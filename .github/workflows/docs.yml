@@ -14,17 +14,20 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+      - uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
 
       - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2 # v4.0.0
         with:
           version: 9
 
-      - run: |
+      - name: Prettier Check on /docs
+        working-directory: ./docs
+        run: |
           pnpm dlx prettier . --check || {
             echo "To fix, run from the root of the zed repo:"
             echo "  cd docs && pnpm dlx prettier . --write && cd .."
             false
           }
 
-        working-directory: ./docs
+      - name: Check spelling
+        run: script/check-spelling docs/

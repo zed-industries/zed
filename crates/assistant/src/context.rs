@@ -26,6 +26,7 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
+    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
@@ -46,7 +47,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use telemetry_events::AssistantKind;
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -294,6 +295,8 @@ impl ContextOperation {
 #[derive(Debug, Clone)]
 pub enum ContextEvent {
     ShowAssistError(SharedString),
+    ShowPaymentRequiredError,
+    ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
@@ -549,7 +552,7 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let buffer = cx.new_model(|_cx| {
-            let mut buffer = Buffer::remote(
+            let buffer = Buffer::remote(
                 language::BufferId::new(1).unwrap(),
                 replica_id,
                 capability,
@@ -683,7 +686,7 @@ impl Context {
             buffer.set_text(saved_context.text.as_str(), cx)
         });
         let operations = saved_context.into_ops(&this.buffer, cx);
-        this.apply_ops(operations, cx).unwrap();
+        this.apply_ops(operations, cx);
         this
     }
 
@@ -756,7 +759,7 @@ impl Context {
         &mut self,
         ops: impl IntoIterator<Item = ContextOperation>,
         cx: &mut ModelContext<Self>,
-    ) -> Result<()> {
+    ) {
         let mut buffer_ops = Vec::new();
         for op in ops {
             match op {
@@ -765,10 +768,8 @@ impl Context {
             }
         }
         self.buffer
-            .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx))?;
+            .update(cx, |buffer, cx| buffer.apply_ops(buffer_ops, cx));
         self.flush_ops(cx);
-
-        Ok(())
     }
 
     fn flush_ops(&mut self, cx: &mut ModelContext<Context>) {
@@ -1008,9 +1009,12 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            language::BufferEvent::Operation(operation) => cx.emit(ContextEvent::Operation(
-                ContextOperation::BufferOperation(operation.clone()),
-            )),
+            language::BufferEvent::Operation {
+                operation,
+                is_local: true,
+            } => cx.emit(ContextEvent::Operation(ContextOperation::BufferOperation(
+                operation.clone(),
+            ))),
             language::BufferEvent::Edited => {
                 self.count_remaining_tokens(cx);
                 self.reparse(cx);
@@ -1969,8 +1973,9 @@ impl Context {
     }
 
     pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider()?;
-        let model = LanguageModelRegistry::read_global(cx).active_model()?;
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let provider = model_registry.active_provider()?;
+        let model = model_registry.active_model()?;
         let last_message_id = self.get_last_valid_message_id(cx)?;
 
         if !provider.is_authenticated(cx) {
@@ -2110,34 +2115,53 @@ impl Context {
                 let result = stream_completion.await;
 
                 this.update(&mut cx, |this, cx| {
-                    let error_message = result
-                        .as_ref()
-                        .err()
-                        .map(|error| error.to_string().trim().to_string());
-
-                    if let Some(error_message) = error_message.as_ref() {
-                        cx.emit(ContextEvent::ShowAssistError(SharedString::from(
-                            error_message.clone(),
-                        )));
-                    }
-
-                    this.update_metadata(assistant_message_id, cx, |metadata| {
-                        if let Some(error_message) = error_message.as_ref() {
-                            metadata.status =
-                                MessageStatus::Error(SharedString::from(error_message.clone()));
+                    let error_message = if let Some(error) = result.as_ref().err() {
+                        if error.is::<PaymentRequiredError>() {
+                            cx.emit(ContextEvent::ShowPaymentRequiredError);
+                            this.update_metadata(assistant_message_id, cx, |metadata| {
+                                metadata.status = MessageStatus::Canceled;
+                            });
+                            Some(error.to_string())
+                        } else if error.is::<MaxMonthlySpendReachedError>() {
+                            cx.emit(ContextEvent::ShowMaxMonthlySpendReachedError);
+                            this.update_metadata(assistant_message_id, cx, |metadata| {
+                                metadata.status = MessageStatus::Canceled;
+                            });
+                            Some(error.to_string())
                         } else {
-                            metadata.status = MessageStatus::Done;
+                            let error_message = error.to_string().trim().to_string();
+                            cx.emit(ContextEvent::ShowAssistError(SharedString::from(
+                                error_message.clone(),
+                            )));
+                            this.update_metadata(assistant_message_id, cx, |metadata| {
+                                metadata.status =
+                                    MessageStatus::Error(SharedString::from(error_message.clone()));
+                            });
+                            Some(error_message)
                         }
-                    });
+                    } else {
+                        this.update_metadata(assistant_message_id, cx, |metadata| {
+                            metadata.status = MessageStatus::Done;
+                        });
+                        None
+                    };
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
-                        telemetry.report_assistant_event(
-                            Some(this.id.0.clone()),
-                            AssistantKind::Panel,
-                            model.telemetry_id(),
+                        let language_name = this
+                            .buffer
+                            .read(cx)
+                            .language()
+                            .map(|language| language.name());
+                        telemetry.report_assistant_event(AssistantEvent {
+                            conversation_id: Some(this.id.0.clone()),
+                            kind: AssistantKind::Panel,
+                            phase: AssistantPhase::Response,
+                            model: model.telemetry_id(),
+                            model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
-                        );
+                            language_name: language_name.map(|name| name.to_proto()),
+                        });
                     }
 
                     if let Ok(stop_reason) = result {
@@ -2181,7 +2205,7 @@ impl Context {
             messages: Vec::new(),
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         };
         for message in self.messages(cx) {
             if message.status != MessageStatus::Done {

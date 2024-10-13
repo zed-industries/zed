@@ -72,6 +72,7 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
+    Rewrap,
     Lowercase,
     Uppercase,
     OppositeCase,
@@ -454,6 +455,7 @@ impl Operator {
             Operator::Jump { line: true } => "'",
             Operator::Jump { line: false } => "`",
             Operator::Indent => ">",
+            Operator::Rewrap => "gq",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
             Operator::Lowercase => "gu",
@@ -482,6 +484,7 @@ impl Operator {
             Operator::Change
             | Operator::Delete
             | Operator::Yank
+            | Operator::Rewrap
             | Operator::Indent
             | Operator::Outdent
             | Operator::Lowercase

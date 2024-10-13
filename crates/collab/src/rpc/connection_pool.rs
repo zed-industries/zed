@@ -32,15 +32,7 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        self.0 >= SemanticVersion::new(0, 134, 0)
-    }
-
-    pub fn with_list_directory() -> ZedVersion {
-        ZedVersion(SemanticVersion::new(0, 145, 0))
-    }
-
-    pub fn with_search_candidates() -> ZedVersion {
-        ZedVersion(SemanticVersion::new(0, 151, 0))
+        self.0 >= SemanticVersion::new(0, 151, 0)
     }
 }
 
@@ -167,6 +159,16 @@ impl ConnectionPool {
 
     pub fn dev_server_connection_id(&self, dev_server_id: DevServerId) -> Option<ConnectionId> {
         self.connected_dev_servers.get(&dev_server_id).copied()
+    }
+
+    pub fn online_dev_server_connection_id(
+        &self,
+        dev_server_id: DevServerId,
+    ) -> Result<ConnectionId> {
+        match self.connected_dev_servers.get(&dev_server_id) {
+            Some(cid) => Ok(*cid),
+            None => Err(anyhow!(proto::ErrorCode::DevServerOffline)),
+        }
     }
 
     pub fn dev_server_connection_id_supporting(

@@ -29,7 +29,7 @@ pub struct GitBlameEntrySummary {
 impl sum_tree::Item for GitBlameEntry {
     type Summary = GitBlameEntrySummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         GitBlameEntrySummary { rows: self.rows }
     }
 }
@@ -205,6 +205,27 @@ impl GitBlame {
             cursor.seek_forward(&row.0, Bias::Right, &());
             cursor.item()?.blame.clone()
         })
+    }
+
+    pub fn max_author_length(&mut self, cx: &mut ModelContext<Self>) -> usize {
+        self.sync(cx);
+
+        let mut max_author_length = 0;
+
+        for entry in self.entries.iter() {
+            let author_len = entry
+                .blame
+                .as_ref()
+                .and_then(|entry| entry.author.as_ref())
+                .map(|author| author.len());
+            if let Some(author_len) = author_len {
+                if author_len > max_author_length {
+                    max_author_length = author_len;
+                }
+            }
+        }
+
+        max_author_length
     }
 
     pub fn blur(&mut self, _: &mut ModelContext<Self>) {

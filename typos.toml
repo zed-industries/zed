@@ -48,7 +48,6 @@ extend-ignore-re = [
     'cl\[ist]',
     '\[lan\]guage',
     '"ba"',
-    ":ba\\|z",
     # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
     "COLUMN enviroment",
     # Typo in ClickHouse column name.
@@ -58,6 +57,8 @@ extend-ignore-re = [
     # ProtoLS crate with tree-sitter Protobuf grammar.
     "protols",
     # x11rb SelectionNotifyEvent struct field
-    "requestor"
+    "requestor",
+    # Not an actual typo but an intentionally invalid color, in `color_extractor`
+    "#fof"
 ]
 check-filename = true

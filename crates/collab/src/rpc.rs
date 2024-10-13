@@ -35,7 +35,9 @@ use chrono::Utc;
 use collections::{HashMap, HashSet};
 pub use connection_pool::{ConnectionPool, ZedVersion};
 use core::fmt::{self, Debug, Formatter};
+use http_client::HttpClient;
 use open_ai::{OpenAiEmbeddingModel, OPEN_AI_API_URL};
+use reqwest_client::ReqwestClient;
 use sha2::Digest;
 use supermaven_api::{CreateExternalUserRequest, SupermavenAdminApi};
 
@@ -45,7 +47,6 @@ use futures::{
     stream::FuturesUnordered,
     FutureExt, SinkExt, StreamExt, TryStreamExt,
 };
-use http_client::IsahcHttpClient;
 use prometheus::{register_int_gauge, IntGauge};
 use rpc::{
     proto::{
@@ -139,7 +140,7 @@ struct Session {
     connection_pool: Arc<parking_lot::Mutex<ConnectionPool>>,
     app_state: Arc<AppState>,
     supermaven_client: Option<Arc<SupermavenAdminApi>>,
-    http_client: Arc<IsahcHttpClient>,
+    http_client: Arc<dyn HttpClient>,
     /// The GeoIP country code for the user.
     #[allow(unused)]
     geoip_country_code: Option<String>,
@@ -190,16 +191,26 @@ impl Session {
         }
     }
 
-    pub async fn current_plan(&self, db: MutexGuard<'_, DbHandle>) -> anyhow::Result<proto::Plan> {
+    pub async fn has_llm_subscription(
+        &self,
+        db: &MutexGuard<'_, DbHandle>,
+    ) -> anyhow::Result<bool> {
         if self.is_staff() {
-            return Ok(proto::Plan::ZedPro);
+            return Ok(true);
         }
 
         let Some(user_id) = self.user_id() else {
-            return Ok(proto::Plan::Free);
+            return Ok(false);
         };
 
-        if db.has_active_billing_subscription(user_id).await? {
+        Ok(db.has_active_billing_subscription(user_id).await?)
+    }
+
+    pub async fn current_plan(
+        &self,
+        _db: &MutexGuard<'_, DbHandle>,
+    ) -> anyhow::Result<proto::Plan> {
+        if self.is_staff() {
             Ok(proto::Plan::ZedPro)
         } else {
             Ok(proto::Plan::Free)
@@ -459,9 +470,6 @@ impl Server {
                 forward_project_request_for_owner::<proto::TaskContextForLocation>,
             ))
             .add_request_handler(user_handler(
-                forward_project_request_for_owner::<proto::TaskTemplates>,
-            ))
-            .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetHover>,
             ))
             .add_request_handler(user_handler(
@@ -472,9 +480,6 @@ impl Server {
             ))
             .add_request_handler(user_handler(
                 forward_read_only_project_request::<proto::GetReferences>,
-            ))
-            .add_request_handler(user_handler(
-                forward_read_only_project_request::<proto::SearchProject>,
             ))
             .add_request_handler(user_handler(forward_find_search_candidates_request))
             .add_request_handler(user_handler(
@@ -956,7 +961,7 @@ impl Server {
             tracing::info!("connection opened");
 
             let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-            let http_client = match IsahcHttpClient::builder().default_header("User-Agent", user_agent).build() {
+            let http_client = match ReqwestClient::user_agent(&user_agent) {
                 Ok(http_client) => Arc::new(http_client),
                 Err(error) => {
                     tracing::error!(?error, "failed to create HTTP client");
@@ -1211,6 +1216,15 @@ impl Server {
             }
         }
         Ok(())
+    }
+
+    pub async fn refresh_llm_tokens_for_user(self: &Arc<Self>, user_id: UserId) {
+        let pool = self.connection_pool.lock();
+        for connection_id in pool.user_connection_ids(user_id) {
+            self.peer
+                .send(connection_id, proto::RefreshLlmToken {})
+                .trace_err();
+        }
     }
 
     pub async fn snapshot<'a>(self: &'a Arc<Self>) -> ServerSnapshot<'a> {
@@ -1741,6 +1755,7 @@ fn notify_rejoined_projects(
                         worktree_id: worktree.id,
                         path: settings_file.path,
                         content: Some(settings_file.content),
+                        kind: Some(settings_file.kind.to_proto().into()),
                     },
                 )?;
             }
@@ -2222,6 +2237,7 @@ fn join_project_internal(
                     worktree_id: worktree.id,
                     path: settings_file.path,
                     content: Some(settings_file.content),
+                    kind: Some(proto::update_user_settings::Kind::Settings.into()),
                 },
             )?;
         }
@@ -2297,7 +2313,7 @@ async fn list_remote_directory(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(dev_server_id, ZedVersion::with_list_directory())?;
+        .online_dev_server_connection_id(dev_server_id)?;
 
     session
         .db()
@@ -2336,10 +2352,7 @@ async fn update_dev_server_project(
     let dev_server_connection_id = session
         .connection_pool()
         .await
-        .dev_server_connection_id_supporting(
-            dev_server_project.dev_server_id,
-            ZedVersion::with_list_directory(),
-        )?;
+        .online_dev_server_connection_id(dev_server_project.dev_server_id)?;
 
     session.peer.send(
         dev_server_connection_id,
@@ -2949,40 +2962,6 @@ async fn forward_find_search_candidates_request(
         .await
         .host_for_read_only_project_request(project_id, session.connection_id, session.user_id())
         .await?;
-
-    let host_version = session
-        .connection_pool()
-        .await
-        .connection(host_connection_id)
-        .map(|c| c.zed_version);
-
-    if host_version.is_some_and(|host_version| host_version < ZedVersion::with_search_candidates())
-    {
-        let query = request.query.ok_or_else(|| anyhow!("missing query"))?;
-        let search = proto::SearchProject {
-            project_id: project_id.to_proto(),
-            query: query.query,
-            regex: query.regex,
-            whole_word: query.whole_word,
-            case_sensitive: query.case_sensitive,
-            files_to_include: query.files_to_include,
-            files_to_exclude: query.files_to_exclude,
-            include_ignored: query.include_ignored,
-        };
-
-        let payload = session
-            .peer
-            .forward_request(session.connection_id, host_connection_id, search)
-            .await?;
-        return response.send(proto::FindSearchCandidatesResponse {
-            buffer_ids: payload
-                .locations
-                .into_iter()
-                .map(|loc| loc.buffer_id)
-                .collect(),
-        });
-    }
-
     let payload = session
         .peer
         .forward_request(session.connection_id, host_connection_id, request)
@@ -3508,7 +3487,7 @@ fn should_auto_subscribe_to_channels(version: ZedVersion) -> bool {
 }
 
 async fn update_user_plan(_user_id: UserId, session: &Session) -> Result<()> {
-    let plan = session.current_plan(session.db().await).await?;
+    let plan = session.current_plan(&session.db().await).await?;
 
     session
         .peer
@@ -4508,7 +4487,7 @@ async fn count_language_model_tokens(
     };
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProCountLanguageModelTokensRateLimit),
         proto::Plan::Free => Box::new(FreeCountLanguageModelTokensRateLimit),
     };
@@ -4629,7 +4608,7 @@ async fn compute_embeddings(
     let api_key = api_key.context("no OpenAI API key configured on the server")?;
     authorize_access_to_legacy_llm_endpoints(&session).await?;
 
-    let rate_limit: Box<dyn RateLimit> = match session.current_plan(session.db().await).await? {
+    let rate_limit: Box<dyn RateLimit> = match session.current_plan(&session.db().await).await? {
         proto::Plan::ZedPro => Box::new(ZedProComputeEmbeddingsRateLimit),
         proto::Plan::Free => Box::new(FreeComputeEmbeddingsRateLimit),
     };
@@ -4947,12 +4926,17 @@ async fn get_llm_api_token(
     if Utc::now().naive_utc() - account_created_at < MIN_ACCOUNT_AGE_FOR_LLM_USE {
         Err(anyhow!("account too young"))?
     }
+
+    let billing_preferences = db.get_billing_preferences(user.id).await?;
+
     let token = LlmTokenClaims::create(
         user.id,
         user.github_login.clone(),
         session.is_staff(),
+        billing_preferences,
         has_llm_closed_beta_feature_flag,
-        session.current_plan(db).await?,
+        session.has_llm_subscription(&db).await?,
+        session.current_plan(&db).await?,
         &session.app_state.config,
     )?;
     response.send(proto::GetLlmTokenResponse { token })?;

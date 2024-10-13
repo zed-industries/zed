@@ -1,7 +1,7 @@
 use crate::{
     px, AbsoluteLength, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
     GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, Size, StyleRefinement, Styled,
+    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, StyleRefinement, Styled,
     SvgSize, UriOrPath, WindowContext,
 };
 use futures::{AsyncReadExt, Future};
@@ -187,16 +187,30 @@ impl Element for Img {
 
                         let image_size = data.size(frame_index);
 
-                        if let (Length::Auto, Length::Auto) = (style.size.width, style.size.height)
-                        {
-                            style.size = Size {
-                                width: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.width.0 as f32)),
-                                )),
-                                height: Length::Definite(DefiniteLength::Absolute(
-                                    AbsoluteLength::Pixels(px(image_size.height.0 as f32)),
-                                )),
-                            }
+                        if let Length::Auto = style.size.width {
+                            style.size.width = match style.size.height {
+                                Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(height),
+                                )) => Length::Definite(
+                                    px(image_size.width.0 as f32 * height.0
+                                        / image_size.height.0 as f32)
+                                    .into(),
+                                ),
+                                _ => Length::Definite(px(image_size.width.0 as f32).into()),
+                            };
+                        }
+
+                        if let Length::Auto = style.size.height {
+                            style.size.height = match style.size.width {
+                                Length::Definite(DefiniteLength::Absolute(
+                                    AbsoluteLength::Pixels(width),
+                                )) => Length::Definite(
+                                    px(image_size.height.0 as f32 * width.0
+                                        / image_size.width.0 as f32)
+                                    .into(),
+                                ),
+                                _ => Length::Definite(px(image_size.height.0 as f32).into()),
+                            };
                         }
 
                         if global_id.is_some() && data.frame_count() > 1 {
@@ -345,7 +359,10 @@ impl Asset for ImageAsset {
             let bytes = match source.clone() {
                 UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
                 UriOrPath::Uri(uri) => {
-                    let mut response = client.get(uri.as_ref(), ().into(), true).await?;
+                    let mut response = client
+                        .get(uri.as_ref(), ().into(), true)
+                        .await
+                        .map_err(|e| ImageCacheError::Client(Arc::new(e)))?;
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
@@ -429,7 +446,7 @@ impl Asset for ImageAsset {
 pub enum ImageCacheError {
     /// An error that occurred while fetching an image from a remote source.
     #[error("http error: {0}")]
-    Client(#[from] http_client::Error),
+    Client(#[from] Arc<anyhow::Error>),
     /// An error that occurred while reading the image from disk.
     #[error("IO error: {0}")]
     Io(Arc<std::io::Error>),

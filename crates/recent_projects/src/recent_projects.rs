@@ -1,7 +1,7 @@
 mod dev_servers;
 pub mod disconnected_overlay;
 mod ssh_connections;
-mod ssh_remotes;
+use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
@@ -32,8 +32,8 @@ use ui::{
 };
 use util::{paths::PathExt, ResultExt};
 use workspace::{
-    AppState, CloseIntent, ModalView, SerializedWorkspaceLocation, Workspace, WorkspaceId,
-    WORKSPACE_DB,
+    AppState, CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace,
+    WorkspaceId, WORKSPACE_DB,
 };
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -172,7 +172,7 @@ pub struct RecentProjectsDelegate {
     create_new_window: bool,
     // Flag to reset index when there is a new query vs not reset index when user delete an item
     reset_selected_match_index: bool,
-    has_any_dev_server_projects: bool,
+    has_any_non_local_projects: bool,
 }
 
 impl RecentProjectsDelegate {
@@ -185,16 +185,16 @@ impl RecentProjectsDelegate {
             create_new_window,
             render_paths,
             reset_selected_match_index: true,
-            has_any_dev_server_projects: false,
+            has_any_non_local_projects: false,
         }
     }
 
     pub fn set_workspaces(&mut self, workspaces: Vec<(WorkspaceId, SerializedWorkspaceLocation)>) {
         self.workspaces = workspaces;
-        self.has_any_dev_server_projects = self
+        self.has_any_non_local_projects = !self
             .workspaces
             .iter()
-            .any(|(_, location)| matches!(location, SerializedWorkspaceLocation::DevServer(_)));
+            .all(|(_, location)| matches!(location, SerializedWorkspaceLocation::Local(_, _)));
     }
 }
 impl EventEmitter<DismissEvent> for RecentProjectsDelegate {}
@@ -258,6 +258,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                             dev_server_project.paths.join("")
                         )
                     }
+                    SerializedWorkspaceLocation::Ssh(ssh_project) => ssh_project
+                        .ssh_urls()
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect::<Vec<_>>()
+                        .join(""),
                 };
 
                 StringMatchCandidate::new(id, combined_string)
@@ -364,6 +370,33 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 };
                                 open_dev_server_project(replace_current_window, dev_server_project.id, project_id, cx)
                         }
+                        SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                            let app_state = workspace.app_state().clone();
+
+                            let replace_window = if replace_current_window {
+                                cx.window_handle().downcast::<Workspace>()
+                            } else {
+                                None
+                            };
+
+                            let open_options = OpenOptions {
+                                replace_window,
+                                ..Default::default()
+                            };
+
+                            let connection_options = SshConnectionOptions {
+                                host: ssh_project.host.clone(),
+                                username: ssh_project.user.clone(),
+                                port: ssh_project.port,
+                                password: None,
+                            };
+
+                            let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
+
+                            cx.spawn(|_, mut cx| async move {
+                                open_ssh_project(connection_options, paths, app_state, open_options, &mut cx).await
+                            })
+                        }
                     }
                 }
                 })
@@ -392,7 +425,6 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         let (_, location) = self.workspaces.get(hit.candidate_id)?;
 
-        let is_remote = matches!(location, SerializedWorkspaceLocation::DevServer(_));
         let dev_server_status =
             if let SerializedWorkspaceLocation::DevServer(dev_server_project) = location {
                 let store = dev_server_projects::Store::global(cx).read(cx);
@@ -414,8 +446,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .order()
                     .iter()
                     .filter_map(|i| paths.paths().get(*i).cloned())
+                    .map(|path| path.compact())
                     .collect(),
             ),
+            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
             SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                 Arc::new(vec![PathBuf::from(format!(
                     "{}:{}",
@@ -428,7 +462,6 @@ impl PickerDelegate for RecentProjectsDelegate {
         let (match_labels, paths): (Vec<_>, Vec<_>) = paths
             .iter()
             .map(|path| {
-                let path = path.compact();
                 let highlighted_text =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
 
@@ -457,29 +490,34 @@ impl PickerDelegate for RecentProjectsDelegate {
                     h_flex()
                         .flex_grow()
                         .gap_3()
-                        .when(self.has_any_dev_server_projects, |this| {
-                            this.child(if is_remote {
-                                // if disabled, Color::Disabled
-                                let indicator_color = match dev_server_status {
-                                    Some(DevServerStatus::Online) => Color::Created,
-                                    Some(DevServerStatus::Offline) => Color::Hidden,
-                                    _ => unreachable!(),
-                                };
-                                IconWithIndicator::new(
-                                    Icon::new(IconName::Server).color(Color::Muted),
-                                    Some(Indicator::dot()),
-                                )
-                                .indicator_color(indicator_color)
-                                .indicator_border_color(if selected {
-                                    Some(cx.theme().colors().element_selected)
-                                } else {
-                                    None
-                                })
-                                .into_any_element()
-                            } else {
-                                Icon::new(IconName::Screen)
+                        .when(self.has_any_non_local_projects, |this| {
+                            this.child(match location {
+                                SerializedWorkspaceLocation::Local(_, _) => {
+                                    Icon::new(IconName::Screen)
+                                        .color(Color::Muted)
+                                        .into_any_element()
+                                }
+                                SerializedWorkspaceLocation::Ssh(_) => Icon::new(IconName::Server)
                                     .color(Color::Muted)
+                                    .into_any_element(),
+                                SerializedWorkspaceLocation::DevServer(_) => {
+                                    let indicator_color = match dev_server_status {
+                                        Some(DevServerStatus::Online) => Color::Created,
+                                        Some(DevServerStatus::Offline) => Color::Hidden,
+                                        _ => unreachable!(),
+                                    };
+                                    IconWithIndicator::new(
+                                        Icon::new(IconName::Server).color(Color::Muted),
+                                        Some(Indicator::dot()),
+                                    )
+                                    .indicator_color(indicator_color)
+                                    .indicator_border_color(if selected {
+                                        Some(cx.theme().colors().element_selected)
+                                    } else {
+                                        None
+                                    })
                                     .into_any_element()
+                                }
                             })
                         })
                         .child({
@@ -527,7 +565,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_t_1()
                 .py_2()
                 .pr_2()
-                .border_color(cx.theme().colors().border)
+                .border_color(cx.theme().colors().border_variant)
                 .justify_end()
                 .gap_4()
                 .child(
@@ -535,7 +573,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("Open remote folder…").color(Color::Muted))
+                        .child(Label::new("Open Remote Folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
@@ -544,7 +582,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             KeyBinding::for_action(&workspace::Open, cx),
                             |button, key| button.child(key),
                         )
-                        .child(Label::new("Open local folder…").color(Color::Muted))
+                        .child(Label::new("Open Local Folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(workspace::Open.boxed_clone())),
                 )
                 .into_any(),
@@ -654,7 +692,6 @@ fn highlights_for_path(
         },
     )
 }
-
 impl RecentProjectsDelegate {
     fn delete_recent_project(&self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(selected_match) = self.matches.get(ix) {

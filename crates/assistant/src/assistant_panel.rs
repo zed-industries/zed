@@ -12,13 +12,13 @@ use crate::{
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
-    ContextStoreEvent, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistId,
-    InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageMetadata,
-    MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
-    ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
+    ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory, DeployPromptLibrary,
+    InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
+    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
+    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use assistant_tool::ToolRegistry;
 use client::{proto, Client, Status};
@@ -45,7 +45,8 @@ use gpui::{
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, Capability, LanguageRegistry, LspAdapterDelegate, Point, ToOffset,
+    language_settings::SoftWrap, BufferSnapshot, Capability, LanguageRegistry, LspAdapterDelegate,
+    ToOffset,
 };
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
@@ -56,6 +57,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
+use rope::Point;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
@@ -70,20 +72,22 @@ use std::{
     time::Duration,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
+use text::SelectionGoal;
 use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
-    Avatar, AvatarShape, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
+    Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::{self, FollowableItem, Item, ItemHandle},
+    notifications::NotificationId,
     pane::{self, SaveIntent},
     searchable::{SearchEvent, SearchableItem},
-    DraggedSelection, Pane, Save, ShowConfiguration, ToggleZoom, ToolbarItemEvent,
+    DraggedSelection, Pane, Save, ShowConfiguration, Toast, ToggleZoom, ToolbarItemEvent,
     ToolbarItemLocation, ToolbarItemView, Workspace,
 };
 use workspace::{searchable::SearchableItemHandle, DraggedTab};
@@ -105,6 +109,7 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
+                .register_action(ContextEditor::copy_code)
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
                 .register_action(AssistantPanel::create_new_context);
@@ -257,9 +262,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
                             .gap_2()
                             .children(if let Some(host_user) = host_user {
                                 vec![
-                                    Avatar::new(host_user.avatar_uri.clone())
-                                        .shape(AvatarShape::Circle)
-                                        .into_any_element(),
+                                    Avatar::new(host_user.avatar_uri.clone()).into_any_element(),
                                     Label::new(format!("Shared by @{}", host_user.github_login))
                                         .color(Color::Muted)
                                         .size(LabelSize::Small)
@@ -694,7 +697,9 @@ impl AssistantPanel {
             log::error!("no context found with ID: {}", context_id.to_proto());
             return;
         };
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
+            .log_err()
+            .flatten();
 
         let assistant_panel = cx.view().downgrade();
         let editor = cx.new_view(|cx| {
@@ -956,7 +961,8 @@ impl AssistantPanel {
     }
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
-        if self.project.read(cx).is_via_collab() {
+        let project = self.project.read(cx);
+        if project.is_via_collab() && project.dev_server_project_id().is_none() {
             let task = self
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));
@@ -967,7 +973,8 @@ impl AssistantPanel {
                 this.update(&mut cx, |this, cx| {
                     let workspace = this.workspace.clone();
                     let project = this.project.clone();
-                    let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
+                    let lsp_adapter_delegate =
+                        make_lsp_adapter_delegate(&project, cx).log_err().flatten();
 
                     let fs = this.fs.clone();
                     let project = this.project.clone();
@@ -997,7 +1004,9 @@ impl AssistantPanel {
             None
         } else {
             let context = self.context_store.update(cx, |store, cx| store.create(cx));
-            let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+            let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
+                .log_err()
+                .flatten();
 
             let assistant_panel = cx.view().downgrade();
             let editor = cx.new_view(|cx| {
@@ -1203,7 +1212,7 @@ impl AssistantPanel {
         let project = self.project.clone();
         let workspace = self.workspace.clone();
 
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
@@ -1250,7 +1259,9 @@ impl AssistantPanel {
             .update(cx, |store, cx| store.open_remote_context(id, cx));
         let fs = self.fs.clone();
         let workspace = self.workspace.clone();
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx).log_err();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
+            .log_err()
+            .flatten();
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
@@ -1492,6 +1503,13 @@ struct WorkflowAssist {
 
 type MessageHeader = MessageMetadata;
 
+#[derive(Clone)]
+enum AssistError {
+    PaymentRequired,
+    MaxMonthlySpendReached,
+    Message(SharedString),
+}
+
 pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
@@ -1510,7 +1528,7 @@ pub struct ContextEditor {
     workflow_steps: HashMap<Range<language::Anchor>, WorkflowStepViewState>,
     active_workflow_step: Option<ActiveWorkflowStep>,
     assistant_panel: WeakView<AssistantPanel>,
-    error_message: Option<SharedString>,
+    last_error: Option<AssistError>,
     show_accept_terms: bool,
     pub(crate) slash_menu_handle:
         PopoverMenuHandle<Picker<slash_command_picker::SlashCommandDelegate>>,
@@ -1549,7 +1567,7 @@ impl ContextEditor {
             editor.set_show_runnables(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Box::new(completion_provider));
+            editor.set_completion_provider(Some(Box::new(completion_provider)));
             editor.set_collaboration_hub(Box::new(project.clone()));
             editor
         });
@@ -1581,7 +1599,7 @@ impl ContextEditor {
             workflow_steps: HashMap::default(),
             active_workflow_step: None,
             assistant_panel,
-            error_message: None,
+            last_error: None,
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
@@ -1625,7 +1643,7 @@ impl ContextEditor {
         }
 
         if !self.apply_active_workflow_step(cx) {
-            self.error_message = None;
+            self.last_error = None;
             self.send_to_model(cx);
             cx.notify();
         }
@@ -1775,7 +1793,7 @@ impl ContextEditor {
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
-        self.error_message = None;
+        self.last_error = None;
 
         if self
             .context
@@ -2280,7 +2298,13 @@ impl ContextEditor {
             }
             ContextEvent::Operation(_) => {}
             ContextEvent::ShowAssistError(error_message) => {
-                self.error_message = Some(error_message.clone());
+                self.last_error = Some(AssistError::Message(error_message.clone()));
+            }
+            ContextEvent::ShowPaymentRequiredError => {
+                self.last_error = Some(AssistError::PaymentRequired);
+            }
+            ContextEvent::ShowMaxMonthlySpendReachedError => {
+                self.last_error = Some(AssistError::MaxMonthlySpendReached);
             }
         }
     }
@@ -2810,9 +2834,8 @@ impl ContextEditor {
         } else {
             // If there are multiple buffers or suggestion groups, create a multibuffer
             let multibuffer = cx.new_model(|cx| {
-                let replica_id = project.read(cx).replica_id();
-                let mut multibuffer = MultiBuffer::new(replica_id, Capability::ReadWrite)
-                    .with_title(resolved_step.title.clone());
+                let mut multibuffer =
+                    MultiBuffer::new(Capability::ReadWrite).with_title(resolved_step.title.clone());
                 for (buffer, groups) in &resolved_step.suggestion_groups {
                     let excerpt_ids = multibuffer.push_excerpts(
                         buffer.clone(),
@@ -3100,6 +3123,49 @@ impl ContextEditor {
         });
     }
 
+    /// Returns either the selected text, or the content of the Markdown code
+    /// block surrounding the cursor.
+    fn get_selection_or_code_block(
+        context_editor_view: &View<ContextEditor>,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<(String, bool)> {
+        const CODE_FENCE_DELIMITER: &'static str = "```";
+
+        let context_editor = context_editor_view.read(cx).editor.read(cx);
+
+        if context_editor.selections.newest::<Point>(cx).is_empty() {
+            let snapshot = context_editor.buffer().read(cx).snapshot(cx);
+            let (_, _, snapshot) = snapshot.as_singleton()?;
+
+            let head = context_editor.selections.newest::<Point>(cx).head();
+            let offset = snapshot.point_to_offset(head);
+
+            let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
+            let mut text = snapshot
+                .text_for_range(surrounding_code_block_range)
+                .collect::<String>();
+
+            // If there is no newline trailing the closing three-backticks, then
+            // tree-sitter-md extends the range of the content node to include
+            // the backticks.
+            if text.ends_with(CODE_FENCE_DELIMITER) {
+                text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+            }
+
+            (!text.is_empty()).then_some((text, true))
+        } else {
+            let anchor = context_editor.selections.newest_anchor();
+            let text = context_editor
+                .buffer()
+                .read(cx)
+                .read(cx)
+                .text_for_range(anchor.range())
+                .collect::<String>();
+
+            (!text.is_empty()).then_some((text, false))
+        }
+    }
+
     fn insert_selection(
         workspace: &mut Workspace,
         _: &InsertIntoEditor,
@@ -3118,22 +3184,42 @@ impl ContextEditor {
             return;
         };
 
-        let context_editor = context_editor_view.read(cx).editor.read(cx);
-        let anchor = context_editor.selections.newest_anchor();
-        let text = context_editor
-            .buffer()
-            .read(cx)
-            .read(cx)
-            .text_for_range(anchor.range())
-            .collect::<String>();
-
-        // If nothing is selected, don't delete the current selection; instead, be a no-op.
-        if !text.is_empty() {
+        if let Some((text, _)) = Self::get_selection_or_code_block(&context_editor_view, cx) {
             active_editor_view.update(cx, |editor, cx| {
                 editor.insert(&text, cx);
                 editor.focus(cx);
             })
         }
+    }
+
+    fn copy_code(workspace: &mut Workspace, _: &CopyCode, cx: &mut ViewContext<Workspace>) {
+        let result = maybe!({
+            let panel = workspace.panel::<AssistantPanel>(cx)?;
+            let context_editor_view = panel.read(cx).active_context_editor(cx)?;
+            Self::get_selection_or_code_block(&context_editor_view, cx)
+        });
+        let Some((text, is_code_block)) = result else {
+            return;
+        };
+
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+
+        struct CopyToClipboardToast;
+        workspace.show_toast(
+            Toast::new(
+                NotificationId::unique::<CopyToClipboardToast>(),
+                format!(
+                    "{} copied to clipboard.",
+                    if is_code_block {
+                        "Code block"
+                    } else {
+                        "Selection"
+                    }
+                ),
+            )
+            .autohide(),
+            cx,
+        );
     }
 
     fn insert_dragged_files(
@@ -3371,7 +3457,7 @@ impl ContextEditor {
 
     fn copy(&mut self, _: &editor::actions::Copy, cx: &mut ViewContext<Self>) {
         if self.editor.read(cx).selections.count() == 1 {
-            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+            let (copied_text, metadata, _) = self.get_clipboard_contents(cx);
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                 copied_text,
                 metadata,
@@ -3385,11 +3471,9 @@ impl ContextEditor {
 
     fn cut(&mut self, _: &editor::actions::Cut, cx: &mut ViewContext<Self>) {
         if self.editor.read(cx).selections.count() == 1 {
-            let (copied_text, metadata) = self.get_clipboard_contents(cx);
+            let (copied_text, metadata, selections) = self.get_clipboard_contents(cx);
 
             self.editor.update(cx, |editor, cx| {
-                let selections = editor.selections.all::<Point>(cx);
-
                 editor.transact(cx, |this, cx| {
                     this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(selections);
@@ -3409,52 +3493,71 @@ impl ContextEditor {
         cx.propagate();
     }
 
-    fn get_clipboard_contents(&mut self, cx: &mut ViewContext<Self>) -> (String, CopyMetadata) {
-        let creases = self.editor.update(cx, |editor, cx| {
-            let selection = editor.selections.newest::<Point>(cx);
-            let selection_start = editor.selections.newest::<usize>(cx).start;
+    fn get_clipboard_contents(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
+        let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
+            let mut selection = editor.selections.newest::<Point>(cx);
             let snapshot = editor.buffer().read(cx).snapshot(cx);
-            editor.display_map.update(cx, |display_map, cx| {
-                display_map
-                    .snapshot(cx)
-                    .crease_snapshot
-                    .creases_in_range(
-                        MultiBufferRow(selection.start.row)..MultiBufferRow(selection.end.row + 1),
-                        &snapshot,
-                    )
-                    .filter_map(|crease| {
-                        if let Some(metadata) = &crease.metadata {
-                            let start = crease
-                                .range
-                                .start
-                                .to_offset(&snapshot)
-                                .saturating_sub(selection_start);
-                            let end = crease
-                                .range
-                                .end
-                                .to_offset(&snapshot)
-                                .saturating_sub(selection_start);
 
-                            let range_relative_to_selection = start..end;
+            let is_entire_line = selection.is_empty() || editor.selections.line_mode;
+            if is_entire_line {
+                selection.start = Point::new(selection.start.row, 0);
+                selection.end =
+                    cmp::min(snapshot.max_point(), Point::new(selection.start.row + 1, 0));
+                selection.goal = SelectionGoal::None;
+            }
 
-                            if range_relative_to_selection.is_empty() {
-                                None
+            let selection_start = snapshot.point_to_offset(selection.start);
+
+            (
+                snapshot.clone(),
+                selection.clone(),
+                editor.display_map.update(cx, |display_map, cx| {
+                    display_map
+                        .snapshot(cx)
+                        .crease_snapshot
+                        .creases_in_range(
+                            MultiBufferRow(selection.start.row)
+                                ..MultiBufferRow(selection.end.row + 1),
+                            &snapshot,
+                        )
+                        .filter_map(|crease| {
+                            if let Some(metadata) = &crease.metadata {
+                                let start = crease
+                                    .range
+                                    .start
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
+                                let end = crease
+                                    .range
+                                    .end
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
+
+                                let range_relative_to_selection = start..end;
+
+                                if range_relative_to_selection.is_empty() {
+                                    None
+                                } else {
+                                    Some(SelectedCreaseMetadata {
+                                        range_relative_to_selection,
+                                        crease: metadata.clone(),
+                                    })
+                                }
                             } else {
-                                Some(SelectedCreaseMetadata {
-                                    range_relative_to_selection,
-                                    crease: metadata.clone(),
-                                })
+                                None
                             }
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
+                        })
+                        .collect::<Vec<_>>()
+                }),
+            )
         });
 
+        let selection = selection.map(|point| snapshot.point_to_offset(point));
         let context = self.context.read(cx);
-        let selection = self.editor.read(cx).selections.newest::<usize>(cx);
+
         let mut text = String::new();
         for message in context.messages(cx) {
             if message.offset_range.start >= selection.range().end {
@@ -3466,12 +3569,14 @@ impl ContextEditor {
                     for chunk in context.buffer().read(cx).text_for_range(range) {
                         text.push_str(chunk);
                     }
-                    text.push('\n');
+                    if message.offset_range.end < selection.range().end {
+                        text.push('\n');
+                    }
                 }
             }
         }
 
-        (text, CopyMetadata { creases })
+        (text, CopyMetadata { creases }, vec![selection])
     }
 
     fn paste(&mut self, action: &editor::actions::Paste, cx: &mut ViewContext<Self>) {
@@ -4213,6 +4318,196 @@ impl ContextEditor {
                 focus_handle.dispatch_action(&Assist, cx);
             })
     }
+
+    fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let last_error = self.last_error.as_ref()?;
+
+        Some(
+            div()
+                .absolute()
+                .right_3()
+                .bottom_12()
+                .max_w_96()
+                .py_2()
+                .px_3()
+                .elevation_2(cx)
+                .occlude()
+                .child(match last_error {
+                    AssistError::PaymentRequired => self.render_payment_required_error(cx),
+                    AssistError::MaxMonthlySpendReached => {
+                        self.render_max_monthly_spend_reached_error(cx)
+                    }
+                    AssistError::Message(error_message) => {
+                        self.render_assist_error(error_message, cx)
+                    }
+                })
+                .into_any(),
+        )
+    }
+
+    fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
+        const SUBSCRIBE_URL: &str = "https://zed.dev/ai/subscribe";
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Free Usage Exceeded").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(ERROR_MESSAGE)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.open_url(SUBSCRIBE_URL);
+                            cx.notify();
+                        },
+                    )))
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
+    fn render_max_monthly_spend_reached_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
+        const ACCOUNT_URL: &str = "https://zed.dev/account";
+
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(Label::new("Max Monthly Spend Reached").weight(FontWeight::MEDIUM)),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(ERROR_MESSAGE)),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(
+                        Button::new("subscribe", "Update Monthly Spend Limit").on_click(
+                            cx.listener(|this, _, cx| {
+                                this.last_error = None;
+                                cx.open_url(ACCOUNT_URL);
+                                cx.notify();
+                            }),
+                        ),
+                    )
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+
+    fn render_assist_error(
+        &self,
+        error_message: &SharedString,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::XCircle).color(Color::Error))
+                    .child(
+                        Label::new("Error interacting with language model")
+                            .weight(FontWeight::MEDIUM),
+                    ),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(error_message.clone())),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
+    }
+}
+
+/// Returns the contents of the *outermost* fenced code block that contains the given offset.
+fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Option<Range<usize>> {
+    const CODE_BLOCK_NODE: &'static str = "fenced_code_block";
+    const CODE_BLOCK_CONTENT: &'static str = "code_fence_content";
+
+    let layer = snapshot.syntax_layers().next()?;
+
+    let root_node = layer.node();
+    let mut cursor = root_node.walk();
+
+    // Go to the first child for the given offset
+    while cursor.goto_first_child_for_byte(offset).is_some() {
+        // If we're at the end of the node, go to the next one.
+        // Example: if you have a fenced-code-block, and you're on the start of the line
+        // right after the closing ```, you want to skip the fenced-code-block and
+        // go to the next sibling.
+        if cursor.node().end_byte() == offset {
+            cursor.goto_next_sibling();
+        }
+
+        if cursor.node().start_byte() > offset {
+            break;
+        }
+
+        // We found the fenced code block.
+        if cursor.node().kind() == CODE_BLOCK_NODE {
+            // Now we need to find the child node that contains the code.
+            cursor.goto_first_child();
+            loop {
+                if cursor.node().kind() == CODE_BLOCK_CONTENT {
+                    return Some(cursor.node().byte_range());
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+    }
+
+    None
 }
 
 fn render_fold_icon_button(
@@ -4307,48 +4602,7 @@ impl Render for ContextEditor {
                         .child(element),
                 )
             })
-            .when_some(self.error_message.clone(), |this, error_message| {
-                this.child(
-                    div()
-                        .absolute()
-                        .right_3()
-                        .bottom_12()
-                        .max_w_96()
-                        .py_2()
-                        .px_3()
-                        .elevation_2(cx)
-                        .occlude()
-                        .child(
-                            v_flex()
-                                .gap_0p5()
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .items_center()
-                                        .child(Icon::new(IconName::XCircle).color(Color::Error))
-                                        .child(
-                                            Label::new("Error interacting with language model")
-                                                .weight(FontWeight::MEDIUM),
-                                        ),
-                                )
-                                .child(
-                                    div()
-                                        .id("error-message")
-                                        .max_h_24()
-                                        .overflow_y_scroll()
-                                        .child(Label::new(error_message)),
-                                )
-                                .child(h_flex().justify_end().mt_1().child(
-                                    Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                                        |this, _, cx| {
-                                            this.error_message = None;
-                                            cx.notify();
-                                        },
-                                    )),
-                                )),
-                        ),
-                )
-            })
+            .children(self.render_last_error(cx))
             .child(
                 h_flex().w_full().relative().child(
                     h_flex()
@@ -5378,22 +5632,21 @@ fn render_docs_slash_command_trailer(
 fn make_lsp_adapter_delegate(
     project: &Model<Project>,
     cx: &mut AppContext,
-) -> Result<Arc<dyn LspAdapterDelegate>> {
+) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
     project.update(cx, |project, cx| {
         // TODO: Find the right worktree.
-        let worktree = project
-            .worktrees(cx)
-            .next()
-            .ok_or_else(|| anyhow!("no worktrees when constructing LocalLspAdapterDelegate"))?;
+        let Some(worktree) = project.worktrees(cx).next() else {
+            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
+        };
         let http_client = project.client().http_client().clone();
         project.lsp_store().update(cx, |lsp_store, cx| {
-            Ok(LocalLspAdapterDelegate::new(
+            Ok(Some(LocalLspAdapterDelegate::new(
                 lsp_store,
                 &worktree,
                 http_client,
                 project.fs().clone(),
                 cx,
-            ) as Arc<dyn LspAdapterDelegate>)
+            ) as Arc<dyn LspAdapterDelegate>))
         })
     })
 }
@@ -5496,4 +5749,86 @@ fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {
     }
 
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gpui::{AppContext, Context};
+    use language::Buffer;
+    use unindent::Unindent;
+
+    #[gpui::test]
+    fn test_find_code_blocks(cx: &mut AppContext) {
+        let markdown = languages::language("markdown", tree_sitter_md::LANGUAGE.into());
+
+        let buffer = cx.new_model(|cx| {
+            let text = r#"
+                line 0
+                line 1
+                ```rust
+                fn main() {}
+                ```
+                line 5
+                line 6
+                line 7
+                ```go
+                func main() {}
+                ```
+                line 11
+                ```
+                this is plain text code block
+                ```
+
+                ```go
+                func another() {}
+                ```
+                line 19
+            "#
+            .unindent();
+            let mut buffer = Buffer::local(text, cx);
+            buffer.set_language(Some(markdown.clone()), cx);
+            buffer
+        });
+        let snapshot = buffer.read(cx).snapshot();
+
+        let code_blocks = vec![
+            Point::new(3, 0)..Point::new(4, 0),
+            Point::new(9, 0)..Point::new(10, 0),
+            Point::new(13, 0)..Point::new(14, 0),
+            Point::new(17, 0)..Point::new(18, 0),
+        ]
+        .into_iter()
+        .map(|range| snapshot.point_to_offset(range.start)..snapshot.point_to_offset(range.end))
+        .collect::<Vec<_>>();
+
+        let expected_results = vec![
+            (0, None),
+            (1, None),
+            (2, Some(code_blocks[0].clone())),
+            (3, Some(code_blocks[0].clone())),
+            (4, Some(code_blocks[0].clone())),
+            (5, None),
+            (6, None),
+            (7, None),
+            (8, Some(code_blocks[1].clone())),
+            (9, Some(code_blocks[1].clone())),
+            (10, Some(code_blocks[1].clone())),
+            (11, None),
+            (12, Some(code_blocks[2].clone())),
+            (13, Some(code_blocks[2].clone())),
+            (14, Some(code_blocks[2].clone())),
+            (15, None),
+            (16, Some(code_blocks[3].clone())),
+            (17, Some(code_blocks[3].clone())),
+            (18, Some(code_blocks[3].clone())),
+            (19, None),
+        ];
+
+        for (row, expected) in expected_results {
+            let offset = snapshot.point_to_offset(Point::new(row, 0));
+            let range = find_surrounding_code_block(&snapshot, offset);
+            assert_eq!(range, expected, "unexpected result on row {:?}", row);
+        }
+    }
 }

@@ -1,0 +1,67 @@
+#!/usr/bin/env node --redirect-warnings=/dev/null
+
+const { execFileSync } = require("child_process");
+let { GITHUB_ACCESS_TOKEN } = process.env;
+const PR_REGEX = /#\d+/; // Ex: matches on #4241
+const FIXES_REGEX = /(fixes|closes|completes) (.+[/#]\d+.*)$/im;
+
+main();
+
+async function main() {
+  if (!GITHUB_ACCESS_TOKEN) {
+    try {
+      GITHUB_ACCESS_TOKEN = execFileSync("gh", ["auth", "token"]).toString();
+    } catch (error) {
+      console.log(error);
+      console.log("No GITHUB_ACCESS_TOKEN, and no `gh auth token`");
+      process.exit(1);
+    }
+  }
+
+  // Use form of: YYYY-MM-DD - 2023-01-09
+  const startDate = new Date(process.argv[2]);
+  const today = new Date();
+
+  console.log(`Pull requests from ${startDate} to ${today}\n`);
+
+  let pullRequestNumbers = getPullRequestNumbers(startDate, today);
+
+  // Fetch the pull requests from the GitHub API.
+  console.log("Merged pull requests:");
+  for (const pullRequestNumber of pullRequestNumbers) {
+    const webURL = `https://github.com/zed-industries/zed/pull/${pullRequestNumber}`;
+    const apiURL = `https://api.github.com/repos/zed-industries/zed/pulls/${pullRequestNumber}`;
+
+    const response = await fetch(apiURL, {
+      headers: {
+        Authorization: `token ${GITHUB_ACCESS_TOKEN}`,
+      },
+    });
+
+    const pullRequest = await response.json();
+    console.log("*", pullRequest.title);
+    console.log("  PR URL:    ", webURL);
+    console.log("  Merged:    ", pullRequest.merged_at);
+    console.log();
+  }
+}
+
+function getPullRequestNumbers(startDate, endDate) {
+  const sinceDate = startDate.toISOString();
+  const untilDate = endDate.toISOString();
+
+  const pullRequestNumbers = execFileSync(
+    "git",
+    ["log", `--since=${sinceDate}`, `--until=${untilDate}`, "--oneline"],
+    { encoding: "utf8" },
+  )
+    .split("\n")
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const match = line.match(/#(\d+)/);
+      return match ? match[1] : null;
+    })
+    .filter((line) => line);
+
+  return pullRequestNumbers;
+}

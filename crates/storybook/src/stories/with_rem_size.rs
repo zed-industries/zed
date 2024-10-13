@@ -1,7 +1,7 @@
 use gpui::{AnyElement, Hsla, Render};
 use story::Story;
 
-use ui::{prelude::*, WithRemSize};
+use ui::{prelude::*, utils::WithRemSize};
 
 pub struct WithRemSizeStory;
 

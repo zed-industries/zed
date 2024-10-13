@@ -6,9 +6,8 @@ use std::{pin::Pin, str::FromStr};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
-use isahc::http::{HeaderMap, HeaderValue};
+use http_client::http::{HeaderMap, HeaderValue};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
@@ -49,6 +48,7 @@ pub enum Model {
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
+        default_temperature: Option<f32>,
     },
 }
 
@@ -121,6 +121,19 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
+        }
+    }
+
+    pub fn default_temperature(&self) -> f32 {
+        match self {
+            Self::Claude3_5Sonnet
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => 1.0,
+            Self::Custom {
+                default_temperature,
+                ..
+            } => default_temperature.unwrap_or(1.0),
         }
     }
 
@@ -275,7 +288,7 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
     let serialized_request =
         serde_json::to_string(&request).context("failed to serialize request")?;
@@ -508,6 +521,10 @@ pub struct Usage {
     pub input_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

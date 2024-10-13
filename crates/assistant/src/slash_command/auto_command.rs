@@ -31,11 +31,11 @@ impl SlashCommand for AutoCommand {
     }
 
     fn description(&self) -> String {
-        "Automatically infer what context to add, based on your prompt".into()
+        "Automatically infer what context to add".into()
     }
 
     fn menu_text(&self) -> String {
-        "Automatically Infer Context".into()
+        self.description()
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
@@ -216,7 +216,7 @@ async fn commands_for_summaries(
         }],
         tools: Vec::new(),
         stop: Vec::new(),
-        temperature: 1.0,
+        temperature: None,
     };
 
     while let Some(current_summaries) = stack.pop() {

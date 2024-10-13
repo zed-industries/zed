@@ -188,6 +188,7 @@
   {
     "context": "AssistantPanel",
     "bindings": {
+      "cmd-k c": "assistant::CopyCode",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
       "alt-m": "assistant::ToggleModelSelector",
@@ -231,7 +232,7 @@
     }
   },
   {
-    "context": "BufferSearchBar && in_replace",
+    "context": "BufferSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "cmd-enter": "search::ReplaceAll"
@@ -346,6 +347,11 @@
       "cmd-shift-\\": "editor::MoveToEnclosingBracket",
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
+      "cmd-k cmd-l": "editor::ToggleFold",
+      "cmd-k cmd-[": "editor::FoldRecursive",
+      "cmd-k cmd-]": "editor::UnfoldRecursive",
+      "cmd-k cmd-0": "editor::FoldAll",
+      "cmd-k cmd-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "alt-cmd-r": "editor::RevealInFileManager",
@@ -434,7 +440,12 @@
       "cmd-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "cmd-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "cmd-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
-      "cmd-shift-x": "zed::Extensions",
+      "cmd-shift-x": "zed::Extensions"
+    }
+  },
+  {
+    "context": "Workspace && !Terminal",
+    "bindings": {
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
@@ -524,6 +535,13 @@
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "PromptEditor",
+    "bindings": {
+      "ctrl-[": "assistant::CyclePreviousInlineAssist",
+      "ctrl-]": "assistant::CycleNextInlineAssist"
     }
   },
   {
@@ -660,7 +678,8 @@
       "cmd-home": "terminal::ScrollToTop",
       "cmd-end": "terminal::ScrollToBottom",
       "shift-home": "terminal::ScrollToTop",
-      "shift-end": "terminal::ScrollToBottom"
+      "shift-end": "terminal::ScrollToBottom",
+      "ctrl-shift-space": "terminal::ToggleViMode"
     }
   }
 ]

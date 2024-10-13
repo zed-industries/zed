@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{Hsla, WindowBackgroundAppearance};
 use refineable::Refineable;
 use std::sync::Arc;
@@ -171,6 +173,10 @@ pub struct ThemeColors {
     /// special attention. Usually a document highlight is visualized by changing
     /// the background color of its range.
     pub editor_document_highlight_write_background: Hsla,
+    /// Highlighted brackets background color.
+    ///
+    /// Matching brackets in the cursor scope are highlighted with this background color.
+    pub editor_document_highlight_bracket_background: Hsla,
 
     // ===
     // Terminal

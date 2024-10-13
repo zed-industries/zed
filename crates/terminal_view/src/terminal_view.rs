@@ -19,10 +19,10 @@ use terminal::{
         index::Point,
         term::{search::RegexSearch, TermMode},
     },
-    terminal_settings::{TerminalBlink, TerminalSettings, WorkingDirectory},
+    terminal_settings::{CursorShape, TerminalBlink, TerminalSettings, WorkingDirectory},
     Clear, Copy, Event, MaybeNavigationTarget, Paste, ScrollLineDown, ScrollLineUp, ScrollPageDown,
     ScrollPageUp, ScrollToBottom, ScrollToTop, ShowCharacterPalette, TaskStatus, Terminal,
-    TerminalSize,
+    TerminalSize, ToggleViMode,
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
@@ -57,6 +57,8 @@ const REGEX_SPECIAL_CHARS: &[char] = &[
 ];
 
 const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
+
+const GIT_DIFF_PATH_PREFIXES: &[char] = &['a', 'b'];
 
 ///Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
@@ -100,8 +102,9 @@ pub struct TerminalView {
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
     context_menu: Option<(View<ContextMenu>, gpui::Point<Pixels>, Subscription)>,
+    cursor_shape: CursorShape,
     blink_state: bool,
-    blinking_on: bool,
+    blinking_terminal_enabled: bool,
     blinking_paused: bool,
     blink_epoch: usize,
     can_navigate_to_selected_word: bool,
@@ -169,6 +172,9 @@ impl TerminalView {
         let focus_out = cx.on_focus_out(&focus_handle, |terminal_view, _event, cx| {
             terminal_view.focus_out(cx);
         });
+        let cursor_shape = TerminalSettings::get_global(cx)
+            .cursor_shape
+            .unwrap_or_default();
 
         Self {
             terminal,
@@ -176,8 +182,9 @@ impl TerminalView {
             has_bell: false,
             focus_handle,
             context_menu: None,
+            cursor_shape,
             blink_state: true,
-            blinking_on: false,
+            blinking_terminal_enabled: false,
             blinking_paused: false,
             blink_epoch: 0,
             can_navigate_to_selected_word: false,
@@ -253,6 +260,16 @@ impl TerminalView {
     fn settings_changed(&mut self, cx: &mut ViewContext<Self>) {
         let settings = TerminalSettings::get_global(cx);
         self.show_title = settings.toolbar.title;
+
+        let new_cursor_shape = settings.cursor_shape.unwrap_or_default();
+        let old_cursor_shape = self.cursor_shape;
+        if old_cursor_shape != new_cursor_shape {
+            self.cursor_shape = new_cursor_shape;
+            self.terminal.update(cx, |term, _| {
+                term.set_cursor_shape(self.cursor_shape);
+            });
+        }
+
         cx.notify();
     }
 
@@ -414,10 +431,14 @@ impl TerminalView {
         cx.notify();
     }
 
+    fn toggle_vi_mode(&mut self, _: &ToggleViMode, cx: &mut ViewContext<Self>) {
+        self.terminal.update(cx, |term, _| term.toggle_vi_mode());
+        cx.notify();
+    }
+
     pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
-            || !self.blinking_on
             || self.blinking_paused
             || self
                 .terminal
@@ -433,7 +454,10 @@ impl TerminalView {
             //If the user requested to never blink, don't blink it.
             TerminalBlink::Off => true,
             //If the terminal is controlling it, check terminal mode
-            TerminalBlink::TerminalControlled | TerminalBlink::On => self.blink_state,
+            TerminalBlink::TerminalControlled => {
+                !self.blinking_terminal_enabled || self.blink_state
+            }
+            TerminalBlink::On => self.blink_state,
         }
     }
 
@@ -625,7 +649,14 @@ fn subscribe_for_terminal_events(
                 cx.emit(Event::Wakeup);
             }
 
-            Event::BlinkChanged => this.blinking_on = !this.blinking_on,
+            Event::BlinkChanged(blinking) => {
+                if matches!(
+                    TerminalSettings::get_global(cx).blinking,
+                    TerminalBlink::TerminalControlled
+                ) {
+                    this.blinking_terminal_enabled = *blinking;
+                }
+            }
 
             Event::TitleChanged => {
                 cx.emit(ItemEvent::UpdateTab);
@@ -826,6 +857,19 @@ fn possible_open_targets(
                 {
                     potential_cwd_and_workspace_paths.insert(potential_worktree_path);
                 }
+
+                for prefix in GIT_DIFF_PATH_PREFIXES {
+                    let prefix_str = &prefix.to_string();
+                    if maybe_path.starts_with(prefix_str) {
+                        let stripped = maybe_path.strip_prefix(prefix_str).unwrap_or(&maybe_path);
+                        for potential_worktree_path in workspace
+                            .worktrees(cx)
+                            .map(|worktree| worktree.read(cx).abs_path().join(&stripped))
+                        {
+                            potential_cwd_and_workspace_paths.insert(potential_worktree_path);
+                        }
+                    }
+                }
             });
         }
 
@@ -888,7 +932,10 @@ impl TerminalView {
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
-        self.terminal.read(cx).focus_in();
+        self.terminal.update(cx, |terminal, _| {
+            terminal.set_cursor_shape(self.cursor_shape);
+            terminal.focus_in();
+        });
         self.blink_cursors(self.blink_epoch, cx);
         cx.invalidate_character_coordinates();
         cx.notify();
@@ -897,6 +944,7 @@ impl TerminalView {
     fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
         self.terminal.update(cx, |terminal, _| {
             terminal.focus_out();
+            terminal.set_cursor_shape(CursorShape::Hollow);
         });
         cx.notify();
     }
@@ -925,6 +973,7 @@ impl Render for TerminalView {
             .on_action(cx.listener(TerminalView::scroll_page_down))
             .on_action(cx.listener(TerminalView::scroll_to_top))
             .on_action(cx.listener(TerminalView::scroll_to_bottom))
+            .on_action(cx.listener(TerminalView::toggle_vi_mode))
             .on_action(cx.listener(TerminalView::show_character_palette))
             .on_action(cx.listener(TerminalView::select_all))
             .on_key_down(cx.listener(Self::key_down))

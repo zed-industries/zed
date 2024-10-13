@@ -246,6 +246,7 @@ impl ExtensionBuilder {
             .args(scanner_path.exists().then_some(scanner_path))
             .output()
             .context("failed to run clang")?;
+
         if !clang_output.status.success() {
             bail!(
                 "failed to compile {} parser with clang: {}",
@@ -431,6 +432,7 @@ impl ExtensionBuilder {
         let body = BufReader::new(response.body_mut());
         let body = GzipDecoder::new(body);
         let tar = Archive::new(body);
+
         tar.unpack(&tar_out_dir)
             .await
             .context("failed to unpack wasi-sdk archive")?;
