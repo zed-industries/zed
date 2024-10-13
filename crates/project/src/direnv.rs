@@ -31,13 +31,17 @@ impl From<DirenvError> for Option<EnvironmentErrorMessage> {
 }
 
 #[cfg(not(any(test, feature = "test-support")))]
-pub async fn load_direnv_environment(dir: &Path) -> Result<HashMap<String, String>, DirenvError> {
+pub async fn load_direnv_environment(
+    env: &HashMap<String, String>,
+    dir: &Path,
+) -> Result<HashMap<String, String>, DirenvError> {
     let Ok(direnv_path) = which::which("direnv") else {
         return Err(DirenvError::NotFound);
     };
 
     let Some(direnv_output) = smol::process::Command::new(direnv_path)
         .args(["export", "json"])
+        .envs(env)
         .env("TERM", "dumb")
         .current_dir(dir)
         .output()
