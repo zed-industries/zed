@@ -202,6 +202,7 @@ async fn load_shell_environment(
     Option<HashMap<String, String>>,
     Option<EnvironmentErrorMessage>,
 ) {
+    // TODO the current code works with Unix $SHELL only, implement environment loading on windows
     (None, None)
 }
 
