@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 
 #[cfg(target_os = "windows")]
-const CREATE_NO_WINDOW: u32 = 0x8000000u32;
+const CREATE_NO_WINDOW: u32 = 0x0800_0000_u32;
 
 #[cfg(target_os = "windows")]
 pub fn new_std_command(program: impl AsRef<OsStr>) -> std::process::Command {
