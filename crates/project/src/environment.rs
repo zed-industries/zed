@@ -208,7 +208,19 @@ async fn load_shell_environment(
     (Some(fake_env), None)
 }
 
-#[cfg(not(any(test, feature = "test-support")))]
+#[cfg(all(not(any(test, feature = "test-support")), target_os = "windows"))]
+async fn load_shell_environment(
+    _dir: &Path,
+    _load_direnv: &DirenvSettings,
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
+    // TODO disable direnv detection for Windows for now, as the current code works with Unix $SHELL only
+    (None, None)
+}
+
+#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
