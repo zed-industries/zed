@@ -217,7 +217,7 @@ fn find_relevant_completion<'a>(
         };
 
         let current_cursor_offset = cursor_position.to_offset(buffer);
-        let original_cursor_offset = state.prefix_offset;
+        let original_cursor_offset = buffer.clip_offset(state.prefix_offset, text::Bias::Left);
         if current_cursor_offset < original_cursor_offset {
             continue;
         }
