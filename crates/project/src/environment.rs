@@ -194,7 +194,7 @@ impl EnvironmentErrorMessage {
     }
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(all(target_os = "windows", not(any(test, feature = "test-support"))))]
 async fn load_shell_environment(
     _dir: &Path,
     _load_direnv: &DirenvSettings,
@@ -206,7 +206,7 @@ async fn load_shell_environment(
     (None, None)
 }
 
-#[cfg(all(not(target_os = "windows"), any(test, feature = "test-support")))]
+#[cfg(any(test, feature = "test-support"))]
 async fn load_shell_environment(
     _dir: &Path,
     _load_direnv: &DirenvSettings,
