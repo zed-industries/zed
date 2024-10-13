@@ -390,40 +390,11 @@ impl SshClientDelegate {
 
         // In dev mode, build the remote server binary from source
         #[cfg(debug_assertions)]
-        if release_channel == ReleaseChannel::Dev
-            && platform.arch == std::env::consts::ARCH
-            && platform.os == std::env::consts::OS
-        {
-            use smol::process::{Command, Stdio};
-
-            self.update_status(Some("building remote server binary from source"), cx);
-            log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
-                "build",
-                "--package",
-                "remote_server",
-                "--target-dir",
-                "target/remote_server",
-            ]))
-            .await?;
-            // run_cmd(Command::new("strip").args(["target/remote_server/debug/remote_server"]))
-            // .await?;
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                "target/remote_server/debug/remote_server",
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            return Ok((path, version));
-
-            async fn run_cmd(command: &mut Command) -> Result<()> {
-                let output = command.stderr(Stdio::inherit()).output().await?;
-                if !output.status.success() {
-                    Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
-                }
-                Ok(())
+        if release_channel == ReleaseChannel::Dev {
+            let result = self.build_local(cx, platform, version).await?;
+            // Fall through to a remote binary if we're not able to compile a local binary
+            if let Some(result) = result {
+                return Ok(result);
             }
         }
 
@@ -445,6 +416,105 @@ impl SshClientDelegate {
         })?;
 
         Ok((binary_path, version))
+    }
+
+    #[cfg(debug_assertions)]
+    async fn build_local(
+        &self,
+        cx: &mut AsyncAppContext,
+        platform: SshPlatform,
+        version: SemanticVersion,
+    ) -> Result<Option<(PathBuf, SemanticVersion)>> {
+        use smol::process::{Command, Stdio};
+
+        async fn run_cmd(command: &mut Command) -> Result<()> {
+            let output = command.stderr(Stdio::inherit()).output().await?;
+            if !output.status.success() {
+                Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
+            }
+            Ok(())
+        }
+
+        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+            self.update_status(Some("Building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+
+            self.update_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
+            return Ok(Some((path, version)));
+        } else if let Some(triple) = platform.triple() {
+            smol::fs::create_dir_all("target/remote-server").await?;
+
+            self.update_status(Some("Installing cross.rs"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
+
+            self.update_status(
+                Some(&format!(
+                    "Building remote server binary from source for {}",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        "--mount type=bind,src=./target,dst=/app/target",
+                    ),
+            )
+            .await?;
+
+            self.update_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                &format!("target/remote_server/{}/debug/remote_server", triple),
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join(format!(
+                "target/remote_server/{}/debug/remote_server.gz",
+                triple
+            ));
+
+            return Ok(Some((path, version)));
+        } else {
+            return Ok(None);
+        }
     }
 }
 
