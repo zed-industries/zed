@@ -12759,6 +12759,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
+ "smol",
  "take-until",
  "tempfile",
  "tendril",
