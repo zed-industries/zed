@@ -455,6 +455,17 @@ impl DebugPanel {
     ) {
         let restart_args = event.clone().and_then(|e| e.restart);
 
+        for (_, thread_state) in self
+            .thread_states
+            .range_mut(&(*client_id, u64::MIN)..&(*client_id, u64::MAX))
+        {
+            thread_state.update(cx, |thread_state, cx| {
+                thread_state.status = ThreadStatus::Ended;
+
+                cx.notify();
+            });
+        }
+
         self.dap_store.update(cx, |store, cx| {
             if restart_args.is_some() {
                 store
