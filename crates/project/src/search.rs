@@ -2,7 +2,7 @@ use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
 use gpui::Model;
-use language::{Buffer, BufferSnapshot};
+use language::{Buffer, BufferSnapshot, CharKind};
 use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
@@ -314,7 +314,9 @@ impl SearchQuery {
                         let end_kind =
                             classifier.kind(rope.reversed_chars_at(mat.end()).next().unwrap());
                         let next_kind = rope.chars_at(mat.end()).next().map(|c| classifier.kind(c));
-                        if Some(start_kind) == prev_kind || Some(end_kind) == next_kind {
+                        if (Some(start_kind) == prev_kind && start_kind == CharKind::Word)
+                            || (Some(end_kind) == next_kind && end_kind == CharKind::Word)
+                        {
                             continue;
                         }
                     }
