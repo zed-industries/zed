@@ -1180,6 +1180,11 @@ impl SshRemoteConnection {
 
         drop(askpass_task);
 
+        /*
+         * The master process exiting does not necessarily mean that anything is wrong,
+         * it could just be that SSH has forked into the background despite not being
+         * asked to - see https://bugzilla.mindrot.org/show_bug.cgi?id=3743
+
         if master_process.try_status()?.is_some() {
             output.clear();
             let mut stderr = master_process.stderr.take().unwrap();
@@ -1189,6 +1194,7 @@ impl SshRemoteConnection {
             delegate.set_error(error_message.clone(), cx);
             Err(anyhow!(error_message))?;
         }
+        */
 
         Ok(Self {
             socket: SshSocket {
