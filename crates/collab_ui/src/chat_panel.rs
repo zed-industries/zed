@@ -939,7 +939,7 @@ impl Render for ChatPanel {
                     TabBar::new("chat_header").child(
                         h_flex()
                             .w_full()
-                            .h(ui::Tab::height(cx))
+                            .h(ui::Tab::container_height(cx))
                             .px_2()
                             .child(Label::new(
                                 self.active_chat

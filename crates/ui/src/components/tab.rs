@@ -74,7 +74,11 @@ impl Tab {
         self
     }
 
-    pub fn height(cx: &mut WindowContext) -> Pixels {
+    pub fn content_height(cx: &mut WindowContext) -> Pixels {
+        cx.rem_size() + Spacing::XXLarge.px(cx) - px(1.)
+    }
+
+    pub fn container_height(cx: &mut WindowContext) -> Pixels {
         cx.rem_size() + Spacing::XXLarge.px(cx)
     }
 }
@@ -130,7 +134,7 @@ impl RenderOnce for Tab {
         };
 
         self.div
-            .h(Tab::height(cx))
+            .h(Tab::container_height(cx))
             .bg(tab_bg)
             .border_color(cx.theme().colors().border)
             .map(|this| match self.position {
@@ -157,7 +161,7 @@ impl RenderOnce for Tab {
                 h_flex()
                     .group("")
                     .relative()
-                    .h(Tab::height(cx))
+                    .h(Tab::content_height(cx))
                     .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .text_color(text_color)
