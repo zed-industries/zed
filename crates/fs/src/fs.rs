@@ -655,14 +655,6 @@ impl Fs for RealFs {
             watcher.add(parent).log_err();
         }
 
-        // Check if path is a symlink and follow the target parent
-        if let Some(target) = self.read_link(&path).await.ok() {
-            watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
-                watcher.add(parent).log_err();
-            }
-        }
-
         (
             Box::pin(rx.filter_map({
                 let watcher = watcher.clone();

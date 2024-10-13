@@ -25,6 +25,10 @@ impl LinuxWatcher {
 impl Watcher for LinuxWatcher {
     fn add(&self, path: &std::path::Path) -> gpui::Result<()> {
         let root_path = path.to_path_buf();
+        // Canonicalize the root path to handle cases where it's a symlink or below one
+        let target_path = std::fs::canonicalize(&path).ok();
+
+        let is_canonical = target_path == Some(root_path.clone());
 
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
@@ -44,10 +48,47 @@ impl Watcher for LinuxWatcher {
                         .paths
                         .iter()
                         .filter_map(|event_path| {
-                            event_path.starts_with(&root_path).then(|| PathEvent {
-                                path: event_path.clone(),
-                                kind,
-                            })
+                            // we canonicalize the parent and join with file name to handle cases
+                            // where the file doesn't exist anymore
+                            if let Some(parent) = event_path.parent() {
+                                if event_path.clone().starts_with(parent) {
+                                    if !is_canonical {
+                                        if let Ok(canonical_parent) = std::fs::canonicalize(&parent)
+                                        {
+                                            if let Some(file_name) = event_path.file_name() {
+                                                return Some(PathEvent {
+                                                    path: canonical_parent.join(file_name),
+                                                    kind,
+                                                });
+                                            }
+                                        }
+                                    } else {
+                                        return Some(PathEvent {
+                                            path: event_path.clone(),
+                                            kind,
+                                        });
+                                    }
+                                } else {
+                                    if let Ok(canonical_parent) = std::fs::canonicalize(&parent) {
+                                        if event_path.starts_with(canonical_parent.clone()) {
+                                            if !is_canonical {
+                                                if let Some(file_name) = event_path.file_name() {
+                                                    return Some(PathEvent {
+                                                        path: canonical_parent.join(file_name),
+                                                        kind,
+                                                    });
+                                                }
+                                            } else {
+                                                return Some(PathEvent {
+                                                    path: event_path.clone(),
+                                                    kind,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            None
                         })
                         .collect::<Vec<_>>();
 
