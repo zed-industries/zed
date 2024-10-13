@@ -220,7 +220,7 @@ git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
-gpui = { path = "crates/gpui" }
+gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
@@ -477,6 +477,7 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
+zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"

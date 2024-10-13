@@ -464,6 +464,7 @@ impl AutoUpdater {
         smol::fs::create_dir_all(&platform_dir).await.ok();
 
         let client = this.read_with(cx, |this, _| this.http_client.clone())?;
+
         if smol::fs::metadata(&version_path).await.is_err() {
             log::info!("downloading zed-remote-server {os} {arch}");
             download_remote_server_binary(&version_path, release, client, cx).await?;
