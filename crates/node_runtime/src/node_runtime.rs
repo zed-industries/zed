@@ -20,9 +20,6 @@ use std::{
 };
 use util::ResultExt;
 
-#[cfg(windows)]
-use smol::process::windows::CommandExt;
-
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
@@ -673,6 +670,5 @@ fn configure_npm_command(
         {
             command.env("ComSpec", val);
         }
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
     }
 }

@@ -49,9 +49,6 @@ uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
-
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true

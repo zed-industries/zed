@@ -81,9 +81,6 @@ tree-sitter-typescript = { workspace = true, optional = true }
 tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
-
 [dev-dependencies]
 tree-sitter.workspace = true
 text.workspace = true
