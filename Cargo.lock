@@ -12310,8 +12310,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-diff"
-version = "0.2.3"
-source = "git+https://github.com/zed-industries/tree-sitter-diff?rev=0a619794b044b6ac36a37e31fb0f5a5126ea8064#0a619794b044b6ac36a37e31fb0f5a5126ea8064"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfe1e5ca280a65dfe5ba4205c1bcc84edf486464fed315db53dee6da9a335889"
 dependencies = [
  "cc",
  "tree-sitter-language",
