@@ -5529,7 +5529,7 @@ name = "http_client"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "bytes 1.7.1",
+ "bytes 1.7.2",
  "derive_more",
  "futures 0.3.30",
  "http 1.1.0",
