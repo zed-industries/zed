@@ -1,3 +1,5 @@
+name: Update Weekly Top Ranking Issues
+
 on:
   schedule:
     - cron: "0 15 * * *"
