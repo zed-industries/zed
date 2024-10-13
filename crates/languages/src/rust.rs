@@ -638,16 +638,9 @@ fn package_name_and_bin_name_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<(String, String)> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
-
-        command.creation_flags(CREATE_NO_WINDOW.0);
     }
     let output = command
         .current_dir(abs_path.parent()?)
@@ -691,18 +684,10 @@ fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
-
-        command.creation_flags(CREATE_NO_WINDOW.0);
-    }
-
     let pkgid = String::from_utf8(
         command
             .current_dir(package_directory)

@@ -9,7 +9,7 @@ use http_client::{HttpClient, Uri};
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
-use smol::{fs, lock::Mutex, process::Command};
+use smol::{fs, lock::Mutex};
 use std::ffi::OsString;
 use std::io;
 use std::process::{Output, Stdio};
@@ -315,9 +315,7 @@ impl ManagedNodeRuntime {
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
 
-        let mut command = Command::new(&node_binary);
-
-        command
+        let result = util::command::new_smol_command(&node_binary)
             .env_clear()
             .arg(npm_file)
             .arg("--version")
@@ -326,12 +324,9 @@ impl ManagedNodeRuntime {
             .stderr(Stdio::null())
             .args(["--cache".into(), node_dir.join("cache")])
             .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
-
-        #[cfg(windows)]
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-
-        let result = command.status().await;
+            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")])
+            .status()
+            .await;
         let valid = matches!(result, Ok(status) if status.success());
 
         if !valid {
@@ -412,9 +407,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
                 return Err(anyhow!("missing npm file"));
             }
 
-            let mut command = Command::new(node_binary);
-            #[cfg(target_os = "windows")]
-            command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
+            let mut command = util::command::new_smol_command(node_binary);
             command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
@@ -475,10 +468,7 @@ pub struct SystemNodeRuntime {
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(18, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
-        let mut command = Command::new(&node);
-        #[cfg(windows)]
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        let output = command
+        let output = util::command::new_smol_command(&node)
             .arg("--version")
             .output()
             .await
@@ -548,7 +538,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let mut command = Command::new(self.npm.clone());
+        let mut command = util::command::new_smol_command(self.npm.clone());
         command
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
@@ -563,8 +553,6 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
                 self.scratch_dir.join("blank_global_npmrc"),
             ])
             .args(args);
-        #[cfg(windows)]
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;
         if !output.status.success() {
@@ -646,7 +634,11 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     }
 }
 
-fn configure_npm_command(command: &mut Command, directory: Option<&Path>, proxy: Option<&Uri>) {
+fn configure_npm_command(
+    command: &mut smol::process::Command,
+    directory: Option<&Path>,
+    proxy: Option<&Uri>,
+) {
     if let Some(directory) = directory {
         command.current_dir(directory);
         command.args(["--prefix".into(), directory.to_path_buf()]);

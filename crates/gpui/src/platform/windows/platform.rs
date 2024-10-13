@@ -292,7 +292,7 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
-        let restart_process = std::process::Command::new("powershell.exe")
+        let restart_process = util::command::new_std_command("powershell.exe")
             .arg("-command")
             .arg(script)
             .spawn();
