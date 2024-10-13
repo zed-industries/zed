@@ -96,13 +96,13 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build collab
-        run: cargo build -p collab
+        run: RUSTFLAGS="-D warnings" cargo build -p collab
 
       - name: Build other binaries and features
         run: |
-          cargo build --workspace --bins --all-features
+          RUSTFLAGS="-D warnings" cargo build --workspace --bins --all-features
           cargo check -p gpui --features "macos-blade"
-          cargo build -p remote_server
+          RUSTFLAGS="-D warnings" cargo build -p remote_server
 
   linux_tests:
     timeout-minutes: 60
@@ -134,7 +134,7 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build Zed
-        run: cargo build -p zed
+        run: RUSTFLAGS="-D warnings" cargo build -p zed
 
   build_remote_server:
     timeout-minutes: 60
@@ -160,7 +160,7 @@ jobs:
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
       - name: Build Remote Server
-        run: cargo build -p remote_server
+        run: RUSTFLAGS="-D warnings" cargo build -p remote_server
 
   # todo(windows): Actually run the tests
   windows_tests:
@@ -184,7 +184,7 @@ jobs:
         run: cargo xtask clippy
 
       - name: Build Zed
-        run: cargo build -p zed
+        run: $env:RUSTFLAGS="-D warnings"; cargo build
 
   bundle-mac:
     timeout-minutes: 60
