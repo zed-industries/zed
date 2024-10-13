@@ -539,7 +539,8 @@ List of `string` values
 "tabs": {
   "close_position": "right",
   "file_icons": false,
-  "git_status": false
+  "git_status": false,
+  "activate_on_close": "history"
 },
 ```
 
@@ -578,6 +579,30 @@ List of `string` values
 - Description: Whether or not to show Git file status in tab.
 - Setting: `git_status`
 - Default: `false`
+
+### Activate on close
+
+- Description: What to do after closing the current tab.
+- Setting: `activate_on_close`
+- Default: `history`
+
+**Options**
+
+1.  Activate the tab that was open previously:
+
+```json
+{
+  "activate_on_close": "history"
+}
+```
+
+2. Activate the neighbour tab (prefers the right one, if present):
+
+```json
+{
+  "activate_on_close": "neighbour"
+}
+```
 
 ## Editor Toolbar
 
