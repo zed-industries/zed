@@ -57,7 +57,7 @@ const FILE_PICKER_PORTAL_MISSING: &str =
     "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
 pub trait LinuxClient {
-    fn compositor_name(&self) -> &'static str;
+    fn compositor_name(&self) -> String;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
@@ -154,7 +154,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.signal.stop());
     }
 
-    fn compositor_name(&self) -> &'static str {
+    fn compositor_name(&self) -> String {
         self.compositor_name()
     }
 

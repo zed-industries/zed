@@ -78,8 +78,8 @@ use crate::platform::linux::{
 };
 use crate::platform::PlatformWindow;
 use crate::{
-    point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    point, px, size, Bounds, Compositor, DevicePixels, FileDropEvent, ForegroundExecutor,
+    MouseExitEvent, Size, DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
 };
 use crate::{
     AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
@@ -775,8 +775,8 @@ impl LinuxClient for WaylandClient {
         None
     }
 
-    fn compositor_name(&self) -> &'static str {
-        "Wayland"
+    fn compositor_name(&self) -> String {
+        format!("{:#?}", Compositor::Wayland)
     }
 }
 

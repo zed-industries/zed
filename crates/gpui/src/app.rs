@@ -629,7 +629,7 @@ impl AppContext {
 
     /// On Linux, returns the name of the compositor in use.
     /// Is blank on other platforms.
-    pub fn compositor_name(&self) -> &'static str {
+    pub fn compositor_name(&self) -> String {
         self.platform.compositor_name()
     }
 

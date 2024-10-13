@@ -68,40 +68,53 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new(headless))
 }
 
+/// Which compositor is used
+#[cfg(target_os = "linux")]
+#[derive(Debug)]
+pub enum Compositor {
+    #[allow(missing_docs)]
+    Wayland,
+    #[allow(missing_docs)]
+    X11,
+    #[allow(missing_docs)]
+    Headless,
+}
+
+impl Compositor {
+    /// Return which compositor we're guessing we'll use.
+    /// Does not attempt to connect to the given compositor
+    #[cfg(target_os = "linux")]
+    #[inline]
+    pub fn guess() -> Self {
+        if std::env::var_os("ZED_HEADLESS").is_some() {
+            return Self::Headless;
+        }
+        let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
+        let x11_display = std::env::var_os("DISPLAY");
+
+        let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
+        let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
+
+        if use_wayland {
+            Self::Wayland
+        } else if use_x11 {
+            Self::X11
+        } else {
+            Self::Headless
+        }
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     if headless {
         return Rc::new(HeadlessClient::new());
     }
 
-    match guess_compositor() {
-        "Wayland" => Rc::new(WaylandClient::new()),
-        "X11" => Rc::new(X11Client::new()),
-        "Headless" => Rc::new(HeadlessClient::new()),
-        _ => unreachable!(),
-    }
-}
-
-/// Return which compositor we're guessing we'll use.
-/// Does not attempt to connect to the given compositor
-#[cfg(target_os = "linux")]
-#[inline]
-pub fn guess_compositor() -> &'static str {
-    if std::env::var_os("ZED_HEADLESS").is_some() {
-        return "Headless";
-    }
-    let wayland_display = std::env::var_os("WAYLAND_DISPLAY");
-    let x11_display = std::env::var_os("DISPLAY");
-
-    let use_wayland = wayland_display.is_some_and(|display| !display.is_empty());
-    let use_x11 = x11_display.is_some_and(|display| !display.is_empty());
-
-    if use_wayland {
-        "Wayland"
-    } else if use_x11 {
-        "X11"
-    } else {
-        "Headless"
+    match Compositor::guess() {
+        Compositor::Wayland => Rc::new(WaylandClient::new()),
+        Compositor::X11 => Rc::new(X11Client::new()),
+        Compositor::Headless => Rc::new(HeadlessClient::new()),
     }
 }
 
@@ -165,8 +178,8 @@ pub(crate) trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
 
-    fn compositor_name(&self) -> &'static str {
-        ""
+    fn compositor_name(&self) -> String {
+        String::new()
     }
     fn app_path(&self) -> Result<PathBuf>;
     fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf>;
