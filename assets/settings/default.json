@@ -142,6 +142,8 @@
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
+  // Whether to show squiggle underlines for diagnostics in the editor
+  "show_squiggly_underlines": true,
   // The debounce delay before re-querying the language server for completion
   // documentation when not included in original completion list.
   "completion_documentation_secondary_query_debounce": 300,

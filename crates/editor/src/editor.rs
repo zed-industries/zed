@@ -405,6 +405,7 @@ pub struct EditorStyle {
     pub inlay_hints_style: HighlightStyle,
     pub suggestions_style: HighlightStyle,
     pub unnecessary_code_fade: f32,
+    pub show_squiggly_underlines: bool,
 }
 
 impl Default for EditorStyle {
@@ -422,6 +423,7 @@ impl Default for EditorStyle {
             inlay_hints_style: HighlightStyle::default(),
             suggestions_style: HighlightStyle::default(),
             unnecessary_code_fade: Default::default(),
+            show_squiggly_underlines: Default::default(),
         }
     }
 }
@@ -13719,6 +13721,7 @@ impl Render for Editor {
                     ..HighlightStyle::default()
                 },
                 unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
+                show_squiggly_underlines: EditorSettings::get_global(cx).show_squiggly_underlines,
             },
         )
     }

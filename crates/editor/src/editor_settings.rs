@@ -34,6 +34,7 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
+    pub show_squiggly_underlines: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -284,6 +285,9 @@ pub struct EditorSettingsContent {
 
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
+
+    /// Whether to show squiggle underlines for diagnostics in the editor.
+    pub show_squiggly_underlines: Option<bool>,
 }
 
 // Toolbar related settings
