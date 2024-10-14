@@ -107,7 +107,7 @@ impl Vim {
         match self.mode {
             Mode::Normal => self.normal_object(object, cx),
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => self.visual_object(object, cx),
-            Mode::Insert | Mode::Replace => {
+            Mode::Insert | Mode::Replace | Mode::HelixNormal | Mode::HelixVisual => {
                 // Shouldn't execute a text object in insert mode. Ignoring
             }
         }

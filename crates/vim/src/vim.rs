@@ -549,7 +549,11 @@ impl Vim {
                 }
             }
             Mode::Replace => CursorShape::Underline,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
+            Mode::HelixNormal
+            | Mode::HelixVisual
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }
@@ -563,9 +567,13 @@ impl Vim {
                     true
                 }
             }
-            Mode::Normal | Mode::Replace | Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
-                false
-            }
+            Mode::Normal
+            | Mode::HelixNormal
+            | Mode::HelixVisual
+            | Mode::Replace
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock => false,
         }
     }
 
@@ -575,9 +583,13 @@ impl Vim {
 
     pub fn clip_at_line_ends(&self) -> bool {
         match self.mode {
-            Mode::Insert | Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::Replace => {
-                false
-            }
+            Mode::Insert
+            | Mode::Visual
+            | Mode::VisualLine
+            | Mode::VisualBlock
+            | Mode::Replace
+            | Mode::HelixNormal
+            | Mode::HelixVisual => false,
             Mode::Normal => true,
         }
     }
@@ -588,6 +600,8 @@ impl Vim {
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => "visual",
             Mode::Insert => "insert",
             Mode::Replace => "replace",
+            Mode::HelixNormal => "helix_normal",
+            Mode::HelixVisual => "helix_visual",
         }
         .to_string();
 
@@ -906,7 +920,7 @@ impl Vim {
                     })
                 });
             }
-            Mode::Insert | Mode::Replace => {}
+            Mode::Insert | Mode::Replace | Mode::HelixNormal | Mode::HelixVisual => {}
         }
     }
 
