@@ -97,8 +97,16 @@ impl EditNicknameState {
             index,
             editor: cx.new_view(Editor::single_line),
         };
+        let starting_text = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(index)
+            .and_then(|state| state.nickname.clone())
+            .filter(|text| !text.is_empty());
         this.editor.update(cx, |this, cx| {
             this.set_placeholder_text("Add a nickname for this server", cx);
+            if let Some(starting_text) = starting_text {
+                this.set_text(starting_text, cx);
+            }
         });
         this.editor.focus_handle(cx).focus(cx);
         this
@@ -538,6 +546,20 @@ impl DevServerProjects {
 
                 self.create_ssh_server(cx);
             }
+            Mode::EditNickname(state) => {
+                let text = Some(state.editor.read(cx).text(cx))
+                    .filter(|text| !text.is_empty())
+                    .map(SharedString::from);
+                let index = state.index;
+                self.update_settings_file(cx, move |setting, _| {
+                    if let Some(connections) = setting.ssh_connections.as_mut() {
+                        if let Some(connection) = connections.get_mut(index) {
+                            connection.nickname = text;
+                        }
+                    }
+                });
+                self.mode = Mode::Default;
+            }
             _ => {}
         }
     }
@@ -567,6 +589,12 @@ impl DevServerProjects {
         ssh_connection: SshConnection,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let (main_label, aux_label) = if let Some(nickname) = ssh_connection.nickname.clone() {
+            let aux_label = SharedString::from(format!("({})", ssh_connection.host));
+            (nickname, Some(aux_label))
+        } else {
+            (SharedString::from(ssh_connection.host.clone()), None)
+        };
         v_flex()
             .w_full()
             .child(
@@ -577,10 +605,14 @@ impl DevServerProjects {
                     .child(
                         h_flex().gap_2().w_full().child(
                             h_flex()
+                                .gap_1()
                                 .max_w(rems(26.))
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .child(Label::new(ssh_connection.host.clone())),
+                                .child(Label::new(main_label))
+                                .children(
+                                    aux_label.map(|label| Label::new(label).color(Color::Muted)),
+                                ),
                         ),
                     ),
             )
@@ -770,10 +802,11 @@ impl DevServerProjects {
                 .ssh_connections
                 .get_or_insert(Default::default())
                 .push(SshConnection {
-                    host: connection_options.host,
+                    host: SharedString::from(connection_options.host),
                     username: connection_options.username,
                     port: connection_options.port,
                     projects: vec![],
+                    nickname: None,
                 })
         });
     }
@@ -897,7 +930,7 @@ impl DevServerProjects {
                         cx.notify();
                     })),
                     connection_string: connection_string.clone(),
-                    nickname: Some("my-cool-server".into()),
+                    nickname: connection.nickname.clone(),
                 }
                 .render(cx),
             )
@@ -981,7 +1014,7 @@ impl DevServerProjects {
                         cx.notify();
                     })),
                     connection_string,
-                    nickname: Some("my-cool-server".into()),
+                    nickname: connection.nickname.clone(),
                 }
                 .render(cx),
             )

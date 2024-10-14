@@ -35,17 +35,20 @@ impl SshSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SshConnection {
-    pub host: String,
+    pub host: SharedString,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
     pub projects: Vec<SshProject>,
+    /// Name to use for this server in UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<SharedString>,
 }
 impl From<SshConnection> for SshConnectionOptions {
     fn from(val: SshConnection) -> Self {
         SshConnectionOptions {
-            host: val.host,
+            host: val.host.into(),
             username: val.username,
             port: val.port,
             password: None,
