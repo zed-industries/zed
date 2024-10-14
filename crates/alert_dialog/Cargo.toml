@@ -13,6 +13,7 @@ path = "src/alert_dialog.rs"
 
 [dependencies]
 gpui.workspace = true
+menu.workspace = true
 settings.workspace = true
 story = { workspace = true, optional = true }
 theme.workspace = true

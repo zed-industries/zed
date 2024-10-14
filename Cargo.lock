@@ -113,6 +113,7 @@ name = "alert_dialog"
 version = "0.1.0"
 dependencies = [
  "gpui",
+ "menu",
  "settings",
  "story",
  "theme",
@@ -11741,6 +11742,7 @@ checksum = "1f3ccbac311fea05f86f61904b462b55fb3df8837a366dfc601a0161d0532f20"
 name = "title_bar"
 version = "0.1.0"
 dependencies = [
+ "alert_dialog",
  "auto_update",
  "call",
  "client",

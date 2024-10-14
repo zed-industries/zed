@@ -5,14 +5,16 @@
 use std::sync::Arc;
 
 use gpui::{
-    AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakView,
+    Action, AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, View,
+    WeakView,
 };
 use ui::{
     div, px, relative, v_flex, vh, ActiveTheme, Button, ButtonCommon, ButtonSize,
     CheckboxWithLabel, Clickable, Color, ElementId, ElevationIndex, FixedWidth, FluentBuilder,
-    Headline, HeadlineSize, InteractiveElement, IntoElement, Label, LabelCommon, ParentElement,
-    Render, Selection, SharedString, Spacing, StatefulInteractiveElement, Styled, StyledExt,
-    StyledTypography, ViewContext, VisualContext, WindowContext,
+    Headline, HeadlineSize, IconButton, IconButtonShape, IconName, InteractiveElement, IntoElement,
+    Label, LabelCommon, ParentElement, Render, Selection, SharedString, Spacing,
+    StatefulInteractiveElement, Styled, StyledExt, StyledTypography, ViewContext, VisualContext,
+    WindowContext,
 };
 use workspace::{ModalView, Workspace};
 
@@ -81,16 +83,15 @@ pub struct AlertDialog {
     focus_handle: FocusHandle,
 }
 
+impl EventEmitter<DismissEvent> for AlertDialog {}
+impl FocusableView for AlertDialog {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
 impl ModalView for AlertDialog {
     fn fade_out_background(&self) -> bool {
         true
-    }
-}
-
-impl EventEmitter<DismissEvent> for AlertDialog {}
-impl FocusableView for AlertDialog {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
     }
 }
 
@@ -218,8 +219,8 @@ impl AlertDialog {
         .detach();
     }
 
-    fn dismiss(&mut self, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent);
+    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent)
     }
 }
 
@@ -233,6 +234,10 @@ impl Render for AlertDialog {
         };
 
         v_flex()
+            .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::dismiss))
+            // TODO: I don't think this is necessary
+            .occlude()
             .debug_below()
             // .w(px(MIN_DIALOG_WIDTH))
             .min_w(px(MIN_DIALOG_WIDTH))
@@ -298,7 +303,15 @@ impl Render for AlertDialog {
                             .gap(Spacing::Medium.rems(cx))
                     })
                     .child(
-                        div().flex_shrink_0(), // This space is reserved for adding a optional checkbox to the dialog
+                        div()
+                            .flex_shrink_0() // This space is reserved for adding a optional checkbox to the dialog
+                            .child(
+                                IconButton::new("back", IconName::ArrowLeft)
+                                    .shape(IconButtonShape::Square)
+                                    .on_click(|_, cx| {
+                                        cx.dispatch_action(menu::Cancel.boxed_clone());
+                                    }),
+                            ),
                     )
                     .child(
                         div()
