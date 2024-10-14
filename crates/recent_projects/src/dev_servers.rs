@@ -608,7 +608,8 @@ impl DevServerProjects {
                     .child(
                         Label::new(main_label)
                             .size(LabelSize::Small)
-                            .weight(FontWeight::SEMIBOLD),
+                            .weight(FontWeight::SEMIBOLD)
+                            .color(Color::Muted),
                     )
                     .children(
                         aux_label.map(|label| {
@@ -1131,7 +1132,7 @@ impl DevServerProjects {
             .section(
                 Section::new().padded(false).child(
                     div()
-                        .w_full()
+                        .size_full()
                         .pt_1p5()
                         .border_y_1()
                         .border_color(cx.theme().colors().border_variant)
