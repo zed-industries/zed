@@ -136,7 +136,6 @@ pub fn add_search_result_section(
 ) {
     let LoadedSearchResult {
         path,
-        full_path,
         excerpt_content,
         row_range,
         ..

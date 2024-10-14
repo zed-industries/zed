@@ -14,6 +14,7 @@ use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use text::LineEnding;
+use ui::IconName;
 use workspace::Workspace;
 
 pub struct ContextServerSlashCommand {
@@ -154,10 +155,10 @@ impl SlashCommand for ContextServerSlashCommand {
                     role: Role::Assistant,
                 });
 
-                if let Some(description) = result.description {
+                if let Some(ref description) = result.description {
                     events.push(SlashCommandEvent::StartSection {
-                        icon: ui::IconName::Info,
-                        label: description.into(),
+                        icon: IconName::Ai,
+                        label: description.clone().into(),
                         metadata: None,
                         ensure_newline: false,
                     });

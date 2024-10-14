@@ -8,9 +8,8 @@ use assistant_slash_command::{AfterCompletion, ArgumentCompletion};
 use futures::stream::{self, StreamExt};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
-use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
-use project::{Entry, PathMatchCandidateSet, Project};
-use serde::{Deserialize, Serialize};
+use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
+use project::{PathMatchCandidateSet, Project};
 use std::{
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},

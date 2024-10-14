@@ -132,7 +132,7 @@ impl SlashCommand for ProjectSlashCommand {
                         ensure_newline: false,
                     });
 
-                    let mut output = "Project context:\n".to_string();
+                    let output = "Project context:\n".to_string();
                     events.push(SlashCommandEvent::Content {
                         text: output.clone(),
                         run_commands_in_text: true,

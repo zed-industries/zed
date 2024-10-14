@@ -113,7 +113,7 @@ impl SlashCommand for ExtensionSlashCommand {
                 .await
         });
         cx.foreground_executor().spawn(async move {
-            let output = output.await?;
+            let _output = output.await?;
 
             let events = vec![
                 SlashCommandEvent::StartMessage {

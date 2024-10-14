@@ -8,7 +8,6 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use futures::stream::StreamExt;
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
@@ -317,7 +316,7 @@ impl SlashCommand for DocsSlashCommand {
                         .await;
                 }
 
-                let (text, ranges) = if let Some((prefix, _)) = key.split_once('*') {
+                let (text, _ranges) = if let Some((prefix, _)) = key.split_once('*') {
                     let docs = store.load_many_by_prefix(prefix.to_string()).await?;
 
                     let mut text = String::new();
@@ -341,12 +340,12 @@ impl SlashCommand for DocsSlashCommand {
                     (text, vec![(key, range)])
                 };
 
-                anyhow::Ok((provider, text, ranges))
+                anyhow::Ok((provider, text, _ranges))
             }
         });
 
         cx.foreground_executor().spawn(async move {
-            let (provider, text, ranges) = task.await?;
+            let (provider, text, _) = task.await?;
 
             let events = vec![
                 SlashCommandEvent::StartSection {

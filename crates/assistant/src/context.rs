@@ -1,5 +1,8 @@
 // todo!()
 // - implement run_commands_in_text
+// - fix file tests
+// - fix extension
+// - fix ensure newline
 // - When slash command wants to insert a message, but it wants to insert it after a message that has the same Role and it emits a `StartMessage { merge_same_roles: bool (name TBD) }`, we should ignore it
 // - When a section ends, we should run the following code:
 //         //             this.slash_command_output_sections
@@ -79,7 +82,7 @@ use std::{
     cmp::{self, max, Ordering},
     fmt::Debug,
     iter, mem,
-    ops::{Range, RangeBounds},
+    ops::Range,
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -1824,7 +1827,7 @@ impl Context {
         &mut self,
         command_range: Range<language::Anchor>,
         output: Task<SlashCommandResult>,
-        ensure_trailing_newline: bool,
+        _ensure_trailing_newline: bool,
         expand_result: bool,
         cx: &mut ModelContext<Self>,
     ) {
@@ -1873,7 +1876,7 @@ impl Context {
                             icon,
                             label,
                             metadata,
-                            ensure_newline,
+                            ensure_newline: _,
                         } => {
                             this.read_with(&cx, |this, cx| {
                                 let buffer = this.buffer.read(cx);
@@ -1888,7 +1891,7 @@ impl Context {
                         }
                         SlashCommandEvent::Content {
                             text,
-                            run_commands_in_text,
+                            run_commands_in_text: _,
                         } => {
                             // assert!(!run_commands_in_text, "not yet implemented");
 
@@ -1903,7 +1906,10 @@ impl Context {
                                 })
                             })?;
                         }
-                        SlashCommandEvent::Progress { message, complete } => {
+                        SlashCommandEvent::Progress {
+                            message: _,
+                            complete: _,
+                        } => {
                             todo!()
                         }
                         SlashCommandEvent::EndSection { metadata } => {
@@ -1939,7 +1945,7 @@ impl Context {
                     this.finished_slash_commands.insert(command_id);
 
                     let version = this.version.clone();
-                    let (op, ev) = this.buffer.update(cx, |buffer, cx| {
+                    let (op, ev) = this.buffer.update(cx, |buffer, _cx| {
                         let start = command_range.start;
                         let output_range = start..position;
 
