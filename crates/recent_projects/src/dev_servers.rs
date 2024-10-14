@@ -19,8 +19,8 @@ use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, Model, ScrollHandle, View, ViewContext,
+    Animation, AnimationExt, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Model, ScrollHandle, View, ViewContext,
 };
 use picker::Picker;
 use project::terminals::wrap_for_ssh;
@@ -35,8 +35,7 @@ use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::ElevationIndex;
 use ui::Section;
-use ui::{prelude::*, IconButtonShape, List, ListItem, Modal, ModalHeader, Tooltip};
-use ui_input::{FieldLabelLayout, TextField};
+use ui::{prelude::*, List, ListItem, Modal, ModalHeader, Tooltip};
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
@@ -61,15 +60,24 @@ pub struct DevServerProjects {
     scroll_handle: ScrollHandle,
     dev_server_store: Model<dev_server_projects::Store>,
     workspace: WeakView<Workspace>,
-    dev_server_name_input: View<TextField>,
     _dev_server_subscription: Subscription,
     focusable_items: SelectableItemList,
 }
 
-#[derive(Default)]
 struct CreateDevServer {
+    address_editor: View<Editor>,
     creating: Option<Task<Option<()>>>,
     ssh_prompt: Option<View<SshPrompt>>,
+}
+
+impl CreateDevServer {
+    fn new(cx: &mut WindowContext<'_>) -> Self {
+        Self {
+            address_editor: cx.new_view(Editor::single_line),
+            creating: None,
+            ssh_prompt: None,
+        }
+    }
 }
 
 struct ProjectPicker {
@@ -318,10 +326,6 @@ impl DevServerProjects {
     }
 
     pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
-        let dev_server_name_input = cx.new_view(|cx| {
-            TextField::new(cx, "Name", "192.168.0.1").with_label(FieldLabelLayout::Hidden)
-        });
-
         let focus_handle = cx.focus_handle();
         let dev_server_store = dev_server_projects::Store::global(cx);
 
@@ -340,7 +344,6 @@ impl DevServerProjects {
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
-            dev_server_name_input,
             workspace,
             _dev_server_subscription: subscription,
             focusable_items: Default::default(),
@@ -378,8 +381,8 @@ impl DevServerProjects {
         this
     }
 
-    fn create_ssh_server(&mut self, cx: &mut ViewContext<Self>) {
-        let host = get_text(&self.dev_server_name_input, cx);
+    fn create_ssh_server(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+        let host = get_text(&editor, cx);
         if host.is_empty() {
             return;
         }
@@ -437,17 +440,18 @@ impl DevServerProjects {
                     .log_err(),
                 None => this
                     .update(&mut cx, |this, cx| {
-                        this.mode = Mode::CreateDevServer(CreateDevServer::default());
+                        this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
                         cx.notify()
                     })
                     .log_err(),
             };
             None
         });
-        self.mode = Mode::CreateDevServer(CreateDevServer {
-            ssh_prompt: Some(ssh_prompt.clone()),
-            creating: Some(creating),
-        });
+        let mut state = CreateDevServer::new(cx);
+        state.address_editor = editor;
+        state.ssh_prompt = Some(ssh_prompt.clone());
+        state.creating = Some(creating);
+        self.mode = Mode::CreateDevServer(state);
     }
 
     fn view_server_options(
@@ -546,7 +550,10 @@ impl DevServerProjects {
                     return;
                 }
 
-                self.create_ssh_server(cx);
+                state.address_editor.update(cx, |this, _| {
+                    this.set_read_only(true);
+                });
+                self.create_ssh_server(state.address_editor.clone(), cx);
             }
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx))
@@ -571,9 +578,7 @@ impl DevServerProjects {
         match &self.mode {
             Mode::Default => cx.emit(DismissEvent),
             Mode::CreateDevServer(state) if state.ssh_prompt.is_some() => {
-                self.mode = Mode::CreateDevServer(CreateDevServer {
-                    ..Default::default()
-                });
+                self.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
                 self.focusable_items.reset_selection();
                 cx.notify();
             }
@@ -819,15 +824,15 @@ impl DevServerProjects {
         state: &CreateDevServer,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let creating = state.creating.is_some();
         let ssh_prompt = state.ssh_prompt.clone();
 
-        self.dev_server_name_input.update(cx, |input, cx| {
-            input.editor().update(cx, |editor, cx| {
-                if editor.text(cx).is_empty() {
-                    editor.set_placeholder_text("ssh me@my.server / ssh@secret-box:2222", cx);
-                }
-            })
+        state.address_editor.update(cx, |editor, cx| {
+            if editor.text(cx).is_empty() {
+                editor.set_placeholder_text(
+                    "Enter the command you use to SSH into this server: e.g. ssh me@my.server",
+                    cx,
+                );
+            }
         });
         let theme = cx.theme();
 
@@ -836,52 +841,7 @@ impl DevServerProjects {
             .overflow_hidden()
             .size_full()
             .flex_1()
-            .child(
-                h_flex()
-                    .p_2()
-                    .gap_2()
-                    .items_center()
-                    .border_b_1()
-                    .border_color(theme.colors().border_variant)
-                    .child(
-                        IconButton::new("cancel-dev-server-creation", IconName::ArrowLeft)
-                            .shape(IconButtonShape::Square)
-                            .on_click(|_, cx| {
-                                cx.dispatch_action(menu::Cancel.boxed_clone());
-                            }),
-                    )
-                    .child(Label::new("Connect New Dev Server")),
-            )
-            .child(
-                v_flex()
-                    .p_3()
-                    .border_b_1()
-                    .border_color(theme.colors().border_variant)
-                    .child(Label::new("SSH Arguments"))
-                    .child(
-                        Label::new("Enter the command you use to SSH into this server.")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        h_flex()
-                            .mt_2()
-                            .w_full()
-                            .gap_2()
-                            .child(self.dev_server_name_input.clone())
-                            .child(
-                                Button::new("create-dev-server", "Connect Server")
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .disabled(creating)
-                                    .on_click(cx.listener({
-                                        move |this, _, cx| {
-                                            this.create_ssh_server(cx);
-                                        }
-                                    })),
-                            ),
-                    ),
-            )
+            .child(div().p_2().child(state.address_editor.clone()))
             .child(
                 h_flex()
                     .bg(theme.colors().editor_background)
@@ -1137,14 +1097,7 @@ impl DevServerProjects {
             .ssh_connections()
             .collect::<Vec<_>>();
         self.focusable_items.add_item(Box::new(|this, cx| {
-            this.mode = Mode::CreateDevServer(CreateDevServer {
-                ..Default::default()
-            });
-            this.dev_server_name_input.update(cx, |text_field, cx| {
-                text_field.editor().update(cx, |editor, cx| {
-                    editor.set_text("", cx);
-                });
-            });
+            this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
             cx.notify();
         }));
         let is_connect_selected = self.focusable_items.is_selected();
@@ -1156,14 +1109,9 @@ impl DevServerProjects {
             .size(ButtonSize::Large)
             .selected(is_connect_selected)
             .on_click(cx.listener(|this, _, cx| {
-                this.mode = Mode::CreateDevServer(CreateDevServer {
-                    ..Default::default()
-                });
-                this.dev_server_name_input.update(cx, |text_field, cx| {
-                    text_field.editor().update(cx, |editor, cx| {
-                        editor.set_text("", cx);
-                    });
-                });
+                let state = CreateDevServer::new(cx);
+                this.mode = Mode::CreateDevServer(state);
+
                 cx.notify();
             }));
         let footer = format!("Connections: {}", ssh_connections.len() + dev_servers.len());
@@ -1206,14 +1154,8 @@ impl DevServerProjects {
     }
 }
 
-fn get_text(element: &View<TextField>, cx: &mut WindowContext) -> String {
-    element
-        .read(cx)
-        .editor()
-        .read(cx)
-        .text(cx)
-        .trim()
-        .to_string()
+fn get_text(element: &View<Editor>, cx: &mut WindowContext) -> String {
+    element.read(cx).text(cx).trim().to_string()
 }
 
 impl ModalView for DevServerProjects {}
