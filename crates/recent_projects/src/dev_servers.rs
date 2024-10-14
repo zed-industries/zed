@@ -38,7 +38,9 @@ use ui::Section;
 use ui::{prelude::*, IconButtonShape, List, ListItem, Modal, ModalHeader, Tooltip};
 use ui_input::{FieldLabelLayout, TextField};
 use util::ResultExt;
+use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
+use workspace::Toast;
 use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
 
 use crate::open_dev_server_project;
@@ -921,6 +923,7 @@ impl DevServerProjects {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let connection_string = SharedString::from(connection.host.clone());
+        let workspace = self.workspace.clone();
         v_flex()
             .size_full()
             .child(
@@ -958,6 +961,27 @@ impl DevServerProjects {
                         cx.write_to_clipboard(ClipboardItem::new_string(
                             connection_string.to_string(),
                         ));
+                        workspace
+                            .update(cx, |this, cx| {
+                                struct SshServerAddressCopiedToClipboard;
+                                let notification = format!(
+                                    "Copied server address ({}) to clipboard",
+                                    connection_string
+                                );
+                                this.show_toast(
+                                    Toast::new(
+                                        NotificationId::identified::<
+                                            SshServerAddressCopiedToClipboard,
+                                        >(
+                                            connection_string.clone()
+                                        ),
+                                        notification,
+                                    )
+                                    .autohide(),
+                                    cx,
+                                );
+                            })
+                            .ok();
                     }),
             )
             .child(
