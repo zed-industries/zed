@@ -118,8 +118,8 @@
   //     "bar"
   //  2. A block that surrounds the following character
   //     "block"
-  //  3. An underline that runs along the following character
-  //     "underscore"
+  //  3. An underline / underscore that runs along the following character
+  //     "underline"
   //  4. A box drawn around the following character
   //     "hollow"
   //
@@ -494,7 +494,14 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": false
+    "file_icons": false,
+    // What to do after closing the current tab.
+    //
+    // 1. Activate the tab that was open previously (default)
+    //     "History"
+    // 2. Activate the neighbour tab (prefers the right one, if present)
+    //     "Neighbour"
+    "activate_on_close": "history"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -684,8 +691,8 @@
     //     "block"
     //  2. A vertical bar
     //     "bar"
-    //  3. An underline that runs along the following character
-    //     "underscore"
+    //  3. An underline / underscore that runs along the following character
+    //     "underline"
     //  4. A box drawn around the following character
     //     "hollow"
     //

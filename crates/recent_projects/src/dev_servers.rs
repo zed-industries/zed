@@ -319,7 +319,9 @@ impl DevServerProjects {
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+                workspace.toggle_modal(cx, |cx| {
+                    SshConnectionModal::new(&connection_options, false, cx)
+                });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
                     .unwrap()
@@ -573,7 +575,7 @@ impl DevServerProjects {
                             }))
                             .child(
                                 h_flex().mt_1().pl_1().child(
-                                    Button::new("new-remote_project", "Open Folder…")
+                                    Button::new(("new-remote_project", ix), "Open Folder…")
                                         .size(ButtonSize::Default)
                                         .layer(ElevationIndex::ModalSurface)
                                         .icon(IconName::Plus)

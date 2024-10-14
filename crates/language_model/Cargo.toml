@@ -47,6 +47,7 @@ settings.workspace = true
 smol.workspace = true
 strum.workspace = true
 theme.workspace = true
+thiserror.workspace = true
 tiktoken-rs.workspace = true
 ui.workspace = true
 util.workspace = true

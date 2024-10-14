@@ -649,16 +649,9 @@ pub struct FormattableBuffer {
 }
 
 pub struct RemoteLspStore {
-    upstream_client: AnyProtoClient,
+    upstream_client: Option<AnyProtoClient>,
     upstream_project_id: u64,
 }
-
-impl RemoteLspStore {}
-
-// pub struct SshLspStore {
-//     upstream_client: AnyProtoClient,
-//     current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
-// }
 
 #[allow(clippy::large_enum_variant)]
 pub enum LspStoreMode {
@@ -810,10 +803,15 @@ impl LspStore {
     pub fn upstream_client(&self) -> Option<(AnyProtoClient, u64)> {
         match &self.mode {
             LspStoreMode::Remote(RemoteLspStore {
-                upstream_client,
+                upstream_client: Some(upstream_client),
                 upstream_project_id,
                 ..
             }) => Some((upstream_client.clone(), *upstream_project_id)),
+
+            LspStoreMode::Remote(RemoteLspStore {
+                upstream_client: None,
+                ..
+            }) => None,
             LspStoreMode::Local(_) => None,
         }
     }
@@ -928,7 +926,7 @@ impl LspStore {
 
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
-                upstream_client,
+                upstream_client: Some(upstream_client),
                 upstream_project_id: project_id,
             }),
             downstream_client: None,
@@ -3109,6 +3107,15 @@ impl LspStore {
 
     pub fn disconnected_from_host(&mut self) {
         self.downstream_client.take();
+    }
+
+    pub fn disconnected_from_ssh_remote(&mut self) {
+        if let LspStoreMode::Remote(RemoteLspStore {
+            upstream_client, ..
+        }) = &mut self.mode
+        {
+            upstream_client.take();
+        }
     }
 
     pub(crate) fn set_language_server_statuses_from_proto(
@@ -7668,10 +7675,16 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     }
 
     async fn read_text_file(&self, path: PathBuf) -> Result<String> {
-        if self.worktree.entry_for_path(&path).is_none() {
-            return Err(anyhow!("no such path {path:?}"));
-        };
-        self.fs.load(&path).await
+        let entry = self
+            .worktree
+            .entry_for_path(&path)
+            .with_context(|| format!("no worktree entry for path {path:?}"))?;
+        let abs_path = self
+            .worktree
+            .absolutize(&entry.path)
+            .with_context(|| format!("cannot absolutize path {path:?}"))?;
+
+        self.fs.load(&abs_path).await
     }
 }
 

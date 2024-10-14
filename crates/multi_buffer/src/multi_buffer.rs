@@ -724,7 +724,7 @@ impl MultiBuffer {
                                     original_indent_columns: Default::default(),
                                 })
                             } else {
-                                None
+                                autoindent_mode.clone()
                             };
                         let insertion_autoindent_mode =
                             if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
@@ -732,7 +732,7 @@ impl MultiBuffer {
                                     original_indent_columns,
                                 })
                             } else {
-                                None
+                                autoindent_mode.clone()
                             };
 
                         buffer.edit(deletions, deletion_autoindent_mode, cx);

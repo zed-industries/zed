@@ -41,6 +41,8 @@ pub(crate) struct MoveToPrev {
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -129,14 +131,17 @@ impl Vim {
                     search_bar.select_query(cx);
                     cx.focus_self();
 
-                    if query.is_empty() {
-                        search_bar.set_replacement(None, cx);
-                        search_bar.set_search_options(SearchOptions::REGEX, cx);
+                    search_bar.set_replacement(None, cx);
+                    let mut options = SearchOptions::NONE;
+                    if action.regex {
+                        options |= SearchOptions::REGEX;
                     }
+                    search_bar.set_search_options(options, cx);
+
                     self.search = SearchState {
                         direction,
                         count,
-                        initial_query: query.clone(),
+                        initial_query: query,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
                         prior_mode: self.mode,
@@ -269,6 +274,9 @@ impl Vim {
                 if regex {
                     options |= SearchOptions::REGEX;
                 }
+                if whole_word {
+                    options |= SearchOptions::WHOLE_WORD;
+                }
                 if !search_bar.show(cx) {
                     return None;
                 }
@@ -276,10 +284,7 @@ impl Vim {
                     drop(search_bar.search("", None, cx));
                     return None;
                 };
-                let mut query = regex::escape(&query);
-                if whole_word {
-                    query = format!(r"\<{}\>", query);
-                }
+                let query = regex::escape(&query);
                 Some(search_bar.search(&query, Some(options), cx))
             });
 

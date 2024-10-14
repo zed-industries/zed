@@ -4,7 +4,7 @@ mod telemetry;
 mod token;
 
 use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor,
+    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor, Cents,
     Config, Error, Result,
 };
 use anyhow::{anyhow, Context as _};
@@ -20,13 +20,14 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
+use db::TokenUsage;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-use isahc_http_client::IsahcHttpClient;
-use rpc::ListModelsResponse;
+use reqwest_client::ReqwestClient;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
+use rpc::{ListModelsResponse, MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME};
 use std::{
     pin::Pin,
     sync::Arc,
@@ -43,7 +44,7 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: IsahcHttpClient,
+    pub http_client: ReqwestClient,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -69,11 +70,8 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client = IsahcHttpClient::builder()
-            .default_header("User-Agent", user_agent)
-            .build()
-            .map(IsahcHttpClient::from)
-            .context("failed to construct http client")?;
+        let http_client =
+            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
 
         let this = Self {
             executor,
@@ -418,10 +416,7 @@ async fn perform_completion(
         claims,
         provider: params.provider,
         model,
-        input_tokens: 0,
-        output_tokens: 0,
-        cache_creation_input_tokens: 0,
-        cache_read_input_tokens: 0,
+        tokens: TokenUsage::default(),
         inner_stream: stream,
     })))
 }
@@ -438,13 +433,18 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
-/// The maximum monthly spending an individual user can reach before they have to pay.
-pub const MONTHLY_SPENDING_LIMIT_IN_CENTS: usize = 5 * 100;
+/// The maximum monthly spending an individual user can reach on the free tier
+/// before they have to pay.
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+
+/// The default value to use for maximum spend per month if the user did not
+/// explicitly set a maximum spend.
+///
+/// Used to prevent surprise bills.
+pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
 
 /// The maximum lifetime spending an individual user can reach before being cut off.
-///
-/// Represented in cents.
-const LIFETIME_SPENDING_LIMIT_IN_CENTS: usize = 1_000 * 100;
+const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
 
 async fn check_usage_limit(
     state: &Arc<LlmState>,
@@ -464,18 +464,31 @@ async fn check_usage_limit(
         .await?;
 
     if state.config.is_llm_billing_enabled() {
-        if usage.spending_this_month >= MONTHLY_SPENDING_LIMIT_IN_CENTS {
-            if !claims.has_llm_subscription.unwrap_or(false) {
+        if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
+            if !claims.has_llm_subscription {
                 return Err(Error::http(
                     StatusCode::PAYMENT_REQUIRED,
                     "Maximum spending limit reached for this month.".to_string(),
+                ));
+            }
+
+            if usage.spending_this_month >= Cents(claims.max_monthly_spend_in_cents) {
+                return Err(Error::Http(
+                    StatusCode::FORBIDDEN,
+                    "Maximum spending limit reached for this month.".to_string(),
+                    [(
+                        HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
+                        HeaderValue::from_static("true"),
+                    )]
+                    .into_iter()
+                    .collect(),
                 ));
             }
         }
     }
 
     // TODO: Remove this once we've rolled out monthly spending limits.
-    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
+    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT {
         return Err(Error::http(
             StatusCode::FORBIDDEN,
             "Maximum spending limit reached.".to_string(),
@@ -593,10 +606,7 @@ struct TokenCountingStream<S> {
     claims: LlmTokenClaims,
     provider: LanguageModelProvider,
     model: String,
-    input_tokens: usize,
-    output_tokens: usize,
-    cache_creation_input_tokens: usize,
-    cache_read_input_tokens: usize,
+    tokens: TokenUsage,
     inner_stream: S,
 }
 
@@ -610,10 +620,10 @@ where
         match Pin::new(&mut self.inner_stream).poll_next(cx) {
             Poll::Ready(Some(Ok(mut chunk))) => {
                 chunk.bytes.push(b'\n');
-                self.input_tokens += chunk.input_tokens;
-                self.output_tokens += chunk.output_tokens;
-                self.cache_creation_input_tokens += chunk.cache_creation_input_tokens;
-                self.cache_read_input_tokens += chunk.cache_read_input_tokens;
+                self.tokens.input += chunk.input_tokens;
+                self.tokens.output += chunk.output_tokens;
+                self.tokens.input_cache_creation += chunk.cache_creation_input_tokens;
+                self.tokens.input_cache_read += chunk.cache_read_input_tokens;
                 Poll::Ready(Some(Ok(chunk.bytes)))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
@@ -626,13 +636,11 @@ where
 impl<S> Drop for TokenCountingStream<S> {
     fn drop(&mut self) {
         let state = self.state.clone();
+        let is_llm_billing_enabled = state.config.is_llm_billing_enabled();
         let claims = self.claims.clone();
         let provider = self.provider;
         let model = std::mem::take(&mut self.model);
-        let input_token_count = self.input_tokens;
-        let output_token_count = self.output_tokens;
-        let cache_creation_input_token_count = self.cache_creation_input_tokens;
-        let cache_read_input_token_count = self.cache_read_input_tokens;
+        let tokens = self.tokens;
         self.state.executor.spawn_detached(async move {
             let usage = state
                 .db
@@ -641,10 +649,16 @@ impl<S> Drop for TokenCountingStream<S> {
                     claims.is_staff,
                     provider,
                     &model,
-                    input_token_count,
-                    cache_creation_input_token_count,
-                    cache_read_input_token_count,
-                    output_token_count,
+                    tokens,
+                    // We're passing `false` here if LLM billing is not enabled
+                    // so that we don't write any records to the
+                    // `billing_events` table until we're ready to bill users.
+                    if is_llm_billing_enabled {
+                        claims.has_llm_subscription
+                    } else {
+                        false
+                    },
+                    Cents(claims.max_monthly_spend_in_cents),
                     Utc::now(),
                 )
                 .await
@@ -674,24 +688,25 @@ impl<S> Drop for TokenCountingStream<S> {
                             },
                             model,
                             provider: provider.to_string(),
-                            input_token_count: input_token_count as u64,
-                            cache_creation_input_token_count: cache_creation_input_token_count
-                                as u64,
-                            cache_read_input_token_count: cache_read_input_token_count as u64,
-                            output_token_count: output_token_count as u64,
+                            input_token_count: tokens.input as u64,
+                            cache_creation_input_token_count: tokens.input_cache_creation as u64,
+                            cache_read_input_token_count: tokens.input_cache_read as u64,
+                            output_token_count: tokens.output as u64,
                             requests_this_minute: usage.requests_this_minute as u64,
                             tokens_this_minute: usage.tokens_this_minute as u64,
                             tokens_this_day: usage.tokens_this_day as u64,
-                            input_tokens_this_month: usage.input_tokens_this_month as u64,
+                            input_tokens_this_month: usage.tokens_this_month.input as u64,
                             cache_creation_input_tokens_this_month: usage
-                                .cache_creation_input_tokens_this_month
+                                .tokens_this_month
+                                .input_cache_creation
                                 as u64,
                             cache_read_input_tokens_this_month: usage
-                                .cache_read_input_tokens_this_month
+                                .tokens_this_month
+                                .input_cache_read
                                 as u64,
-                            output_tokens_this_month: usage.output_tokens_this_month as u64,
-                            spending_this_month: usage.spending_this_month as u64,
-                            lifetime_spending: usage.lifetime_spending as u64,
+                            output_tokens_this_month: usage.tokens_this_month.output as u64,
+                            spending_this_month: usage.spending_this_month.0 as u64,
+                            lifetime_spending: usage.lifetime_spending.0 as u64,
                         },
                     )
                     .await

@@ -52,6 +52,7 @@ pub struct WindowsWindowState {
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
+    initial_placement: Option<WINDOWPLACEMENT>,
     hwnd: HWND,
 }
 
@@ -97,6 +98,7 @@ impl WindowsWindowState {
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
+        let initial_placement = None;
 
         Ok(Self {
             origin,
@@ -114,6 +116,7 @@ impl WindowsWindowState {
             nc_button_pressed,
             display,
             fullscreen,
+            initial_placement,
             hwnd,
         })
     }
@@ -231,6 +234,14 @@ impl WindowsWindowStatePtr {
             main_receiver: context.main_receiver.clone(),
         }))
     }
+
+    fn set_window_placement(&self) -> Result<()> {
+        let Some(placement) = self.state.borrow_mut().initial_placement.take() else {
+            return Ok(());
+        };
+        unsafe { SetWindowPlacement(self.hwnd, &placement)? };
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -295,9 +306,6 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
-        if !params.show {
-            dwstyle |= WS_MINIMIZE;
-        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -336,36 +344,24 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
+        // We should call `?` on state_ptr first, then call `?` on hwnd.
         // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
-        let raw_hwnd = creation_result?;
+        let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
-        unsafe {
-            let mut placement = WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                ..Default::default()
-            };
-            GetWindowPlacement(raw_hwnd, &mut placement)?;
-            // the bounds may be not inside the display
-            let bounds = if display.check_given_bounds(params.bounds) {
-                params.bounds
-            } else {
-                display.default_bounds()
-            };
-            let mut lock = state_ptr.state.borrow_mut();
-            let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.update(raw_hwnd)?;
-            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
-            drop(lock);
-            SetWindowPlacement(raw_hwnd, &placement)?;
-        }
-
+        state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
+        let placement = retrieve_window_placement(
+            hwnd,
+            display,
+            params.bounds,
+            state_ptr.state.borrow().scale_factor,
+            state_ptr.state.borrow().border_offset,
+        )?;
         if params.show {
-            unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
+            unsafe { SetWindowPlacement(hwnd, &placement)? };
         } else {
-            unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? };
+            state_ptr.state.borrow_mut().initial_placement = Some(placement);
         }
 
         Ok(Self(state_ptr))
@@ -541,11 +537,18 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { SetActiveWindow(hwnd).log_err() };
-        unsafe { SetFocus(hwnd).log_err() };
-        // todo(windows)
-        // crate `windows 0.56` reports true as Err
-        unsafe { SetForegroundWindow(hwnd).as_bool() };
+        let this = self.0.clone();
+        self.0
+            .executor
+            .spawn(async move {
+                this.set_window_placement().log_err();
+                unsafe { SetActiveWindow(hwnd).log_err() };
+                unsafe { SetFocus(hwnd).log_err() };
+                // todo(windows)
+                // crate `windows 0.56` reports true as Err
+                unsafe { SetForegroundWindow(hwnd).as_bool() };
+            })
+            .detach();
     }
 
     fn is_active(&self) -> bool {
@@ -1064,6 +1067,29 @@ fn calculate_client_rect(
         origin: logical_point(left as f32, top as f32, scale_factor),
         size: physical_size.to_pixels(scale_factor),
     }
+}
+
+fn retrieve_window_placement(
+    hwnd: HWND,
+    display: WindowsDisplay,
+    initial_bounds: Bounds<Pixels>,
+    scale_factor: f32,
+    border_offset: WindowBorderOffset,
+) -> Result<WINDOWPLACEMENT> {
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowPlacement(hwnd, &mut placement)? };
+    // the bounds may be not inside the display
+    let bounds = if display.check_given_bounds(initial_bounds) {
+        initial_bounds
+    } else {
+        display.default_bounds()
+    };
+    let bounds = bounds.to_device_pixels(scale_factor);
+    placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
+    Ok(placement)
 }
 
 mod windows_renderer {

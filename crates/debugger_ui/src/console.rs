@@ -53,7 +53,7 @@ impl Console {
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Box::new(ConsoleQueryBarCompletionProvider(this)));
+            editor.set_completion_provider(Some(Box::new(ConsoleQueryBarCompletionProvider(this))));
 
             editor
         });

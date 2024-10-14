@@ -5,9 +5,9 @@ use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
-    percentage, px, Action, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext,
-    DismissEvent, EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion,
-    SharedString, Task, Transformation, View,
+    percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
+    EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
+    Transformation, View,
 };
 use gpui::{AppContext, Model};
 use release_channel::{AppVersion, ReleaseChannel};
@@ -83,6 +83,7 @@ pub struct SshPrompt {
 
 pub struct SshConnectionModal {
     pub(crate) prompt: View<SshPrompt>,
+    is_separate_window: bool,
 }
 
 impl SshPrompt {
@@ -207,9 +208,14 @@ impl Render for SshPrompt {
 }
 
 impl SshConnectionModal {
-    pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        connection_options: &SshConnectionOptions,
+        is_separate_window: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
             prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
+            is_separate_window,
         }
     }
 
@@ -218,7 +224,10 @@ impl SshConnectionModal {
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.remove_window();
+        cx.emit(DismissEvent);
+        if self.is_separate_window {
+            cx.remove_window();
+        }
     }
 }
 
@@ -232,6 +241,7 @@ impl Render for SshConnectionModal {
 
         v_flex()
             .elevation_3(cx)
+            .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
             .w(px(500.))
@@ -250,7 +260,9 @@ impl Render for SshConnectionModal {
                         div().absolute().left_0p5().top_0p5().child(
                             IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
                                 .icon_size(IconSize::XSmall)
-                                .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()))
+                                .on_click(cx.listener(move |this, _, cx| {
+                                    this.dismiss(&Default::default(), cx);
+                                }))
                                 .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
                         ),
                     )
@@ -378,40 +390,11 @@ impl SshClientDelegate {
 
         // In dev mode, build the remote server binary from source
         #[cfg(debug_assertions)]
-        if release_channel == ReleaseChannel::Dev
-            && platform.arch == std::env::consts::ARCH
-            && platform.os == std::env::consts::OS
-        {
-            use smol::process::{Command, Stdio};
-
-            self.update_status(Some("building remote server binary from source"), cx);
-            log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
-                "build",
-                "--package",
-                "remote_server",
-                "--target-dir",
-                "target/remote_server",
-            ]))
-            .await?;
-            // run_cmd(Command::new("strip").args(["target/remote_server/debug/remote_server"]))
-            // .await?;
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                "target/remote_server/debug/remote_server",
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            return Ok((path, version));
-
-            async fn run_cmd(command: &mut Command) -> Result<()> {
-                let output = command.stderr(Stdio::inherit()).output().await?;
-                if !output.status.success() {
-                    Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
-                }
-                Ok(())
+        if release_channel == ReleaseChannel::Dev {
+            let result = self.build_local(cx, platform, version).await?;
+            // Fall through to a remote binary if we're not able to compile a local binary
+            if let Some(result) = result {
+                return Ok(result);
             }
         }
 
@@ -433,6 +416,107 @@ impl SshClientDelegate {
         })?;
 
         Ok((binary_path, version))
+    }
+
+    #[cfg(debug_assertions)]
+    async fn build_local(
+        &self,
+        cx: &mut AsyncAppContext,
+        platform: SshPlatform,
+        version: SemanticVersion,
+    ) -> Result<Option<(PathBuf, SemanticVersion)>> {
+        use smol::process::{Command, Stdio};
+
+        async fn run_cmd(command: &mut Command) -> Result<()> {
+            let output = command.stderr(Stdio::inherit()).output().await?;
+            if !output.status.success() {
+                Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
+            }
+            Ok(())
+        }
+
+        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+            self.update_status(Some("Building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+
+            self.update_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
+            return Ok(Some((path, version)));
+        } else if let Some(triple) = platform.triple() {
+            smol::fs::create_dir_all("target/remote-server").await?;
+
+            self.update_status(Some("Installing cross.rs for cross-compilation"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
+
+            self.update_status(
+                Some(&format!(
+                    "Building remote server binary from source for {}",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        "--mount type=bind,src=./target,dst=/app/target",
+                    ),
+            )
+            .await?;
+
+            self.update_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                &format!("target/remote_server/{}/debug/remote_server", triple),
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join(format!(
+                "target/remote_server/{}/debug/remote_server.gz",
+                triple
+            ));
+
+            return Ok(Some((path, version)));
+        } else {
+            return Ok(None);
+        }
     }
 }
 
@@ -464,11 +548,10 @@ pub async fn open_ssh_project(
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
-
     let window = if let Some(window) = open_options.replace_window {
         window
     } else {
+        let options = cx.update(|cx| (app_state.build_window_options)(None, cx))?;
         cx.open_window(options, |cx| {
             let project = project::Project::local(
                 app_state.client.clone(),
@@ -485,7 +568,9 @@ pub async fn open_ssh_project(
 
     let delegate = window.update(cx, |workspace, cx| {
         cx.activate_window();
-        workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+        workspace.toggle_modal(cx, |cx| {
+            SshConnectionModal::new(&connection_options, true, cx)
+        });
         let ui = workspace
             .active_modal::<SshConnectionModal>(cx)
             .unwrap()
@@ -500,8 +585,26 @@ pub async fn open_ssh_project(
         })
     })?;
 
-    cx.update(|cx| {
-        workspace::open_ssh_project(window, connection_options, delegate, app_state, paths, cx)
-    })?
-    .await
+    let did_open_ssh_project = cx
+        .update(|cx| {
+            workspace::open_ssh_project(
+                window,
+                connection_options,
+                delegate.clone(),
+                app_state,
+                paths,
+                cx,
+            )
+        })?
+        .await;
+
+    let did_open_ssh_project = match did_open_ssh_project {
+        Ok(ok) => Ok(ok),
+        Err(e) => {
+            delegate.update_error(e.to_string(), cx);
+            Err(e)
+        }
+    };
+
+    did_open_ssh_project
 }
