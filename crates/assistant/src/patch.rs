@@ -534,7 +534,12 @@ impl Eq for AssistantPatch {}
 mod tests {
     use super::*;
     use gpui::{AppContext, Context};
+    use language::{
+        language_settings::AllLanguageSettings, Language, LanguageConfig, LanguageMatcher,
+    };
+    use settings::SettingsStore;
     use text::{OffsetRangeExt, Point};
+    use ui::BorrowAppContext;
     use unindent::Unindent as _;
 
     #[gpui::test]
@@ -610,6 +615,13 @@ mod tests {
 
     #[gpui::test]
     fn test_resolve_edits(cx: &mut AppContext) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        language::init(cx);
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<AllLanguageSettings>(cx, |_| {});
+        });
+
         assert_edits(
             "
                 /// A person
@@ -690,7 +702,8 @@ mod tests {
         new_text: String,
         cx: &mut AppContext,
     ) {
-        let buffer = cx.new_model(|cx| Buffer::local(old_text, cx));
+        let buffer =
+            cx.new_model(|cx| Buffer::local(old_text, cx).with_language(Arc::new(rust_lang()), cx));
         let snapshot = buffer.read(cx).snapshot();
         let resolved_edits = edits
             .into_iter()
@@ -700,5 +713,28 @@ mod tests {
         ResolvedPatch::apply_edit_groups(&edit_groups, &buffer, cx);
         let actual_new_text = buffer.read(cx).text();
         pretty_assertions::assert_eq!(actual_new_text, new_text);
+    }
+
+    fn rust_lang() -> Language {
+        Language::new(
+            LanguageConfig {
+                name: "Rust".into(),
+                matcher: LanguageMatcher {
+                    path_suffixes: vec!["rs".to_string()],
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            Some(language::tree_sitter_rust::LANGUAGE.into()),
+        )
+        .with_indents_query(
+            r#"
+            (call_expression) @indent
+            (field_expression) @indent
+            (_ "(" ")" @end) @indent
+            (_ "{" "}" @end) @indent
+            "#,
+        )
+        .unwrap()
     }
 }
