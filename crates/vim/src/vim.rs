@@ -17,6 +17,8 @@ mod rewrap;
 mod state;
 mod surrounds;
 mod visual;
+mod helix_normal;
+mod helix_visual;
 
 use anyhow::Result;
 use collections::HashMap;
