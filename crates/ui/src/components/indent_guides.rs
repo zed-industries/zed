@@ -83,9 +83,11 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
         let render_fn = self.render_fn;
 
         UniformListDecoration {
-            prepaint_fn: Box::new(move |visible_range, bounds, item_height, cx| {
+            prepaint_fn: Box::new(move |mut visible_range, bounds, item_height, cx| {
+                visible_range.end += 1;
                 let visible_entries = &(compute_fn)(visible_range.clone(), cx);
-                let indent_guides = compute_indent_guides(&visible_entries, visible_range.start);
+                let indent_guides =
+                    compute_indent_guides(&visible_entries, visible_range.start, true);
 
                 let mut indent_guides = if let Some(ref custom_render) = render_fn {
                     let params = RenderIndentGuideParams {
@@ -131,12 +133,20 @@ pub struct IndentGuideLayout {
     pub continues_offscreen: bool,
 }
 
-fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGuideLayout; 16]> {
+fn compute_indent_guides(
+    indents: &[usize],
+    offset: usize,
+    includes_trailing_indent: bool,
+) -> SmallVec<[IndentGuideLayout; 16]> {
     let mut indent_guides = SmallVec::<[IndentGuideLayout; 16]>::new();
     let mut indent_stack = SmallVec::<[IndentGuideLayout; 8]>::new();
 
     let mut min_depth = usize::MAX;
     for (row, &depth) in indents.iter().enumerate() {
+        if includes_trailing_indent && row == indents.len() - 1 {
+            continue;
+        }
+
         let current_row = row + offset;
         let current_depth = indent_stack.len();
         if depth < min_depth {
@@ -171,7 +181,14 @@ fn compute_indent_guides(indents: &[usize], offset: usize) -> SmallVec<[IndentGu
     indent_guides.extend(indent_stack);
 
     for guide in indent_guides.iter_mut() {
-        guide.continues_offscreen = guide.offset.x < min_depth;
+        if includes_trailing_indent
+            && guide.offset.y + guide.length == offset + indents.len().saturating_sub(1)
+        {
+            guide.continues_offscreen = indents
+                .last()
+                .map(|last_indent| guide.offset.x < *last_indent)
+                .unwrap_or(false);
+        }
     }
 
     indent_guides
@@ -186,11 +203,12 @@ mod tests {
         fn assert_compute_indent_guides(
             input: &[usize],
             offset: usize,
+            includes_trailing_indent: bool,
             expected: Vec<IndentGuideLayout>,
         ) {
             use std::collections::HashSet;
             assert_eq!(
-                compute_indent_guides(input, offset)
+                compute_indent_guides(input, offset, includes_trailing_indent)
                     .into_vec()
                     .into_iter()
                     .collect::<HashSet<_>>(),
@@ -201,6 +219,7 @@ mod tests {
         assert_compute_indent_guides(
             &[0, 1, 2, 2, 1, 0],
             0,
+            false,
             vec![
                 IndentGuideLayout {
                     offset: Point::new(0, 1),
@@ -218,6 +237,7 @@ mod tests {
         assert_compute_indent_guides(
             &[2, 2, 2, 1, 1],
             0,
+            false,
             vec![
                 IndentGuideLayout {
                     offset: Point::new(0, 0),
@@ -235,6 +255,7 @@ mod tests {
         assert_compute_indent_guides(
             &[1, 2, 3, 2, 1],
             0,
+            false,
             vec![
                 IndentGuideLayout {
                     offset: Point::new(0, 0),
@@ -252,6 +273,38 @@ mod tests {
                     continues_offscreen: false,
                 },
             ],
+        );
+
+        assert_compute_indent_guides(
+            &[0, 1, 0],
+            0,
+            true,
+            vec![IndentGuideLayout {
+                offset: Point::new(0, 1),
+                length: 1,
+                continues_offscreen: false,
+            }],
+        );
+
+        assert_compute_indent_guides(
+            &[0, 1, 1],
+            0,
+            true,
+            vec![IndentGuideLayout {
+                offset: Point::new(0, 1),
+                length: 1,
+                continues_offscreen: true,
+            }],
+        );
+        assert_compute_indent_guides(
+            &[0, 1, 2],
+            0,
+            true,
+            vec![IndentGuideLayout {
+                offset: Point::new(0, 1),
+                length: 1,
+                continues_offscreen: true,
+            }],
         );
     }
 }
