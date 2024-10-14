@@ -946,13 +946,17 @@ impl DevServerProjects {
                     }
                 }));
                 let is_selected = self.focusable_items.is_selected();
-
+                let label = if connection.nickname.is_some() {
+                    "Edit Nickname"
+                } else {
+                    "Add Nickname to Server"
+                };
                 ListItem::new("add-nickname")
                     .selected(is_selected)
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                    .child(Label::new("Add Nickname to Server"))
+                    .child(Label::new(label))
                     .on_click(cx.listener(move |this, _, cx| {
                         this.mode = Mode::EditNickname(EditNicknameState::new(index, cx));
                         cx.notify();
@@ -973,6 +977,7 @@ impl DevServerProjects {
                                 "Copied server address ({}) to clipboard",
                                 connection_string
                             );
+
                             this.show_toast(
                                 Toast::new(
                                     NotificationId::identified::<SshServerAddressCopiedToClipboard>(
@@ -1001,16 +1006,57 @@ impl DevServerProjects {
                     .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
                     .child(Label::new("Copy Server Address"))
                     .end_hover_slot(Label::new(connection_string.clone()).color(Color::Muted))
-                    .on_click(move |_, cx| {
-                        callback(workspace.clone(), connection_string.clone(), cx);
+                    .on_click({
+                        let connection_string = connection_string.clone();
+                        move |_, cx| {
+                            callback(workspace.clone(), connection_string.clone(), cx);
+                        }
                     })
             })
             .child({
+                fn remove_ssh_server(
+                    dev_servers: View<DevServerProjects>,
+                    workspace: WeakView<Workspace>,
+                    index: usize,
+                    connection_string: SharedString,
+                    cx: &mut WindowContext<'_>,
+                ) {
+                    workspace
+                        .update(cx, |this, cx| {
+                            struct SshServerRemoval;
+                            let notification = format!(
+                                "Do you really want to remove server `{}`?",
+                                connection_string
+                            );
+                            this.show_toast(
+                                Toast::new(
+                                    NotificationId::identified::<SshServerRemoval>(
+                                        connection_string.clone(),
+                                    ),
+                                    notification,
+                                )
+                                .on_click("Yes", move |cx| {
+                                    dev_servers.update(cx, |this, cx| {
+                                        this.delete_ssh_server(index, cx);
+                                        this.mode = Mode::Default;
+                                        cx.notify();
+                                    })
+                                }),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
                 self.focusable_items.add_item(Box::new({
+                    let connection_string = connection_string.clone();
                     move |this, cx| {
-                        this.delete_ssh_server(index, cx);
-                        this.mode = Mode::Default;
-                        cx.notify();
+                        remove_ssh_server(
+                            cx.view().clone(),
+                            this.workspace.clone(),
+                            index,
+                            connection_string.clone(),
+                            cx,
+                        );
                     }
                 }));
                 let is_selected = self.focusable_items.is_selected();
@@ -1021,9 +1067,13 @@ impl DevServerProjects {
                     .start_slot(Icon::new(IconName::Trash).color(Color::Error))
                     .child(Label::new("Delete Server").color(Color::Error))
                     .on_click(cx.listener(move |this, _, cx| {
-                        this.delete_ssh_server(index, cx);
-                        this.mode = Mode::Default;
-                        cx.notify();
+                        remove_ssh_server(
+                            cx.view().clone(),
+                            this.workspace.clone(),
+                            index,
+                            connection_string.clone(),
+                            cx,
+                        );
                     }))
             })
             .child(
