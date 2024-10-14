@@ -1090,7 +1090,11 @@ impl DevServerProjects {
                             .inset(true)
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
-                            .child(Label::new("Go Back")),
+                            .child(Label::new("Go Back"))
+                            .on_click(cx.listener(|this, _, cx| {
+                                this.mode = Mode::Default(None);
+                                cx.notify()
+                            })),
                     ),
             )
     }
