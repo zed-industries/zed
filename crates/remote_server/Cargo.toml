@@ -37,6 +37,7 @@ node_runtime.workspace = true
 project.workspace = true
 remote.workspace = true
 rpc.workspace = true
+rust-embed = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -44,7 +45,6 @@ shellexpand.workspace = true
 smol.workspace = true
 util.workspace = true
 worktree.workspace = true
-rust-embed.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
