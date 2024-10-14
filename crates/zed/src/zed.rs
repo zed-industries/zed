@@ -3314,7 +3314,7 @@ mod tests {
         cx.text_system()
             .add_fonts(vec![
                 Assets
-                    .load("fonts/plex-mono/IBMPlexMono-Regular.ttf")
+                    .load("fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf")
                     .unwrap()
                     .unwrap(),
                 Assets

@@ -58,7 +58,7 @@ impl Assets {
     pub fn load_test_fonts(&self, cx: &AppContext) {
         cx.text_system()
             .add_fonts(vec![self
-                .load("fonts/plex-mono/IBMPlexMono-Regular.ttf")
+                .load("fonts/ibm-plex-mono/IBMPlexMono-Regular.ttf")
                 .unwrap()
                 .unwrap()])
             .unwrap()
