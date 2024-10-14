@@ -596,7 +596,7 @@ impl DevServerProjects {
             let aux_label = SharedString::from(format!("({})", ssh_connection.host));
             (nickname, Some(aux_label))
         } else {
-            (SharedString::from(ssh_connection.host.clone()), None)
+            (ssh_connection.host.clone(), None)
         };
         v_flex()
             .w_full()
@@ -923,7 +923,7 @@ impl DevServerProjects {
         connection: SshConnection,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let connection_string = SharedString::from(connection.host.clone());
+        let connection_string = connection.host.clone();
 
         v_flex()
             .size_full()
@@ -1114,7 +1114,7 @@ impl DevServerProjects {
             return v_flex();
         };
 
-        let connection_string = SharedString::from(connection.host.clone());
+        let connection_string = connection.host.clone();
 
         v_flex()
             .child(
