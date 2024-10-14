@@ -154,6 +154,24 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 }
 
 impl Vim {
+
+    pub fn helix_visual_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ){
+        
+    }
+    pub fn helix_normal_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.helix_move_cursor(motion, times, cx);
+    }
+
     pub fn normal_motion(
         &mut self,
         motion: Motion,
@@ -241,6 +259,24 @@ impl Vim {
     }
 
     pub(crate) fn move_cursor(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.update_editor(cx, |_, editor, cx| {
+            let text_layout_details = editor.text_layout_details(cx);
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.move_cursors_with(|map, cursor, goal| {
+                    motion
+                        .move_point(map, cursor, goal, times, &text_layout_details)
+                        .unwrap_or((cursor, goal))
+                })
+            })
+        });
+    }
+
+    fn helix_move_cursor(
         &mut self,
         motion: Motion,
         times: Option<usize>,
