@@ -288,11 +288,6 @@ impl VariableList {
     fn fetch_variables(&mut self, cx: &mut ViewContext<Self>) {
         let stack_frames = self.stack_frame_list.read(cx).stack_frames().clone();
 
-        self.fetch_variables_task.take();
-        self.variables.clear();
-        self.scopes.clear();
-        self.fetched_variable_ids.clear();
-
         self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
             let mut scope_tasks = Vec::with_capacity(stack_frames.len());
             for stack_frame in stack_frames.clone().into_iter() {
@@ -328,8 +323,14 @@ impl VariableList {
                 });
             }
 
-            for (stack_frame_id, scopes) in try_join_all(stack_frame_tasks).await? {
-                this.update(&mut cx, |this, _| {
+            let result = try_join_all(stack_frame_tasks).await?;
+
+            this.update(&mut cx, |this, cx| {
+                this.variables.clear();
+                this.scopes.clear();
+                this.fetched_variable_ids.clear();
+
+                for (stack_frame_id, scopes) in result {
                     for (scope, variables) in scopes {
                         this.scopes
                             .entry(stack_frame_id)
@@ -350,10 +351,8 @@ impl VariableList {
                                 .collect::<Vec<VariableContainer>>(),
                         );
                     }
-                })?;
-            }
+                }
 
-            this.update(&mut cx, |this, cx| {
                 this.build_entries(true, false, cx);
 
                 this.fetch_variables_task.take();
