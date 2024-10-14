@@ -35,9 +35,8 @@ use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::ElevationIndex;
 use ui::Section;
-use ui::{prelude::*, IconButtonShape, List, ListItem, Modal, ModalFooter, ModalHeader, Tooltip};
+use ui::{prelude::*, IconButtonShape, List, ListItem, Modal, ModalHeader, Tooltip};
 use ui_input::{FieldLabelLayout, TextField};
-use util::maybe;
 use util::ResultExt;
 use workspace::OpenOptions;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
@@ -265,6 +264,7 @@ impl gpui::Render for ProjectPicker {
                             })
                             .log_err();
                     })),
+                    nickname: None,
                 }
                 .render(cx),
             )
@@ -273,7 +273,7 @@ impl gpui::Render for ProjectPicker {
 }
 enum Mode {
     Default(Option<CreateDevServerProject>),
-    ViewServerOptions(SshConnection),
+    ViewServerOptions(usize, SshConnection),
     ProjectPicker(View<ProjectPicker>),
     CreateDevServer(CreateDevServer),
 }
@@ -545,8 +545,12 @@ impl DevServerProjects {
         });
     }
 
-    fn view_server_options(&mut self, ssh_connection: SshConnection, cx: &mut ViewContext<Self>) {
-        self.mode = Mode::ViewServerOptions(ssh_connection);
+    fn view_server_options(
+        &mut self,
+        (index, connection): (usize, SshConnection),
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.mode = Mode::ViewServerOptions(index, connection);
         cx.notify();
     }
 
@@ -764,7 +768,7 @@ impl DevServerProjects {
                             self.focusable_items.add_item(Box::new({
                                 let ssh_connection = ssh_connection.clone();
                                 move |this, cx| {
-                                    this.view_server_options(ssh_connection.clone(), cx);
+                                    this.view_server_options((ix, ssh_connection.clone()), cx);
                                 }
                             }));
                             let is_selected = self.focusable_items.is_selected();
@@ -778,7 +782,10 @@ impl DevServerProjects {
                                     .on_click(cx.listener({
                                         let ssh_connection = ssh_connection.clone();
                                         move |this, _, cx| {
-                                            this.view_server_options(ssh_connection.clone(), cx);
+                                            this.view_server_options(
+                                                (ix, ssh_connection.clone()),
+                                                cx,
+                                            );
                                         }
                                     })),
                             )
@@ -1020,6 +1027,7 @@ impl DevServerProjects {
 
     fn render_view_options(
         &self,
+        index: usize,
         connection: &SshConnection,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
@@ -1032,7 +1040,8 @@ impl DevServerProjects {
                         this.mode = Mode::Default(None);
                         cx.notify();
                     })),
-                    connection_string,
+                    connection_string: connection_string.clone(),
+                    nickname: Some("my-cool-server".into()),
                 }
                 .render(cx),
             )
@@ -1050,15 +1059,26 @@ impl DevServerProjects {
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
-                    .child(Label::new("Copy Server Address")),
+                    .child(Label::new("Copy Server Address"))
+                    .end_hover_slot(Label::new(connection_string.clone()).color(Color::Muted))
+                    .on_click(move |_, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(
+                            connection_string.to_string(),
+                        ));
+                    }),
             )
             .child(
                 ListItem::new("delete-server")
                     .selected(false)
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
-                    .start_slot(Icon::new(IconName::Trash).color(Color::Muted))
-                    .child(Label::new("Delete Server").color(Color::Error)),
+                    .start_slot(Icon::new(IconName::Trash).color(Color::Error))
+                    .child(Label::new("Delete Server").color(Color::Error))
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.delete_ssh_server(index, cx);
+                        this.mode = Mode::Default(None);
+                        cx.notify();
+                    })),
             )
             .child(
                 h_flex()
@@ -1192,9 +1212,9 @@ impl Render for DevServerProjects {
             .max_h(rems(40.))
             .child(match &self.mode {
                 Mode::Default(_) => self.render_default(cx).into_any_element(),
-                Mode::ViewServerOptions(connection) => {
-                    self.render_view_options(connection, cx).into_any_element()
-                }
+                Mode::ViewServerOptions(index, connection) => self
+                    .render_view_options(*index, connection, cx)
+                    .into_any_element(),
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
                 Mode::CreateDevServer(state) => {
                     self.render_create_dev_server(state, cx).into_any_element()

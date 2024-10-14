@@ -236,6 +236,7 @@ impl SshConnectionModal {
 
 pub(crate) struct SshConnectionHeader {
     pub(crate) connection_string: SharedString,
+    pub(crate) nickname: Option<SharedString>,
     pub(crate) on_back_click_handler: Box<dyn Fn(&gpui::ClickEvent, &mut WindowContext) + 'static>,
 }
 
@@ -244,6 +245,12 @@ impl RenderOnce for SshConnectionHeader {
         let theme = cx.theme();
         let mut header_color = theme.colors().text;
         header_color.fade_out(0.96);
+        let (main_label, meta_label) = if let Some(nickname) = self.nickname {
+            (nickname, Some(format!("({})", self.connection_string)))
+        } else {
+            (self.connection_string, None)
+        };
+
         h_flex()
             .relative()
             .p_1()
@@ -267,9 +274,19 @@ impl RenderOnce for SshConnectionHeader {
                     .justify_center()
                     .child(Icon::new(IconName::Server).size(IconSize::XSmall))
                     .child(
-                        Label::new(self.connection_string)
-                            .size(ui::LabelSize::Small)
-                            .single_line(),
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Label::new(main_label)
+                                    .size(ui::LabelSize::Small)
+                                    .single_line(),
+                            )
+                            .children(meta_label.map(|label| {
+                                Label::new(label)
+                                    .size(ui::LabelSize::Small)
+                                    .single_line()
+                                    .color(Color::Muted)
+                            })),
                     ),
             )
     }
@@ -296,6 +313,7 @@ impl Render for SshConnectionModal {
                     on_back_click_handler: Box::new(cx.listener(move |this, _, cx| {
                         this.dismiss(&Default::default(), cx);
                     })),
+                    nickname: None,
                 }
                 .render(cx),
             )
