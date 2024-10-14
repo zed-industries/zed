@@ -1144,7 +1144,14 @@ impl SshRemoteConnection {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
-            .args(["-N", "-o", "ControlMaster=yes", "-o"])
+            .args([
+                "-N",
+                "-o",
+                "ControlPersist=no",
+                "-o",
+                "ControlMaster=yes",
+                "-o",
+            ])
             .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .spawn()?;
