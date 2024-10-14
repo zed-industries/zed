@@ -16,8 +16,9 @@ use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
+use recent_projects::open_ssh_project;
 use remote::SshConnectionOptions;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{process, thread};
@@ -25,7 +26,7 @@ use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
-use workspace::{AppState, OpenOptions, Workspace};
+use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
@@ -356,33 +357,21 @@ async fn open_workspaces(
     env: Option<collections::HashMap<String, String>>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let grouped_paths = if paths.is_empty() {
+    let grouped_locations = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
             let locations = restorable_workspace_locations(cx, &app_state).await;
-            locations
-                .into_iter()
-                .flat_map(|locations| {
-                    locations
-                        .into_iter()
-                        .map(|location| {
-                            location
-                                .paths()
-                                .iter()
-                                .map(|path| path.to_string_lossy().to_string())
-                                .collect()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect()
+            locations.unwrap_or_default()
         }
     } else {
-        vec![paths]
+        vec![SerializedWorkspaceLocation::from_local_paths(
+            paths.into_iter().map(PathBuf::from),
+        )]
     };
 
-    if grouped_paths.is_empty() {
+    if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_welcome_view(app_state, cx).detach())
@@ -406,20 +395,48 @@ async fn open_workspaces(
         // If there are paths to open, open a workspace for each grouping of paths
         let mut errored = false;
 
-        for workspace_paths in grouped_paths {
-            let workspace_failed_to_open = open_workspace(
-                workspace_paths,
-                open_new_workspace,
-                wait,
-                responses,
-                env.as_ref(),
-                &app_state,
-                cx,
-            )
-            .await;
+        for location in grouped_locations {
+            match location {
+                SerializedWorkspaceLocation::Local(workspace_paths, _) => {
+                    let workspace_paths = workspace_paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect();
 
-            if workspace_failed_to_open {
-                errored = true
+                    let workspace_failed_to_open = open_local_workspace(
+                        workspace_paths,
+                        open_new_workspace,
+                        wait,
+                        responses,
+                        env.as_ref(),
+                        &app_state,
+                        cx,
+                    )
+                    .await;
+
+                    if workspace_failed_to_open {
+                        errored = true
+                    }
+                }
+                SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                    let app_state = app_state.clone();
+                    cx.spawn(|mut cx| async move {
+                        open_ssh_project(
+                            ssh_project.connection_options(),
+                            ssh_project.paths.into_iter().map(PathBuf::from).collect(),
+                            app_state,
+                            OpenOptions::default(),
+                            &mut cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                    // We don't set `errored` here, because for ssh projects, the
+                    // error is displayed in the window.
+                }
+                SerializedWorkspaceLocation::DevServer(_) => {}
             }
         }
 
@@ -431,7 +448,7 @@ async fn open_workspaces(
     Ok(())
 }
 
-async fn open_workspace(
+async fn open_local_workspace(
     workspace_paths: Vec<String>,
     open_new_workspace: Option<bool>,
     wait: bool,
@@ -563,7 +580,7 @@ mod tests {
     use serde_json::json;
     use workspace::{AppState, Workspace};
 
-    use crate::zed::{open_listener::open_workspace, tests::init_test};
+    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
 
     #[gpui::test]
     async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {
@@ -678,7 +695,7 @@ mod tests {
 
         let errored = cx
             .spawn(|mut cx| async move {
-                open_workspace(
+                open_local_workspace(
                     workspace_paths,
                     open_new_workspace,
                     false,

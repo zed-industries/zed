@@ -5046,14 +5046,14 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
+pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<LocalPaths>> {
+) -> Option<Vec<SerializedWorkspaceLocation>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
