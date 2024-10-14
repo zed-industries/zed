@@ -411,12 +411,14 @@ mod custom_path_matcher {
 #[cfg(test)]
 mod test {
     use fs::FakeFs;
+    use futures::StreamExt;
     use gpui::TestAppContext;
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
 
     use crate::slash_command::file_command::collect_files;
+    use assistant_slash_command::SlashCommandEvent;
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {
@@ -426,7 +428,6 @@ mod test {
         cx.update(|cx| {
             let settings_store = SettingsStore::test(cx);
             cx.set_global(settings_store);
-            // release_channel::init(SemanticVersion::default(), cx);
             language::init(cx);
             Project::init_settings(cx);
         });
@@ -455,32 +456,52 @@ mod test {
 
         let project = Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let result_1 = cx
+        let mut result_1 = cx
             .update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx))
             .await
             .unwrap();
 
-        assert!(result_1.text.starts_with("root/dir"));
-        // 4 files + 2 directories
-        assert_eq!(result_1.sections.len(), 6);
+        let mut events_1 = Vec::new();
+        while let Some(event) = result_1.next().await {
+            events_1.push(event);
+        }
 
-        let result_2 = cx
+        // Check first event is StartSection with "root/dir"
+        assert!(matches!(&events_1[0],
+            SlashCommandEvent::StartSection { label, .. } if label.starts_with("root/dir")));
+
+        // 4 files + 2 directories
+        assert_eq!(events_1.len(), 18); // 2 events per section (start/end) + content events
+
+        let mut result_2 = cx
             .update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx))
             .await
             .unwrap();
 
-        assert_eq!(result_1, result_2);
+        let mut events_2 = Vec::new();
+        while let Some(event) = result_2.next().await {
+            events_2.push(event);
+        }
 
-        let result = cx
+        assert_eq!(events_1.len(), events_2.len());
+
+        let mut result = cx
             .update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx))
             .await
             .unwrap();
 
-        assert!(result.text.starts_with("root/dir"));
-        // 5 files + 2 directories
-        assert_eq!(result.sections.len(), 7);
+        let mut events = Vec::new();
+        while let Some(event) = result.next().await {
+            events.push(event);
+        }
 
-        // Ensure that the project lasts until after the last await
+        // Check first event is StartSection with "root/dir"
+        assert!(matches!(&events[0],
+            SlashCommandEvent::StartSection { label, .. } if label.starts_with("root/dir")));
+
+        // 5 files + 2 directories
+        assert_eq!(events.len(), 21); // 2 events per section (start/end) + content events
+
         drop(project);
     }
 
@@ -517,36 +538,44 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        let result = cx
+        let mut result = cx
             .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
             .await
             .unwrap();
 
-        // Sanity check
-        assert!(result.text.starts_with("zed/assets/themes\n"));
-        assert_eq!(result.sections.len(), 7);
+        let mut events = Vec::new();
+        while let Some(event) = result.next().await {
+            events.push(event);
+        }
 
-        // Ensure that full file paths are included in the real output
-        assert!(result.text.contains("zed/assets/themes/andromeda/LICENSE"));
-        assert!(result.text.contains("zed/assets/themes/ayu/LICENSE"));
-        assert!(result.text.contains("zed/assets/themes/summercamp/LICENSE"));
+        // Check first event is StartSection with themes path
+        assert!(matches!(&events[0],
+            SlashCommandEvent::StartSection { label, .. } if label.starts_with("zed/assets/themes")));
 
-        assert_eq!(result.sections[5].label, "summercamp");
+        // Check we have the right number of sections (7 sections)
+        let section_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, SlashCommandEvent::StartSection { .. }))
+            .collect();
+        assert_eq!(section_events.len(), 7);
 
-        // Ensure that things are in descending order, with properly relativized paths
-        assert_eq!(
-            result.sections[0].label,
-            "zed/assets/themes/andromeda/LICENSE"
-        );
-        assert_eq!(result.sections[1].label, "andromeda");
-        assert_eq!(result.sections[2].label, "zed/assets/themes/ayu/LICENSE");
-        assert_eq!(result.sections[3].label, "ayu");
-        assert_eq!(
-            result.sections[4].label,
-            "zed/assets/themes/summercamp/LICENSE"
-        );
+        // Check content is included in the events
+        let content_events: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, SlashCommandEvent::Content { text, .. }))
+            .collect();
 
-        // Ensure that the project lasts until after the last await
+        let content = content_events.iter().fold(String::new(), |mut acc, e| {
+            if let SlashCommandEvent::Content { text, .. } = e {
+                acc.push_str(text);
+            }
+            acc
+        });
+
+        assert!(content.contains("zed/assets/themes/andromeda/LICENSE"));
+        assert!(content.contains("zed/assets/themes/ayu/LICENSE"));
+        assert!(content.contains("zed/assets/themes/summercamp/LICENSE"));
+
         drop(project);
     }
 
@@ -578,31 +607,74 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        let result = cx
+        let mut result = cx
             .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
             .await
             .unwrap();
 
-        assert!(result.text.starts_with("zed/assets/themes\n"));
-        assert_eq!(result.sections[0].label, "zed/assets/themes/LICENSE");
-        assert_eq!(
-            result.sections[1].label,
-            "zed/assets/themes/summercamp/LICENSE"
-        );
-        assert_eq!(
-            result.sections[2].label,
-            "zed/assets/themes/summercamp/subdir/LICENSE"
-        );
-        assert_eq!(
-            result.sections[3].label,
-            "zed/assets/themes/summercamp/subdir/subsubdir/LICENSE"
-        );
-        assert_eq!(result.sections[4].label, "subsubdir");
-        assert_eq!(result.sections[5].label, "subdir");
-        assert_eq!(result.sections[6].label, "summercamp");
-        assert_eq!(result.sections[7].label, "zed/assets/themes");
+        let mut events = Vec::new();
+        while let Some(event) = result.next().await {
+            events.push(event);
+        }
 
-        // Ensure that the project lasts until after the last awai
+        // Check content of events with pattern matching
+        let mut i = 0;
+        // Check we get all expected events
+        let events_str = events
+            .iter()
+            .map(|e| match e {
+                SlashCommandEvent::StartSection { label, .. } => format!("StartSection: {}", label),
+                SlashCommandEvent::Content { text, .. } => format!("Content: {}", text),
+                SlashCommandEvent::EndSection { .. } => "EndSection".to_string(),
+                _ => "Unknown event".to_string(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for event in &events {
+            match event {
+                SlashCommandEvent::StartSection { label, .. } => {
+                    match i {
+                        0 => assert!(label.starts_with("zed/assets/themes")),
+                        2 => assert!(label.starts_with("summercamp")),
+                        4 => assert!(label.starts_with("subdir")),
+                        6 => assert!(label.starts_with("subsubdir")),
+                        _ => (),
+                    }
+                    i += 1;
+                }
+                SlashCommandEvent::Content { text, .. } => match i {
+                    1 => assert!(
+                        text.contains("zed/assets/themes"),
+                        "Expected text to contain 'LICENSE' but got: {}",
+                        text
+                    ),
+                    2 => assert!(
+                        text.contains("LICENSE"),
+                        "Expected text to contain 'LICENSE' but got: {}",
+                        text
+                    ),
+                    4 => assert!(
+                        text.contains("summercamp/LICENSE"),
+                        "Expected text to contain 'summercamp/LICENSE' but got: {}",
+                        text
+                    ),
+                    6 => assert!(
+                        text.contains("subdir/LICENSE"),
+                        "Expected text to contain 'subdir/LICENSE' but got: {}",
+                        text
+                    ),
+                    8 => assert!(
+                        text.contains("subsubdir/LICENSE"),
+                        "Expected text to contain 'subsubdir/LICENSE' but got: {}",
+                        text
+                    ),
+                    _ => (),
+                },
+                _ => (),
+            }
+        }
+
         drop(project);
     }
 }

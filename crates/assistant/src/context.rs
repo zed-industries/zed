@@ -1,5 +1,4 @@
 // todo!()
-// - implement run_commands_in_text
 // - fix file tests
 // - fix extension
 // - When slash command wants to insert a message, but it wants to insert it after a message that has the same Role and it emits a `StartMessage { merge_same_roles: bool (name TBD) }`, we should ignore it
@@ -27,7 +26,6 @@
 //         //                     expand_result,
 //         //                 },
 //         //             )
-// - Adapt all the commands to use the streaming API
 // - Animation example:
 // Icon::new(IconName::ArrowCircle)
 // .size(IconSize::Small)
