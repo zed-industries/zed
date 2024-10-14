@@ -18,7 +18,7 @@ name = "remote_server"
 
 [features]
 default = []
-debug-embed = ["rust-embed/debug-embed"]
+debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
@@ -37,7 +37,7 @@ node_runtime.workspace = true
 project.workspace = true
 remote.workspace = true
 rpc.workspace = true
-rust-embed = { workspace = true, optional = true }
+rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
