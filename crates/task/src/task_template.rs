@@ -95,7 +95,6 @@ mod deserialization_tests {
             kind: DebugAdapterKind::Python,
             request: crate::DebugRequestType::Launch,
             program: "main".to_string(),
-            adapter_path: None,
             initialize_args: None,
         };
         let json = json!({
