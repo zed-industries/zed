@@ -413,7 +413,7 @@ impl DebugPanelItem {
     pub fn step_over(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
 
-        let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
         self.dap_store.update(cx, |store, cx| {
             store
@@ -425,7 +425,7 @@ impl DebugPanelItem {
     pub fn step_in(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
 
-        let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
         self.dap_store.update(cx, |store, cx| {
             store
@@ -437,7 +437,7 @@ impl DebugPanelItem {
     pub fn step_out(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
 
-        let granularity = DebuggerSettings::get_global(cx).stepping_granularity();
+        let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
         self.dap_store.update(cx, |store, cx| {
             store
