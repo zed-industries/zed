@@ -4347,7 +4347,7 @@ impl ContextEditor {
 
     fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
-        const SUBSCRIBE_URL: &str = "https://zed.dev/ai/subscribe";
+        const SUBSCRIBE_URL: &str = "https://zed.dev/api/billing/initiate_checkout";
 
         v_flex()
             .gap_0p5()

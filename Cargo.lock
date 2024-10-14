@@ -9153,6 +9153,7 @@ dependencies = [
  "project",
  "remote",
  "rpc",
+ "rust-embed",
  "serde",
  "serde_json",
  "settings",

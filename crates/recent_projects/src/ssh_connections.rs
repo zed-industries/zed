@@ -461,7 +461,7 @@ impl SshClientDelegate {
         } else if let Some(triple) = platform.triple() {
             smol::fs::create_dir_all("target/remote-server").await?;
 
-            self.update_status(Some("Installing cross.rs"), cx);
+            self.update_status(Some("Installing cross.rs for cross-compilation"), cx);
             log::info!("installing cross");
             run_cmd(Command::new("cargo").args([
                 "install",
@@ -485,6 +485,8 @@ impl SshClientDelegate {
                         "build",
                         "--package",
                         "remote_server",
+                        "--features",
+                        "debug-embed",
                         "--target-dir",
                         "target/remote_server",
                         "--target",
