@@ -286,15 +286,6 @@ impl gpui::Render for ProjectPicker {
             .child(
                 SshConnectionHeader {
                     connection_string: self.connection_string.clone(),
-                    on_back_click_handler: Box::new(cx.listener(|this, _, cx| {
-                        this.main_modal
-                            .update(cx, |this, cx| {
-                                this.mode = Mode::Default;
-                                this.focusable_items.reset_selection();
-                                cx.notify();
-                            })
-                            .log_err();
-                    })),
                     nickname: None,
                 }
                 .render(cx),
@@ -895,10 +886,6 @@ impl DevServerProjects {
             .size_full()
             .child(
                 SshConnectionHeader {
-                    on_back_click_handler: Box::new(cx.listener(|this, _, cx| {
-                        this.mode = Mode::Default;
-                        cx.notify();
-                    })),
                     connection_string: connection_string.clone(),
                     nickname: connection.nickname.clone(),
                 }
@@ -1094,10 +1081,6 @@ impl DevServerProjects {
         v_flex()
             .child(
                 SshConnectionHeader {
-                    on_back_click_handler: Box::new(cx.listener(|this, _, cx| {
-                        this.mode = Mode::Default;
-                        cx.notify();
-                    })),
                     connection_string,
                     nickname: connection.nickname.clone(),
                 }

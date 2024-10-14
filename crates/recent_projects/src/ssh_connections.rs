@@ -16,9 +16,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    div, h_flex, prelude::*, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, Icon, IconButton,
-    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, Styled, Tooltip,
-    ViewContext, VisualContext, WindowContext,
+    div, h_flex, prelude::*, v_flex, ActiveTheme, Color, Icon, IconName, IconSize,
+    InteractiveElement, IntoElement, Label, LabelCommon, Styled, ViewContext, VisualContext,
+    WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -240,7 +240,6 @@ impl SshConnectionModal {
 pub(crate) struct SshConnectionHeader {
     pub(crate) connection_string: SharedString,
     pub(crate) nickname: Option<SharedString>,
-    pub(crate) on_back_click_handler: Box<dyn Fn(&gpui::ClickEvent, &mut WindowContext) + 'static>,
 }
 
 impl RenderOnce for SshConnectionHeader {
@@ -255,21 +254,12 @@ impl RenderOnce for SshConnectionHeader {
         };
 
         h_flex()
-            .relative()
             .p_1()
             .rounded_t_md()
             .border_b_1()
             .border_color(theme.colors().border)
             .bg(header_color)
             .justify_between()
-            .child(
-                div().absolute().left_0p5().top_0p5().child(
-                    IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
-                        .icon_size(IconSize::XSmall)
-                        .on_click(self.on_back_click_handler)
-                        .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
-                ),
-            )
             .child(
                 h_flex()
                     .w_full()
@@ -313,9 +303,6 @@ impl Render for SshConnectionModal {
             .child(
                 SshConnectionHeader {
                     connection_string,
-                    on_back_click_handler: Box::new(cx.listener(move |this, _, cx| {
-                        this.dismiss(&Default::default(), cx);
-                    })),
                     nickname: None,
                 }
                 .render(cx),
