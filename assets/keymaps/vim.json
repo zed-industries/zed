@@ -346,7 +346,12 @@
       "a": "vim::InsertAfter",
       "w": "vim::NextWordStart",
       "e": "vim::NextWordEnd",
-      "b": "vim::PreviousWordStart"
+      "b": "vim::PreviousWordStart",
+
+      "h": "vim::Left",
+      "j": "vim::Down",
+      "k": "vim::Up",
+      "l": "vim::Right"
     }
   },
 

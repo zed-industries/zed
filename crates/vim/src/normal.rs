@@ -285,11 +285,23 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_heads_update_tails_with(|map, cursor, goal| {
-                    motion
-                        .move_point(map, cursor, goal, times, &text_layout_details)
-                        .unwrap_or((cursor, goal))
-                })
+                match motion {
+                    Motion::Left | Motion::Right | Motion::Up { .. } | Motion::Down { .. } => {
+                        s.move_cursors_with(|map, cursor, goal| {
+                            motion
+                                .move_point(map, cursor, goal, times, &text_layout_details)
+                                .unwrap_or((cursor, goal))
+                        })
+                    }
+                    _  => {
+                        s.move_heads_update_tails_with(|map, cursor, goal| {
+                            motion
+                                .move_point(map, cursor, goal, times, &text_layout_details)
+                                .unwrap_or((cursor, goal))
+                        })
+                    }
+                }
+                
             })
         });
     }
