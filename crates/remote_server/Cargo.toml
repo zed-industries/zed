@@ -63,3 +63,6 @@ serde_json.workspace = true
 [build-dependencies]
 cargo_toml.workspace = true
 toml.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["rust-embed"]
