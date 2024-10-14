@@ -3801,10 +3801,9 @@ impl EditorElement {
 
                 editor.update(cx, |editor, cx| {
                     if event.pressed_button == Some(MouseButton::Left)
-                        && (editor.scroll_manager.is_dragging_scrollbar(Axis::Vertical)
-                            || editor
-                                .scroll_manager
-                                .is_dragging_scrollbar(Axis::Horizontal))
+                        && editor
+                            .scroll_manager
+                            .is_dragging_scrollbar(Axis::Horizontal)
                     {
                         let x = mouse_position.x;
                         let new_x = event.position.x;
@@ -3853,10 +3852,7 @@ impl EditorElement {
 
                 editor.update(cx, |editor, cx| {
                     if event.pressed_button == Some(MouseButton::Left)
-                        && (editor.scroll_manager.is_dragging_scrollbar(Axis::Vertical)
-                            || editor
-                                .scroll_manager
-                                .is_dragging_scrollbar(Axis::Horizontal))
+                        && editor.scroll_manager.is_dragging_scrollbar(Axis::Vertical)
                     {
                         let y = mouse_position.y;
                         let new_y = event.position.y;
