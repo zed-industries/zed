@@ -348,13 +348,13 @@ impl DevServerProjects {
     }
 
     fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default) {
+        if !matches!(self.mode, Mode::Default | Mode::ViewServerOptions(_, _)) {
             return;
         }
         self.focusable_items.next(cx);
     }
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default) {
+        if !matches!(self.mode, Mode::Default | Mode::ViewServerOptions(_, _)) {
             return;
         }
         self.focusable_items.prev(cx);
@@ -532,7 +532,7 @@ impl DevServerProjects {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default => {
+            Mode::Default | Mode::ViewServerOptions(_, _) => {
                 let items = std::mem::take(&mut self.focusable_items);
                 items.confirm(self, cx);
                 self.focusable_items = items;
@@ -561,8 +561,9 @@ impl DevServerProjects {
                     }
                 });
                 self.mode = Mode::Default;
+                self.focusable_items.reset_selection();
+                self.focus_handle.focus(cx);
             }
-            _ => {}
         }
     }
 
@@ -917,13 +918,13 @@ impl DevServerProjects {
     }
 
     fn render_view_options(
-        &self,
+        &mut self,
         index: usize,
-        connection: &SshConnection,
+        connection: SshConnection,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let connection_string = SharedString::from(connection.host.clone());
-        let workspace = self.workspace.clone();
+
         v_flex()
             .size_full()
             .child(
@@ -937,9 +938,17 @@ impl DevServerProjects {
                 }
                 .render(cx),
             )
-            .child(
+            .child({
+                self.focusable_items.add_item(Box::new({
+                    move |this, cx| {
+                        this.mode = Mode::EditNickname(EditNicknameState::new(index, cx));
+                        cx.notify();
+                    }
+                }));
+                let is_selected = self.focusable_items.is_selected();
+
                 ListItem::new("add-nickname")
-                    .selected(false)
+                    .selected(is_selected)
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
@@ -947,46 +956,66 @@ impl DevServerProjects {
                     .on_click(cx.listener(move |this, _, cx| {
                         this.mode = Mode::EditNickname(EditNicknameState::new(index, cx));
                         cx.notify();
-                    })),
-            )
-            .child(
+                    }))
+            })
+            .child({
+                let workspace = self.workspace.clone();
+                fn callback(
+                    workspace: WeakView<Workspace>,
+                    connection_string: SharedString,
+                    cx: &mut WindowContext<'_>,
+                ) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(connection_string.to_string()));
+                    workspace
+                        .update(cx, |this, cx| {
+                            struct SshServerAddressCopiedToClipboard;
+                            let notification = format!(
+                                "Copied server address ({}) to clipboard",
+                                connection_string
+                            );
+                            this.show_toast(
+                                Toast::new(
+                                    NotificationId::identified::<SshServerAddressCopiedToClipboard>(
+                                        connection_string.clone(),
+                                    ),
+                                    notification,
+                                )
+                                .autohide(),
+                                cx,
+                            );
+                        })
+                        .ok();
+                }
+                self.focusable_items.add_item(Box::new({
+                    let workspace = workspace.clone();
+                    let connection_string = connection_string.clone();
+                    move |_, cx| {
+                        callback(workspace.clone(), connection_string.clone(), cx);
+                    }
+                }));
+                let is_selected = self.focusable_items.is_selected();
                 ListItem::new("copy-server-address")
-                    .selected(false)
+                    .selected(is_selected)
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
                     .child(Label::new("Copy Server Address"))
                     .end_hover_slot(Label::new(connection_string.clone()).color(Color::Muted))
                     .on_click(move |_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(
-                            connection_string.to_string(),
-                        ));
-                        workspace
-                            .update(cx, |this, cx| {
-                                struct SshServerAddressCopiedToClipboard;
-                                let notification = format!(
-                                    "Copied server address ({}) to clipboard",
-                                    connection_string
-                                );
-                                this.show_toast(
-                                    Toast::new(
-                                        NotificationId::identified::<
-                                            SshServerAddressCopiedToClipboard,
-                                        >(
-                                            connection_string.clone()
-                                        ),
-                                        notification,
-                                    )
-                                    .autohide(),
-                                    cx,
-                                );
-                            })
-                            .ok();
-                    }),
-            )
-            .child(
+                        callback(workspace.clone(), connection_string.clone(), cx);
+                    })
+            })
+            .child({
+                self.focusable_items.add_item(Box::new({
+                    move |this, cx| {
+                        this.delete_ssh_server(index, cx);
+                        this.mode = Mode::Default;
+                        cx.notify();
+                    }
+                }));
+                let is_selected = self.focusable_items.is_selected();
                 ListItem::new("delete-server")
-                    .selected(false)
+                    .selected(is_selected)
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Trash).color(Color::Error))
@@ -995,15 +1024,22 @@ impl DevServerProjects {
                         this.delete_ssh_server(index, cx);
                         this.mode = Mode::Default;
                         cx.notify();
-                    })),
-            )
+                    }))
+            })
             .child(
                 h_flex()
                     .border_t_1()
                     .border_color(cx.theme().colors().border_variant)
-                    .child(
+                    .child({
+                        self.focusable_items.add_item(Box::new({
+                            move |this, cx| {
+                                this.mode = Mode::Default;
+                                cx.notify();
+                            }
+                        }));
+                        let is_selected = self.focusable_items.is_selected();
                         ListItem::new("go-back")
-                            .selected(false)
+                            .selected(is_selected)
                             .inset(true)
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
@@ -1011,8 +1047,8 @@ impl DevServerProjects {
                             .on_click(cx.listener(|this, _, cx| {
                                 this.mode = Mode::Default;
                                 cx.notify()
-                            })),
-                    ),
+                            }))
+                    }),
             )
     }
 
@@ -1164,7 +1200,7 @@ impl Render for DevServerProjects {
             .child(match &self.mode {
                 Mode::Default => self.render_default(cx).into_any_element(),
                 Mode::ViewServerOptions(index, connection) => self
-                    .render_view_options(*index, connection, cx)
+                    .render_view_options(*index, connection.clone(), cx)
                     .into_any_element(),
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
                 Mode::CreateDevServer(state) => {
