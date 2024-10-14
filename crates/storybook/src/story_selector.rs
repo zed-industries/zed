@@ -48,9 +48,7 @@ impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
             Self::AlertDialog => cx
-                .new_view(|cx| {
-                    ui_feedback::alert_dialog::alert_dialog_stories::AlertDialogStory::new(cx)
-                })
+                .new_view(|cx| alert_dialog::alert_dialog_stories::AlertDialogStory::new(cx))
                 .into(),
             Self::ApplicationMenu => cx
                 .new_view(|cx| title_bar::ApplicationMenuStory::new(cx))

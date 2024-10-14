@@ -1,4 +1,6 @@
 #![allow(unused, dead_code)]
+#![deny(missing_docs)]
+//! Provides the Alert Dialog UI component – A modal dialog that interrupts the user's workflow to convey critical information.
 
 use std::sync::Arc;
 

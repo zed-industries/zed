@@ -1,5 +1,5 @@
 [package]
-name = "ui_feedback"
+name = "alert_dialog"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/ui_feedback.rs"
+path = "src/alert_dialog.rs"
 
 [dependencies]
 gpui.workspace = true

@@ -120,7 +120,7 @@ members = [
     "crates/time_format",
     "crates/title_bar",
     "crates/ui",
-    "crates/ui_feedback",
+    "crates/alert_dialog",
     "crates/ui_input",
     "crates/ui_macros",
     "crates/util",
@@ -299,7 +299,7 @@ theme_selector = { path = "crates/theme_selector" }
 time_format = { path = "crates/time_format" }
 title_bar = { path = "crates/title_bar" }
 ui = { path = "crates/ui" }
-ui_feedback = { path = "crates/ui_feedback" }
+alert_dialog = { path = "crates/alert_dialog" }
 ui_input = { path = "crates/ui_input" }
 ui_macros = { path = "crates/ui_macros" }
 util = { path = "crates/util" }

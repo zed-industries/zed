@@ -109,6 +109,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "alert_dialog"
+version = "0.1.0"
+dependencies = [
+ "gpui",
+ "settings",
+ "story",
+ "theme",
+ "ui",
+ "workspace",
+]
+
+[[package]]
 name = "aliasable"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -10864,6 +10876,7 @@ dependencies = [
 name = "storybook"
 version = "0.1.0"
 dependencies = [
+ "alert_dialog",
  "anyhow",
  "clap",
  "collab_ui",
@@ -10887,7 +10900,6 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
- "ui_feedback",
 ]
 
 [[package]]
@@ -11755,7 +11767,6 @@ dependencies = [
  "theme_selector",
  "tree-sitter-md",
  "ui",
- "ui_feedback",
  "util",
  "vcs_menu",
  "windows 0.58.0",
@@ -12417,18 +12428,6 @@ dependencies = [
  "theme",
  "ui_macros",
  "windows 0.58.0",
-]
-
-[[package]]
-name = "ui_feedback"
-version = "0.1.0"
-dependencies = [
- "gpui",
- "settings",
- "story",
- "theme",
- "ui",
- "workspace",
 ]
 
 [[package]]
