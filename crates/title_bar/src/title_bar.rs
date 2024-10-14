@@ -8,6 +8,7 @@ mod stories;
 
 use crate::application_menu::ApplicationMenu;
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
+use alert_dialog::AlertDialog;
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
@@ -67,6 +68,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
+    test_dialog: View<AlertDialog>,
 }
 
 impl Render for TitleBar {
@@ -84,6 +86,8 @@ impl Render for TitleBar {
         } else {
             cx.theme().colors().title_bar_background
         };
+        let workspace = self.workspace.clone();
+        let test_dialog = self.test_dialog.clone();
 
         h_flex()
             .id("titlebar")
@@ -139,6 +143,13 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
+                    .child(
+                        Button::new("test-dialog", "Test Dialog").on_click(move |_, cx| {
+                            let workspace = workspace.clone();
+
+                            test_dialog.update(cx, move |dialog, cx| dialog.show(workspace, cx));
+                        }),
+                    )
                     .child(
                         h_flex()
                             .gap_1()
@@ -220,6 +231,14 @@ impl TitleBar {
             }
         };
 
+        let test_dialog = AlertDialog::new(cx, |dialog, cx| {
+            dialog
+                .title("Do you want to leave the current call?")
+                .message("The current window will be closed, and connections to any shared projects will be terminated.")
+                .primary_action("Leave Call", |_, _| {})
+                .secondary_dismiss_action("Cancel", cx)
+        });
+
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -242,6 +261,7 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
+            test_dialog,
         }
     }
 
