@@ -7,7 +7,6 @@ use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
 use dev_server_projects::{DevServer, DevServerId, DevServerProjectId};
-use editor::Editor;
 use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use futures::future::Shared;
@@ -26,7 +25,7 @@ use picker::Picker;
 use project::terminals::wrap_for_ssh;
 use project::terminals::SshCommand;
 use project::Project;
-use rpc::{proto::DevServerStatus, ErrorCode, ErrorExt};
+use rpc::proto::DevServerStatus;
 use settings::update_settings_file;
 use settings::Settings;
 use task::HideStrategy;
@@ -39,7 +38,7 @@ use ui::{prelude::*, IconButtonShape, List, ListItem, Modal, ModalHeader, Toolti
 use ui_input::{FieldLabelLayout, TextField};
 use util::ResultExt;
 use workspace::OpenOptions;
-use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
+use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
 
 use crate::open_dev_server_project;
 use crate::ssh_connections::connect_over_ssh;
@@ -59,7 +58,6 @@ pub struct DevServerProjects {
     scroll_handle: ScrollHandle,
     dev_server_store: Model<dev_server_projects::Store>,
     workspace: WeakView<Workspace>,
-    project_path_input: View<Editor>,
     dev_server_name_input: View<TextField>,
     _dev_server_subscription: Subscription,
     focusable_items: SelectableItemList,
@@ -69,11 +67,6 @@ pub struct DevServerProjects {
 struct CreateDevServer {
     creating: Option<Task<Option<()>>>,
     ssh_prompt: Option<View<SshPrompt>>,
-}
-
-struct CreateDevServerProject {
-    dev_server_id: DevServerId,
-    _opening: Option<Subscription>,
 }
 
 struct ProjectPicker {
@@ -258,7 +251,7 @@ impl gpui::Render for ProjectPicker {
                     on_back_click_handler: Box::new(cx.listener(|this, _, cx| {
                         this.main_modal
                             .update(cx, |this, cx| {
-                                this.mode = Mode::Default(None);
+                                this.mode = Mode::Default;
                                 this.focusable_items.reset_selection();
                                 cx.notify();
                             })
@@ -272,7 +265,7 @@ impl gpui::Render for ProjectPicker {
     }
 }
 enum Mode {
-    Default(Option<CreateDevServerProject>),
+    Default,
     ViewServerOptions(usize, SshConnection),
     ProjectPicker(View<ProjectPicker>),
     CreateDevServer(CreateDevServer),
@@ -294,11 +287,6 @@ impl DevServerProjects {
     }
 
     pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
-        let project_path_input = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Project path (~/work/zed, /workspace/zed, …)", cx);
-            editor
-        });
         let dev_server_name_input = cx.new_view(|cx| {
             TextField::new(cx, "Name", "192.168.0.1").with_label(FieldLabelLayout::Hidden)
         });
@@ -317,11 +305,10 @@ impl DevServerProjects {
         });
 
         Self {
-            mode: Mode::Default(None),
+            mode: Mode::Default,
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
-            project_path_input,
             dev_server_name_input,
             workspace,
             _dev_server_subscription: subscription,
@@ -330,13 +317,13 @@ impl DevServerProjects {
     }
 
     fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default(_)) {
+        if !matches!(self.mode, Mode::Default) {
             return;
         }
         self.focusable_items.next(cx);
     }
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default(_)) {
+        if !matches!(self.mode, Mode::Default) {
             return;
         }
         self.focusable_items.prev(cx);
@@ -358,119 +345,6 @@ impl DevServerProjects {
         ));
 
         this
-    }
-
-    pub fn create_dev_server_project(
-        &mut self,
-        dev_server_id: DevServerId,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let mut path = self.project_path_input.read(cx).text(cx).trim().to_string();
-
-        if path.is_empty() {
-            return;
-        }
-
-        if !path.starts_with('/') && !path.starts_with('~') {
-            path = format!("~/{}", path);
-        }
-
-        if self
-            .dev_server_store
-            .read(cx)
-            .projects_for_server(dev_server_id)
-            .iter()
-            .any(|p| p.paths.iter().any(|p| p == &path))
-        {
-            cx.spawn(|_, mut cx| async move {
-                cx.prompt(
-                    gpui::PromptLevel::Critical,
-                    "Failed to create project",
-                    Some(&format!("{} is already open on this dev server.", path)),
-                    &["Ok"],
-                )
-                .await
-            })
-            .detach_and_log_err(cx);
-            return;
-        }
-
-        let create = {
-            let path = path.clone();
-            self.dev_server_store.update(cx, |store, cx| {
-                store.create_dev_server_project(dev_server_id, path, cx)
-            })
-        };
-
-        cx.spawn(|this, mut cx| async move {
-            let result = create.await;
-            this.update(&mut cx, |this, cx| {
-                if let Ok(result) = &result {
-                    if let Some(dev_server_project_id) =
-                        result.dev_server_project.as_ref().map(|p| p.id)
-                    {
-                        let subscription =
-                            cx.observe(&this.dev_server_store, move |this, store, cx| {
-                                if let Some(project_id) = store
-                                    .read(cx)
-                                    .dev_server_project(DevServerProjectId(dev_server_project_id))
-                                    .and_then(|p| p.project_id)
-                                {
-                                    this.project_path_input.update(cx, |editor, cx| {
-                                        editor.set_text("", cx);
-                                    });
-                                    this.mode = Mode::Default(None);
-                                    this.focusable_items.reset_selection();
-                                    if let Some(app_state) = AppState::global(cx).upgrade() {
-                                        workspace::join_dev_server_project(
-                                            DevServerProjectId(dev_server_project_id),
-                                            project_id,
-                                            app_state,
-                                            None,
-                                            cx,
-                                        )
-                                        .detach_and_prompt_err(
-                                            "Could not join project",
-                                            cx,
-                                            |_, _| None,
-                                        )
-                                    }
-                                }
-                            });
-
-                        this.mode = Mode::Default(Some(CreateDevServerProject {
-                            dev_server_id,
-                            _opening: Some(subscription),
-                        }));
-                    }
-                } else {
-                    this.mode = Mode::Default(Some(CreateDevServerProject {
-                        dev_server_id,
-                        _opening: None,
-                    }));
-                }
-            })
-            .log_err();
-            result
-        })
-        .detach_and_prompt_err("Failed to create project", cx, move |e, _| {
-            match e.error_code() {
-                ErrorCode::DevServerOffline => Some(
-                    "The dev server is offline. Please log in and check it is connected."
-                        .to_string(),
-                ),
-                ErrorCode::DevServerProjectPathDoesNotExist => {
-                    Some(format!("The path `{}` does not exist on the server.", path))
-                }
-                _ => None,
-            }
-        });
-
-        self.mode = Mode::Default(Some(CreateDevServerProject {
-            dev_server_id,
-
-            _opening: None,
-        }));
     }
 
     fn create_ssh_server(&mut self, cx: &mut ViewContext<Self>) {
@@ -525,7 +399,7 @@ impl DevServerProjects {
                         });
 
                         this.add_ssh_server(connection_options, cx);
-                        this.mode = Mode::Default(None);
+                        this.mode = Mode::Default;
                         this.focusable_items.reset_selection();
                         cx.notify()
                     })
@@ -627,13 +501,10 @@ impl DevServerProjects {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default(None) => {
+            Mode::Default => {
                 let items = std::mem::take(&mut self.focusable_items);
                 items.confirm(self, cx);
                 self.focusable_items = items;
-            }
-            Mode::Default(Some(create_project)) => {
-                self.create_dev_server_project(create_project.dev_server_id, cx);
             }
             Mode::ProjectPicker(_) => {}
             Mode::CreateDevServer(state) => {
@@ -652,7 +523,7 @@ impl DevServerProjects {
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default(None) => cx.emit(DismissEvent),
+            Mode::Default => cx.emit(DismissEvent),
             Mode::CreateDevServer(state) if state.ssh_prompt.is_some() => {
                 self.mode = Mode::CreateDevServer(CreateDevServer {
                     ..Default::default()
@@ -661,7 +532,7 @@ impl DevServerProjects {
                 cx.notify();
             }
             _ => {
-                self.mode = Mode::Default(None);
+                self.mode = Mode::Default;
                 self.focusable_items.reset_selection();
                 self.focus_handle(cx).focus(cx);
                 cx.notify();
@@ -691,41 +562,6 @@ impl DevServerProjects {
                                 .whitespace_nowrap()
                                 .child(Label::new(ssh_connection.host.clone())),
                         ),
-                    )
-                    .child(
-                        h_flex()
-                            .visible_on_hover("ssh-server")
-                            .gap_1()
-                            .child({
-                                IconButton::new("copy-dev-server-address", IconName::Copy)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.update_settings_file(cx, move |servers, cx| {
-                                            if let Some(content) = servers
-                                                .ssh_connections
-                                                .as_ref()
-                                                .and_then(|connections| {
-                                                    connections
-                                                        .get(ix)
-                                                        .map(|connection| connection.host.clone())
-                                                })
-                                            {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    content,
-                                                ));
-                                            }
-                                        });
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Copy Server Address", cx))
-                            })
-                            .child({
-                                IconButton::new("remove-dev-server", IconName::TrashAlt)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.delete_ssh_server(ix, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Remove Dev Server", cx))
-                            }),
                     ),
             )
             .child(
@@ -1037,7 +873,7 @@ impl DevServerProjects {
             .child(
                 SshConnectionHeader {
                     on_back_click_handler: Box::new(cx.listener(|this, _, cx| {
-                        this.mode = Mode::Default(None);
+                        this.mode = Mode::Default;
                         cx.notify();
                     })),
                     connection_string: connection_string.clone(),
@@ -1076,7 +912,7 @@ impl DevServerProjects {
                     .child(Label::new("Delete Server").color(Color::Error))
                     .on_click(cx.listener(move |this, _, cx| {
                         this.delete_ssh_server(index, cx);
-                        this.mode = Mode::Default(None);
+                        this.mode = Mode::Default;
                         cx.notify();
                     })),
             )
@@ -1092,7 +928,7 @@ impl DevServerProjects {
                             .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
                             .child(Label::new("Go Back"))
                             .on_click(cx.listener(|this, _, cx| {
-                                this.mode = Mode::Default(None);
+                                this.mode = Mode::Default;
                                 cx.notify()
                             })),
                     ),
@@ -1208,14 +1044,14 @@ impl Render for DevServerProjects {
                 this.focus_handle(cx).focus(cx);
             }))
             .on_mouse_down_out(cx.listener(|this, _, cx| {
-                if matches!(this.mode, Mode::Default(None)) {
+                if matches!(this.mode, Mode::Default) {
                     cx.emit(DismissEvent)
                 }
             }))
             .w(rems(34.))
             .max_h(rems(40.))
             .child(match &self.mode {
-                Mode::Default(_) => self.render_default(cx).into_any_element(),
+                Mode::Default => self.render_default(cx).into_any_element(),
                 Mode::ViewServerOptions(index, connection) => self
                     .render_view_options(*index, connection, cx)
                     .into_any_element(),
