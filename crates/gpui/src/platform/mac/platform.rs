@@ -6,9 +6,9 @@ use super::{
 use crate::{
     hash, Action, AnyWindowHandle, BackgroundExecutor, ClipboardEntry, ClipboardItem,
     ClipboardString, CursorStyle, ForegroundExecutor, Image, ImageFormat, Keymap, MacDispatcher,
-    MacDisplay, MacTextSystem, MacWindow, Menu, MenuItem, PathPromptOptions, Platform,
-    PlatformDisplay, PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task,
-    WindowAppearance, WindowParams,
+    MacDisplay, MacWindow, Menu, MenuItem, PathPromptOptions, Platform, PlatformDisplay,
+    PlatformTextSystem, PlatformWindow, Result, SemanticVersion, Task, WindowAppearance,
+    WindowParams,
 };
 use anyhow::anyhow;
 use block::ConcreteBlock;
@@ -145,7 +145,7 @@ pub(crate) struct MacPlatform(Mutex<MacPlatformState>);
 pub(crate) struct MacPlatformState {
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
-    text_system: Arc<MacTextSystem>,
+    text_system: Arc<dyn PlatformTextSystem>,
     renderer_context: renderer::Context,
     headless: bool,
     pasteboard: id,
@@ -171,11 +171,18 @@ impl Default for MacPlatform {
 impl MacPlatform {
     pub(crate) fn new(headless: bool) -> Self {
         let dispatcher = Arc::new(MacDispatcher::new());
+
+        #[cfg(feature = "font-kit")]
+        let text_system = Arc::new(crate::MacTextSystem::new());
+
+        #[cfg(not(feature = "font-kit"))]
+        let text_system = Arc::new(crate::NoopTextSystem::new());
+
         Self(Mutex::new(MacPlatformState {
-            background_executor: BackgroundExecutor::new(dispatcher.clone()),
             headless,
+            text_system,
+            background_executor: BackgroundExecutor::new(dispatcher.clone()),
             foreground_executor: ForegroundExecutor::new(dispatcher),
-            text_system: Arc::new(MacTextSystem::new()),
             renderer_context: renderer::Context::default(),
             pasteboard: unsafe { NSPasteboard::generalPasteboard(nil) },
             text_hash_pasteboard_type: unsafe { ns_string("zed-text-hash") },
@@ -216,7 +223,8 @@ impl MacPlatform {
 
         for menu_config in menus {
             let menu = NSMenu::new(nil).autorelease();
-            menu.setTitle_(ns_string(&menu_config.name));
+            let menu_title = ns_string(&menu_config.name);
+            menu.setTitle_(menu_title);
             menu.setDelegate_(delegate);
 
             for item_config in menu_config.items {
@@ -229,6 +237,7 @@ impl MacPlatform {
             }
 
             let menu_item = NSMenuItem::new(nil).autorelease();
+            menu_item.setTitle_(menu_title);
             menu_item.setSubmenu_(menu);
             application_menu.addItem_(menu_item);
 

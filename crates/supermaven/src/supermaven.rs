@@ -141,6 +141,7 @@ impl Supermaven {
                 SupermavenCompletionState {
                     buffer_id,
                     prefix_anchor: cursor_position,
+                    prefix_offset: offset,
                     text: String::new(),
                     dedent: String::new(),
                     updates_tx,
@@ -216,7 +217,7 @@ fn find_relevant_completion<'a>(
         };
 
         let current_cursor_offset = cursor_position.to_offset(buffer);
-        let original_cursor_offset = state.prefix_anchor.to_offset(buffer);
+        let original_cursor_offset = state.prefix_offset;
         if current_cursor_offset < original_cursor_offset {
             continue;
         }
@@ -419,6 +420,9 @@ pub struct SupermavenCompletionStateId(usize);
 pub struct SupermavenCompletionState {
     buffer_id: EntityId,
     prefix_anchor: Anchor,
+    // prefix_offset is tracked independently because the anchor biases left which
+    // doesn't allow us to determine if the prior text has been deleted.
+    prefix_offset: usize,
     text: String,
     dedent: String,
     updates_tx: watch::Sender<()>,

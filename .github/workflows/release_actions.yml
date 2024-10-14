@@ -1,3 +1,5 @@
+name: Release Actions
+
 on:
   release:
     types: [published]

@@ -810,7 +810,7 @@ mod tests {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                    resolve_provider: Some(false),
+                    resolve_provider: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -902,15 +902,12 @@ mod tests {
         assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
         //apply a completion and check it was successfully applied
-        let () = cx
-            .update_editor(|editor, cx| {
-                editor.context_menu_next(&Default::default(), cx);
-                editor
-                    .confirm_completion(&ConfirmCompletion::default(), cx)
-                    .unwrap()
-            })
-            .await
-            .unwrap();
+        let _apply_additional_edits = cx.update_editor(|editor, cx| {
+            editor.context_menu_next(&Default::default(), cx);
+            editor
+                .confirm_completion(&ConfirmCompletion::default(), cx)
+                .unwrap()
+        });
         cx.assert_editor_state(indoc! {"
             one.second_completionˇ
             two

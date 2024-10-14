@@ -96,10 +96,13 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build collab
-        run: cargo build -p collab
+        run: RUSTFLAGS="-D warnings" cargo build -p collab
 
       - name: Build other binaries and features
-        run: cargo build --workspace --bins --all-features; cargo check -p gpui --features "macos-blade"
+        run: |
+          RUSTFLAGS="-D warnings" cargo build --workspace --bins --all-features
+          cargo check -p gpui --features "macos-blade"
+          RUSTFLAGS="-D warnings" cargo build -p remote_server
 
   linux_tests:
     timeout-minutes: 60
@@ -131,7 +134,33 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build Zed
-        run: cargo build -p zed
+        run: RUSTFLAGS="-D warnings" cargo build -p zed
+
+  build_remote_server:
+    timeout-minutes: 60
+    name: (Linux) Build Remote Server
+    runs-on:
+      - buildjet-16vcpu-ubuntu-2204
+    steps:
+      - name: Add Rust to the PATH
+        run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Checkout repo
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        with:
+          clean: false
+
+      - name: Cache dependencies
+        uses: swatinem/rust-cache@23bce251a8cd2ffc3c1075eaa2367cf899916d84 # v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-provider: "buildjet"
+
+      - name: Install Clang & Mold
+        run: ./script/remote-server && ./script/install-mold 2.34.0
+
+      - name: Build Remote Server
+        run: RUSTFLAGS="-D warnings" cargo build -p remote_server
 
   # todo(windows): Actually run the tests
   windows_tests:
@@ -155,7 +184,7 @@ jobs:
         run: cargo xtask clippy
 
       - name: Build Zed
-        run: cargo build -p zed
+        run: $env:RUSTFLAGS="-D warnings"; cargo build
 
   bundle-mac:
     timeout-minutes: 60
@@ -219,20 +248,20 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (universal) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: target/release/Zed.dmg
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -283,7 +312,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -330,7 +359,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@50769540e7f4bd5e21e526ee35c689e35e0d6874 # v4
+        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz

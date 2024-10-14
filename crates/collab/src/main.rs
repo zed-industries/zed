@@ -111,6 +111,13 @@ async fn main() -> Result<()> {
 
                 let state = AppState::new(config, Executor::Production).await?;
 
+                if let Some(stripe_billing) = state.stripe_billing.clone() {
+                    let executor = state.executor.clone();
+                    executor.spawn_detached(async move {
+                        stripe_billing.initialize().await.trace_err();
+                    });
+                }
+
                 if mode.is_collab() {
                     state.db.purge_old_embeddings().await.trace_err();
                     RateLimiter::save_periodically(
@@ -157,7 +164,7 @@ async fn main() -> Result<()> {
 
                     if let Some(mut llm_db) = llm_db {
                         llm_db.initialize().await?;
-                        sync_llm_usage_with_stripe_periodically(state.clone(), llm_db);
+                        sync_llm_usage_with_stripe_periodically(state.clone());
                     }
 
                     app = app

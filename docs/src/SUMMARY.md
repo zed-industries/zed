@@ -29,6 +29,7 @@
 - [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
+- [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
 # Assistant
@@ -110,6 +111,7 @@
 - [TypeScript](./languages/typescript.md)
 - [Uiua](./languages/uiua.md)
 - [Vue](./languages/vue.md)
+- [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)

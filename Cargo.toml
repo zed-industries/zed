@@ -52,7 +52,6 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
-    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -88,6 +87,7 @@ members = [
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
+    "crates/reqwest_client",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -122,6 +122,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
+    "crates/reqwest_client",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -144,7 +145,6 @@ members = [
     "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
-    "extensions/gleam",
     "extensions/glsl",
     "extensions/haskell",
     "extensions/html",
@@ -220,7 +220,7 @@ git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
-gpui = { path = "crates/gpui" }
+gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
 gpui_macros = { path = "crates/gpui_macros" }
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
@@ -229,7 +229,6 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
-isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
@@ -266,6 +265,7 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
+reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -327,7 +327,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.23"
+async-tungstenite = "0.24"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
@@ -336,6 +336,7 @@ blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blake3 = "1.5.3"
+bytes = "1.0"
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -367,10 +368,6 @@ ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
-# We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "text-decoding",
-] }
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
@@ -395,6 +392,7 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = ["charset", "http2", "macos-system-configuration", "rustls-tls-native-roots", "stream"]}
 rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
@@ -439,7 +437,7 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.8"
 toml = "0.8"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1" }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.23", features = ["wasm"] }
 tree-sitter-bash = "0.23"
@@ -479,9 +477,11 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
+zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
-version = "0.39"
+git = "https://github.com/zed-industries/async-stripe"
+rev = "3672dd4efb7181aa597bf580bf5a2f5d23db6735"
 default-features = false
 features = [
     "runtime-tokio-hyper-rustls",

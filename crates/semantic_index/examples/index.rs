@@ -2,7 +2,6 @@ use client::Client;
 use futures::channel::oneshot;
 use gpui::App;
 use http_client::HttpClientWithUrl;
-use isahc_http_client::IsahcHttpClient;
 use language::language_settings::AllLanguageSettings;
 use project::Project;
 use semantic_index::{OpenAiEmbeddingModel, OpenAiEmbeddingProvider, SemanticDb};
@@ -29,7 +28,9 @@ fn main() {
         let clock = Arc::new(FakeSystemClock::default());
 
         let http = Arc::new(HttpClientWithUrl::new(
-            IsahcHttpClient::new(None, None),
+            Arc::new(
+                reqwest_client::ReqwestClient::user_agent("Zed semantic index example").unwrap(),
+            ),
             "http://localhost:11434",
             None,
         ));
