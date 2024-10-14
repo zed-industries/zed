@@ -2464,13 +2464,7 @@ impl MultiBufferSnapshot {
         if self.singleton {
             self.excerpts.summary().max_buffer_row
         } else {
-            // TODO
-            let mut row = 0;
-            let excerpts = self.excerpts.items(&());
-            for excerpt in excerpts.iter() {
-                row += excerpt.text_summary.longest_row;
-            }
-            MultiBufferRow(row)
+            MultiBufferRow(self.max_point().row)
         }
     }
 
