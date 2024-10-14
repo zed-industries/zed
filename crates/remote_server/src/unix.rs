@@ -427,11 +427,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 }
 
 fn create_state_directory(identifier: &str) -> Result<PathBuf> {
-    let home_dir = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let server_dir = PathBuf::from(home_dir)
-        .join(".local")
-        .join("state")
-        .join("zed-remote-server")
+    let server_dir = paths::remote_server_state_dir()
         .join(identifier);
 
     std::fs::create_dir_all(&server_dir)?;

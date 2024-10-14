@@ -123,6 +123,13 @@ pub fn logs_dir() -> &'static PathBuf {
     })
 }
 
+/// Returns the path to the zed server directory on this ssh host.
+pub(crate) fn remote_server_state_dir() -> &'static PathBuf {
+    static REMOTE_SERVER_STATE: OnceLock<PathBuf> = OnceLock::new();
+    REMOTE_SERVER_STATE.get_or_init(|| return support_dir().join("server_state"))
+}
+
+
 /// Returns the path to the `Zed.log` file.
 pub fn log_file() -> &'static PathBuf {
     static LOG_FILE: OnceLock<PathBuf> = OnceLock::new();
