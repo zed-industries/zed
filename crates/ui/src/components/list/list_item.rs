@@ -193,7 +193,8 @@ impl RenderOnce for ListItem {
                     .id("inner_list_item")
                     .w_full()
                     .relative()
-                    .gap_1()
+                    .items_center()
+                    .gap_1p5()
                     .px(Spacing::Medium.rems(cx))
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
