@@ -72,44 +72,26 @@ pub(crate) struct AssistantPatchResolutionError {
     pub message: String,
 }
 
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum SearchDirection {
-    Diagonal,
     Up,
     Left,
+    Diagonal,
 }
 
 // A measure of the currently quality of an in-progress fuzzy search.
 //
 // Uses 60 bits to store a numeric cost, and 4 bits to store the preceding
 // operation in the search.
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq)]
-struct SearchState(u64);
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct SearchState {
+    score: u32,
+    direction: SearchDirection,
+}
 
 impl SearchState {
-    fn new(value: u64, direction: SearchDirection) -> Self {
-        let value_bits = value & 0x0fffffffffffffff;
-        let direction_bits = match direction {
-            SearchDirection::Diagonal => 0x0000000000000000,
-            SearchDirection::Up => 0x1000000000000000,
-            SearchDirection::Left => 0x2000000000000000,
-        };
-        Self(value_bits | direction_bits)
-    }
-
-    fn value(&self) -> u64 {
-        self.0 & 0x0fffffffffffffff
-    }
-
-    fn direction(&self) -> SearchDirection {
-        match self.0 & 0xf000000000000000 {
-            0x0000000000000000 => SearchDirection::Diagonal,
-            0x1000000000000000 => SearchDirection::Up,
-            0x2000000000000000 => SearchDirection::Left,
-            _ => unreachable!(),
-        }
+    fn new(score: u32, direction: SearchDirection) -> Self {
+        Self { score, direction }
     }
 }
 
@@ -309,10 +291,11 @@ impl AssistantEditKind {
     }
 
     fn resolve_location(buffer: &text::BufferSnapshot, search_query: &str) -> Range<text::Anchor> {
-        const INSERTION_COST: u64 = 3;
-        const DELETION_COST: u64 = 3;
-        const WHITESPACE_INSERTION_COST: u64 = 1;
-        const WHITESPACE_DELETION_COST: u64 = 1;
+        const INSERTION_COST: u32 = 3;
+        const WHITESPACE_INSERTION_COST: u32 = 1;
+        const DELETION_COST: u32 = 3;
+        const WHITESPACE_DELETION_COST: u32 = 1;
+        const EQUALITY_BONUS: u32 = 5;
 
         struct Matrix {
             cols: usize,
@@ -340,14 +323,8 @@ impl AssistantEditKind {
         let query_len = search_query.len();
         let mut matrix = Matrix::new(query_len + 1, buffer_len + 1);
 
-        for (i, query_byte) in search_query.bytes().enumerate() {
-            matrix.set(
-                i + 1,
-                0,
-                SearchState::new(i as u64 * INSERTION_COST, SearchDirection::Left),
-            );
-
-            for (j, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
+        for (row, query_byte) in search_query.bytes().enumerate() {
+            for (col, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
                 let deletion_cost = if query_byte.is_ascii_whitespace() {
                     WHITESPACE_DELETION_COST
                 } else {
@@ -359,59 +336,48 @@ impl AssistantEditKind {
                     INSERTION_COST
                 };
 
-                let up = matrix.get(i + 1, j).value() + deletion_cost;
-                let left = matrix.get(i, j + 1).value() + insertion_cost;
-                let diagonal = matrix.get(i, j).value()
-                    + if query_byte == *buffer_byte {
-                        0
+                let up = SearchState::new(
+                    matrix.get(row, col + 1).score.saturating_sub(deletion_cost),
+                    SearchDirection::Up,
+                );
+                let left = SearchState::new(
+                    matrix
+                        .get(row + 1, col)
+                        .score
+                        .saturating_sub(insertion_cost),
+                    SearchDirection::Left,
+                );
+                let diagonal = SearchState::new(
+                    if query_byte == *buffer_byte {
+                        matrix.get(row, col).score.saturating_add(EQUALITY_BONUS)
                     } else {
-                        deletion_cost + insertion_cost
-                    };
-
-                let cost = if up < diagonal {
-                    if up <= left {
-                        SearchState::new(up, SearchDirection::Up)
-                    } else {
-                        SearchState::new(left, SearchDirection::Left)
-                    }
-                } else if left < diagonal {
-                    SearchState::new(left, SearchDirection::Left)
-                } else {
-                    SearchState::new(diagonal, SearchDirection::Diagonal)
-                };
-
-                matrix.set(i + 1, j + 1, cost);
+                        matrix
+                            .get(row, col)
+                            .score
+                            .saturating_sub(deletion_cost + insertion_cost)
+                    },
+                    SearchDirection::Diagonal,
+                );
+                matrix.set(row + 1, col + 1, up.max(left).max(diagonal));
             }
-        }
-
-        eprintln!("query: {:?}", search_query);
-        eprintln!("haystack: {:?}", buffer.text());
-
-        for row in 0..=query_len {
-            for col in 0..=buffer.len() {
-                eprint!("{}\t", matrix.get(row, col).value());
-            }
-            eprintln!("");
         }
 
         // Traceback to find the best match
         let mut best_buffer_end = buffer_len;
-        let mut best_cost = u64::MAX;
+        let mut best_score = 0;
         for col in 1..=buffer_len {
-            let cost = matrix.get(query_len, col).value();
-            if cost < best_cost {
-                best_cost = cost;
+            let score = matrix.get(query_len, col).score;
+            if score > best_score {
+                best_score = score;
                 best_buffer_end = col;
             }
         }
-
-        eprintln!("best cost: {best_cost}, best_buffer_end: {best_buffer_end}");
 
         let mut query_ix = query_len;
         let mut buffer_ix = best_buffer_end;
         while query_ix > 0 && buffer_ix > 0 {
             let current = matrix.get(query_ix, buffer_ix);
-            match current.direction() {
+            match current.direction {
                 SearchDirection::Diagonal => {
                     query_ix -= 1;
                     buffer_ix -= 1;
@@ -428,7 +394,9 @@ impl AssistantEditKind {
         let mut start = buffer.offset_to_point(buffer.clip_offset(buffer_ix, Bias::Left));
         start.column = 0;
         let mut end = buffer.offset_to_point(buffer.clip_offset(best_buffer_end, Bias::Right));
-        end.column = buffer.line_len(end.row);
+        if end.column > 0 {
+            end.column = buffer.line_len(end.row);
+        }
 
         buffer.anchor_after(start)..buffer.anchor_before(end)
     }
