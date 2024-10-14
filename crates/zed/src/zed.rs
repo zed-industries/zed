@@ -3318,7 +3318,7 @@ mod tests {
                     .unwrap()
                     .unwrap(),
                 Assets
-                    .load("fonts/plex-sans/IBMPlexSans-Regular.ttf")
+                    .load("fonts/ibm-plex-sans/IBMPlexSans-Regular.ttf")
                     .unwrap()
                     .unwrap(),
             ])
