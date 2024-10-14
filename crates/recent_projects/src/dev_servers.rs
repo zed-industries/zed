@@ -20,7 +20,7 @@ use gpui::Task;
 use gpui::WeakView;
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Model, ScrollHandle, View, ViewContext,
+    FocusableView, FontWeight, Model, ScrollHandle, View, ViewContext,
 };
 use picker::Picker;
 use project::terminals::wrap_for_ssh;
@@ -605,27 +605,32 @@ impl DevServerProjects {
         };
         v_flex()
             .w_full()
+            .border_b_1()
+            .border_color(cx.theme().colors().border_variant)
+            .mb_1()
             .child(
                 h_flex()
-                    .w_full()
                     .group("ssh-server")
-                    .justify_between()
+                    .w_full()
+                    .pt_0p5()
+                    .px_2p5()
+                    .gap_1()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .w_full()
                     .child(
-                        h_flex().gap_2().w_full().child(
-                            h_flex()
-                                .gap_1()
-                                .max_w(rems(26.))
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .child(Label::new(main_label))
-                                .children(
-                                    aux_label.map(|label| Label::new(label).color(Color::Muted)),
-                                ),
-                        ),
+                        Label::new(main_label)
+                            .size(LabelSize::Small)
+                            .weight(FontWeight::SEMIBOLD),
+                    )
+                    .children(
+                        aux_label.map(|label| {
+                            Label::new(label).size(LabelSize::Small).color(Color::Muted)
+                        }),
                     ),
             )
             .child(
-                v_flex().w_full().mb_1().child(
+                v_flex().w_full().gap_1().mb_1().child(
                     List::new()
                         .empty_message("No projects.")
                         .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
@@ -637,7 +642,7 @@ impl DevServerProjects {
                                 cx,
                             ))
                         }))
-                        .child(h_flex().mt_1().map(|this| {
+                        .child(h_flex().map(|this| {
                             self.focusable_items.add_item(Box::new({
                                 let ssh_connection = ssh_connection.clone();
                                 move |this, cx| {
@@ -660,7 +665,7 @@ impl DevServerProjects {
                                     })),
                             )
                         }))
-                        .child(h_flex().mt_1().map(|this| {
+                        .child(h_flex().map(|this| {
                             self.focusable_items.add_item(Box::new({
                                 let ssh_connection = ssh_connection.clone();
                                 move |this, cx| {
@@ -756,6 +761,7 @@ impl DevServerProjects {
             .on_click(cx.listener(move |this, _, cx| callback(this, cx)))
             .end_hover_slot::<AnyElement>(Some(
                 IconButton::new("remove-remote-project", IconName::TrashAlt)
+                    .icon_size(IconSize::Small)
                     .on_click(
                         cx.listener(move |this, _, cx| this.delete_ssh_project(server_ix, ix, cx)),
                     )
@@ -1138,7 +1144,7 @@ impl DevServerProjects {
                                 .child(connect_button),
                         )
                         .child(
-                            div().p_2().child(
+                            div().child(
                                 List::new()
                                     .empty_message("No dev servers registered yet.")
                                     .children(ssh_connections.iter().cloned().enumerate().map(
@@ -1188,7 +1194,7 @@ impl Render for DevServerProjects {
                 }
             }))
             .w(rems(34.))
-            .max_h(rems(40.))
+            .max_h(rems(28.))
             .child(match &self.mode {
                 Mode::Default => self.render_default(cx).into_any_element(),
                 Mode::ViewServerOptions(index, connection) => self
