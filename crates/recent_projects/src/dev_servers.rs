@@ -7,6 +7,7 @@ use anyhow::anyhow;
 use anyhow::Context;
 use anyhow::Result;
 use dev_server_projects::{DevServer, DevServerId, DevServerProjectId};
+use editor::Editor;
 use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use futures::future::Shared;
@@ -83,6 +84,25 @@ type SelectedItemCallback =
 struct SelectableItemList {
     items: Vec<SelectedItemCallback>,
     active_item: Option<usize>,
+}
+
+struct EditNicknameState {
+    index: usize,
+    editor: View<Editor>,
+}
+
+impl EditNicknameState {
+    fn new(index: usize, cx: &mut WindowContext<'_>) -> Self {
+        let this = Self {
+            index,
+            editor: cx.new_view(Editor::single_line),
+        };
+        this.editor.update(cx, |this, cx| {
+            this.set_placeholder_text("Add a nickname for this server", cx);
+        });
+        this.editor.focus_handle(cx).focus(cx);
+        this
+    }
 }
 
 impl SelectableItemList {
@@ -267,6 +287,7 @@ impl gpui::Render for ProjectPicker {
 enum Mode {
     Default,
     ViewServerOptions(usize, SshConnection),
+    EditNickname(EditNicknameState),
     ProjectPicker(View<ProjectPicker>),
     CreateDevServer(CreateDevServer),
 }
@@ -548,7 +569,6 @@ impl DevServerProjects {
     ) -> impl IntoElement {
         v_flex()
             .w_full()
-            // .px(Spacing::Small.rems(cx) + Spacing::Small.rems(cx))
             .child(
                 h_flex()
                     .w_full()
@@ -887,7 +907,11 @@ impl DevServerProjects {
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
-                    .child(Label::new("Add Nickname to Server")),
+                    .child(Label::new("Add Nickname to Server"))
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.mode = Mode::EditNickname(EditNicknameState::new(index, cx));
+                        cx.notify();
+                    })),
             )
             .child(
                 ListItem::new("copy-server-address")
@@ -934,6 +958,36 @@ impl DevServerProjects {
                     ),
             )
     }
+
+    fn render_edit_nickname(
+        &self,
+        state: &EditNicknameState,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let Some(connection) = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(state.index)
+        else {
+            return v_flex();
+        };
+
+        let connection_string = SharedString::from(connection.host.clone());
+
+        v_flex()
+            .child(
+                SshConnectionHeader {
+                    on_back_click_handler: Box::new(cx.listener(|this, _, cx| {
+                        this.mode = Mode::Default;
+                        cx.notify();
+                    })),
+                    connection_string,
+                    nickname: Some("my-cool-server".into()),
+                }
+                .render(cx),
+            )
+            .child(h_flex().p_2().child(state.editor.clone()))
+    }
+
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let dev_servers = self.dev_server_store.read(cx).dev_servers();
         let ssh_connections = SshSettings::get_global(cx)
@@ -1058,6 +1112,9 @@ impl Render for DevServerProjects {
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
                 Mode::CreateDevServer(state) => {
                     self.render_create_dev_server(state, cx).into_any_element()
+                }
+                Mode::EditNickname(state) => {
+                    self.render_edit_nickname(state, cx).into_any_element()
                 }
             })
     }
