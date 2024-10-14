@@ -37,6 +37,7 @@ use ui::ElevationIndex;
 use ui::Section;
 use ui::{prelude::*, IconButtonShape, List, ListItem, Modal, ModalFooter, ModalHeader, Tooltip};
 use ui_input::{FieldLabelLayout, TextField};
+use util::maybe;
 use util::ResultExt;
 use workspace::OpenOptions;
 use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
@@ -272,6 +273,7 @@ impl gpui::Render for ProjectPicker {
 }
 enum Mode {
     Default(Option<CreateDevServerProject>),
+    ViewServerOptions(SshConnection),
     ProjectPicker(View<ProjectPicker>),
     CreateDevServer(CreateDevServer),
 }
@@ -543,6 +545,11 @@ impl DevServerProjects {
         });
     }
 
+    fn view_server_options(&mut self, ssh_connection: SshConnection, cx: &mut ViewContext<Self>) {
+        self.mode = Mode::ViewServerOptions(ssh_connection);
+        cx.notify();
+    }
+
     fn create_ssh_project(
         &mut self,
         ix: usize,
@@ -635,6 +642,7 @@ impl DevServerProjects {
 
                 self.create_ssh_server(cx);
             }
+            _ => {}
         }
     }
 
@@ -665,29 +673,20 @@ impl DevServerProjects {
     ) -> impl IntoElement {
         v_flex()
             .w_full()
-            .px(Spacing::Small.rems(cx) + Spacing::Small.rems(cx))
+            // .px(Spacing::Small.rems(cx) + Spacing::Small.rems(cx))
             .child(
                 h_flex()
                     .w_full()
                     .group("ssh-server")
                     .justify_between()
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .w_full()
-                            .child(
-                                div()
-                                    .id(("status", ix))
-                                    .relative()
-                                    .child(Icon::new(IconName::Server).size(IconSize::Small)),
-                            )
-                            .child(
-                                h_flex()
-                                    .max_w(rems(26.))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .child(Label::new(ssh_connection.host.clone())),
-                            ),
+                        h_flex().gap_2().w_full().child(
+                            h_flex()
+                                .max_w(rems(26.))
+                                .overflow_hidden()
+                                .whitespace_nowrap()
+                                .child(Label::new(ssh_connection.host.clone())),
+                        ),
                     )
                     .child(
                         h_flex()
@@ -726,47 +725,65 @@ impl DevServerProjects {
                     ),
             )
             .child(
-                v_flex()
-                    .w_full()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .mb_1()
-                    .mx_1p5()
-                    .pl_2()
-                    .child(
-                        List::new()
-                            .empty_message("No projects.")
-                            .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
-                                v_flex().gap_0p5().child(self.render_ssh_project(
-                                    ix,
-                                    &ssh_connection,
-                                    pix,
-                                    p,
-                                    cx,
-                                ))
-                            }))
-                            .child(h_flex().mt_1().pl_1().map(|this| {
-                                self.focusable_items.add_item(Box::new({
-                                    let ssh_connection = ssh_connection.clone();
-                                    move |this, cx| {
-                                        this.create_ssh_project(ix, ssh_connection.clone(), cx);
-                                    }
-                                }));
-                                let is_selected = self.focusable_items.is_selected();
-                                this.child(
-                                    Button::new(("new-remote_project", ix), "Open Folder…")
-                                        .size(ButtonSize::Default)
-                                        .layer(ElevationIndex::ModalSurface)
-                                        .icon(IconName::Plus)
-                                        .icon_color(Color::Muted)
-                                        .selected(is_selected)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(cx.listener(move |this, _, cx| {
+                v_flex().w_full().mb_1().child(
+                    List::new()
+                        .empty_message("No projects.")
+                        .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
+                            v_flex().gap_0p5().child(self.render_ssh_project(
+                                ix,
+                                &ssh_connection,
+                                pix,
+                                p,
+                                cx,
+                            ))
+                        }))
+                        .child(h_flex().mt_1().map(|this| {
+                            self.focusable_items.add_item(Box::new({
+                                let ssh_connection = ssh_connection.clone();
+                                move |this, cx| {
+                                    this.create_ssh_project(ix, ssh_connection.clone(), cx);
+                                }
+                            }));
+                            let is_selected = self.focusable_items.is_selected();
+                            this.child(
+                                ListItem::new(("new-remote-project", ix))
+                                    .selected(is_selected)
+                                    .inset(true)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                                    .child(Label::new("Open Folder"))
+                                    .on_click(cx.listener({
+                                        let ssh_connection = ssh_connection.clone();
+                                        move |this, _, cx| {
                                             this.create_ssh_project(ix, ssh_connection.clone(), cx);
-                                        })),
-                                )
-                            })),
-                    ),
+                                        }
+                                    })),
+                            )
+                        }))
+                        .child(h_flex().mt_1().map(|this| {
+                            self.focusable_items.add_item(Box::new({
+                                let ssh_connection = ssh_connection.clone();
+                                move |this, cx| {
+                                    this.view_server_options(ssh_connection.clone(), cx);
+                                }
+                            }));
+                            let is_selected = self.focusable_items.is_selected();
+                            this.child(
+                                ListItem::new(("server-options", ix))
+                                    .selected(is_selected)
+                                    .inset(true)
+                                    .spacing(ui::ListItemSpacing::Sparse)
+                                    .start_slot(Icon::new(IconName::Settings).color(Color::Muted))
+                                    .child(Label::new("View Server Options"))
+                                    .on_click(cx.listener({
+                                        let ssh_connection = ssh_connection.clone();
+                                        move |this, _, cx| {
+                                            this.view_server_options(ssh_connection.clone(), cx);
+                                        }
+                                    })),
+                            )
+                        })),
+                ),
             )
     }
 
@@ -839,6 +856,7 @@ impl DevServerProjects {
                     .on_click(
                         cx.listener(move |this, _, cx| this.delete_ssh_project(server_ix, ix, cx)),
                     )
+                    .size(ButtonSize::Large)
                     .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
                     .into_any_element(),
             ))
@@ -1000,12 +1018,97 @@ impl DevServerProjects {
             )
     }
 
+    fn render_view_options(
+        &self,
+        connection: &SshConnection,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let connection_string = SharedString::from(connection.host.clone());
+        v_flex()
+            .size_full()
+            .child(
+                SshConnectionHeader {
+                    on_back_click_handler: Box::new(cx.listener(|this, _, cx| {
+                        this.mode = Mode::Default(None);
+                        cx.notify();
+                    })),
+                    connection_string,
+                }
+                .render(cx),
+            )
+            .child(
+                ListItem::new("add-nickname")
+                    .selected(false)
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                    .child(Label::new("Add Nickname to Server")),
+            )
+            .child(
+                ListItem::new("copy-server-address")
+                    .selected(false)
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
+                    .child(Label::new("Copy Server Address")),
+            )
+            .child(
+                ListItem::new("delete-server")
+                    .selected(false)
+                    .inset(true)
+                    .spacing(ui::ListItemSpacing::Sparse)
+                    .start_slot(Icon::new(IconName::Trash).color(Color::Muted))
+                    .child(Label::new("Delete Server").color(Color::Error)),
+            )
+            .child(
+                h_flex()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(
+                        ListItem::new("go-back")
+                            .selected(false)
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
+                            .child(Label::new("Go Back")),
+                    ),
+            )
+    }
     fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let dev_servers = self.dev_server_store.read(cx).dev_servers();
         let ssh_connections = SshSettings::get_global(cx)
             .ssh_connections()
             .collect::<Vec<_>>();
-
+        self.focusable_items.add_item(Box::new(|this, cx| {
+            this.mode = Mode::CreateDevServer(CreateDevServer {
+                ..Default::default()
+            });
+            this.dev_server_name_input.update(cx, |text_field, cx| {
+                text_field.editor().update(cx, |editor, cx| {
+                    editor.set_text("", cx);
+                });
+            });
+            cx.notify();
+        }));
+        let is_connect_selected = self.focusable_items.is_selected();
+        let connect_button = Button::new("register-dev-server-button", "Connect New Server")
+            .layer(ElevationIndex::ModalSurface)
+            .icon(IconName::Plus)
+            .icon_position(IconPosition::Start)
+            .icon_color(Color::Muted)
+            .size(ButtonSize::Large)
+            .selected(is_connect_selected)
+            .on_click(cx.listener(|this, _, cx| {
+                this.mode = Mode::CreateDevServer(CreateDevServer {
+                    ..Default::default()
+                });
+                this.dev_server_name_input.update(cx, |text_field, cx| {
+                    text_field.editor().update(cx, |editor, cx| {
+                        editor.set_text("", cx);
+                    });
+                });
+                cx.notify();
+            }));
         let footer = format!("Connections: {}", ssh_connections.len() + dev_servers.len());
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
@@ -1013,40 +1116,7 @@ impl DevServerProjects {
                     h_flex()
                         .justify_between()
                         .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall))
-                        .map(|this| {
-                            self.focusable_items.add_item(Box::new(|this, cx| {
-                                this.mode = Mode::CreateDevServer(CreateDevServer {
-                                    ..Default::default()
-                                });
-                                this.dev_server_name_input.update(cx, |text_field, cx| {
-                                    text_field.editor().update(cx, |editor, cx| {
-                                        editor.set_text("", cx);
-                                    });
-                                });
-                                cx.notify();
-                            }));
-                            let is_selected = self.focusable_items.is_selected();
-                            this.child(
-                                Button::new("register-dev-server-button", "Connect New Server")
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .icon(IconName::Plus)
-                                    .icon_position(IconPosition::Start)
-                                    .icon_color(Color::Muted)
-                                    .selected(is_selected)
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.mode = Mode::CreateDevServer(CreateDevServer {
-                                            ..Default::default()
-                                        });
-                                        this.dev_server_name_input.update(cx, |text_field, cx| {
-                                            text_field.editor().update(cx, |editor, cx| {
-                                                editor.set_text("", cx);
-                                            });
-                                        });
-                                        cx.notify();
-                                    })),
-                            )
-                        }),
+                        .child(Label::new(footer).size(LabelSize::Small)),
                 ),
             )
             .section(
@@ -1055,6 +1125,13 @@ impl DevServerProjects {
                         .border_y_1()
                         .border_color(cx.theme().colors().border_variant)
                         .w_full()
+                        .child(
+                            div()
+                                .p_1()
+                                .border_b_1()
+                                .border_color(cx.theme().colors().border_variant)
+                                .child(connect_button),
+                        )
                         .child(
                             div().p_2().child(
                                 List::new()
@@ -1068,10 +1145,6 @@ impl DevServerProjects {
                             ),
                         ),
                 ),
-            )
-            .footer(
-                ModalFooter::new()
-                    .start_slot(div().child(Label::new(footer).size(LabelSize::Small))),
             )
     }
 }
@@ -1119,6 +1192,9 @@ impl Render for DevServerProjects {
             .max_h(rems(40.))
             .child(match &self.mode {
                 Mode::Default(_) => self.render_default(cx).into_any_element(),
+                Mode::ViewServerOptions(connection) => {
+                    self.render_view_options(connection, cx).into_any_element()
+                }
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
                 Mode::CreateDevServer(state) => {
                     self.render_create_dev_server(state, cx).into_any_element()
