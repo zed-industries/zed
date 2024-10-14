@@ -2887,19 +2887,22 @@ impl ProjectPanel {
         cx: &AppContext,
     ) -> Option<usize> {
         let (worktree, entry) = self.selected_entry(cx)?;
-        let is_expanded_dir = entry.is_dir()
-            && self
-                .expanded_dir_ids
-                .get(&worktree.id())
-                .map(|ids| ids.binary_search(&entry.id).is_ok())
-                .unwrap_or(false);
 
-        let has_children = worktree.child_entries(&entry.path).next().is_some();
-        let entry = if is_expanded_dir && has_children {
-            entry
-        } else {
-            worktree.entry_for_path(&entry.path.parent()?)?
-        };
+        let mut entry = entry;
+        loop {
+            let is_expanded_dir = entry.is_dir()
+                && self
+                    .expanded_dir_ids
+                    .get(&worktree.id())
+                    .map(|ids| ids.binary_search(&entry.id).is_ok())
+                    .unwrap_or(false);
+            let has_files = worktree.files_in_folder(&entry.path).next().is_some();
+
+            if is_expanded_dir && has_files {
+                break;
+            }
+            entry = worktree.entry_for_path(&entry.path.parent()?)?;
+        }
 
         let (active_indent_range, depth) = {
             let (worktree_ix, child_offset, ix) = self.index_for_entry(entry.id, worktree.id())?;
@@ -2916,7 +2919,13 @@ impl ProjectPanel {
             let start = ix + 1;
             let end = start + child_count;
 
-            (start..end, depth.saturating_sub(1))
+            let (_, entries, paths) = &self.visible_entries[worktree_ix];
+            let visible_worktree_entries =
+                paths.get_or_init(|| entries.iter().map(|e| (e.path.clone())).collect());
+
+            // Calculate the actual depth of the entry, taking into account that directories can be auto-folded.
+            let (depth, _) = Self::calculate_depth_and_difference(entry, visible_worktree_entries);
+            (start..end, depth)
         };
 
         let candidates = indent_guides

@@ -2381,6 +2381,21 @@ impl Snapshot {
         }
     }
 
+    pub fn files_in_folder<'a>(&'a self, parent_path: &'a Path) -> ChildEntriesIter<'a> {
+        let mut cursor = self.entries_by_path.cursor(&());
+        cursor.seek(&TraversalTarget::Path(parent_path), Bias::Right, &());
+        let traversal = Traversal {
+            cursor,
+            include_files: true,
+            include_dirs: false,
+            include_ignored: false,
+        };
+        ChildEntriesIter {
+            traversal,
+            parent_path,
+        }
+    }
+
     pub fn root_entry(&self) -> Option<&Entry> {
         self.entry_for_path("")
     }
