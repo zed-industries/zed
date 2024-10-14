@@ -245,8 +245,10 @@ pub(crate) struct SshConnectionHeader {
 impl RenderOnce for SshConnectionHeader {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let theme = cx.theme();
+
         let mut header_color = theme.colors().text;
         header_color.fade_out(0.96);
+
         let (main_label, meta_label) = if let Some(nickname) = self.nickname {
             (nickname, Some(format!("({})", self.connection_string)))
         } else {
@@ -256,31 +258,27 @@ impl RenderOnce for SshConnectionHeader {
         h_flex()
             .p_1()
             .rounded_t_md()
+            .w_full()
+            .gap_2()
+            .justify_center()
             .border_b_1()
-            .border_color(theme.colors().border)
+            .border_color(theme.colors().border_variant)
             .bg(header_color)
-            .justify_between()
+            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
             .child(
                 h_flex()
-                    .w_full()
-                    .gap_2()
-                    .justify_center()
-                    .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+                    .gap_1()
                     .child(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Label::new(main_label)
-                                    .size(ui::LabelSize::Small)
-                                    .single_line(),
-                            )
-                            .children(meta_label.map(|label| {
-                                Label::new(label)
-                                    .size(ui::LabelSize::Small)
-                                    .single_line()
-                                    .color(Color::Muted)
-                            })),
-                    ),
+                        Label::new(main_label)
+                            .size(ui::LabelSize::Small)
+                            .single_line(),
+                    )
+                    .children(meta_label.map(|label| {
+                        Label::new(label)
+                            .size(ui::LabelSize::Small)
+                            .single_line()
+                            .color(Color::Muted)
+                    })),
             )
     }
 }
