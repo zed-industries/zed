@@ -1,8 +1,9 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use http_client::{read_proxy_from_env, Uri};
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
-use node_runtime::NodeRuntime;
+use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
     project_settings::SettingsObserver,
@@ -12,6 +13,7 @@ use project::{
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
+use reqwest_client::ReqwestClient;
 use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
@@ -46,7 +48,36 @@ impl HeadlessProject {
     pub fn new(session: Arc<ChannelClient>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
 
-        let node_runtime = NodeRuntime::unavailable();
+        // TODO read settings
+        // let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
+        let proxy_str = None;
+        let proxy_url = proxy_str
+            .as_ref()
+            .and_then(|input: &String| {
+                input
+                    .parse::<Uri>()
+                    .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                    .ok()
+            })
+            .or_else(read_proxy_from_env);
+
+        let http_client = Arc::new(
+            ReqwestClient::proxy_and_user_agent(
+                proxy_url,
+                // TODO: Is this a good user agent?
+                "Zed Remote Server",
+            )
+            .expect("Could not start HTTP client"),
+        );
+
+        // TODO: Read this from settings too
+        let (_node_settings_tx, node_settings_rx) = async_watch::channel(Some(NodeBinaryOptions {
+            allow_path_lookup: false,
+            allow_binary_download: true,
+            use_paths: None,
+        }));
+
+        let node_runtime = NodeRuntime::new(http_client, node_settings_rx);
 
         languages::init(languages.clone(), node_runtime.clone(), cx);
 

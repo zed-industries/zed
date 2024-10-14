@@ -266,6 +266,22 @@ fn start_server(
     ChannelClient::new(incoming_rx, outgoing_tx, cx)
 }
 
+fn init_paths() -> anyhow::Result<()> {
+    for path in [
+        paths::config_dir(),
+        paths::extensions_dir(),
+        paths::languages_dir(),
+        paths::logs_dir(),
+        paths::temp_dir(),
+    ]
+    .iter()
+    {
+        std::fs::create_dir_all(path)
+            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
+    }
+    Ok(())
+}
+
 pub fn execute_run(
     log_file: PathBuf,
     pid_file: PathBuf,
@@ -275,6 +291,7 @@ pub fn execute_run(
 ) -> Result<()> {
     let log_rx = init_logging_server(log_file)?;
     init_panic_hook();
+    init_paths()?;
 
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",

@@ -8975,6 +8975,7 @@ dependencies = [
  "log",
  "menu",
  "ordered-float 2.10.1",
+ "paths",
  "picker",
  "project",
  "release_channel",
@@ -9135,6 +9136,7 @@ name = "remote_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-watch",
  "backtrace",
  "cargo_toml",
  "clap",
@@ -9150,8 +9152,10 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "paths",
  "project",
  "remote",
+ "reqwest_client",
  "rpc",
  "rust-embed",
  "serde",

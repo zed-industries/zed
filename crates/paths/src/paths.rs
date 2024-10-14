@@ -5,10 +5,25 @@ use std::sync::OnceLock;
 
 pub use util::paths::home_dir;
 
+/// Returns the relative path to the zed_server directory on the ssh host.
+pub fn remote_server_dir_relative() -> &'static Path {
+    Path::new(".zed_server")
+}
+
+/// Returns the path to the zed server directory on this ssh host.
+pub(crate) fn remote_server_dir() -> &'static PathBuf {
+    static REMOTE_SERVER: OnceLock<PathBuf> = OnceLock::new();
+    REMOTE_SERVER.get_or_init(|| return home_dir().join(remote_server_dir_relative()))
+}
+
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
     static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
     CONFIG_DIR.get_or_init(|| {
+        if cfg!(feature = "remote_server") {
+            return remote_server_dir().join("config");
+        }
+
         if cfg!(target_os = "windows") {
             return dirs::config_dir()
                 .expect("failed to determine RoamingAppData directory")
@@ -32,6 +47,10 @@ pub fn config_dir() -> &'static PathBuf {
 pub fn support_dir() -> &'static PathBuf {
     static SUPPORT_DIR: OnceLock<PathBuf> = OnceLock::new();
     SUPPORT_DIR.get_or_init(|| {
+        if cfg!(feature = "remote_server") {
+            return remote_server_dir().join("support");
+        }
+
         if cfg!(target_os = "macos") {
             return home_dir().join("Library/Application Support/Zed");
         }
@@ -59,6 +78,10 @@ pub fn support_dir() -> &'static PathBuf {
 pub fn temp_dir() -> &'static PathBuf {
     static TEMP_DIR: OnceLock<PathBuf> = OnceLock::new();
     TEMP_DIR.get_or_init(|| {
+        if cfg!(feature = "remote_server") {
+            return remote_server_dir().join("cache");
+        }
+
         if cfg!(target_os = "macos") {
             return dirs::cache_dir()
                 .expect("failed to determine cachesDirectory directory")
@@ -88,6 +111,10 @@ pub fn temp_dir() -> &'static PathBuf {
 pub fn logs_dir() -> &'static PathBuf {
     static LOGS_DIR: OnceLock<PathBuf> = OnceLock::new();
     LOGS_DIR.get_or_init(|| {
+        if cfg!(feature = "remote_server") {
+            return remote_server_dir().join("logs");
+        }
+
         if cfg!(target_os = "macos") {
             home_dir().join("Library/Logs/Zed")
         } else {
