@@ -29,9 +29,7 @@ pub struct IndentGuides {
     render_fn: Option<
         Box<
             dyn Fn(
-                SmallVec<[IndentGuideLayout; 16]>,
-                Pixels,
-                Pixels,
+                RenderIndentGuideParams,
                 &mut WindowContext,
             ) -> SmallVec<[RenderedIndentGuide; 16]>,
         >,
@@ -49,21 +47,23 @@ impl IndentGuides {
         view: View<V>,
         render_fn: impl Fn(
                 &mut V,
-                SmallVec<[IndentGuideLayout; 16]>,
-                Pixels,
-                Pixels,
+                RenderIndentGuideParams,
                 &mut WindowContext,
             ) -> SmallVec<[RenderedIndentGuide; 16]>
             + 'static,
     ) -> Self {
-        let render_fn = move |layout, indent_size, item_height, cx: &mut WindowContext| {
-            view.update(cx, |this, cx| {
-                render_fn(this, layout, indent_size, item_height, cx)
-            })
+        let render_fn = move |params, cx: &mut WindowContext| {
+            view.update(cx, |this, cx| render_fn(this, params, cx))
         };
         self.render_fn = Some(Box::new(render_fn));
         self
     }
+}
+
+pub struct RenderIndentGuideParams {
+    pub indent_guides: SmallVec<[IndentGuideLayout; 16]>,
+    pub indent_size: Pixels,
+    pub item_height: Pixels,
 }
 
 pub struct RenderedIndentGuide {
@@ -88,7 +88,12 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
                 let indent_guides = compute_indent_guides(&visible_entries, visible_range.start);
 
                 let mut indent_guides = if let Some(ref custom_render) = render_fn {
-                    custom_render(indent_guides, indent_size, item_height, cx)
+                    let params = RenderIndentGuideParams {
+                        indent_guides,
+                        indent_size,
+                        item_height,
+                    };
+                    custom_render(params, cx)
                 } else {
                     indent_guides
                         .into_iter()

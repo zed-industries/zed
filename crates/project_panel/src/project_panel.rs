@@ -19,7 +19,7 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, Hsla,
+    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
@@ -3064,8 +3064,7 @@ impl Render for ProjectPanel {
                     })
                     .when(indent_guides, |this| {
                         let line_color = cx.theme().colors().editor_indent_guide;
-                        // let active_line_color = cx.theme().colors().editor_indent_guide_active;
-                        let active_line_color = Hsla::red();
+                        let active_line_color = cx.theme().colors().editor_indent_guide_active;
                         this.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
@@ -3084,14 +3083,18 @@ impl Render for ProjectPanel {
                             )
                             .with_render_fn(
                                 cx.view().clone(),
-                                move |this, indent_guides, indent_size, item_height, cx| {
+                                move |this, params, cx| {
                                     const LEFT_OFFSET: f32 = 14.;
                                     const PADDING_Y: f32 = 4.;
 
                                     let active_indent_guide_index =
-                                        this.find_active_indent_guide(&indent_guides, cx);
+                                        this.find_active_indent_guide(&params.indent_guides, cx);
 
-                                    indent_guides
+                                    let indent_size = params.indent_size;
+                                    let item_height = params.item_height;
+
+                                    params
+                                        .indent_guides
                                         .into_iter()
                                         .enumerate()
                                         .map(|(idx, layout)| {
