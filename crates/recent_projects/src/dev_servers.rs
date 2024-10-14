@@ -822,11 +822,12 @@ impl DevServerProjects {
         state.address_editor.update(cx, |editor, cx| {
             if editor.text(cx).is_empty() {
                 editor.set_placeholder_text(
-                    "Enter the command you use to SSH into this server: e.g. ssh me@my.server",
+                    "Enter the command you use to SSH into this server: e.g., ssh me@my.server",
                     cx,
                 );
             }
         });
+
         let theme = cx.theme();
 
         v_flex()
@@ -834,7 +835,13 @@ impl DevServerProjects {
             .overflow_hidden()
             .size_full()
             .flex_1()
-            .child(div().p_2().child(state.address_editor.clone()))
+            .child(
+                div()
+                    .p_2()
+                    .border_b_1()
+                    .border_color(theme.colors().border_variant)
+                    .child(state.address_editor.clone()),
+            )
             .child(
                 h_flex()
                     .bg(theme.colors().editor_background)
@@ -849,10 +856,11 @@ impl DevServerProjects {
                                 h_flex()
                                     .p_2()
                                     .w_full()
+                                    .items_center()
                                     .justify_center()
-                                    .gap_1p5()
+                                    .gap_2()
                                     .child(
-                                        div().p_1().rounded_lg().bg(color).with_animation(
+                                        div().size_1p5().rounded_full().bg(color).with_animation(
                                             "pulse-ssh-waiting-for-connection",
                                             Animation::new(Duration::from_secs(2))
                                                 .repeat()
