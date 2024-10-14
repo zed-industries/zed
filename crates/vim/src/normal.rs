@@ -285,7 +285,7 @@ impl Vim {
         self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                s.move_cursors_with(|map, cursor, goal| {
+                s.move_heads_update_tails_with(|map, cursor, goal| {
                     motion
                         .move_point(map, cursor, goal, times, &text_layout_details)
                         .unwrap_or((cursor, goal))
