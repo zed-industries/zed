@@ -116,11 +116,10 @@ impl ResolvedPatch {
             }
         }
         buffer.update(cx, |buffer, cx| {
-            let original_indent_columns = (0..edits.len()).map(|_| 0).collect();
             buffer.edit(
                 edits,
                 Some(AutoindentMode::Block {
-                    original_indent_columns,
+                    original_indent_columns: Vec::new(),
                 }),
                 cx,
             );
