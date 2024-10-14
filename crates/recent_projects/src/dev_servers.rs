@@ -33,7 +33,6 @@ use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
-use ui::ElevationIndex;
 use ui::Section;
 use ui::{prelude::*, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
 use util::ResultExt;
@@ -83,7 +82,6 @@ impl CreateDevServer {
 struct ProjectPicker {
     connection_string: SharedString,
     picker: View<Picker<OpenPathDelegate>>,
-    main_modal: WeakView<DevServerProjects>,
     _path_task: Shared<Task<Option<()>>>,
 }
 
@@ -177,7 +175,6 @@ impl ProjectPicker {
         cx: &mut ViewContext<DevServerProjects>,
     ) -> View<Self> {
         let (tx, rx) = oneshot::channel();
-        let main_modal = cx.view().downgrade();
         let lister = project::DirectoryLister::Project(project.clone());
         let query = lister.default_query(cx);
         let delegate = file_finder::OpenPathDelegate::new(tx, lister);
@@ -273,7 +270,6 @@ impl ProjectPicker {
             Self {
                 _path_task,
                 picker,
-                main_modal,
                 connection_string,
             }
         })
@@ -1098,21 +1094,23 @@ impl DevServerProjects {
             this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
             cx.notify();
         }));
-        let is_connect_selected = self.focusable_items.is_selected();
-        let connect_button = Button::new("register-dev-server-button", "Connect New Server")
-            .layer(ElevationIndex::ModalSurface)
-            .icon(IconName::Plus)
-            .icon_position(IconPosition::Start)
-            .icon_color(Color::Muted)
-            .size(ButtonSize::Large)
-            .selected(is_connect_selected)
+
+        let is_selected = self.focusable_items.is_selected();
+        let connect_button = ListItem::new("register-dev-server-button")
+            .selected(is_selected)
+            .inset(true)
+            .spacing(ui::ListItemSpacing::Sparse)
+            .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+            .child(Label::new("Connect New Server"))
             .on_click(cx.listener(|this, _, cx| {
                 let state = CreateDevServer::new(cx);
                 this.mode = Mode::CreateDevServer(state);
 
                 cx.notify();
             }));
+
         let footer = format!("Connections: {}", ssh_connections.len() + dev_servers.len());
+
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
                 ModalHeader::new().child(
@@ -1125,27 +1123,21 @@ impl DevServerProjects {
             .section(
                 Section::new().padded(false).child(
                     div()
+                        .w_full()
+                        .pt_1p5()
                         .border_y_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .w_full()
+                        .child(connect_button)
+                        .child(ListSeparator)
                         .child(
-                            div()
-                                .p_1()
-                                .border_b_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .child(connect_button),
-                        )
-                        .child(
-                            div().child(
-                                List::new()
-                                    .empty_message("No dev servers registered yet.")
-                                    .children(ssh_connections.iter().cloned().enumerate().map(
-                                        |(ix, connection)| {
-                                            self.render_ssh_connection(ix, connection, cx)
-                                                .into_any_element()
-                                        },
-                                    )),
-                            ),
+                            List::new()
+                                .empty_message("No dev servers registered yet.")
+                                .children(ssh_connections.iter().cloned().enumerate().map(
+                                    |(ix, connection)| {
+                                        self.render_ssh_connection(ix, connection, cx)
+                                            .into_any_element()
+                                    },
+                                )),
                         ),
                 ),
             )
