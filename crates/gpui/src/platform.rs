@@ -80,10 +80,10 @@ pub enum Compositor {
     Headless,
 }
 
+#[cfg(target_os = "linux")]
 impl Compositor {
     /// Return which compositor we're guessing we'll use.
     /// Does not attempt to connect to the given compositor
-    #[cfg(target_os = "linux")]
     #[inline]
     pub fn guess() -> Self {
         if std::env::var_os("ZED_HEADLESS").is_some() {
