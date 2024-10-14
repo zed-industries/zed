@@ -1776,7 +1776,7 @@ mod tests {
             SerializedWorkspaceLocation::Ssh(ssh_projects[1].clone())
         );
         assert_eq!(
-           have[3],
+            have[3],
             SerializedWorkspaceLocation::Ssh(ssh_projects[0].clone())
         );
     }
