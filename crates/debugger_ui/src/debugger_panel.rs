@@ -6,8 +6,8 @@ use dap::debugger_settings::DebuggerSettings;
 use dap::messages::{Events, Message};
 use dap::requests::{Request, StartDebugging};
 use dap::{
-    Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent, ModuleEvent, OutputEvent,
-    StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
+    Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent, LoadedSourceEvent, ModuleEvent,
+    OutputEvent, StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
 };
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
@@ -38,6 +38,7 @@ pub enum DebugPanelEvent {
     Continued((DebugAdapterClientId, ContinuedEvent)),
     Output((DebugAdapterClientId, OutputEvent)),
     Module((DebugAdapterClientId, ModuleEvent)),
+    LoadedSource((DebugAdapterClientId, LoadedSourceEvent)),
     ClientStopped(DebugAdapterClientId),
     CapabilitiesChanged(DebugAdapterClientId),
 }
@@ -258,7 +259,7 @@ impl DebugPanel {
             Events::Output(event) => self.handle_output_event(&client_id, event, cx),
             Events::Breakpoint(_) => {}
             Events::Module(event) => self.handle_module_event(&client_id, event, cx),
-            Events::LoadedSource(_) => {}
+            Events::LoadedSource(event) => self.handle_loaded_source_event(&client_id, event, cx),
             Events::Capabilities(event) => {
                 self.handle_capabilities_changed_event(client_id, event, cx);
             }
@@ -497,6 +498,15 @@ impl DebugPanel {
         cx.emit(DebugPanelEvent::Module((*client_id, event.clone())));
     }
 
+    fn handle_loaded_source_event(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        event: &LoadedSourceEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        cx.emit(DebugPanelEvent::LoadedSource((*client_id, event.clone())));
+    }
+
     fn handle_capabilities_changed_event(
         &mut self,
         client_id: &DebugAdapterClientId,
@@ -511,8 +521,8 @@ impl DebugPanel {
     }
 
     fn render_did_not_stop_warning(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const TITLE: &str = "Debug session exited without hitting any breakpoints";
-        const DESCRIPTION: &str =
+        const TITLE: &'static str = "Debug session exited without hitting any breakpoints";
+        const DESCRIPTION: &'static str =
             "Try adding a breakpoint, or define the correct path mapping for your debugger.";
 
         div()

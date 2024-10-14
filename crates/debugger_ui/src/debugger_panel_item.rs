@@ -1,5 +1,6 @@
 use crate::console::Console;
 use crate::debugger_panel::{DebugPanel, DebugPanelEvent, ThreadState};
+use crate::loaded_source_list::LoadedSourceList;
 use crate::module_list::ModuleList;
 use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use crate::variable_list::VariableList;
@@ -7,8 +8,8 @@ use crate::variable_list::VariableList;
 use dap::client::{DebugAdapterClientId, ThreadStatus};
 use dap::debugger_settings::DebuggerSettings;
 use dap::{
-    Capabilities, ContinuedEvent, ModuleEvent, OutputEvent, OutputEventCategory, StoppedEvent,
-    ThreadEvent,
+    Capabilities, ContinuedEvent, LoadedSourceEvent, ModuleEvent, OutputEvent, OutputEventCategory,
+    StoppedEvent, ThreadEvent,
 };
 use editor::Editor;
 use gpui::{
@@ -31,10 +32,11 @@ pub enum DebugPanelItemEvent {
 
 #[derive(Clone, PartialEq, Eq)]
 enum ThreadItem {
-    Variables,
-    Modules,
     Console,
+    LoadedSource,
+    Modules,
     Output,
+    Variables,
 }
 
 pub struct DebugPanelItem {
@@ -52,6 +54,7 @@ pub struct DebugPanelItem {
     variable_list: View<VariableList>,
     _subscriptions: Vec<Subscription>,
     stack_frame_list: View<StackFrameList>,
+    loaded_source_list: View<LoadedSourceList>,
 }
 
 impl DebugPanelItem {
@@ -77,6 +80,9 @@ impl DebugPanelItem {
             .new_view(|cx| VariableList::new(&stack_frame_list, dap_store.clone(), &client_id, cx));
 
         let module_list = cx.new_view(|cx| ModuleList::new(dap_store.clone(), &client_id, cx));
+
+        let loaded_source_list =
+            cx.new_view(|cx| LoadedSourceList::new(&this, dap_store.clone(), &client_id, cx));
 
         let console = cx.new_view(|cx| {
             Console::new(
@@ -106,6 +112,9 @@ impl DebugPanelItem {
                         DebugPanelEvent::Module((client_id, event)) => {
                             this.handle_module_event(client_id, event, cx)
                         }
+                        DebugPanelEvent::LoadedSource((client_id, event)) => {
+                            this.handle_loaded_source_event(client_id, event, cx)
+                        }
                         DebugPanelEvent::ClientStopped(client_id) => {
                             this.handle_client_stopped_event(client_id, cx)
                         }
@@ -126,7 +135,7 @@ impl DebugPanelItem {
                 &stack_frame_list,
                 move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
                     StackFrameListEvent::ChangedStackFrame => this.clear_highlights(cx),
-                    StackFrameListEvent::StackFramesUpdated => {}
+                    _ => {}
                 },
             ),
         ];
@@ -157,6 +166,7 @@ impl DebugPanelItem {
             variable_list,
             _subscriptions,
             stack_frame_list,
+            loaded_source_list,
             client_id: *client_id,
             client_kind: client_kind.clone(),
             active_thread_item: ThreadItem::Variables,
@@ -176,8 +186,6 @@ impl DebugPanelItem {
         {
             self.clear_highlights(cx);
         }
-
-        cx.notify();
     }
 
     fn should_skip_event(&self, client_id: &DebugAdapterClientId, thread_id: u64) -> bool {
@@ -273,6 +281,22 @@ impl DebugPanelItem {
         self.module_list.update(cx, |variable_list, cx| {
             variable_list.on_module_event(event, cx);
         });
+    }
+
+    fn handle_loaded_source_event(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        event: &LoadedSourceEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.should_skip_event(client_id, self.thread_id) {
+            return;
+        }
+
+        self.loaded_source_list
+            .update(cx, |loaded_source_list, cx| {
+                loaded_source_list.on_loaded_source_event(event, cx);
+            });
     }
 
     fn handle_client_stopped_event(
@@ -645,6 +669,18 @@ impl Render for DebugPanelItem {
                                     ))
                                 },
                             )
+                            .when(
+                                capabilities
+                                    .supports_loaded_sources_request
+                                    .unwrap_or_default(),
+                                |this| {
+                                    this.child(self.render_entry_button(
+                                        &SharedString::from("Loaded Sources"),
+                                        ThreadItem::LoadedSource,
+                                        cx,
+                                    ))
+                                },
+                            )
                             .child(self.render_entry_button(
                                 &SharedString::from("Console"),
                                 ThreadItem::Console,
@@ -661,6 +697,9 @@ impl Render for DebugPanelItem {
                     })
                     .when(*active_thread_item == ThreadItem::Modules, |this| {
                         this.size_full().child(self.module_list.clone())
+                    })
+                    .when(*active_thread_item == ThreadItem::LoadedSource, |this| {
+                        this.size_full().child(self.loaded_source_list.clone())
                     })
                     .when(*active_thread_item == ThreadItem::Output, |this| {
                         this.child(self.output_editor.clone())

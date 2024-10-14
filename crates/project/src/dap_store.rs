@@ -5,19 +5,19 @@ use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::messages::Message;
 use dap::requests::{
     Attach, Completions, ConfigurationDone, Continue, Disconnect, Evaluate, Initialize, Launch,
-    Modules, Next, Pause, Scopes, SetBreakpoints, SetExpression, SetVariable, StackTrace, StepIn,
-    StepOut, Terminate, TerminateThreads, Variables,
+    LoadedSources, Modules, Next, Pause, Scopes, SetBreakpoints, SetExpression, SetVariable,
+    StackTrace, StepIn, StepOut, Terminate, TerminateThreads, Variables,
 };
 use dap::{
     AttachRequestArguments, Capabilities, CompletionItem, CompletionsArguments,
     ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, EvaluateArguments,
     EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
-    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, Module, ModulesArguments,
-    NextArguments, PauseArguments, Scope, ScopesArguments, SetBreakpointsArguments,
-    SetExpressionArguments, SetVariableArguments, Source, SourceBreakpoint, StackFrame,
-    StackTraceArguments, StartDebuggingRequestArguments, StepInArguments, StepOutArguments,
-    SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
-    VariablesArguments,
+    InitializeRequestArgumentsPathFormat, LaunchRequestArguments, LoadedSourcesArguments, Module,
+    ModulesArguments, NextArguments, PauseArguments, Scope, ScopesArguments,
+    SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments, Source,
+    SourceBreakpoint, StackFrame, StackTraceArguments, StartDebuggingRequestArguments,
+    StepInArguments, StepOutArguments, SteppingGranularity, TerminateArguments,
+    TerminateThreadsArguments, Variable, VariablesArguments,
 };
 use dap_adapters::build_adapter;
 use fs::Fs;
@@ -397,6 +397,32 @@ impl DapStore {
                 })
                 .await?
                 .modules)
+        })
+    }
+
+    pub fn loaded_sources(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Source>>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Client was not found")));
+        };
+
+        let capabilities = self.capabilities_by_id(client_id);
+
+        if !capabilities
+            .supports_loaded_sources_request
+            .unwrap_or_default()
+        {
+            return Task::ready(Ok(Vec::default()));
+        }
+
+        cx.spawn(|_, _| async move {
+            Ok(client
+                .request::<LoadedSources>(LoadedSourcesArguments {})
+                .await?
+                .sources)
         })
     }
 

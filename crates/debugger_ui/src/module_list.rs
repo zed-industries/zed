@@ -87,9 +87,7 @@ impl ModuleList {
                 h_flex()
                     .text_ui_xs(cx)
                     .text_color(cx.theme().colors().text_muted)
-                    .when_some(module.path.clone(), |this, path| {
-                        this.child(div().child(path))
-                    }),
+                    .when_some(module.path.clone(), |this, path| this.child(path)),
             )
             .into_any()
     }

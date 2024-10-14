@@ -124,10 +124,8 @@ impl Transport {
         mut payload: Message,
     ) -> Result<()> {
         if let Message::Request(request) = &mut payload {
-            {
-                if let Some(sender) = current_requests.lock().await.remove(&request.seq) {
-                    pending_requests.lock().await.insert(request.seq, sender);
-                }
+            if let Some(sender) = current_requests.lock().await.remove(&request.seq) {
+                pending_requests.lock().await.insert(request.seq, sender);
             }
         }
         Self::send_string_to_server(server_stdin, serde_json::to_string(&payload)?).await
