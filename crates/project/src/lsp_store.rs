@@ -8794,6 +8794,64 @@ impl LspStore {
         )
     }
 
+    fn pull_diagnostic(
+        &mut self,
+        language_server_id: LanguageServerId,
+        buffer_handle: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let buffer = buffer_handle.read(cx);
+        let file = File::from_dyn(buffer.file())?;
+        let abs_path = file.as_local()?.abs_path(cx);
+        let uri = lsp::Url::from_file_path(abs_path).log_err()?;
+
+        const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
+
+        let previous_result_id = match self.as_local()?.language_servers.get(&language_server_id) {
+            Some(LanguageServerState::Running {
+                previous_document_diagnostic_result_id,
+                ..
+            }) => previous_document_diagnostic_result_id.clone(),
+            _ => None,
+        };
+
+        let lsp_request_task = self.request_lsp(
+            buffer_handle,
+            LanguageServerToQuery::Other(language_server_id),
+            GetDocumentDiagnostics {
+                language_server_id,
+                previous_result_id,
+            },
+            cx,
+        );
+
+        cx.spawn(move |this, mut cx| async move {
+            cx.background_executor()
+                .timer(PULL_DIAGNOSTICS_DEBOUNCE)
+                .await;
+
+            let diagnostics = lsp_request_task.await;
+            this.update(&mut cx, |this, cx| {
+                this.update_diagnostics(
+                    language_server_id,
+                    lsp::PublishDiagnosticsParams {
+                        uri: uri.clone(),
+                        diagnostics: diagnostics.unwrap(),
+                        version: None,
+                    },
+                    &[],
+                    cx,
+                )
+                .log_err()
+            })
+            .ok();
+        })
+        .detach();
+
+        None
+    }
+
+
     pub fn update_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,
@@ -9937,6 +9995,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
+        previous_document_diagnostic_result_id: Option<String>,
     },
 }
 
