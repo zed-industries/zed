@@ -287,7 +287,10 @@ message Envelope {
 
         RemoveWorktree remove_worktree = 258;
 
-        LanguageServerLog language_server_log = 260; // current max
+        LanguageServerLog language_server_log = 260;
+
+        LspExtOpenDocs lsp_ext_open_docs = 261;
+        LspExtOpenDocsResponse lsp_ext_open_docs_response = 262; // current max
     }
 
     reserved 87 to 88;
@@ -2128,6 +2131,17 @@ message LspExtExpandMacro {
 message LspExtExpandMacroResponse {
     string name = 1;
     string expansion = 2;
+}
+
+message LspExtOpenDocs {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtOpenDocsResponse {
+    optional string web = 1;
+    optional string local = 2;
 }
 
 message LspExtSwitchSourceHeader {
