@@ -382,6 +382,8 @@ pub fn compare_paths(
                 });
                 if !ordering.is_eq() {
                     return ordering;
+                } else if !component_a.as_os_str().cmp(component_b.as_os_str()).is_eq() {
+                    return component_b.as_os_str().cmp(component_a.as_os_str());
                 }
             }
             (Some(_), None) => break cmp::Ordering::Greater,
@@ -429,6 +431,38 @@ mod tests {
             vec![
                 (Path::new("root1/one.txt"), true),
                 (Path::new("root1/one.two.txt"), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn compare_paths_case_semi_sensitive() {
+        let mut paths = vec![
+            (Path::new("test_DIRS"), false),
+            (Path::new("test_DIRS/foo_1"), true),
+            (Path::new("test_DIRS/foo_2"), true),
+            (Path::new("test_DIRS/bar"), true),
+            (Path::new("test_DIRS/BAR"), true),
+            (Path::new("test_dirs"), false),
+            (Path::new("test_dirs/foo_1"), true),
+            (Path::new("test_dirs/foo_2"), true),
+            (Path::new("test_dirs/bar"), true),
+            (Path::new("test_dirs/BAR"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/bar"), true),
+                (Path::new("test_dirs/BAR"), true),
+                (Path::new("test_dirs/foo_1"), true),
+                (Path::new("test_dirs/foo_2"), true),
+                (Path::new("test_DIRS"), false),
+                (Path::new("test_DIRS/bar"), true),
+                (Path::new("test_DIRS/BAR"), true),
+                (Path::new("test_DIRS/foo_1"), true),
+                (Path::new("test_DIRS/foo_2"), true),
             ]
         );
     }
