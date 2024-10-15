@@ -6072,6 +6072,52 @@ impl LspStore {
         }
     }
 
+    fn pull_diagnostic(
+        &mut self,
+        language_server_id: LanguageServerId,
+        buffer_handle: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let buffer = buffer_handle.read(cx);
+        let file = File::from_dyn(buffer.file())?;
+        let abs_path = file.as_local()?.abs_path(cx);
+        let uri = lsp::Url::from_file_path(abs_path).log_err()?;
+
+        const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
+
+        let lsp_request_task = self.request_lsp(
+            buffer_handle,
+            LanguageServerToQuery::Other(language_server_id),
+            GetDocumentDiagnostics {},
+            cx,
+        );
+
+        cx.spawn(move |this, mut cx| async move {
+            cx.background_executor()
+                .timer(PULL_DIAGNOSTICS_DEBOUNCE)
+                .await;
+
+            let diagnostics = lsp_request_task.await;
+            this.update(&mut cx, |this, cx| {
+                this.update_diagnostics(
+                    language_server_id,
+                    lsp::PublishDiagnosticsParams {
+                        uri: uri.clone(),
+                        diagnostics: diagnostics.unwrap(),
+                        version: None,
+                    },
+                    &[],
+                    cx,
+                )
+                .log_err()
+            })
+            .ok();
+        })
+        .detach();
+
+        None
+    }
+
     pub fn diagnostic_summary(&self, include_ignored: bool, cx: &App) -> DiagnosticSummary {
         let mut summary = DiagnosticSummary::default();
         for (_, _, path_summary) in self.diagnostic_summaries(include_ignored, cx) {

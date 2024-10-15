@@ -643,7 +643,7 @@ impl LanguageServer {
                         refresh_support: Some(true),
                     }),
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
-                        refresh_support: None,
+                        refresh_support: Some(true),
                     }),
                     code_lens: Some(CodeLensWorkspaceClientCapabilities {
                         refresh_support: Some(true),
@@ -792,6 +792,10 @@ impl LanguageServer {
                     document_symbol: Some(DocumentSymbolClientCapabilities {
                         hierarchical_document_symbol_support: Some(true),
                         ..DocumentSymbolClientCapabilities::default()
+                    }),
+                    diagnostic: Some(DiagnosticClientCapabilities {
+                        dynamic_registration: Some(true),
+                        related_document_support: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),

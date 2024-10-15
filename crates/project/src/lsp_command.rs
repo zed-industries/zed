@@ -24,7 +24,7 @@ use language::{
 };
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
-    CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
+    CompletionListItemDefaultsEditRange, CompletionTriggerKind, Diagnostic, DocumentHighlightKind,
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
     ServerCapabilities,
 };
@@ -254,6 +254,11 @@ impl GetCodeLens {
 #[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
+}
+
+#[derive(Debug)]
+pub(crate) struct GetDocumentDiagnostics {
+    // pub previous_result_id: Option<String>,
 }
 
 #[async_trait(?Send)]
@@ -3642,6 +3647,120 @@ impl LspCommand for LinkedEditingRange {
     }
 
     fn buffer_id_from_proto(message: &proto::LinkedEditingRange) -> Result<BufferId> {
+        BufferId::new(message.buffer_id)
+    }
+}
+
+#[async_trait(?Send)]
+impl LspCommand for GetDocumentDiagnostics {
+    type Response = Vec<Diagnostic>;
+    type LspRequest = lsp::request::DocumentDiagnosticRequest;
+    type ProtoRequest = proto::GetDocumentDiagnostics;
+
+    fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
+        server_capabilities
+            .server_capabilities
+            .diagnostic_provider
+            .is_some()
+    }
+
+    fn to_lsp(
+        &self,
+        path: &Path,
+        _: &Buffer,
+        language_server: &Arc<LanguageServer>,
+        _: &AppContext,
+    ) -> lsp::DocumentDiagnosticParams {
+        let identifier = match language_server.capabilities().diagnostic_provider {
+            Some(lsp::DiagnosticServerCapabilities::Options(options)) => options.identifier.clone(),
+            Some(lsp::DiagnosticServerCapabilities::RegistrationOptions(options)) => {
+                options.diagnostic_options.identifier.clone()
+            }
+            None => None,
+        };
+
+        lsp::DocumentDiagnosticParams {
+            text_document: lsp::TextDocumentIdentifier {
+                uri: lsp::Url::from_file_path(path).unwrap(),
+            },
+            identifier,
+            previous_result_id: None,
+            partial_result_params: Default::default(),
+            work_done_progress_params: Default::default(),
+        }
+    }
+
+    async fn response_from_lsp(
+        self,
+        message: lsp::DocumentDiagnosticReportResult,
+        _: Model<LspStore>,
+        _: Model<Buffer>,
+        _server_id: LanguageServerId,
+        _: AsyncAppContext,
+    ) -> Result<Vec<Diagnostic>> {
+        match message {
+            lsp::DocumentDiagnosticReportResult::Report(report) => match report {
+                lsp::DocumentDiagnosticReport::Full(report) => {
+                    // TODO: Handle related_documents in the report
+                    // TODO: Store the result in the adapter?
+                    Ok(report.full_document_diagnostic_report.items.clone())
+                }
+                lsp::DocumentDiagnosticReport::Unchanged(_) => {
+                    panic!("unexpected unchanged report");
+                }
+            },
+            lsp::DocumentDiagnosticReportResult::Partial(_) => {
+                panic!("unexpected partial report");
+            }
+        }
+    }
+
+    fn to_proto(&self, project_id: u64, buffer: &Buffer) -> proto::GetDocumentDiagnostics {
+        proto::GetDocumentDiagnostics {
+            project_id,
+            buffer_id: buffer.remote_id().into(),
+            version: serialize_version(&buffer.version()),
+        }
+    }
+
+    async fn from_proto(
+        _: proto::GetDocumentDiagnostics,
+        _: Model<LspStore>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Self> {
+        Ok(Self {
+            // previous_result_id: None,
+        })
+    }
+
+    fn response_to_proto(
+        _: Vec<Diagnostic>,
+        _: &mut LspStore,
+        _: PeerId,
+        _: &clock::Global,
+        _: &mut AppContext,
+    ) -> proto::GetDocumentDiagnosticsResponse {
+        panic!()
+        // let diagnostics = response
+        //     .into_iter()
+        //     .map(|diagnostic| language::proto::serialize_diagnostics(diagnostic))
+        //     .collect();
+        // proto::GetDocumentDiagnosticsResponse { diagnostics }
+    }
+
+    async fn response_from_proto(
+        self,
+        _: proto::GetDocumentDiagnosticsResponse,
+        _: Model<LspStore>,
+        _: Model<Buffer>,
+        _: AsyncAppContext,
+    ) -> Result<Vec<Diagnostic>> {
+        panic!()
+        // language::proto::deserialize_diagnostics(message.diagnostics)
+    }
+
+    fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {
         BufferId::new(message.buffer_id)
     }
 }

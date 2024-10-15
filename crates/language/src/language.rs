@@ -161,6 +161,7 @@ pub struct CachedLspAdapter {
     pub name: LanguageServerName,
     pub disk_based_diagnostic_sources: Vec<String>,
     pub disk_based_diagnostics_progress_token: Option<String>,
+    pub previous_document_diagnostic_result_id: Option<String>,
     language_ids: HashMap<String, String>,
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
@@ -193,11 +194,14 @@ impl CachedLspAdapter {
         let disk_based_diagnostic_sources = adapter.disk_based_diagnostic_sources();
         let disk_based_diagnostics_progress_token = adapter.disk_based_diagnostics_progress_token();
         let language_ids = adapter.language_ids();
+        let previous_document_diagnostic_result_id =
+            adapter.previous_document_diagnostic_result_id();
 
         Arc::new(CachedLspAdapter {
             name,
             disk_based_diagnostic_sources,
             disk_based_diagnostics_progress_token,
+            previous_document_diagnostic_result_id,
             language_ids,
             adapter,
             cached_binary: Default::default(),
