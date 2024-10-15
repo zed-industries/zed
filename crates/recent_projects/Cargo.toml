@@ -37,7 +37,6 @@ smol.workspace = true
 task.workspace = true
 terminal_view.workspace = true
 ui.workspace = true
-ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
 

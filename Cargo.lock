@@ -8989,7 +8989,6 @@ dependencies = [
  "task",
  "terminal_view",
  "ui",
- "ui_input",
  "util",
  "workspace",
 ]
