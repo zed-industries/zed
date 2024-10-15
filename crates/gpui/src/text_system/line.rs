@@ -139,10 +139,14 @@ fn paint_line(
                     wraps.next();
                     if let Some((background_origin, background_color)) = current_background.as_mut()
                     {
+                        let mut width = glyph_origin.x - background_origin.x;
+                        if width == px(0.) {
+                            width = px(5.)
+                        };
                         cx.paint_quad(fill(
                             Bounds {
                                 origin: *background_origin,
-                                size: size(glyph_origin.x - background_origin.x, line_height),
+                                size: size(width, line_height),
                             },
                             *background_color,
                         ));
@@ -179,7 +183,18 @@ fn paint_line(
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
                 let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
                 if glyph.index >= run_end {
-                    if let Some(style_run) = decoration_runs.next() {
+                    let mut style_run = decoration_runs.next();
+
+                    // ignore stlye runs that apply to a partial glyph
+                    while let Some(run) = style_run {
+                        if glyph.index < run_end + (run.len as usize) {
+                            break;
+                        }
+                        run_end += run.len as usize;
+                        style_run = decoration_runs.next();
+                    }
+
+                    if let Some(style_run) = style_run {
                         if let Some((_, background_color)) = &mut current_background {
                             if style_run.background_color.as_ref() != Some(background_color) {
                                 finished_background = current_background.take();
@@ -240,10 +255,14 @@ fn paint_line(
                 }
 
                 if let Some((background_origin, background_color)) = finished_background {
+                    let mut width = glyph_origin.x - background_origin.x;
+                    if width == px(0.) {
+                        width = px(5.)
+                    };
                     cx.paint_quad(fill(
                         Bounds {
                             origin: background_origin,
-                            size: size(glyph_origin.x - background_origin.x, line_height),
+                            size: size(width, line_height),
                         },
                         background_color,
                     ));

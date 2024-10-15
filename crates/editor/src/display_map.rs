@@ -21,6 +21,7 @@ mod block_map;
 mod crease_map;
 mod fold_map;
 mod inlay_map;
+mod invisibles;
 mod tab_map;
 mod wrap_map;
 
@@ -42,6 +43,7 @@ use gpui::{
 pub(crate) use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
+pub use invisibles::is_invisible;
 use language::{
     language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
     Subscription as BufferSubscription,
@@ -64,6 +66,7 @@ use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
 use ui::WindowContext;
+use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -687,6 +690,18 @@ impl DisplaySnapshot {
                 }
             }
 
+            if chunk.is_invisible {
+                let invisible_highlight = HighlightStyle {
+                    background_color: Some(editor_style.status.error_background),
+                    ..Default::default()
+                };
+                if let Some(highlight_style) = highlight_style.as_mut() {
+                    highlight_style.highlight(invisible_highlight);
+                } else {
+                    highlight_style = Some(invisible_highlight);
+                }
+            }
+
             let mut diagnostic_highlight = HighlightStyle::default();
 
             if chunk.is_unnecessary {
@@ -783,12 +798,11 @@ impl DisplaySnapshot {
         layout_line.closest_index_for_x(x) as u32
     }
 
-    pub fn display_chars_at(
-        &self,
-        mut point: DisplayPoint,
-    ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
+    pub fn grapheme_at(&self, mut point: DisplayPoint) -> String {
         point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
-        self.text_chunks(point.row())
+
+        let chars = self
+            .text_chunks(point.row())
             .flat_map(str::chars)
             .skip_while({
                 let mut column = 0;
@@ -798,16 +812,22 @@ impl DisplaySnapshot {
                     !at_point
                 }
             })
-            .map(move |ch| {
-                let result = (ch, point);
-                if ch == '\n' {
-                    *point.row_mut() += 1;
-                    *point.column_mut() = 0;
-                } else {
-                    *point.column_mut() += ch.len_utf8() as u32;
+            .take_while({
+                let mut prev = false;
+                move |char| {
+                    let now = char.is_ascii();
+                    let end = char.is_ascii() && (char.is_ascii_whitespace() || prev);
+                    prev = now;
+                    end
                 }
-                result
-            })
+            });
+
+        chars
+            .collect::<String>()
+            .graphemes(true)
+            .next()
+            .map(|s| s.to_owned())
+            .unwrap_or(String::new())
     }
 
     pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {

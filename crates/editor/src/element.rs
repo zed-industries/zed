@@ -1015,38 +1015,34 @@ impl EditorElement {
                         block_width = em_width;
                     }
                     let block_text = if let CursorShape::Block = selection.cursor_shape {
-                        snapshot.display_chars_at(cursor_position).next().and_then(
-                            |(character, _)| {
-                                let text = if character == '\n' {
-                                    SharedString::from(" ")
-                                } else {
-                                    SharedString::from(character.to_string())
-                                };
-                                let len = text.len();
+                        let mut text: SharedString =
+                            snapshot.grapheme_at(cursor_position).to_string().into();
+                        if text == "\n" {
+                            text = " ".into();
+                        }
+                        let len = text.len();
 
-                                let font = cursor_row_layout
-                                    .font_id_for_index(cursor_column)
-                                    .and_then(|cursor_font_id| {
-                                        cx.text_system().get_font_for_id(cursor_font_id)
-                                    })
-                                    .unwrap_or(self.style.text.font());
+                        let font = cursor_row_layout
+                            .font_id_for_index(cursor_column)
+                            .and_then(|cursor_font_id| {
+                                cx.text_system().get_font_for_id(cursor_font_id)
+                            })
+                            .unwrap_or(self.style.text.font());
 
-                                cx.text_system()
-                                    .shape_line(
-                                        text,
-                                        cursor_row_layout.font_size,
-                                        &[TextRun {
-                                            len,
-                                            font,
-                                            color: self.style.background,
-                                            background_color: None,
-                                            strikethrough: None,
-                                            underline: None,
-                                        }],
-                                    )
-                                    .log_err()
-                            },
-                        )
+                        cx.text_system()
+                            .shape_line(
+                                text,
+                                cursor_row_layout.font_size,
+                                &[TextRun {
+                                    len,
+                                    font,
+                                    color: self.style.background,
+                                    background_color: None,
+                                    strikethrough: None,
+                                    underline: None,
+                                }],
+                            )
+                            .log_err()
                     } else {
                         None
                     };

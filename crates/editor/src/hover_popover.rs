@@ -1,6 +1,7 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
+    is_invisible,
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover, RangeToAnchorExt,
@@ -288,13 +289,7 @@ fn show_hover(
                     let position = anchor.text_anchor;
                     let offset = text::ToOffset::to_offset(&position, &snapshot);
                     for ch in snapshot.chars_at(offset).take(1) {
-                        if ('\u{200B}'..='\u{200F}').contains(&ch)
-                            || ('\u{0001}'..='\u{0008}').contains(&ch)
-                            || ('\u{000B}'..='\u{000C}').contains(&ch)
-                            || ('\u{000E}'..='\u{001F}').contains(&ch)
-                            || ('\u{007F}'..='\u{009F}').contains(&ch)
-                            || ('\0') == ch
-                        {
+                        if is_invisible(ch) {
                             let anchor_end = Anchor {
                                 text_anchor: snapshot.anchor_before(offset),
                                 ..anchor
@@ -386,11 +381,12 @@ fn show_hover(
                 })
             } else if result.is_some() {
                 let char = result.unwrap();
+                let message = format!("Unicode character U+{:02X}", char as u32);
                 let new_diagnostic = Diagnostic {
                     source: None,
                     code: None,
                     severity: DiagnosticSeverity::WARNING,
-                    message: format!("The Character `{:?}` is invisible", char),
+                    message: message.clone(),
                     group_id: 0,
                     is_primary: false,
                     is_disk_based: false,
@@ -401,7 +397,6 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
                 let parsed_content = cx
                     .new_view(|cx| {
-                        let text = format!("The Character `{:?}` is invisible", char);
                         let status_colors = cx.theme().status();
                         background_color = Some(status_colors.warning_background);
                         border_color = Some(status_colors.warning_border);
@@ -427,7 +422,7 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
+                        Markdown::new_text(message, markdown_style.clone(), None, cx, None)
                     })
                     .ok();
                 let diagnostic_entry = DiagnosticEntry {

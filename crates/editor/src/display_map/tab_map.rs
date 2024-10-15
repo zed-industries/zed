@@ -1,5 +1,6 @@
 use super::{
     fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
+    invisibles::{is_invisible, replacement},
     Highlights,
 };
 use language::{Chunk, Point};
@@ -344,19 +345,9 @@ impl TabSnapshot {
                 let tab_len = tab_size - expanded_chars % tab_size;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
-            } else if c == '\0' {
-                expanded_chars += 1;
-                expanded_bytes += 3;
-            } else if ('\u{200B}'..='\u{200F}').contains(&c) {
-                expanded_bytes += 1;
-                expanded_chars += 1;
-            } else if ('\u{0001}'..='\u{0008}').contains(&c)
-                || ('\u{000B}'..='\u{000C}').contains(&c)
-                || ('\u{000E}'..='\u{001F}').contains(&c)
-                || ('\u{007F}'..='\u{009F}').contains(&c)
-            {
-                expanded_bytes += 3;
-                expanded_chars += 1;
+            } else if let Some(replacement) = replacement(c) {
+                expanded_chars += replacement.chars().count() as u32;
+                expanded_bytes += replacement.len() as u32;
             } else {
                 expanded_bytes += c.len_utf8() as u32;
                 expanded_chars += 1;
@@ -396,17 +387,9 @@ impl TabSnapshot {
                         Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
                     };
                 }
-            } else if ('\u{200B}'..='\u{200F}').contains(&c) {
-                expanded_chars += 1;
-                expanded_bytes += 1;
-            } else if ('\u{0001}'..='\u{0008}').contains(&c)
-                || ('\u{000B}'..='\u{000C}').contains(&c)
-                || ('\u{000E}'..='\u{001F}').contains(&c)
-                || ('\u{007F}'..='\u{009F}').contains(&c)
-                || '\0' == c
-            {
-                expanded_chars += 1;
-                expanded_bytes += 3;
+            } else if let Some(replacement) = replacement(c) {
+                expanded_chars += replacement.chars().count() as u32;
+                expanded_bytes += replacement.len() as u32;
             } else {
                 expanded_chars += 1;
                 expanded_bytes += c.len_utf8() as u32;
@@ -539,37 +522,6 @@ impl<'a> Iterator for TabChunks<'a> {
 
         for (ix, c) in self.chunk.text.char_indices() {
             match c {
-                '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{200E}' | '\u{200F}' => {
-                    if ix > 0 {
-                        let (prefix, suffix) = self.chunk.text.split_at(ix);
-                        self.chunk.text = suffix;
-                        return Some(Chunk {
-                            text: prefix,
-                            is_invisible: true,
-                            ..self.chunk.clone()
-                        });
-                    } else {
-                        if self.chunk.text.len() >= 3 {
-                            self.chunk.text = &self.chunk.text[3..];
-                        } else {
-                            self.chunk.text = "";
-                        }
-                        let tab_size = 1;
-                        let len = tab_size - (self.column % tab_size);
-                        let next_output_position = cmp::min(
-                            self.output_position + Point::new(0, 1),
-                            self.max_output_position,
-                        );
-                        self.column += len;
-                        self.input_column += len;
-                        self.output_position = next_output_position;
-                        return Some(Chunk {
-                            text: " ",
-                            is_invisible: true,
-                            ..self.chunk.clone()
-                        });
-                    }
-                }
                 '\t' => {
                     if ix > 0 {
                         let (prefix, suffix) = self.chunk.text.split_at(ix);
@@ -601,45 +553,41 @@ impl<'a> Iterator for TabChunks<'a> {
                         });
                     }
                 }
-                '\u{0001}'..='\u{0008}'
-                | '\u{000B}'..='\u{000C}'
-                | '\u{000E}'..='\u{001F}'
-                | '\u{007F}'..='\u{009F}'
-                | '\0' => {
+                '\n' => {
+                    self.column = 0;
+                    self.input_column = 0;
+                    self.output_position += Point::new(1, 0);
+                }
+                _ if is_invisible(c) => {
                     if ix > 0 {
                         let (prefix, suffix) = self.chunk.text.split_at(ix);
                         self.chunk.text = suffix;
                         return Some(Chunk {
                             text: prefix,
-                            is_invisible: true,
-                            ..self.chunk.clone()
-                        });
-                    } else {
-                        let c_len = c.len_utf8();
-                        if self.chunk.text.len() >= c_len {
-                            self.chunk.text = &self.chunk.text[c_len..];
-                        } else {
-                            self.chunk.text = "";
-                        }
-                        let len = c_len as u32;
-                        let next_output_position = cmp::min(
-                            self.output_position + Point::new(0, len),
-                            self.max_output_position,
-                        );
-                        self.column += len;
-                        self.input_column += len;
-                        self.output_position = next_output_position;
-                        return Some(Chunk {
-                            text: "�",
-                            is_invisible: true,
+                            is_invisible: false,
                             ..self.chunk.clone()
                         });
                     }
-                }
-                '\n' => {
-                    self.column = 0;
-                    self.input_column = 0;
-                    self.output_position += Point::new(1, 0);
+                    let c_len = c.len_utf8();
+                    let replacement = replacement(c).unwrap_or(&self.chunk.text[..c_len]);
+                    if self.chunk.text.len() >= c_len {
+                        self.chunk.text = &self.chunk.text[c_len..];
+                    } else {
+                        self.chunk.text = "";
+                    }
+                    let len = replacement.chars().count() as u32;
+                    let next_output_position = cmp::min(
+                        self.output_position + Point::new(0, len),
+                        self.max_output_position,
+                    );
+                    self.column += len;
+                    self.input_column += 1;
+                    self.output_position = next_output_position;
+                    return Some(Chunk {
+                        text: replacement,
+                        is_invisible: true,
+                        ..self.chunk.clone()
+                    });
                 }
                 _ => {
                     self.column += 1;
