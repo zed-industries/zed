@@ -26,7 +26,7 @@ with open(LABEL_DATA_FILE_PATH, "r") as label_data_file:
     # report, but that we don't want being defined as a core label, since issues
     # with without core labels are flagged as errors.
     ADDITIONAL_LABELS: set[str] = set(label_data["additional_labels"])
-    NEW_ISSSUE_LABELS: set[str] = set(label_data["new_issue_labels"])
+    NEW_ISSUE_LABELS: set[str] = set(label_data["new_issue_labels"])
     IGNORED_LABEL: str = label_data["ignored_label"]
 
 
@@ -93,7 +93,7 @@ def main(
             for issue in issue_data:
                 # Used as a dry-run flag
                 if issue_reference_number:
-                    issue._issue.add_to_labels(*NEW_ISSSUE_LABELS)
+                    issue._issue.add_to_labels(*NEW_ISSUE_LABELS)
 
     remaining_requests_after: int = github.rate_limiting[0]
     print(f"Remaining requests after: {remaining_requests_after}")
