@@ -111,7 +111,7 @@ struct LanguageServerState {
 }
 
 #[derive(PartialEq, Clone)]
-enum LanguageServerKind {
+pub enum LanguageServerKind {
     Local { project: WeakModel<Project> },
     Remote { project: WeakModel<Project> },
     Global,
@@ -196,7 +196,7 @@ pub(crate) struct LogMenuItem {
     pub rpc_trace_enabled: bool,
     pub selected_entry: LogKind,
     pub trace_level: lsp::TraceValue,
-    server_kind: LanguageServerKind,
+    pub server_kind: LanguageServerKind,
 }
 
 actions!(debug, [OpenLanguageServerLogs]);
