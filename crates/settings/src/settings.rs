@@ -1,4 +1,5 @@
 mod editable_setting_control;
+mod editorconfig;
 mod json_schema;
 mod keymap_file;
 mod settings_file;
