@@ -45,6 +45,10 @@ pub trait PathExt {
                 .ok_or_else(|| anyhow!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
+    /// TODO:
+    fn to_absolute_pathbuf(&self) -> anyhow::Result<AbsolutePathBuf>;
+    /// TODO:
+    fn to_absolute_pathbuf_string(&self) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -93,7 +97,33 @@ impl<T: AsRef<Path>> PathExt for T {
 
         self.as_ref().file_name()?.to_str()?.split('.').last()
     }
+
+    fn to_absolute_pathbuf(&self) -> anyhow::Result<AbsolutePathBuf> {
+        #[cfg(target_os = "windows")]
+        return Ok(AbsolutePathBuf(PathBuf::from(
+            self.to_absolute_pathbuf_string()?,
+        )));
+        #[cfg(not(target_os = "windows"))]
+        return Ok(AbsolutePathBuf(self.as_ref().to_path_buf()));
+    }
+
+    fn to_absolute_pathbuf_string(&self) -> anyhow::Result<String> {
+        let path_string = self.as_ref().to_string_lossy();
+        #[cfg(target_os = "windows")]
+        {
+            let trimmed_path_string = path_string.trim_start_matches("\\\\?\\");
+            if trimmed_path_string.is_empty() {
+                anyhow::bail!("File path is empty!");
+            }
+            return Ok(trimmed_path_string.to_string());
+        }
+        #[cfg(not(target_os = "windows"))]
+        return Ok(path_string.to_string());
+    }
 }
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+pub struct AbsolutePathBuf(PathBuf);
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
