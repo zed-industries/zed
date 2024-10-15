@@ -60,7 +60,7 @@ pub struct DevServerProjects {
     dev_server_store: Model<dev_server_projects::Store>,
     workspace: WeakView<Workspace>,
     _dev_server_subscription: Subscription,
-    focusable_items: SelectableItemList,
+    selectable_items: SelectableItemList,
 }
 
 struct CreateDevServer {
@@ -88,6 +88,7 @@ struct ProjectPicker {
 type SelectedItemCallback =
     Box<dyn Fn(&mut DevServerProjects, &mut ViewContext<DevServerProjects>) + 'static>;
 
+/// Used to implement keyboard navigation for SSH modal.
 #[derive(Default)]
 struct SelectableItemList {
     items: Vec<SelectedItemCallback>,
@@ -333,7 +334,7 @@ impl DevServerProjects {
             dev_server_store,
             workspace,
             _dev_server_subscription: subscription,
-            focusable_items: Default::default(),
+            selectable_items: Default::default(),
         }
     }
 
@@ -341,13 +342,13 @@ impl DevServerProjects {
         if !matches!(self.mode, Mode::Default | Mode::ViewServerOptions(_, _)) {
             return;
         }
-        self.focusable_items.next(cx);
+        self.selectable_items.next(cx);
     }
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
         if !matches!(self.mode, Mode::Default | Mode::ViewServerOptions(_, _)) {
             return;
         }
-        self.focusable_items.prev(cx);
+        self.selectable_items.prev(cx);
     }
     pub fn project_picker(
         ix: usize,
@@ -421,7 +422,7 @@ impl DevServerProjects {
 
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::Default;
-                        this.focusable_items.reset_selection();
+                        this.selectable_items.reset_selection();
                         cx.notify()
                     })
                     .log_err(),
@@ -446,7 +447,7 @@ impl DevServerProjects {
         (index, connection): (usize, SshConnection),
         cx: &mut ViewContext<Self>,
     ) {
-        self.focusable_items.reset_selection();
+        self.selectable_items.reset_selection();
         self.mode = Mode::ViewServerOptions(index, connection);
         cx.notify();
     }
@@ -525,9 +526,9 @@ impl DevServerProjects {
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.mode {
             Mode::Default | Mode::ViewServerOptions(_, _) => {
-                let items = std::mem::take(&mut self.focusable_items);
+                let items = std::mem::take(&mut self.selectable_items);
                 items.confirm(self, cx);
-                self.focusable_items = items;
+                self.selectable_items = items;
             }
             Mode::ProjectPicker(_) => {}
             Mode::CreateDevServer(state) => {
@@ -556,7 +557,7 @@ impl DevServerProjects {
                     }
                 });
                 self.mode = Mode::Default;
-                self.focusable_items.reset_selection();
+                self.selectable_items.reset_selection();
                 self.focus_handle.focus(cx);
             }
         }
@@ -567,12 +568,12 @@ impl DevServerProjects {
             Mode::Default => cx.emit(DismissEvent),
             Mode::CreateDevServer(state) if state.ssh_prompt.is_some() => {
                 self.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
-                self.focusable_items.reset_selection();
+                self.selectable_items.reset_selection();
                 cx.notify();
             }
             _ => {
                 self.mode = Mode::Default;
-                self.focusable_items.reset_selection();
+                self.selectable_items.reset_selection();
                 self.focus_handle(cx).focus(cx);
                 cx.notify();
             }
@@ -632,13 +633,13 @@ impl DevServerProjects {
                             ))
                         }))
                         .child(h_flex().map(|this| {
-                            self.focusable_items.add_item(Box::new({
+                            self.selectable_items.add_item(Box::new({
                                 let ssh_connection = ssh_connection.clone();
                                 move |this, cx| {
                                     this.create_ssh_project(ix, ssh_connection.clone(), cx);
                                 }
                             }));
-                            let is_selected = self.focusable_items.is_selected();
+                            let is_selected = self.selectable_items.is_selected();
                             this.child(
                                 ListItem::new(("new-remote-project", ix))
                                     .selected(is_selected)
@@ -655,13 +656,13 @@ impl DevServerProjects {
                             )
                         }))
                         .child(h_flex().map(|this| {
-                            self.focusable_items.add_item(Box::new({
+                            self.selectable_items.add_item(Box::new({
                                 let ssh_connection = ssh_connection.clone();
                                 move |this, cx| {
                                     this.view_server_options((ix, ssh_connection.clone()), cx);
                                 }
                             }));
-                            let is_selected = self.focusable_items.is_selected();
+                            let is_selected = self.selectable_items.is_selected();
                             this.child(
                                 ListItem::new(("server-options", ix))
                                     .selected(is_selected)
@@ -731,11 +732,11 @@ impl DevServerProjects {
                 .detach();
             }
         });
-        self.focusable_items.add_item(Box::new({
+        self.selectable_items.add_item(Box::new({
             let callback = callback.clone();
             move |this, cx| callback(this, cx)
         }));
-        let is_selected = self.focusable_items.is_selected();
+        let is_selected = self.selectable_items.is_selected();
 
         ListItem::new((element_id_base, ix))
             .inset(true)
@@ -901,13 +902,13 @@ impl DevServerProjects {
                 v_flex()
                     .py_1()
                     .child({
-                        self.focusable_items.add_item(Box::new({
+                        self.selectable_items.add_item(Box::new({
                             move |this, cx| {
                                 this.mode = Mode::EditNickname(EditNicknameState::new(index, cx));
                                 cx.notify();
                             }
                         }));
-                        let is_selected = self.focusable_items.is_selected();
+                        let is_selected = self.selectable_items.is_selected();
                         let label = if connection.nickname.is_some() {
                             "Edit Nickname"
                         } else {
@@ -957,14 +958,14 @@ impl DevServerProjects {
                                 })
                                 .ok();
                         }
-                        self.focusable_items.add_item(Box::new({
+                        self.selectable_items.add_item(Box::new({
                             let workspace = workspace.clone();
                             let connection_string = connection_string.clone();
                             move |_, cx| {
                                 callback(workspace.clone(), connection_string.clone(), cx);
                             }
                         }));
-                        let is_selected = self.focusable_items.is_selected();
+                        let is_selected = self.selectable_items.is_selected();
                         ListItem::new("copy-server-address")
                             .selected(is_selected)
                             .inset(true)
@@ -1018,7 +1019,7 @@ impl DevServerProjects {
                                 })
                                 .ok();
                         }
-                        self.focusable_items.add_item(Box::new({
+                        self.selectable_items.add_item(Box::new({
                             let connection_string = connection_string.clone();
                             move |this, cx| {
                                 remove_ssh_server(
@@ -1030,7 +1031,7 @@ impl DevServerProjects {
                                 );
                             }
                         }));
-                        let is_selected = self.focusable_items.is_selected();
+                        let is_selected = self.selectable_items.is_selected();
                         ListItem::new("delete-server")
                             .selected(is_selected)
                             .inset(true)
@@ -1049,13 +1050,13 @@ impl DevServerProjects {
                     })
                     .child(ListSeparator)
                     .child({
-                        self.focusable_items.add_item(Box::new({
+                        self.selectable_items.add_item(Box::new({
                             move |this, cx| {
                                 this.mode = Mode::Default;
                                 cx.notify();
                             }
                         }));
-                        let is_selected = self.focusable_items.is_selected();
+                        let is_selected = self.selectable_items.is_selected();
                         ListItem::new("go-back")
                             .selected(is_selected)
                             .inset(true)
@@ -1100,12 +1101,12 @@ impl DevServerProjects {
         let ssh_connections = SshSettings::get_global(cx)
             .ssh_connections()
             .collect::<Vec<_>>();
-        self.focusable_items.add_item(Box::new(|this, cx| {
+        self.selectable_items.add_item(Box::new(|this, cx| {
             this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
             cx.notify();
         }));
 
-        let is_selected = self.focusable_items.is_selected();
+        let is_selected = self.selectable_items.is_selected();
         let connect_button = ListItem::new("register-dev-server-button")
             .selected(is_selected)
             .inset(true)
@@ -1170,7 +1171,7 @@ impl EventEmitter<DismissEvent> for DevServerProjects {}
 
 impl Render for DevServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.focusable_items.reset();
+        self.selectable_items.reset();
         div()
             .track_focus(&self.focus_handle)
             .elevation_3(cx)
