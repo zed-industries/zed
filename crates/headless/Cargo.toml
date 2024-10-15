@@ -19,11 +19,11 @@ extension.workspace = true
 signal-hook.workspace = true
 gpui.workspace = true
 log.workspace = true
-rpc.workspace = true
 util.workspace = true
 node_runtime.workspace = true
 language.workspace = true
 project.workspace = true
+proto.workspace = true
 fs.workspace = true
 futures.workspace = true
 settings.workspace = true
@@ -34,5 +34,4 @@ postage.workspace = true
 client = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
-rpc = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }

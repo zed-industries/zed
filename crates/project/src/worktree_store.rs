@@ -231,16 +231,22 @@ impl WorktreeStore {
         if abs_path.starts_with("/~") {
             abs_path = abs_path[1..].to_string();
         }
+        if abs_path.is_empty() {
+            abs_path = "~/".to_string();
+        }
         let root_name = PathBuf::from(abs_path.clone())
             .file_name()
             .unwrap()
             .to_string_lossy()
             .to_string();
         cx.spawn(|this, mut cx| async move {
+            let this = this.upgrade().context("Dropped worktree store")?;
+
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
                     path: abs_path.clone(),
+                    visible,
                 })
                 .await?;
 
@@ -252,7 +258,7 @@ impl WorktreeStore {
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
-                    0,
+                    SSH_PROJECT_ID,
                     0,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,
@@ -509,11 +515,6 @@ impl WorktreeStore {
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade() {
                 worktree.update(cx, |worktree, _| {
-                    println!(
-                        "worktree. is_local: {:?}, is_remote: {:?}",
-                        worktree.is_local(),
-                        worktree.is_remote()
-                    );
                     if let Some(worktree) = worktree.as_remote_mut() {
                         worktree.disconnected_from_host();
                     }

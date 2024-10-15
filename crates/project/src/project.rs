@@ -219,7 +219,7 @@ enum ProjectClientState {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Event {
-    LanguageServerAdded(LanguageServerId),
+    LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerLog(LanguageServerId, LanguageServerLogType, String),
     Notification(String),
@@ -746,17 +746,6 @@ impl Project {
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
-            cx.on_release(|this, cx| {
-                if let Some(ssh_client) = this.ssh_client.as_ref() {
-                    ssh_client
-                        .read(cx)
-                        .to_proto_client()
-                        .send(proto::ShutdownRemoteServer {})
-                        .log_err();
-                }
-            })
-            .detach();
-
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
 
@@ -769,7 +758,22 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![cx.on_release(Self::release)],
+                _subscriptions: vec![
+                    cx.on_release(Self::release),
+                    cx.on_app_quit(|this, cx| {
+                        let shutdown = this.ssh_client.take().and_then(|client| {
+                            client
+                                .read(cx)
+                                .shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+                        });
+
+                        cx.background_executor().spawn(async move {
+                            if let Some(shutdown) = shutdown {
+                                shutdown.await;
+                            }
+                        })
+                    }),
+                ],
                 active_entry: None,
                 snippets,
                 languages,
@@ -1094,6 +1098,20 @@ impl Project {
     }
 
     fn release(&mut self, cx: &mut AppContext) {
+        if let Some(client) = self.ssh_client.take() {
+            let shutdown = client
+                .read(cx)
+                .shutdown_processes(Some(proto::ShutdownRemoteServer {}));
+
+            cx.background_executor()
+                .spawn(async move {
+                    if let Some(shutdown) = shutdown {
+                        shutdown.await;
+                    }
+                })
+                .detach()
+        }
+
         match &self.client_state {
             ProjectClientState::Local => {}
             ProjectClientState::Shared { .. } => {
@@ -2072,9 +2090,9 @@ impl Project {
                 path: path.clone(),
                 language_server_id: *language_server_id,
             }),
-            LspStoreEvent::LanguageServerAdded(language_server_id) => {
-                cx.emit(Event::LanguageServerAdded(*language_server_id))
-            }
+            LspStoreEvent::LanguageServerAdded(language_server_id, name, worktree_id) => cx.emit(
+                Event::LanguageServerAdded(*language_server_id, name.clone(), *worktree_id),
+            ),
             LspStoreEvent::LanguageServerRemoved(language_server_id) => {
                 cx.emit(Event::LanguageServerRemoved(*language_server_id))
             }
@@ -2240,6 +2258,15 @@ impl Project {
                     .detach_and_log_err(cx);
             }
             return;
+        }
+
+        if let Some(ssh) = &self.ssh_client {
+            ssh.read(cx)
+                .to_proto_client()
+                .send(proto::RemoveWorktree {
+                    worktree_id: id_to_remove.to_proto(),
+                })
+                .log_err();
         }
 
         cx.notify();
@@ -3070,7 +3097,7 @@ impl Project {
         }
     }
 
-    // Returns the resolved version of `path`, that was found in `buffer`, if it exists.
+    /// Returns the resolved version of `path`, that was found in `buffer`, if it exists.
     pub fn resolve_existing_file_path(
         &self,
         path: &str,
@@ -3079,38 +3106,53 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let path_buf = PathBuf::from(path);
         if path_buf.is_absolute() || path.starts_with("~") {
-            if self.is_local() {
-                let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
-
-                let fs = self.fs.clone();
-                cx.background_executor().spawn(async move {
-                    let path = expanded.as_path();
-                    let exists = fs.is_file(path).await;
-
-                    exists.then(|| ResolvedPath::AbsPath(expanded))
-                })
-            } else if let Some(ssh_client) = self.ssh_client.as_ref() {
-                let request =
-                    ssh_client
-                        .read(cx)
-                        .to_proto_client()
-                        .request(proto::CheckFileExists {
-                            project_id: SSH_PROJECT_ID,
-                            path: path.to_string(),
-                        });
-                cx.background_executor().spawn(async move {
-                    let response = request.await.log_err()?;
-                    if response.exists {
-                        Some(ResolvedPath::AbsPath(PathBuf::from(response.path)))
-                    } else {
-                        None
-                    }
-                })
-            } else {
-                return Task::ready(None);
-            }
+            self.resolve_abs_file_path(path, cx)
         } else {
             self.resolve_path_in_worktrees(path_buf, buffer, cx)
+        }
+    }
+
+    pub fn abs_file_path_exists(&self, path: &str, cx: &mut ModelContext<Self>) -> Task<bool> {
+        let resolve_task = self.resolve_abs_file_path(path, cx);
+        cx.background_executor().spawn(async move {
+            let resolved_path = resolve_task.await;
+            resolved_path.is_some()
+        })
+    }
+
+    fn resolve_abs_file_path(
+        &self,
+        path: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        if self.is_local() {
+            let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
+
+            let fs = self.fs.clone();
+            cx.background_executor().spawn(async move {
+                let path = expanded.as_path();
+                let exists = fs.is_file(path).await;
+
+                exists.then(|| ResolvedPath::AbsPath(expanded))
+            })
+        } else if let Some(ssh_client) = self.ssh_client.as_ref() {
+            let request = ssh_client
+                .read(cx)
+                .to_proto_client()
+                .request(proto::CheckFileExists {
+                    project_id: SSH_PROJECT_ID,
+                    path: path.to_string(),
+                });
+            cx.background_executor().spawn(async move {
+                let response = request.await.log_err()?;
+                if response.exists {
+                    Some(ResolvedPath::AbsPath(PathBuf::from(response.path)))
+                } else {
+                    None
+                }
+            })
+        } else {
+            return Task::ready(None);
         }
     }
 
@@ -3945,7 +3987,7 @@ impl<'a> fuzzy::PathMatchCandidateSet<'a> for PathMatchCandidateSet {
         if self.snapshot.root_entry().map_or(false, |e| e.is_file()) {
             self.snapshot.root_name().into()
         } else if self.include_root_name {
-            format!("{}/", self.snapshot.root_name()).into()
+            format!("{}{}", self.snapshot.root_name(), std::path::MAIN_SEPARATOR).into()
         } else {
             Arc::default()
         }

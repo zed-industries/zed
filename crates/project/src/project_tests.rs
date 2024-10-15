@@ -1185,7 +1185,11 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(LanguageServerId(0)),
+        Event::LanguageServerAdded(
+            LanguageServerId(0),
+            fake_server.server.name().into(),
+            Some(worktree_id)
+        ),
     );
 
     fake_server
@@ -1295,6 +1299,8 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         },
     );
 
+    let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
+
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
         .await
@@ -1314,7 +1320,11 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(LanguageServerId(1))
+        Event::LanguageServerAdded(
+            LanguageServerId(1),
+            fake_server.server.name().into(),
+            Some(worktree_id)
+        )
     );
     fake_server.start_progress(progress_token).await;
     assert_eq!(

@@ -51,13 +51,12 @@ futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 go_to_line.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 headless.workspace = true
 http_client.workspace = true
 image_viewer.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
-isahc_http_client.workspace = true
 journal.workspace = true
 language.workspace = true
 language_model.workspace = true
@@ -108,6 +107,7 @@ theme.workspace = true
 theme_selector.workspace = true
 time.workspace = true
 ui.workspace = true
+reqwest_client.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
@@ -125,6 +125,8 @@ winresource = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd.workspace = true
+# We don't use zstd in the zed crate, but we want to add this feature when compiling a desktop build of Zed
+zstd = { workspace = true, features = [ "pkg-config" ] }
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
@@ -169,4 +171,4 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
-ignored = ["profiling"]
+ignored = ["profiling", "zstd"]

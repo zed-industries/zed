@@ -332,9 +332,14 @@ impl TerminalBuilder {
         completion_tx: Sender<()>,
         cx: &AppContext,
     ) -> Result<TerminalBuilder> {
-        // TODO: Properly set the current locale,
-        env.entry("LC_ALL".to_string())
-            .or_insert_with(|| "en_US.UTF-8".to_string());
+        // If the parent environment doesn't have a locale set
+        // (As is the case when launched from a .app on MacOS),
+        // and the Project doesn't have a locale set, then
+        // set a fallback for our child environment to use.
+        if std::env::var("LANG").is_err() {
+            env.entry("LANG".to_string())
+                .or_insert_with(|| "en_US.UTF-8".to_string());
+        }
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
         env.insert("TERM_PROGRAM".to_string(), "zed".to_string());

@@ -1911,11 +1911,9 @@ impl ProjectPanel {
                                     Some(Arc::<Path>::from(full_path.join(suffix)))
                                 })
                         })
+                        .or_else(|| entry.path.file_name().map(Path::new).map(Arc::from))
                         .unwrap_or_else(|| entry.path.clone());
-                    let depth = path
-                        .strip_prefix(worktree_abs_path)
-                        .map(|suffix| suffix.components().count())
-                        .unwrap_or_default();
+                    let depth = path.components().count();
                     (depth, path)
                 };
                 let width_estimate = item_width_estimate(

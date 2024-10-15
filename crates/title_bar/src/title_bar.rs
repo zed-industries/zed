@@ -293,15 +293,20 @@ impl TitleBar {
 
         let meta = SharedString::from(meta);
 
-        let indicator = div()
+        let indicator = h_flex()
+            // We're using the circle inside a circle approach because, otherwise, by using borders
+            // we'd get a very thin, leaking indicator color, which is not what we want.
             .absolute()
             .size_2p5()
             .right_0()
             .bottom_0()
+            .bg(indicator_border_color)
+            .size_2p5()
             .rounded_full()
-            .border_2()
-            .border_color(indicator_border_color)
-            .bg(indicator_color.color(cx));
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .child(Indicator::dot().color(indicator_color));
 
         Some(
             div()
