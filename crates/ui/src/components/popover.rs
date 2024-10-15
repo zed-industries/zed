@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use crate::prelude::*;
 use crate::v_flex;
 use gpui::{

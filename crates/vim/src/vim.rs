@@ -389,6 +389,7 @@ impl Vim {
             }
             EditorEvent::Edited { .. } => self.push_to_change_list(cx),
             EditorEvent::FocusedIn => self.sync_vim_settings(cx),
+            EditorEvent::CursorShapeChanged => self.cursor_shape_changed(cx),
             _ => {}
         }
     }
@@ -544,10 +545,10 @@ impl Vim {
                 if self.operator_stack.is_empty() {
                     CursorShape::Block
                 } else {
-                    CursorShape::Underscore
+                    CursorShape::Underline
                 }
             }
-            Mode::Replace => CursorShape::Underscore,
+            Mode::Replace => CursorShape::Underline,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
@@ -676,6 +677,12 @@ impl Vim {
         self.clear_operator(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.set_cursor_shape(language::CursorShape::Hollow, cx);
+        });
+    }
+
+    fn cursor_shape_changed(&mut self, cx: &mut ViewContext<Self>) {
+        self.update_editor(cx, |vim, editor, cx| {
+            editor.set_cursor_shape(vim.cursor_shape(), cx);
         });
     }
 

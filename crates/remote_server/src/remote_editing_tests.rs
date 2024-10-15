@@ -15,7 +15,7 @@ use project::{
     search::{SearchQuery, SearchResult},
     Project, ProjectPath,
 };
-use remote::SshSession;
+use remote::SshRemoteClient;
 use serde_json::json;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
@@ -434,7 +434,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     project
         .update(cx, |project, cx| {
-            project.perform_rename(buffer.clone(), 3, "two".to_string(), true, cx)
+            project.perform_rename(buffer.clone(), 3, "two".to_string(), cx)
         })
         .await
         .unwrap();
@@ -564,6 +564,48 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
     });
 }
 
+#[gpui::test]
+async fn test_adding_then_removing_then_adding_worktrees(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let (_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let (worktree_2, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project2", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id_2 = worktree_2.read_with(cx, |tree, _| tree.id());
+
+    project.update(cx, |project, cx| project.remove_worktree(worktree_id_2, cx));
+
+    let (worktree_2, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project2", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    worktree_2.update(cx, |worktree, _cx| {
+        assert!(worktree.is_visible());
+        let entries = worktree.entries(true, 0).collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[1].path.to_string_lossy().to_string(),
+            "README.md".to_string()
+        )
+    })
+}
+
 fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::try_init().ok();
@@ -574,7 +616,7 @@ async fn init_test(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) -> (Model<Project>, Model<HeadlessProject>, Arc<FakeFs>) {
-    let (client_ssh, server_ssh) = SshSession::fake(cx, server_cx);
+    let (ssh_remote_client, ssh_server_client) = SshRemoteClient::fake(cx, server_cx);
     init_logger();
 
     let fs = FakeFs::new(server_cx.executor());
@@ -600,8 +642,9 @@ async fn init_test(
     );
 
     server_cx.update(HeadlessProject::init);
-    let headless = server_cx.new_model(|cx| HeadlessProject::new(server_ssh, fs.clone(), cx));
-    let project = build_project(client_ssh, cx);
+    let headless =
+        server_cx.new_model(|cx| HeadlessProject::new(ssh_server_client, fs.clone(), cx));
+    let project = build_project(ssh_remote_client, cx);
 
     project
         .update(cx, {
@@ -612,7 +655,7 @@ async fn init_test(
     (project, headless, fs)
 }
 
-fn build_project(ssh: Arc<SshSession>, cx: &mut TestAppContext) -> Model<Project> {
+fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);

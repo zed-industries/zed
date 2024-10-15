@@ -34,11 +34,11 @@ impl SlashCommand for SearchSlashCommand {
     }
 
     fn description(&self) -> String {
-        "semantic search".into()
+        "Search your project semantically".into()
     }
 
     fn menu_text(&self) -> String {
-        "Semantic Search".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

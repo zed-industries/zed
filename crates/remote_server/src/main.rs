@@ -1,21 +1,38 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
-use fs::RealFs;
-use futures::channel::mpsc;
-use gpui::Context as _;
-use remote::{
-    json_log::LogRecord,
-    protocol::{read_message, write_message},
-    SshSession,
-};
-use remote_server::HeadlessProject;
-use smol::{io::AsyncWriteExt, stream::StreamExt as _, Async};
-use std::{
-    env,
-    io::{self, Write},
-    mem, process,
-    sync::Arc,
-};
+use anyhow::Result;
+use clap::{Parser, Subcommand};
+use std::path::PathBuf;
+
+#[derive(Parser)]
+#[command(disable_version_flag = true)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Run {
+        #[arg(long)]
+        log_file: PathBuf,
+        #[arg(long)]
+        pid_file: PathBuf,
+        #[arg(long)]
+        stdin_socket: PathBuf,
+        #[arg(long)]
+        stdout_socket: PathBuf,
+        #[arg(long)]
+        stderr_socket: PathBuf,
+    },
+    Proxy {
+        #[arg(long)]
+        reconnect: bool,
+        #[arg(long)]
+        identifier: String,
+    },
+    Version,
+}
 
 #[cfg(windows)]
 fn main() {
@@ -23,74 +40,45 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-fn main() {
-    env_logger::builder()
-        .format(|buf, record| {
-            serde_json::to_writer(&mut *buf, &LogRecord::new(record))?;
-            buf.write_all(b"\n")?;
-            Ok(())
-        })
-        .init();
+fn main() -> Result<()> {
+    use remote::proxy::ProxyLaunchError;
+    use remote_server::unix::{execute_proxy, execute_run};
 
-    let subcommand = std::env::args().nth(1);
-    match subcommand.as_deref() {
-        Some("run") => {}
-        Some("version") => {
-            println!("{}", env!("ZED_PKG_VERSION"));
-            return;
+    let cli = Cli::parse();
+
+    match cli.command {
+        Some(Commands::Run {
+            log_file,
+            pid_file,
+            stdin_socket,
+            stdout_socket,
+            stderr_socket,
+        }) => execute_run(
+            log_file,
+            pid_file,
+            stdin_socket,
+            stdout_socket,
+            stderr_socket,
+        ),
+        Some(Commands::Proxy {
+            identifier,
+            reconnect,
+        }) => match execute_proxy(identifier, reconnect) {
+            Ok(_) => Ok(()),
+            Err(err) => {
+                if let Some(err) = err.downcast_ref::<ProxyLaunchError>() {
+                    std::process::exit(err.to_exit_code());
+                }
+                Err(err)
+            }
+        },
+        Some(Commands::Version) => {
+            eprintln!("{}", env!("ZED_PKG_VERSION"));
+            Ok(())
         }
-        _ => {
-            eprintln!("usage: remote <run|version>");
-            process::exit(1);
+        None => {
+            eprintln!("usage: remote <run|proxy|version>");
+            std::process::exit(1);
         }
     }
-
-    gpui::App::headless().run(move |cx| {
-        settings::init(cx);
-        HeadlessProject::init(cx);
-
-        let (incoming_tx, incoming_rx) = mpsc::unbounded();
-        let (outgoing_tx, mut outgoing_rx) = mpsc::unbounded();
-
-        let mut stdin = Async::new(io::stdin()).unwrap();
-        let mut stdout = Async::new(io::stdout()).unwrap();
-
-        let session = SshSession::server(incoming_rx, outgoing_tx, cx);
-        let project = cx.new_model(|cx| {
-            HeadlessProject::new(
-                session.clone(),
-                Arc::new(RealFs::new(Default::default(), None)),
-                cx,
-            )
-        });
-
-        cx.background_executor()
-            .spawn(async move {
-                let mut output_buffer = Vec::new();
-                while let Some(message) = outgoing_rx.next().await {
-                    write_message(&mut stdout, &mut output_buffer, message).await?;
-                    stdout.flush().await?;
-                }
-                anyhow::Ok(())
-            })
-            .detach();
-
-        cx.background_executor()
-            .spawn(async move {
-                let mut input_buffer = Vec::new();
-                loop {
-                    let message = match read_message(&mut stdin, &mut input_buffer).await {
-                        Ok(message) => message,
-                        Err(error) => {
-                            log::warn!("error reading message: {:?}", error);
-                            process::exit(0);
-                        }
-                    };
-                    incoming_tx.unbounded_send(message).ok();
-                }
-            })
-            .detach();
-
-        mem::forget(project);
-    });
 }

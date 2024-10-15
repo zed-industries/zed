@@ -224,7 +224,7 @@ impl DiagnosticSet {
 impl sum_tree::Item for DiagnosticEntry<Anchor> {
     type Summary = Summary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         Summary {
             start: self.range.start,
             end: self.range.end,

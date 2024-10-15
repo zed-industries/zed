@@ -52,6 +52,7 @@ pub struct WindowsWindowState {
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
+    initial_placement: Option<WINDOWPLACEMENT>,
     hwnd: HWND,
 }
 
@@ -97,6 +98,7 @@ impl WindowsWindowState {
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
+        let initial_placement = None;
 
         Ok(Self {
             origin,
@@ -114,6 +116,7 @@ impl WindowsWindowState {
             nc_button_pressed,
             display,
             fullscreen,
+            initial_placement,
             hwnd,
         })
     }
@@ -231,6 +234,14 @@ impl WindowsWindowStatePtr {
             main_receiver: context.main_receiver.clone(),
         }))
     }
+
+    fn set_window_placement(&self) -> Result<()> {
+        let Some(placement) = self.state.borrow_mut().initial_placement.take() else {
+            return Ok(());
+        };
+        unsafe { SetWindowPlacement(self.hwnd, &placement)? };
+        Ok(())
+    }
 }
 
 #[derive(Default)]
@@ -287,7 +298,7 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+        let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
             (
@@ -295,6 +306,7 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
+
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
             // if we obtain a display_id, then this ID must be valid.
@@ -332,32 +344,25 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
+        // We should call `?` on state_ptr first, then call `?` on hwnd.
         // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
-        let raw_hwnd = creation_result?;
+        let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
-        unsafe {
-            let mut placement = WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                ..Default::default()
-            };
-            GetWindowPlacement(raw_hwnd, &mut placement)?;
-            // the bounds may be not inside the display
-            let bounds = if display.check_given_bounds(params.bounds) {
-                params.bounds
-            } else {
-                display.default_bounds()
-            };
-            let mut lock = state_ptr.state.borrow_mut();
-            let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.update(raw_hwnd)?;
-            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
-            drop(lock);
-            SetWindowPlacement(raw_hwnd, &placement)?;
+        state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
+        let placement = retrieve_window_placement(
+            hwnd,
+            display,
+            params.bounds,
+            state_ptr.state.borrow().scale_factor,
+            state_ptr.state.borrow().border_offset,
+        )?;
+        if params.show {
+            unsafe { SetWindowPlacement(hwnd, &placement)? };
+        } else {
+            state_ptr.state.borrow_mut().initial_placement = Some(placement);
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
 
         Ok(Self(state_ptr))
     }
@@ -532,11 +537,18 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { SetActiveWindow(hwnd).log_err() };
-        unsafe { SetFocus(hwnd).log_err() };
-        // todo(windows)
-        // crate `windows 0.56` reports true as Err
-        unsafe { SetForegroundWindow(hwnd).as_bool() };
+        let this = self.0.clone();
+        self.0
+            .executor
+            .spawn(async move {
+                this.set_window_placement().log_err();
+                unsafe { SetActiveWindow(hwnd).log_err() };
+                unsafe { SetFocus(hwnd).log_err() };
+                // todo(windows)
+                // crate `windows 0.56` reports true as Err
+                unsafe { SetForegroundWindow(hwnd).as_bool() };
+            })
+            .detach();
     }
 
     fn is_active(&self) -> bool {
@@ -685,7 +697,7 @@ impl PlatformWindow for WindowsWindow {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
         // todo(windows)
     }
 }
@@ -735,23 +747,11 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 }
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
                 let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
-                for file_index in 0..file_count {
-                    let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
-                    let mut buffer = vec![0u16; filename_length + 1];
-                    let ret = DragQueryFileW(*hdrop, file_index, Some(buffer.as_mut_slice()));
-                    if ret == 0 {
-                        log::error!("unable to read file name");
-                        continue;
+                with_file_names(*hdrop, |file_name| {
+                    if let Some(path) = PathBuf::from_str(&file_name).log_err() {
+                        paths.push(path);
                     }
-                    if let Some(file_name) =
-                        String::from_utf16(&buffer[0..filename_length]).log_err()
-                    {
-                        if let Some(path) = PathBuf::from_str(&file_name).log_err() {
-                            paths.push(path);
-                        }
-                    }
-                }
+                });
                 ReleaseStgMedium(&mut idata);
                 let mut cursor_position = POINT { x: pt.x, y: pt.y };
                 ScreenToClient(self.0.hwnd, &mut cursor_position)
@@ -1069,8 +1069,28 @@ fn calculate_client_rect(
     }
 }
 
-// https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
-const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+fn retrieve_window_placement(
+    hwnd: HWND,
+    display: WindowsDisplay,
+    initial_bounds: Bounds<Pixels>,
+    scale_factor: f32,
+    border_offset: WindowBorderOffset,
+) -> Result<WINDOWPLACEMENT> {
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowPlacement(hwnd, &mut placement)? };
+    // the bounds may be not inside the display
+    let bounds = if display.check_given_bounds(initial_bounds) {
+        initial_bounds
+    } else {
+        display.default_bounds()
+    };
+    let bounds = bounds.to_device_pixels(scale_factor);
+    placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
+    Ok(placement)
+}
 
 mod windows_renderer {
     use std::{num::NonZeroIsize, sync::Arc};

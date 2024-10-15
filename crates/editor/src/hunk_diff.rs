@@ -1,28 +1,23 @@
 use collections::{hash_map, HashMap, HashSet};
 use git::diff::DiffHunkStatus;
-use gpui::{Action, AppContext, CursorStyle, Hsla, Model, MouseButton, Subscription, Task, View};
+use gpui::{Action, AnchorCorner, AppContext, CursorStyle, Hsla, Model, MouseButton, Task, View};
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
     MultiBufferSnapshot, ToPoint,
 };
-use settings::SettingsStore;
-use std::{
-    ops::{Range, RangeInclusive},
-    sync::Arc,
-};
+use std::{ops::Range, sync::Arc};
 use ui::{
-    prelude::*, ActiveTheme, ContextMenu, InteractiveElement, IntoElement, ParentElement, Pixels,
-    Styled, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
+    ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
 };
-use util::{debug_panic, RangeExt};
+use util::RangeExt;
 
 use crate::{
-    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections,
-    mouse_context_menu::MouseContextMenu, BlockDisposition, BlockProperties, BlockStyle,
-    CustomBlockId, DiffRowHighlight, DisplayRow, DisplaySnapshot, Editor, EditorElement,
-    EditorSnapshot, ExpandAllHunkDiffs, RangeToAnchorExt, RevertFile, RevertSelectedHunks,
-    ToDisplayPoint, ToggleHunkDiff,
+    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyDiffHunk,
+    BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
+    DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
+    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -37,11 +32,12 @@ pub(super) struct ExpandedHunks {
     pub(crate) hunks: Vec<ExpandedHunk>,
     diff_base: HashMap<BufferId, DiffBaseBuffer>,
     hunk_update_tasks: HashMap<Option<BufferId>, Task<()>>,
+    expand_all: bool,
 }
 
 #[derive(Debug, Clone)]
 pub(super) struct ExpandedHunk {
-    pub block: Option<CustomBlockId>,
+    pub blocks: Vec<CustomBlockId>,
     pub hunk_range: Range<Anchor>,
     pub diff_base_byte_range: Range<usize>,
     pub status: DiffHunkStatus,
@@ -77,83 +73,8 @@ impl ExpandedHunks {
 }
 
 impl Editor {
-    pub(super) fn open_hunk_context_menu(
-        &mut self,
-        hovered_hunk: HoveredHunk,
-        clicked_point: gpui::Point<Pixels>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let focus_handle = self.focus_handle.clone();
-        let expanded = self
-            .expanded_hunks
-            .hunks(false)
-            .any(|expanded_hunk| expanded_hunk.hunk_range == hovered_hunk.multi_buffer_range);
-        let editor_handle = cx.view().clone();
-        let editor_snapshot = self.snapshot(cx);
-        let start_point = self
-            .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
-            .unwrap_or(clicked_point);
-        let end_point = self
-            .to_pixel_point(hovered_hunk.multi_buffer_range.start, &editor_snapshot, cx)
-            .unwrap_or(clicked_point);
-        let norm =
-            |a: gpui::Point<Pixels>, b: gpui::Point<Pixels>| (a.x - b.x).abs() + (a.y - b.y).abs();
-        let closest_source = if norm(start_point, clicked_point) < norm(end_point, clicked_point) {
-            hovered_hunk.multi_buffer_range.start
-        } else {
-            hovered_hunk.multi_buffer_range.end
-        };
-
-        self.mouse_context_menu = MouseContextMenu::pinned_to_editor(
-            self,
-            closest_source,
-            clicked_point,
-            ContextMenu::build(cx, move |menu, _| {
-                menu.on_blur_subscription(Subscription::new(|| {}))
-                    .context(focus_handle)
-                    .entry(
-                        if expanded {
-                            "Collapse Hunk"
-                        } else {
-                            "Expand Hunk"
-                        },
-                        Some(ToggleHunkDiff.boxed_clone()),
-                        {
-                            let editor = editor_handle.clone();
-                            let hunk = hovered_hunk.clone();
-                            move |cx| {
-                                editor.update(cx, |editor, cx| {
-                                    editor.toggle_hovered_hunk(&hunk, cx);
-                                });
-                            }
-                        },
-                    )
-                    .entry("Revert Hunk", Some(RevertSelectedHunks.boxed_clone()), {
-                        let editor = editor_handle.clone();
-                        let hunk = hovered_hunk.clone();
-                        move |cx| {
-                            let multi_buffer = editor.read(cx).buffer().clone();
-                            let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
-                            let mut revert_changes = HashMap::default();
-                            if let Some(hunk) =
-                                crate::hunk_diff::to_diff_hunk(&hunk, &multi_buffer_snapshot)
-                            {
-                                Editor::prepare_revert_change(
-                                    &mut revert_changes,
-                                    &multi_buffer,
-                                    &hunk,
-                                    cx,
-                                );
-                            }
-                            if !revert_changes.is_empty() {
-                                editor.update(cx, |editor, cx| editor.revert(revert_changes, cx));
-                            }
-                        }
-                    })
-                    .action("Revert File", RevertFile.boxed_clone())
-            }),
-            cx,
-        )
+    pub fn set_expand_all_diff_hunks(&mut self) {
+        self.expanded_hunks.expand_all = true;
     }
 
     pub(super) fn toggle_hovered_hunk(
@@ -217,6 +138,10 @@ impl Editor {
         hunks_to_toggle: Vec<MultiBufferDiffHunk>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self.expanded_hunks.expand_all {
+            return;
+        }
+
         let previous_toggle_task = self.expanded_hunks.hunk_update_tasks.remove(&None);
         let new_toggle_task = cx.spawn(move |editor, mut cx| async move {
             if let Some(task) = previous_toggle_task {
@@ -264,7 +189,8 @@ impl Editor {
                                         break;
                                     } else if expanded_hunk_row_range == hunk_to_toggle_row_range {
                                         highlights_to_remove.push(expanded_hunk.hunk_range.clone());
-                                        blocks_to_remove.extend(expanded_hunk.block);
+                                        blocks_to_remove
+                                            .extend(expanded_hunk.blocks.iter().copied());
                                         hunks_to_toggle.next();
                                         retain = false;
                                         break;
@@ -283,30 +209,24 @@ impl Editor {
 
                         retain
                     });
-                    for remaining_hunk in hunks_to_toggle {
-                        let remaining_hunk_point_range =
-                            Point::new(remaining_hunk.row_range.start.0, 0)
-                                ..Point::new(remaining_hunk.row_range.end.0, 0);
+                    for hunk in hunks_to_toggle {
+                        let remaining_hunk_point_range = Point::new(hunk.row_range.start.0, 0)
+                            ..Point::new(hunk.row_range.end.0, 0);
+                        let hunk_start = snapshot
+                            .buffer_snapshot
+                            .anchor_before(remaining_hunk_point_range.start);
+                        let hunk_end = snapshot
+                            .buffer_snapshot
+                            .anchor_in_excerpt(hunk_start.excerpt_id, hunk.buffer_range.end)
+                            .unwrap();
                         hunks_to_expand.push(HoveredHunk {
-                            status: hunk_status(&remaining_hunk),
-                            multi_buffer_range: snapshot
-                                .buffer_snapshot
-                                .anchor_before(remaining_hunk_point_range.start)
-                                ..snapshot
-                                    .buffer_snapshot
-                                    .anchor_after(remaining_hunk_point_range.end),
-                            diff_base_byte_range: remaining_hunk.diff_base_byte_range.clone(),
+                            status: hunk_status(&hunk),
+                            multi_buffer_range: hunk_start..hunk_end,
+                            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         });
                     }
 
-                    for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(
-                            to_inclusive_row_range(removed_rows, &snapshot),
-                            None,
-                            false,
-                            cx,
-                        );
-                    }
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
                         editor.expand_diff_hunk(None, &hunk, cx);
@@ -327,78 +247,77 @@ impl Editor {
         hunk: &HoveredHunk,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<()> {
-        let multi_buffer_snapshot = self.buffer().read(cx).snapshot(cx);
-        let multi_buffer_row_range = hunk
-            .multi_buffer_range
-            .start
-            .to_point(&multi_buffer_snapshot)
-            ..hunk.multi_buffer_range.end.to_point(&multi_buffer_snapshot);
-        let hunk_start = hunk.multi_buffer_range.start;
-        let hunk_end = hunk.multi_buffer_range.end;
-
-        let buffer = self.buffer().clone();
-        let snapshot = self.snapshot(cx);
+        let buffer = self.buffer.clone();
+        let multi_buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let hunk_range = hunk.multi_buffer_range.clone();
         let (diff_base_buffer, deleted_text_lines) = buffer.update(cx, |buffer, cx| {
-            let hunk = buffer_diff_hunk(&snapshot.buffer_snapshot, multi_buffer_row_range.clone())?;
-            let mut buffer_ranges = buffer.range_to_buffer_ranges(multi_buffer_row_range, cx);
-            if buffer_ranges.len() == 1 {
-                let (buffer, _, _) = buffer_ranges.pop()?;
-                let diff_base_buffer = diff_base_buffer
-                    .or_else(|| self.current_diff_base_buffer(&buffer, cx))
-                    .or_else(|| create_diff_base_buffer(&buffer, cx))?;
-                let buffer = buffer.read(cx);
-                let deleted_text_lines = buffer.diff_base().map(|diff_base| {
-                    let diff_start_row = diff_base
-                        .offset_to_point(hunk.diff_base_byte_range.start)
-                        .row;
-                    let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
-
-                    diff_end_row - diff_start_row
-                })?;
-                Some((diff_base_buffer, deleted_text_lines))
-            } else {
-                None
-            }
+            let buffer = buffer.buffer(hunk_range.start.buffer_id?)?;
+            let diff_base_buffer = diff_base_buffer
+                .or_else(|| self.current_diff_base_buffer(&buffer, cx))
+                .or_else(|| create_diff_base_buffer(&buffer, cx))?;
+            let deleted_text_lines = buffer.read(cx).diff_base().map(|diff_base| {
+                let diff_start_row = diff_base
+                    .offset_to_point(hunk.diff_base_byte_range.start)
+                    .row;
+                let diff_end_row = diff_base.offset_to_point(hunk.diff_base_byte_range.end).row;
+                diff_end_row - diff_start_row
+            })?;
+            Some((diff_base_buffer, deleted_text_lines))
         })?;
 
         let block_insert_index = match self.expanded_hunks.hunks.binary_search_by(|probe| {
             probe
                 .hunk_range
                 .start
-                .cmp(&hunk_start, &multi_buffer_snapshot)
+                .cmp(&hunk_range.start, &multi_buffer_snapshot)
         }) {
             Ok(_already_present) => return None,
             Err(ix) => ix,
         };
 
-        let block = match hunk.status {
+        let blocks;
+        match hunk.status {
             DiffHunkStatus::Removed => {
-                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, hunk, cx)
+                blocks = self.insert_blocks(
+                    [
+                        self.hunk_header_block(&hunk, cx),
+                        Self::deleted_text_block(hunk, diff_base_buffer, deleted_text_lines, cx),
+                    ],
+                    None,
+                    cx,
+                );
             }
             DiffHunkStatus::Added => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    hunk_range.clone(),
+                    added_hunk_color(cx),
                     false,
                     cx,
                 );
-                None
+                blocks = self.insert_blocks([self.hunk_header_block(&hunk, cx)], None, cx);
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
-                    to_inclusive_row_range(hunk_start..hunk_end, &snapshot),
-                    Some(added_hunk_color(cx)),
+                    hunk_range.clone(),
+                    added_hunk_color(cx),
                     false,
                     cx,
                 );
-                self.insert_deleted_text_block(diff_base_buffer, deleted_text_lines, hunk, cx)
+                blocks = self.insert_blocks(
+                    [
+                        self.hunk_header_block(&hunk, cx),
+                        Self::deleted_text_block(hunk, diff_base_buffer, deleted_text_lines, cx),
+                    ],
+                    None,
+                    cx,
+                );
             }
         };
         self.expanded_hunks.hunks.insert(
             block_insert_index,
             ExpandedHunk {
-                block,
-                hunk_range: hunk_start..hunk_end,
+                blocks,
+                hunk_range,
                 status: hunk.status,
                 folded: false,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
@@ -408,120 +327,398 @@ impl Editor {
         Some(())
     }
 
-    fn insert_deleted_text_block(
+    fn apply_changes_in_range(
         &mut self,
+        range: Range<Anchor>,
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> Option<()> {
+        let (buffer, range, _) = self
+            .buffer
+            .read(cx)
+            .range_to_buffer_ranges(range, cx)
+            .into_iter()
+            .next()?;
+
+        buffer.update(cx, |branch_buffer, cx| {
+            branch_buffer.merge_into_base(vec![range], cx);
+        });
+
+        None
+    }
+
+    pub(crate) fn apply_all_changes(&self, cx: &mut ViewContext<Self>) {
+        let buffers = self.buffer.read(cx).all_buffers();
+        for branch_buffer in buffers {
+            branch_buffer.update(cx, |branch_buffer, cx| {
+                branch_buffer.merge_into_base(Vec::new(), cx);
+            });
+        }
+    }
+
+    fn hunk_header_block(
+        &self,
+        hunk: &HoveredHunk,
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> BlockProperties<Anchor> {
+        let is_branch_buffer = self
+            .buffer
+            .read(cx)
+            .point_to_buffer_offset(hunk.multi_buffer_range.start, cx)
+            .map_or(false, |(buffer, _, _)| {
+                buffer.read(cx).diff_base_buffer().is_some()
+            });
+
+        let border_color = cx.theme().colors().border_variant;
+        let bg_color = cx.theme().colors().editor_background;
+        let gutter_color = match hunk.status {
+            DiffHunkStatus::Added => cx.theme().status().created,
+            DiffHunkStatus::Modified => cx.theme().status().modified,
+            DiffHunkStatus::Removed => cx.theme().status().deleted,
+        };
+
+        BlockProperties {
+            position: hunk.multi_buffer_range.start,
+            height: 1,
+            style: BlockStyle::Sticky,
+            disposition: BlockDisposition::Above,
+            priority: 0,
+            render: Box::new({
+                let editor = cx.view().clone();
+                let hunk = hunk.clone();
+
+                move |cx| {
+                    let hunk_controls_menu_handle =
+                        editor.read(cx).hunk_controls_menu_handle.clone();
+
+                    h_flex()
+                        .id(cx.block_id)
+                        .h(cx.line_height())
+                        .w_full()
+                        .border_t_1()
+                        .border_color(border_color)
+                        .bg(bg_color)
+                        .child(
+                            div()
+                                .id("gutter-strip")
+                                .w(EditorElement::diff_hunk_strip_width(cx.line_height()))
+                                .h_full()
+                                .bg(gutter_color)
+                                .cursor(CursorStyle::PointingHand)
+                                .on_click({
+                                    let editor = editor.clone();
+                                    let hunk = hunk.clone();
+                                    move |_event, cx| {
+                                        editor.update(cx, |editor, cx| {
+                                            editor.toggle_hovered_hunk(&hunk, cx);
+                                        });
+                                    }
+                                }),
+                        )
+                        .child(
+                            h_flex()
+                                .px_6()
+                                .size_full()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .when(!is_branch_buffer, |row| {
+                                            row.child(
+                                                IconButton::new("next-hunk", IconName::ArrowDown)
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .tooltip({
+                                                        let focus_handle = editor.focus_handle(cx);
+                                                        move |cx| {
+                                                            Tooltip::for_action_in(
+                                                                "Next Hunk",
+                                                                &GoToHunk,
+                                                                &focus_handle,
+                                                                cx,
+                                                            )
+                                                        }
+                                                    })
+                                                    .on_click({
+                                                        let editor = editor.clone();
+                                                        let hunk = hunk.clone();
+                                                        move |_event, cx| {
+                                                            editor.update(cx, |editor, cx| {
+                                                                editor.go_to_subsequent_hunk(
+                                                                    hunk.multi_buffer_range.end,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    }),
+                                            )
+                                            .child(
+                                                IconButton::new("prev-hunk", IconName::ArrowUp)
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .tooltip({
+                                                        let focus_handle = editor.focus_handle(cx);
+                                                        move |cx| {
+                                                            Tooltip::for_action_in(
+                                                                "Previous Hunk",
+                                                                &GoToPrevHunk,
+                                                                &focus_handle,
+                                                                cx,
+                                                            )
+                                                        }
+                                                    })
+                                                    .on_click({
+                                                        let editor = editor.clone();
+                                                        let hunk = hunk.clone();
+                                                        move |_event, cx| {
+                                                            editor.update(cx, |editor, cx| {
+                                                                editor.go_to_preceding_hunk(
+                                                                    hunk.multi_buffer_range.start,
+                                                                    cx,
+                                                                );
+                                                            });
+                                                        }
+                                                    }),
+                                            )
+                                        })
+                                        .child(
+                                            IconButton::new("discard", IconName::Undo)
+                                                .shape(IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
+                                                .tooltip({
+                                                    let focus_handle = editor.focus_handle(cx);
+                                                    move |cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Discard Hunk",
+                                                            &RevertSelectedHunks,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                                .on_click({
+                                                    let editor = editor.clone();
+                                                    let hunk = hunk.clone();
+                                                    move |_event, cx| {
+                                                        let multi_buffer =
+                                                            editor.read(cx).buffer().clone();
+                                                        let multi_buffer_snapshot =
+                                                            multi_buffer.read(cx).snapshot(cx);
+                                                        let mut revert_changes = HashMap::default();
+                                                        if let Some(hunk) =
+                                                            crate::hunk_diff::to_diff_hunk(
+                                                                &hunk,
+                                                                &multi_buffer_snapshot,
+                                                            )
+                                                        {
+                                                            Editor::prepare_revert_change(
+                                                                &mut revert_changes,
+                                                                &multi_buffer,
+                                                                &hunk,
+                                                                cx,
+                                                            );
+                                                        }
+                                                        if !revert_changes.is_empty() {
+                                                            editor.update(cx, |editor, cx| {
+                                                                editor.revert(revert_changes, cx)
+                                                            });
+                                                        }
+                                                    }
+                                                }),
+                                        )
+                                        .map(|this| {
+                                            if is_branch_buffer {
+                                                this.child(
+                                                    IconButton::new("apply", IconName::Check)
+                                                        .shape(IconButtonShape::Square)
+                                                        .icon_size(IconSize::Small)
+                                                        .tooltip({
+                                                            let focus_handle =
+                                                                editor.focus_handle(cx);
+                                                            move |cx| {
+                                                                Tooltip::for_action_in(
+                                                                    "Apply Hunk",
+                                                                    &ApplyDiffHunk,
+                                                                    &focus_handle,
+                                                                    cx,
+                                                                )
+                                                            }
+                                                        })
+                                                        .on_click({
+                                                            let editor = editor.clone();
+                                                            let hunk = hunk.clone();
+                                                            move |_event, cx| {
+                                                                editor.update(cx, |editor, cx| {
+                                                                    editor.apply_changes_in_range(
+                                                                        hunk.multi_buffer_range
+                                                                            .clone(),
+                                                                        cx,
+                                                                    );
+                                                                });
+                                                            }
+                                                        }),
+                                                )
+                                            } else {
+                                                this.child({
+                                                    let focus = editor.focus_handle(cx);
+                                                    PopoverMenu::new("hunk-controls-dropdown")
+                                                        .trigger(
+                                                            IconButton::new(
+                                                                "toggle_editor_selections_icon",
+                                                                IconName::EllipsisVertical,
+                                                            )
+                                                            .shape(IconButtonShape::Square)
+                                                            .icon_size(IconSize::Small)
+                                                            .style(ButtonStyle::Subtle)
+                                                            .selected(
+                                                                hunk_controls_menu_handle
+                                                                    .is_deployed(),
+                                                            )
+                                                            .when(
+                                                                !hunk_controls_menu_handle
+                                                                    .is_deployed(),
+                                                                |this| {
+                                                                    this.tooltip(|cx| {
+                                                                        Tooltip::text(
+                                                                            "Hunk Controls",
+                                                                            cx,
+                                                                        )
+                                                                    })
+                                                                },
+                                                            ),
+                                                        )
+                                                        .anchor(AnchorCorner::TopRight)
+                                                        .with_handle(hunk_controls_menu_handle)
+                                                        .menu(move |cx| {
+                                                            let focus = focus.clone();
+                                                            let menu = ContextMenu::build(
+                                                                cx,
+                                                                move |menu, _| {
+                                                                    menu.context(focus.clone())
+                                                                        .action(
+                                                                            "Discard All Hunks",
+                                                                            RevertFile
+                                                                                .boxed_clone(),
+                                                                        )
+                                                                },
+                                                            );
+                                                            Some(menu)
+                                                        })
+                                                })
+                                            }
+                                        }),
+                                )
+                                .when(!is_branch_buffer, |div| {
+                                    div.child(
+                                        IconButton::new("collapse", IconName::Close)
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = editor.focus_handle(cx);
+                                                move |cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Collapse Hunk",
+                                                        &ToggleHunkDiff,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                }
+                                            })
+                                            .on_click({
+                                                let editor = editor.clone();
+                                                let hunk = hunk.clone();
+                                                move |_event, cx| {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.toggle_hovered_hunk(&hunk, cx);
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                }),
+                        )
+                        .into_any_element()
+                }
+            }),
+        }
+    }
+
+    fn deleted_text_block(
+        hunk: &HoveredHunk,
         diff_base_buffer: Model<Buffer>,
         deleted_text_height: u32,
-        hunk: &HoveredHunk,
-        cx: &mut ViewContext<'_, Self>,
-    ) -> Option<CustomBlockId> {
+        cx: &mut ViewContext<'_, Editor>,
+    ) -> BlockProperties<Anchor> {
+        let gutter_color = match hunk.status {
+            DiffHunkStatus::Added => unreachable!(),
+            DiffHunkStatus::Modified => cx.theme().status().modified,
+            DiffHunkStatus::Removed => cx.theme().status().deleted,
+        };
         let deleted_hunk_color = deleted_hunk_color(cx);
         let (editor_height, editor_with_deleted_text) =
             editor_with_deleted_text(diff_base_buffer, deleted_hunk_color, hunk, cx);
         let editor = cx.view().clone();
         let hunk = hunk.clone();
         let height = editor_height.max(deleted_text_height);
-        let mut new_block_ids = self.insert_blocks(
-            Some(BlockProperties {
-                position: hunk.multi_buffer_range.start,
-                height,
-                style: BlockStyle::Flex,
-                disposition: BlockDisposition::Above,
-                render: Box::new(move |cx| {
-                    let width = EditorElement::diff_hunk_strip_width(cx.line_height());
-                    let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
+        BlockProperties {
+            position: hunk.multi_buffer_range.start,
+            height,
+            style: BlockStyle::Flex,
+            disposition: BlockDisposition::Above,
+            priority: 0,
+            render: Box::new(move |cx| {
+                let width = EditorElement::diff_hunk_strip_width(cx.line_height());
+                let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 
-                    let close_button = editor.update(cx.context, |editor, cx| {
-                        let editor_snapshot = editor.snapshot(cx);
-                        let hunk_display_range = hunk
-                            .multi_buffer_range
-                            .clone()
-                            .to_display_points(&editor_snapshot);
-                        editor.close_hunk_diff_button(
-                            hunk.clone(),
-                            hunk_display_range.start.row(),
-                            cx,
-                        )
-                    });
-
-                    h_flex()
-                        .id("gutter with editor")
-                        .bg(deleted_hunk_color)
-                        .h(height as f32 * cx.line_height())
-                        .w_full()
-                        .child(
-                            h_flex()
-                                .id("gutter")
-                                .max_w(gutter_dimensions.full_width())
-                                .min_w(gutter_dimensions.full_width())
-                                .size_full()
-                                .child(
-                                    h_flex()
-                                        .id("gutter hunk")
-                                        .bg(cx.theme().status().deleted)
-                                        .pl(gutter_dimensions.margin
-                                            + gutter_dimensions
-                                                .git_blame_entries_width
-                                                .unwrap_or_default())
-                                        .max_w(width)
-                                        .min_w(width)
-                                        .size_full()
-                                        .cursor(CursorStyle::PointingHand)
-                                        .on_mouse_down(MouseButton::Left, {
-                                            let editor = editor.clone();
-                                            let hunk = hunk.clone();
-                                            move |event, cx| {
-                                                let modifiers = event.modifiers;
-                                                if modifiers.control || modifiers.platform {
-                                                    editor.update(cx, |editor, cx| {
-                                                        editor.toggle_hovered_hunk(&hunk, cx);
-                                                    });
-                                                } else {
-                                                    editor.update(cx, |editor, cx| {
-                                                        editor.open_hunk_context_menu(
-                                                            hunk.clone(),
-                                                            event.position,
-                                                            cx,
-                                                        );
-                                                    });
-                                                }
-                                            }
-                                        }),
-                                )
-                                .child(
-                                    v_flex()
-                                        .size_full()
-                                        .pt(rems(0.25))
-                                        .justify_start()
-                                        .child(close_button),
-                                ),
-                        )
-                        .child(editor_with_deleted_text.clone())
-                        .into_any_element()
-                }),
-                priority: 0,
+                h_flex()
+                    .id(cx.block_id)
+                    .bg(deleted_hunk_color)
+                    .h(height as f32 * cx.line_height())
+                    .w_full()
+                    .child(
+                        h_flex()
+                            .id("gutter")
+                            .max_w(gutter_dimensions.full_width())
+                            .min_w(gutter_dimensions.full_width())
+                            .size_full()
+                            .child(
+                                h_flex()
+                                    .id("gutter hunk")
+                                    .bg(gutter_color)
+                                    .pl(gutter_dimensions.margin
+                                        + gutter_dimensions
+                                            .git_blame_entries_width
+                                            .unwrap_or_default())
+                                    .max_w(width)
+                                    .min_w(width)
+                                    .size_full()
+                                    .cursor(CursorStyle::PointingHand)
+                                    .on_mouse_down(MouseButton::Left, {
+                                        let editor = editor.clone();
+                                        let hunk = hunk.clone();
+                                        move |_event, cx| {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.toggle_hovered_hunk(&hunk, cx);
+                                            });
+                                        }
+                                    }),
+                            ),
+                    )
+                    .child(editor_with_deleted_text.clone())
+                    .into_any_element()
             }),
-            None,
-            cx,
-        );
-        if new_block_ids.len() == 1 {
-            new_block_ids.pop()
-        } else {
-            debug_panic!(
-                "Inserted one editor block but did not receive exactly one block id: {new_block_ids:?}"
-            );
-            None
         }
     }
 
-    pub(super) fn clear_clicked_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
+    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<'_, Editor>) -> bool {
+        if self.expanded_hunks.expand_all {
+            return false;
+        }
         self.expanded_hunks.hunk_update_tasks.clear();
         self.clear_row_highlights::<DiffRowHighlight>();
         let to_remove = self
             .expanded_hunks
             .hunks
             .drain(..)
-            .filter_map(|expanded_hunk| expanded_hunk.block)
+            .flat_map(|expanded_hunk| expanded_hunk.blocks.into_iter())
             .collect::<HashSet<_>>();
         if to_remove.is_empty() {
             false
@@ -603,7 +800,7 @@ impl Editor {
                                             expanded_hunk.folded = true;
                                             highlights_to_remove
                                                 .push(expanded_hunk.hunk_range.clone());
-                                            if let Some(block) = expanded_hunk.block.take() {
+                                            for block in expanded_hunk.blocks.drain(..) {
                                                 blocks_to_remove.insert(block);
                                             }
                                             break;
@@ -618,52 +815,75 @@ impl Editor {
                                         status,
                                     } => {
                                         let hunk_display_range = display_row_range;
+
                                         if expanded_hunk_display_range.start
                                             > hunk_display_range.end
                                         {
                                             recalculated_hunks.next();
-                                            continue;
-                                        } else if expanded_hunk_display_range.end
-                                            < hunk_display_range.start
-                                        {
-                                            break;
-                                        } else {
-                                            if !expanded_hunk.folded
-                                                && expanded_hunk_display_range == hunk_display_range
-                                                && expanded_hunk.status == hunk_status(buffer_hunk)
-                                                && expanded_hunk.diff_base_byte_range
-                                                    == buffer_hunk.diff_base_byte_range
-                                            {
-                                                recalculated_hunks.next();
-                                                retain = true;
-                                            } else {
+                                            if editor.expanded_hunks.expand_all {
                                                 hunks_to_reexpand.push(HoveredHunk {
                                                     status,
                                                     multi_buffer_range,
                                                     diff_base_byte_range,
                                                 });
                                             }
+                                            continue;
+                                        }
+
+                                        if expanded_hunk_display_range.end
+                                            < hunk_display_range.start
+                                        {
                                             break;
                                         }
+
+                                        if !expanded_hunk.folded
+                                            && expanded_hunk_display_range == hunk_display_range
+                                            && expanded_hunk.status == hunk_status(buffer_hunk)
+                                            && expanded_hunk.diff_base_byte_range
+                                                == buffer_hunk.diff_base_byte_range
+                                        {
+                                            recalculated_hunks.next();
+                                            retain = true;
+                                        } else {
+                                            hunks_to_reexpand.push(HoveredHunk {
+                                                status,
+                                                multi_buffer_range,
+                                                diff_base_byte_range,
+                                            });
+                                        }
+                                        break;
                                     }
                                 }
                             }
                         }
                         if !retain {
-                            blocks_to_remove.extend(expanded_hunk.block);
+                            blocks_to_remove.extend(expanded_hunk.blocks.drain(..));
                             highlights_to_remove.push(expanded_hunk.hunk_range.clone());
                         }
                         retain
                     });
 
-                    for removed_rows in highlights_to_remove {
-                        editor.highlight_rows::<DiffRowHighlight>(
-                            to_inclusive_row_range(removed_rows, &snapshot),
-                            None,
-                            false,
-                            cx,
-                        );
+                    if editor.expanded_hunks.expand_all {
+                        for hunk in recalculated_hunks {
+                            match diff_hunk_to_display(&hunk, &snapshot) {
+                                DisplayDiffHunk::Folded { .. } => {}
+                                DisplayDiffHunk::Unfolded {
+                                    diff_base_byte_range,
+                                    multi_buffer_range,
+                                    status,
+                                    ..
+                                } => {
+                                    hunks_to_reexpand.push(HoveredHunk {
+                                        status,
+                                        multi_buffer_range,
+                                        diff_base_byte_range,
+                                    });
+                                }
+                            }
+                        }
                     }
+
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
 
                     if let Some(diff_base_buffer) = &diff_base_buffer {
@@ -699,6 +919,51 @@ impl Editor {
                 hash_map::Entry::Vacant(_) => None,
             }
         })
+    }
+
+    fn go_to_subsequent_hunk(&mut self, position: Anchor, cx: &mut ViewContext<Self>) {
+        let snapshot = self.snapshot(cx);
+        let position = position.to_point(&snapshot.buffer_snapshot);
+        if let Some(hunk) = self.go_to_hunk_after_position(&snapshot, position, cx) {
+            let multi_buffer_start = snapshot
+                .buffer_snapshot
+                .anchor_before(Point::new(hunk.row_range.start.0, 0));
+            let multi_buffer_end = snapshot
+                .buffer_snapshot
+                .anchor_after(Point::new(hunk.row_range.end.0, 0));
+            self.expand_diff_hunk(
+                None,
+                &HoveredHunk {
+                    multi_buffer_range: multi_buffer_start..multi_buffer_end,
+                    status: hunk_status(&hunk),
+                    diff_base_byte_range: hunk.diff_base_byte_range,
+                },
+                cx,
+            );
+        }
+    }
+
+    fn go_to_preceding_hunk(&mut self, position: Anchor, cx: &mut ViewContext<Self>) {
+        let snapshot = self.snapshot(cx);
+        let position = position.to_point(&snapshot.buffer_snapshot);
+        let hunk = self.go_to_hunk_before_position(&snapshot, position, cx);
+        if let Some(hunk) = hunk {
+            let multi_buffer_start = snapshot
+                .buffer_snapshot
+                .anchor_before(Point::new(hunk.row_range.start.0, 0));
+            let multi_buffer_end = snapshot
+                .buffer_snapshot
+                .anchor_after(Point::new(hunk.row_range.end.0, 0));
+            self.expand_diff_hunk(
+                None,
+                &HoveredHunk {
+                    multi_buffer_range: multi_buffer_start..multi_buffer_end,
+                    status: hunk_status(&hunk),
+                    diff_base_byte_range: hunk.diff_base_byte_range,
+                },
+                cx,
+            );
+        }
     }
 }
 
@@ -749,7 +1014,7 @@ fn added_hunk_color(cx: &AppContext) -> Hsla {
 }
 
 fn deleted_hunk_color(cx: &AppContext) -> Hsla {
-    let mut deleted_color = cx.theme().status().git().deleted;
+    let mut deleted_color = cx.theme().status().deleted;
     deleted_color.fade_out(0.7);
     deleted_color
 }
@@ -782,69 +1047,58 @@ fn editor_with_deleted_text(
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_read_only(true);
         editor.set_show_inline_completions(Some(false), cx);
-        editor.highlight_rows::<DiffRowHighlight>(
-            Anchor::min()..=Anchor::max(),
-            Some(deleted_color),
+
+        enum DeletedBlockRowHighlight {}
+        editor.highlight_rows::<DeletedBlockRowHighlight>(
+            Anchor::min()..Anchor::max(),
+            deleted_color,
             false,
             cx,
         );
-
-        let subscription_editor = parent_editor.clone();
-        editor._subscriptions.extend([
-            cx.on_blur(&editor.focus_handle, |editor, cx| {
-                editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
+        editor.set_current_line_highlight(Some(CurrentLineHighlight::None)); //
+        editor
+            ._subscriptions
+            .extend([cx.on_blur(&editor.focus_handle, |editor, cx| {
                 editor.change_selections(None, cx, |s| {
                     s.try_cancel();
                 });
-                cx.notify();
-            }),
-            cx.on_focus(&editor.focus_handle, move |editor, cx| {
-                let restored_highlight = if let Some(parent_editor) = subscription_editor.upgrade()
-                {
-                    parent_editor.read(cx).current_line_highlight
-                } else {
-                    None
-                };
-                editor.set_current_line_highlight(restored_highlight);
-                cx.notify();
-            }),
-            cx.observe_global::<SettingsStore>(|editor, cx| {
-                if !editor.is_focused(cx) {
-                    editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                }
-            }),
-        ]);
-        let parent_editor_for_reverts = parent_editor.clone();
+            })]);
+
         let original_multi_buffer_range = hunk.multi_buffer_range.clone();
         let diff_base_range = hunk.diff_base_byte_range.clone();
         editor
-            .register_action::<RevertSelectedHunks>(move |_, cx| {
-                parent_editor_for_reverts
-                    .update(cx, |editor, cx| {
-                        let Some((buffer, original_text)) =
-                            editor.buffer().update(cx, |buffer, cx| {
-                                let (_, buffer, _) = buffer
-                                    .excerpt_containing(original_multi_buffer_range.start, cx)?;
-                                let original_text =
-                                    buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
-                                Some((buffer, Arc::from(original_text.to_string())))
-                            })
-                        else {
-                            return;
-                        };
-                        buffer.update(cx, |buffer, cx| {
-                            buffer.edit(
-                                Some((
-                                    original_multi_buffer_range.start.text_anchor
-                                        ..original_multi_buffer_range.end.text_anchor,
-                                    original_text,
-                                )),
-                                None,
-                                cx,
-                            )
-                        });
-                    })
-                    .ok();
+            .register_action::<RevertSelectedHunks>({
+                let parent_editor = parent_editor.clone();
+                move |_, cx| {
+                    parent_editor
+                        .update(cx, |editor, cx| {
+                            let Some((buffer, original_text)) =
+                                editor.buffer().update(cx, |buffer, cx| {
+                                    let (_, buffer, _) = buffer.excerpt_containing(
+                                        original_multi_buffer_range.start,
+                                        cx,
+                                    )?;
+                                    let original_text =
+                                        buffer.read(cx).diff_base()?.slice(diff_base_range.clone());
+                                    Some((buffer, Arc::from(original_text.to_string())))
+                                })
+                            else {
+                                return;
+                            };
+                            buffer.update(cx, |buffer, cx| {
+                                buffer.edit(
+                                    Some((
+                                        original_multi_buffer_range.start.text_anchor
+                                            ..original_multi_buffer_range.end.text_anchor,
+                                        original_text,
+                                    )),
+                                    None,
+                                    cx,
+                                )
+                            });
+                        })
+                        .ok();
+                }
             })
             .detach();
         let hunk = hunk.clone();
@@ -862,36 +1116,6 @@ fn editor_with_deleted_text(
 
     let editor_height = editor.update(cx, |editor, cx| editor.max_point(cx).row().0);
     (editor_height, editor)
-}
-
-fn buffer_diff_hunk(
-    buffer_snapshot: &MultiBufferSnapshot,
-    row_range: Range<Point>,
-) -> Option<MultiBufferDiffHunk> {
-    let mut hunks = buffer_snapshot.git_diff_hunks_in_range(
-        MultiBufferRow(row_range.start.row)..MultiBufferRow(row_range.end.row),
-    );
-    let hunk = hunks.next()?;
-    let second_hunk = hunks.next();
-    if second_hunk.is_none() {
-        return Some(hunk);
-    }
-    None
-}
-
-fn to_inclusive_row_range(
-    row_range: Range<Anchor>,
-    snapshot: &EditorSnapshot,
-) -> RangeInclusive<Anchor> {
-    let mut display_row_range =
-        row_range.start.to_display_point(snapshot)..row_range.end.to_display_point(snapshot);
-    if display_row_range.end.row() > display_row_range.start.row() {
-        *display_row_range.end.row_mut() -= 1;
-    }
-    let point_range = display_row_range.start.to_point(&snapshot.display_snapshot)
-        ..display_row_range.end.to_point(&snapshot.display_snapshot);
-    let new_range = point_range.to_anchors(&snapshot.buffer_snapshot);
-    new_range.start..=new_range.end
 }
 
 impl DisplayDiffHunk {
@@ -960,7 +1184,10 @@ pub fn diff_hunk_to_display(
         let hunk_end_point = Point::new(hunk_end_row.0, 0);
 
         let multi_buffer_start = snapshot.buffer_snapshot.anchor_before(hunk_start_point);
-        let multi_buffer_end = snapshot.buffer_snapshot.anchor_after(hunk_end_point);
+        let multi_buffer_end = snapshot
+            .buffer_snapshot
+            .anchor_in_excerpt(multi_buffer_start.excerpt_id, hunk.buffer_range.end)
+            .unwrap();
         let end = hunk_end_point.to_display_point(snapshot).row();
 
         DisplayDiffHunk::Unfolded {

@@ -67,8 +67,12 @@ impl Project {
     }
 
     fn ssh_command(&self, cx: &AppContext) -> Option<SshCommand> {
-        if let Some(ssh_session) = self.ssh_session.as_ref() {
-            return Some(SshCommand::Direct(ssh_session.ssh_args()));
+        if let Some(args) = self
+            .ssh_client
+            .as_ref()
+            .and_then(|session| session.read(cx).ssh_args())
+        {
+            return Some(SshCommand::Direct(args));
         }
 
         let dev_server_project_id = self.dev_server_project_id()?;
@@ -215,7 +219,7 @@ impl Project {
             spawn_task,
             shell,
             env,
-            Some(settings.blinking),
+            settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
             window,
@@ -358,7 +362,16 @@ pub fn wrap_for_ssh(
     }
 
     let commands = if let Some(path) = path {
-        format!("cd {:?}; {} {}", path, env_changes, to_run)
+        let path_string = path.to_string_lossy().to_string();
+        // shlex will wrap the command in single quotes (''), disabling ~ expansion,
+        // replace ith with something that works
+        let tilde_prefix = "~/";
+        if path.starts_with(tilde_prefix) {
+            let trimmed_path = &path_string[tilde_prefix.len()..];
+            format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
+        } else {
+            format!("cd {path:?}; {env_changes} {to_run}")
+        }
     } else {
         format!("cd; {env_changes} {to_run}")
     };

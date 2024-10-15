@@ -1,3 +1,4 @@
+use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
@@ -25,33 +26,20 @@ pub struct ProjectPanelSettings {
     pub show_diagnostics: ShowDiagnostics,
 }
 
-/// When to show the scrollbar in the project panel.
-///
-/// Default: always
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowScrollbar {
-    #[default]
-    /// Always show the scrollbar.
-    Always,
-    /// Never show the scrollbar.
-    Never,
-}
-
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     /// When to show the scrollbar in the project panel.
     ///
-    /// Default: always
-    pub show: ShowScrollbar,
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the project panel.
     ///
-    /// Default: always
-    pub show: Option<ShowScrollbar>,
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<Option<ShowScrollbar>>,
 }
 
 /// Which files containing diagnostic errors/warnings to mark in the project panel.

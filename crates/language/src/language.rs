@@ -313,6 +313,10 @@ pub trait LspAdapterDelegate: Send + Sync {
     fn update_status(&self, language: LanguageServerName, status: LanguageServerBinaryStatus);
     async fn language_server_download_dir(&self, name: &LanguageServerName) -> Option<Arc<Path>>;
 
+    async fn npm_package_installed_version(
+        &self,
+        package_name: &str,
+    ) -> Result<Option<(PathBuf, String)>>;
     async fn which(&self, command: &OsStr) -> Option<PathBuf>;
     async fn shell_env(&self) -> HashMap<String, String>;
     async fn read_text_file(&self, path: PathBuf) -> Result<String>;
