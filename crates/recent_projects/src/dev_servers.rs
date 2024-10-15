@@ -35,7 +35,7 @@ use task::RevealStrategy;
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
 use ui::Section;
-use ui::{prelude::*, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
+use ui::{prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
@@ -762,6 +762,7 @@ impl DevServerProjects {
             .end_hover_slot::<AnyElement>(Some(
                 IconButton::new("remove-remote-project", IconName::TrashAlt)
                     .icon_size(IconSize::Small)
+                    .shape(IconButtonShape::Square)
                     .on_click(
                         cx.listener(move |this, _, cx| this.delete_ssh_project(server_ix, ix, cx)),
                     )
