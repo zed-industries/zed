@@ -1,4 +1,3 @@
-#![allow(unused, dead_code)]
 #![deny(missing_docs)]
 //! Provides the Alert Dialog UI component – A modal dialog that interrupts the user's workflow to convey critical information.
 
@@ -9,12 +8,10 @@ use gpui::{
     WeakView,
 };
 use ui::{
-    div, px, relative, v_flex, vh, ActiveTheme, Button, ButtonCommon, ButtonSize,
-    CheckboxWithLabel, Clickable, Color, ElementId, ElevationIndex, FixedWidth, FluentBuilder,
-    Headline, HeadlineSize, IconButton, IconButtonShape, IconName, InteractiveElement, IntoElement,
-    Label, LabelCommon, ParentElement, Render, RenderOnce, Selection, SharedString, Spacing,
-    StatefulInteractiveElement, Styled, StyledExt, StyledTypography, ViewContext, VisualContext,
-    WindowContext,
+    div, px, v_flex, vh, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, ElementId,
+    ElevationIndex, FluentBuilder, Headline, HeadlineSize, InteractiveElement, IntoElement,
+    ParentElement, Render, RenderOnce, SharedString, Spacing, Styled, StyledTypography,
+    ViewContext, VisualContext, WindowContext,
 };
 use workspace::{ModalView, Workspace};
 
@@ -23,20 +20,14 @@ struct AlertDialogButton {
     id: ElementId,
     label: SharedString,
     on_click: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
-    focus_handle: FocusHandle,
 }
 
 impl AlertDialogButton {
-    fn new(
-        id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
-        focus_handle: FocusHandle,
-    ) -> Self {
+    fn new(id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
             label: label.into(),
             on_click: None,
-            focus_handle,
         }
     }
 
@@ -47,7 +38,7 @@ impl AlertDialogButton {
 }
 
 impl RenderOnce for AlertDialogButton {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         Button::new(self.id, self.label)
             .size(ButtonSize::Large)
             .layer(ElevationIndex::ModalSurface)
@@ -128,16 +119,8 @@ impl AlertDialog {
                 Self {
                     title: "Untitled Alert".into(),
                     message: None,
-                    primary_action: AlertDialogButton::new(
-                        "primary-action",
-                        "OK",
-                        focus_handle.clone(),
-                    ),
-                    secondary_action: AlertDialogButton::new(
-                        "secondary-action",
-                        "Cancel",
-                        focus_handle.clone(),
-                    ),
+                    primary_action: AlertDialogButton::new("primary-action", "OK"),
+                    secondary_action: AlertDialogButton::new("secondary-action", "Cancel"),
                     focus_handle,
                 },
                 cx,
@@ -163,9 +146,7 @@ impl AlertDialog {
         label: impl Into<SharedString>,
         handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.primary_action =
-            AlertDialogButton::new("primary-action", label, self.focus_handle.clone())
-                .on_click(handler);
+        self.primary_action = AlertDialogButton::new("primary-action", label).on_click(handler);
         self
     }
 
@@ -175,9 +156,7 @@ impl AlertDialog {
         label: impl Into<SharedString>,
         handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.secondary_action =
-            AlertDialogButton::new("secondary-action", label, self.focus_handle.clone())
-                .on_click(handler);
+        self.secondary_action = AlertDialogButton::new("secondary-action", label).on_click(handler);
         self
     }
 
@@ -185,28 +164,9 @@ impl AlertDialog {
     ///
     /// Example: "Close", "Dismiss", "No"
     pub fn secondary_dismiss_action(mut self, label: impl Into<SharedString>) -> Self {
-        self.secondary_action =
-            AlertDialogButton::new("secondary-action", label, self.focus_handle.clone())
-                .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()));
+        self.secondary_action = AlertDialogButton::new("secondary-action", label)
+            .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()));
         self
-    }
-
-    fn render_button(&self, cx: &WindowContext, action: AlertDialogButton) -> impl IntoElement {
-        let id_string: SharedString = format!("action-{}-button", action.label).into();
-        let id: ElementId = ElementId::Name(id_string);
-
-        Button::new(id, action.label)
-            .size(ButtonSize::Large)
-            .layer(ElevationIndex::ModalSurface)
-            .when(
-                self.dialog_layout() == AlertDialogLayout::Vertical,
-                |this| this.full_width(),
-            )
-            .when_some(action.on_click, |this, on_click| {
-                this.on_click(move |event, cx| {
-                    on_click(event, cx);
-                })
-            })
     }
 
     fn dialog_layout(&self) -> AlertDialogLayout {
@@ -232,7 +192,7 @@ impl AlertDialog {
         let focus_handle = self.focus_handle.clone();
         cx.spawn(|_, mut cx| async move {
             workspace.update(&mut cx, |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| this);
+                workspace.toggle_modal(cx, |_cx| this);
                 cx.focus(&focus_handle);
             })
         })
@@ -346,7 +306,7 @@ pub mod alert_dialog_stories {
     #![allow(missing_docs)]
 
     use gpui::{Render, View};
-    use story::{Story, StoryItem, StorySection};
+    use story::{Story, StorySection};
     use ui::{prelude::*, ElevationIndex};
 
     use super::AlertDialog;
@@ -359,7 +319,7 @@ pub mod alert_dialog_stories {
 
     impl AlertDialogStory {
         pub fn new(cx: &mut WindowContext) -> Self {
-            let vertical_alert_dialog = AlertDialog::new(cx, |mut dialog, cx| {
+            let vertical_alert_dialog = AlertDialog::new(cx, |dialog, _cx| {
                 dialog
                     .title("Discard changes?")
                     .message("Something bad could happen...")
@@ -371,7 +331,7 @@ pub mod alert_dialog_stories {
                     })
             });
 
-            let horizontal_alert_dialog = AlertDialog::new(cx, |mut dialog, cx| {
+            let horizontal_alert_dialog = AlertDialog::new(cx, |dialog, _cx| {
                 dialog
                     .title("Do you want to leave the current call?")
                     .message("The current window will be closed, and connections to any shared projects will be terminated.")
@@ -401,7 +361,7 @@ pub mod alert_dialog_stories {
   ]
 }"#;
 
-            let long_content_alert_dialog = AlertDialog::new(cx, |mut dialog, cx| {
+            let long_content_alert_dialog = AlertDialog::new(cx, |dialog, _cx| {
                 dialog
                     .title("A RuntimeError occurred")
                     .message(long_content)
