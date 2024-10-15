@@ -3382,7 +3382,7 @@ pub mod tests {
 
     async fn prepare_test_objects(
         cx: &mut TestAppContext,
-    ) -> (&'static str, WindowHandle<Editor>, FakeLanguageServer) {
+    ) -> (&'static str, WindowHandle<Editor>, Arc<FakeLanguageServer>) {
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
             "/a",

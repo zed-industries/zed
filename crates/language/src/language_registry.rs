@@ -104,9 +104,9 @@ struct LanguageRegistryState {
 #[cfg(any(test, feature = "test-support"))]
 pub struct FakeLanguageServerEntry {
     pub capabilities: lsp::ServerCapabilities,
-    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
-    pub tx: futures::channel::mpsc::UnboundedSender<lsp::FakeLanguageServer>,
-    pub _server: Option<lsp::FakeLanguageServer>,
+    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(Arc<lsp::FakeLanguageServer>)>>,
+    pub tx: futures::channel::mpsc::UnboundedSender<Arc<lsp::FakeLanguageServer>>,
+    pub _server: Option<Arc<lsp::FakeLanguageServer>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -365,7 +365,7 @@ impl LanguageRegistry {
         &self,
         language_name: impl Into<LanguageName>,
         mut adapter: crate::FakeLspAdapter,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+    ) -> futures::channel::mpsc::UnboundedReceiver<Arc<lsp::FakeLanguageServer>> {
         let language_name = language_name.into();
         let adapter_name = LanguageServerName(adapter.name.into());
         let capabilities = adapter.capabilities.clone();
@@ -403,8 +403,8 @@ impl LanguageRegistry {
         &self,
         lsp_name: LanguageServerName,
         capabilities: lsp::ServerCapabilities,
-        initializer: Option<Box<dyn Fn(&mut lsp::FakeLanguageServer) + Send + Sync>>,
-    ) -> futures::channel::mpsc::UnboundedReceiver<lsp::FakeLanguageServer> {
+        initializer: Option<Box<dyn Fn(Arc<lsp::FakeLanguageServer>) + Send + Sync>>,
+    ) -> futures::channel::mpsc::UnboundedReceiver<Arc<lsp::FakeLanguageServer>> {
         let (servers_tx, servers_rx) = futures::channel::mpsc::unbounded();
         self.state.write().fake_server_entries.insert(
             lsp_name,
@@ -895,7 +895,7 @@ impl LanguageRegistry {
     ) -> Option<lsp::LanguageServer> {
         let mut state = self.state.write();
         let fake_entry = state.fake_server_entries.get_mut(&name)?;
-        let (server, mut fake_server) = lsp::FakeLanguageServer::new(
+        let (server, fake_server) = lsp::FakeLanguageServer::new(
             server_id,
             binary,
             name.0.to_string(),
@@ -905,7 +905,7 @@ impl LanguageRegistry {
         fake_entry._server = Some(fake_server.clone());
 
         if let Some(initializer) = &fake_entry.initializer {
-            initializer(&mut fake_server);
+            initializer(fake_server.clone());
         }
 
         let tx = fake_entry.tx.clone();

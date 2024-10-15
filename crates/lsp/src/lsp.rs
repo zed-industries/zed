@@ -371,6 +371,7 @@ impl LanguageServer {
             let io_handlers = io_handlers.clone();
             move |cx| {
                 Self::handle_input(
+                    server_id,
                     stdout,
                     on_unhandled_notification,
                     notification_handlers,
@@ -394,6 +395,7 @@ impl LanguageServer {
         });
         let output_task = cx.background_executor().spawn({
             Self::handle_output(
+                server_id,
                 stdin,
                 outbound_rx,
                 output_done_tx,
@@ -428,6 +430,7 @@ impl LanguageServer {
     }
 
     async fn handle_input<Stdout, F>(
+        server_id: LanguageServerId,
         stdout: Stdout,
         mut on_unhandled_notification: F,
         notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
@@ -444,10 +447,13 @@ impl LanguageServer {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
             move || {
+                println!("clearing response_handlers");
                 response_handlers.lock().take();
             }
         });
+
         let mut input_handler = input_handler::LspStdoutHandler::new(
+            server_id,
             stdout,
             response_handlers,
             io_handlers,
@@ -456,8 +462,13 @@ impl LanguageServer {
 
         while let Some(msg) = input_handler.notifications_channel.next().await {
             {
+                println!(
+                    "server_id: {:?}, received notification: {:?}",
+                    server_id, msg
+                );
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
+                    println!("found handler!");
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
                 } else {
                     drop(notification_handlers);
@@ -492,6 +503,7 @@ impl LanguageServer {
 
             if let Ok(message) = std::str::from_utf8(&buffer) {
                 log::trace!("incoming stderr message:{message}");
+                println!("incoming stderr message: {message}");
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdErr, message);
                 }
@@ -507,6 +519,7 @@ impl LanguageServer {
     }
 
     async fn handle_output<Stdin>(
+        server_id: LanguageServerId,
         stdin: Stdin,
         outbound_rx: channel::Receiver<String>,
         output_done_tx: barrier::Sender,
@@ -520,12 +533,14 @@ impl LanguageServer {
         let _clear_response_handlers = util::defer({
             let response_handlers = response_handlers.clone();
             move || {
+                println!("handle output clearing response_handlers");
                 response_handlers.lock().take();
             }
         });
         let mut content_len_buffer = Vec::new();
         while let Ok(message) = outbound_rx.recv().await {
             log::trace!("outgoing message:{}", message);
+            println!("server_id: {:?}, sending message from adapter to server on server's stdin: {message}", server_id);
             for handler in io_handlers.lock().values_mut() {
                 handler(IoKind::StdIn, &message);
             }
@@ -749,28 +764,40 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
-            outbound_tx.close();
 
             let server = self.server.clone();
             let name = self.name.clone();
+            println!(
+                "\n\n\n\n---------------------------------------------------------------------"
+            );
+            println!(
+                "sent shutdown request. name: {:?}, id: {:?}, response_handlers.keys(): {:?}",
+                name,
+                self.server_id,
+                response_handlers.lock().as_ref().map(|h| h.keys().cloned())
+            );
             let mut timer = self.executor.timer(SERVER_SHUTDOWN_TIMEOUT).fuse();
             Some(
                 async move {
-                    log::debug!("language server shutdown started");
+                    shutdown_request.await?;
+                    // if server.lock().is_some() {
+                    // select! {
+                    //     request_result = shutdown_request.fuse() => {
+                    //         request_result?;
+                    //     }
+                    //     _ = timer => {
+                    //         log::info!("timeout waiting for language server {name} to shutdown");
+                    //     },
+                    // }
+                    // }
 
-                    select! {
-                        request_result = shutdown_request.fuse() => {
-                            request_result?;
-                        }
-
-                        _ = timer => {
-                            log::info!("timeout waiting for language server {name} to shutdown");
-                        },
-                    }
-
+                    outbound_tx.close();
+                    println!("---- shutdown request. taking response handlers");
                     response_handlers.lock().take();
+
+                    let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
                     exit?;
+
                     output_done.recv().await;
                     server.lock().take().map(|mut child| child.kill());
                     log::debug!("language server shutdown finished");
@@ -876,6 +903,7 @@ impl LanguageServer {
         let prev_handler = self.notification_handlers.lock().insert(
             method,
             Box::new(move |id, params, cx| {
+                println!("got custom notification: {method:?} {id:?} {params:?}");
                 if let Some(id) = id {
                     match serde_json::from_value(params) {
                         Ok(params) => {
@@ -1014,6 +1042,7 @@ impl LanguageServer {
             .ok_or_else(|| anyhow!("server shut down"))
             .map(|handlers| {
                 let executor = executor.clone();
+                println!("registering response handler for id: {:?}", id);
                 handlers.insert(
                     RequestId::Int(id),
                     Box::new(move |result| {
@@ -1142,6 +1171,7 @@ impl Drop for Subscription {
                 notification_handlers,
             } => {
                 if let Some(handlers) = notification_handlers {
+                    println!("dropping subscription for notification: {:?}", method);
                     handlers.lock().remove(method);
                 }
             }
@@ -1156,11 +1186,22 @@ impl Drop for Subscription {
 
 /// Mock language server for use in tests.
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Clone)]
 pub struct FakeLanguageServer {
     pub binary: LanguageServerBinary,
     pub server: Arc<LanguageServer>,
     notifications_rx: channel::Receiver<(String, String)>,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl Drop for FakeLanguageServer {
+    fn drop(&mut self) {
+        self.server.executor.allow_parking();
+        println!(
+            "\n\n\n================================== FakeLanguageServer::drop. self.server.name(): {:?}, self.server.id(): {:?}",
+            self.server.name(),
+            self.server.server_id
+        );
+    }
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1172,7 +1213,7 @@ impl FakeLanguageServer {
         name: String,
         capabilities: ServerCapabilities,
         cx: AsyncAppContext,
-    ) -> (LanguageServer, FakeLanguageServer) {
+    ) -> (LanguageServer, Arc<FakeLanguageServer>) {
         let (stdin_writer, stdin_reader) = async_pipe::pipe();
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
@@ -1190,12 +1231,14 @@ impl FakeLanguageServer {
             cx.clone(),
             |_| {},
         );
-        server.name = name.as_str().into();
-        let fake = FakeLanguageServer {
+        let adapter_side_name = format!("adapter-process-side: {:?}, id:{:?}, ", name, server_id);
+        server.name = adapter_side_name.as_str().into();
+
+        let fake = Arc::new(FakeLanguageServer {
             binary,
             server: Arc::new({
                 let mut server = LanguageServer::new_internal(
-                    server_id,
+                    LanguageServerId(9999),
                     stdout_writer,
                     stdin_reader,
                     None::<async_pipe::PipeReader>,
@@ -1206,6 +1249,7 @@ impl FakeLanguageServer {
                     None,
                     cx,
                     move |msg| {
+                        println!("server-side unhandled notification: {:?}", msg);
                         notifications_tx
                             .try_send((
                                 msg.method.to_string(),
@@ -1214,17 +1258,19 @@ impl FakeLanguageServer {
                             .ok();
                     },
                 );
+                let name = format!("server-process-side: {:?}, id:{:?}, ", name, server_id);
                 server.name = name.as_str().into();
                 server
             }),
             notifications_rx,
-        };
+        });
         fake.handle_request::<request::Initialize, _, _>({
             let capabilities = capabilities;
             move |_, _| {
                 let capabilities = capabilities.clone();
                 let name = name.clone();
                 async move {
+                    println!("server-side server received initialize request");
                     Ok(InitializeResult {
                         capabilities,
                         server_info: Some(ServerInfo {
@@ -1235,7 +1281,38 @@ impl FakeLanguageServer {
                 }
             }
         });
+        // server
+        //     .on_request::<request::Shutdown, _, _>({
+        //         |params, cx| async move {
+        //             println!("adapter-side server received shutdown request");
+        //             Ok(())
+        //         }
+        //     })
+        //     .detach();
 
+        fake.handle_request::<request::Shutdown, _, _>({
+            move |_, _| async move {
+                println!("\n\n\n\nserver-side server received shutdown request\n\n\n\n");
+                Ok(())
+            }
+        });
+        // fake.handle_notification::<request::Shutdown, _>({
+        //     move |_, _| async move {
+        //         println!(
+        //             "\n\n\n\nserver-side server received NOTIFICATION shutdown request\n\n\n\n"
+        //         );
+        //         Ok(())
+        //     }
+        // });
+
+        // server
+        //     .on_io(move |kind, msg| {
+        //         println!(
+        //             "adapter-side ({:?}) io: {:?} - {:?}",
+        //             &adapter_side_name, kind, msg
+        //         );
+        //     })
+        //     .detach();
         (server, fake)
     }
 }
@@ -1274,19 +1351,17 @@ impl FakeLanguageServer {
     }
 
     /// Attempts [`Self::try_receive_notification`], unwrapping if it has not received the specified type yet.
-    pub async fn receive_notification<T: notification::Notification>(&mut self) -> T::Params {
+    pub async fn receive_notification<T: notification::Notification>(&self) -> T::Params {
         self.server.executor.start_waiting();
         self.try_receive_notification::<T>().await.unwrap()
     }
 
     /// Consumes the notification channel until it finds a notification for the specified type.
     pub async fn try_receive_notification<T: notification::Notification>(
-        &mut self,
+        &self,
     ) -> Option<T::Params> {
-        use futures::StreamExt as _;
-
         loop {
-            let (method, params) = self.notifications_rx.next().await?;
+            let (method, params) = self.notifications_rx.recv().await.ok()?;
             if method == T::METHOD {
                 return Some(serde_json::from_str::<T::Params>(&params).unwrap());
             } else {
@@ -1306,10 +1381,12 @@ impl FakeLanguageServer {
         F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
+        println!("handle_request: {:?}", T::METHOD);
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_request_handler::<T>();
         self.server
             .on_request::<T, _, _>(move |params, cx| {
+                println!("self.server.on_request: {:?}", T::METHOD);
                 let result = handler(params, cx.clone());
                 let responded_tx = responded_tx.clone();
                 let executor = cx.background_executor().clone();
@@ -1346,10 +1423,11 @@ impl FakeLanguageServer {
     }
 
     /// Removes any existing handler for specified notification type.
-    pub fn remove_request_handler<T>(&mut self)
+    pub fn remove_request_handler<T>(&self)
     where
         T: 'static + request::Request,
     {
+        println!("remove_request_handler: {:?}", T::METHOD);
         self.server.remove_request_handler::<T>();
     }
 
@@ -1388,6 +1466,7 @@ impl FakeLanguageServer {
 mod tests {
     use super::*;
     use gpui::{SemanticVersion, TestAppContext};
+    use smol::stream::StreamExt;
     use std::str::FromStr;
 
     #[ctor::ctor]
@@ -1402,7 +1481,7 @@ mod tests {
         cx.update(|cx| {
             release_channel::init(SemanticVersion::default(), cx);
         });
-        let (server, mut fake) = FakeLanguageServer::new(
+        let (adapter_side, fake) = FakeLanguageServer::new(
             LanguageServerId(0),
             LanguageServerBinary {
                 path: "path/to/language-server".into(),
@@ -1416,19 +1495,22 @@ mod tests {
 
         let (message_tx, message_rx) = channel::unbounded();
         let (diagnostics_tx, diagnostics_rx) = channel::unbounded();
-        server
+        adapter_side
             .on_notification::<notification::ShowMessage, _>(move |params, _| {
                 message_tx.try_send(params).unwrap()
             })
             .detach();
-        server
+        adapter_side
             .on_notification::<notification::PublishDiagnostics, _>(move |params, _| {
                 diagnostics_tx.try_send(params).unwrap()
             })
             .detach();
 
-        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
-        server
+        let adapter_side = cx
+            .update(|cx| adapter_side.initialize(None, cx))
+            .await
+            .unwrap();
+        adapter_side
             .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Url::from_str("file://a/b").unwrap(),
@@ -1462,9 +1544,12 @@ mod tests {
             "file://b/c"
         );
 
-        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
+        let mut shutdown_response =
+            fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
-        drop(server);
+        drop(adapter_side);
+
+        shutdown_response.next().await;
         fake.receive_notification::<notification::Exit>().await;
     }
 

@@ -63,7 +63,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
         .await
         .unwrap();
 
-    let mut language_server = fake_rust_servers.next().await.unwrap();
+    let language_server = fake_rust_servers.next().await.unwrap();
     language_server
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;

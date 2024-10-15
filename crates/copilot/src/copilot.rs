@@ -390,7 +390,7 @@ impl Copilot {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn fake(cx: &mut gpui::TestAppContext) -> (Model<Self>, lsp::FakeLanguageServer) {
+    pub fn fake(cx: &mut gpui::TestAppContext) -> (Model<Self>, Arc<lsp::FakeLanguageServer>) {
         use lsp::FakeLanguageServer;
         use node_runtime::NodeRuntime;
 
@@ -1058,7 +1058,7 @@ mod tests {
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {
-        let (copilot, mut lsp) = Copilot::fake(cx);
+        let (copilot, lsp) = Copilot::fake(cx);
 
         let buffer_1 = cx.new_model(|cx| Buffer::local("Hello", cx));
         let buffer_1_uri: lsp::Url = format!("buffer://{}", buffer_1.entity_id().as_u64())

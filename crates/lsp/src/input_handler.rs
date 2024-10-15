@@ -13,7 +13,8 @@ use parking_lot::Mutex;
 use smol::io::BufReader;
 
 use crate::{
-    AnyNotification, AnyResponse, IoHandler, IoKind, RequestId, ResponseHandler, CONTENT_LEN_HEADER,
+    AnyNotification, AnyResponse, IoHandler, IoKind, LanguageServerId, RequestId, ResponseHandler,
+    CONTENT_LEN_HEADER,
 };
 
 const HEADER_DELIMITER: &[u8; 4] = b"\r\n\r\n";
@@ -42,6 +43,7 @@ where
 
 impl LspStdoutHandler {
     pub fn new<Input>(
+        server_id: LanguageServerId,
         stdout: Input,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
         io_handlers: Arc<Mutex<HashMap<i32, IoHandler>>>,
@@ -51,7 +53,13 @@ impl LspStdoutHandler {
         Input: AsyncRead + Unpin + Send + 'static,
     {
         let (tx, notifications_channel) = unbounded();
-        let loop_handle = cx.spawn(Self::handler(stdout, tx, response_handlers, io_handlers));
+        let loop_handle = cx.spawn(Self::handler(
+            server_id,
+            stdout,
+            tx,
+            response_handlers,
+            io_handlers,
+        ));
         Self {
             loop_handle,
             notifications_channel,
@@ -59,6 +67,7 @@ impl LspStdoutHandler {
     }
 
     async fn handler<Input>(
+        server_id: LanguageServerId,
         stdout: Input,
         notifications_sender: UnboundedSender<AnyNotification>,
         response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -91,22 +100,36 @@ impl LspStdoutHandler {
 
             if let Ok(message) = str::from_utf8(&buffer) {
                 log::trace!("incoming message: {message}");
+                println!("server_id: {:?}. incoming message, from server sent on stdout to adapter: {message}", server_id);
                 for handler in io_handlers.lock().values_mut() {
                     handler(IoKind::StdOut, message);
                 }
             }
 
-            if let Ok(msg) = serde_json::from_slice::<AnyNotification>(&buffer) {
-                notifications_sender.unbounded_send(msg)?;
+            let notification = serde_json::from_slice::<AnyNotification>(&buffer);
+            if let Ok(notification) = notification {
+                println!("Got notification: {:?}", notification.method);
+                println!(
+                    "server_id: {:?}, sending message as notification: {:?}",
+                    server_id, notification
+                );
+                notifications_sender.unbounded_send(notification)?;
             } else if let Ok(AnyResponse {
                 id, error, result, ..
             }) = serde_json::from_slice(&buffer)
             {
+                println!(
+                    "server_id: {:?}, trying to find response_handlers for id: {:?}",
+                    server_id, id
+                );
                 let mut response_handlers = response_handlers.lock();
-                if let Some(handler) = response_handlers
-                    .as_mut()
-                    .and_then(|handlers| handlers.remove(&id))
-                {
+                if let Some(handler) = response_handlers.as_mut().and_then(|handlers| {
+                    println!(
+                        "server_id: {:?}, trying to remove response_handlers for id: {:?}",
+                        server_id, id
+                    );
+                    handlers.remove(&id)
+                }) {
                     drop(response_handlers);
                     if let Some(error) = error {
                         handler(Err(error));
@@ -115,6 +138,8 @@ impl LspStdoutHandler {
                     } else {
                         handler(Ok("null".into()));
                     }
+                } else {
+                    println!("sever_id: {:?},no response handler found", server_id);
                 }
             } else {
                 warn!(

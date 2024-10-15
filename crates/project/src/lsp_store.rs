@@ -143,11 +143,15 @@ impl LocalLspStore {
             .language_servers
             .drain()
             .map(|(_, server_state)| async {
+                println!("shutting down in shutdown_language_servers");
                 use LanguageServerState::*;
-                match server_state {
+                let reuslt = match server_state {
                     Running { server, .. } => server.shutdown()?.await,
                     Starting(task) => task.await?.shutdown()?.await,
-                }
+                };
+
+                println!("done");
+                reuslt
             })
             .collect::<Vec<_>>();
 
@@ -5554,6 +5558,7 @@ impl LspStore {
 
         if let Some(server) = server {
             if let Some(shutdown) = server.shutdown() {
+                println!("shutting down in shutdown_language_server");
                 shutdown.await;
             }
         }

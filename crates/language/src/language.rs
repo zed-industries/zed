@@ -774,7 +774,7 @@ pub struct FakeLspAdapter {
     pub language_server_binary: LanguageServerBinary,
 
     pub capabilities: lsp::ServerCapabilities,
-    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(Arc<lsp::FakeLanguageServer>)>>,
 }
 
 /// Configuration of handling bracket pairs for a given language.
@@ -1657,7 +1657,7 @@ impl PartialEq for LanguageMatcher {
 impl Default for FakeLspAdapter {
     fn default() -> Self {
         Self {
-            name: "the-fake-language-server",
+            name: "default-fake-lsp-adapter",
             capabilities: lsp::LanguageServer::full_capabilities(),
             initializer: None,
             disk_based_diagnostics_progress_token: None,

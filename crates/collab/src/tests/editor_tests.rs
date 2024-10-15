@@ -576,7 +576,7 @@ async fn test_collaborating_with_code_actions(
         .downcast::<Editor>()
         .unwrap();
 
-    let mut fake_language_server = fake_language_servers.next().await.unwrap();
+    let fake_language_server = fake_language_servers.next().await.unwrap();
     let mut requests = fake_language_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
             assert_eq!(

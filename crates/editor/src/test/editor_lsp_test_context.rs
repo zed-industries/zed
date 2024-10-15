@@ -25,9 +25,15 @@ use super::editor_test_context::{AssertionContextManager, EditorTestContext};
 
 pub struct EditorLspTestContext {
     pub cx: EditorTestContext,
-    pub lsp: lsp::FakeLanguageServer,
+    pub lsp: Arc<lsp::FakeLanguageServer>,
     pub workspace: View<Workspace>,
     pub buffer_lsp_url: lsp::Url,
+}
+
+impl Drop for EditorLspTestContext {
+    fn drop(&mut self) {
+        println!("EditorLspTestContext dropped");
+    }
 }
 
 impl EditorLspTestContext {
@@ -60,6 +66,7 @@ impl EditorLspTestContext {
         let mut fake_servers = language_registry.register_fake_lsp(
             language.name(),
             FakeLspAdapter {
+                name: "fake lsp adapter. EditorLspTestContext::new()".into(),
                 capabilities,
                 ..Default::default()
             },

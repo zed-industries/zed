@@ -1053,7 +1053,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 capabilities: lsp::LanguageServer::full_capabilities(),
                 initializer: Some(Box::new({
                     let fs = client.app_state.fs.clone();
-                    move |fake_server: &mut FakeLanguageServer| {
+                    move |fake_server: Arc<FakeLanguageServer>| {
                         fake_server.handle_request::<lsp::request::Completion, _, _>(
                             |_, _| async move {
                                 Ok(Some(lsp::CompletionResponse::Array(vec![
