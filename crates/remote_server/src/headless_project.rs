@@ -203,6 +203,16 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
+            LspStoreEvent::LanguageServerLog(language_server_id, log_type, message) => {
+                self.session
+                    .send(proto::LanguageServerLog {
+                        project_id: SSH_PROJECT_ID,
+                        language_server_id: language_server_id.to_proto(),
+                        message: message.clone(),
+                        log_type: Some(log_type.to_proto()),
+                    })
+                    .log_err();
+            }
             _ => {}
         }
     }

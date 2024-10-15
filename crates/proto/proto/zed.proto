@@ -269,7 +269,7 @@ message Envelope {
 
         GetLlmToken get_llm_token = 235;
         GetLlmTokenResponse get_llm_token_response = 236;
-        RefreshLlmToken refresh_llm_token = 259; // current max
+        RefreshLlmToken refresh_llm_token = 259;
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
@@ -286,6 +286,8 @@ message Envelope {
         ShutdownRemoteServer shutdown_remote_server = 257;
 
         RemoveWorktree remove_worktree = 258;
+
+        LanguageServerLog language_server_log = 260; // current max
     }
 
     reserved 87 to 88;
@@ -1294,6 +1296,7 @@ message LamportTimestamp {
 message LanguageServer {
     uint64 id = 1;
     string name = 2;
+    optional uint64 worktree_id = 3;
 }
 
 message StartLanguageServer {
@@ -1346,6 +1349,20 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message LanguageServerLog {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    oneof log_type {
+        uint32 log_message_type = 3;
+        LspLogTrace log_trace = 4;
+    }
+    string message = 5;
+}
+
+message LspLogTrace {
+    optional string message = 1;
+}
 
 message UpdateChannels {
     repeated Channel channels = 1;

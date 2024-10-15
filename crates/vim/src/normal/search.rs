@@ -41,6 +41,8 @@ pub(crate) struct MoveToPrev {
 pub(crate) struct Search {
     #[serde(default)]
     backwards: bool,
+    #[serde(default = "default_true")]
+    regex: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
@@ -130,7 +132,11 @@ impl Vim {
                     cx.focus_self();
 
                     search_bar.set_replacement(None, cx);
-                    search_bar.set_search_options(SearchOptions::NONE | SearchOptions::REGEX, cx);
+                    let mut options = SearchOptions::NONE;
+                    if action.regex {
+                        options |= SearchOptions::REGEX;
+                    }
+                    search_bar.set_search_options(options, cx);
 
                     self.search = SearchState {
                         direction,

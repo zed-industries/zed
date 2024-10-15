@@ -5,6 +5,8 @@ mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 
+pub use open_path_prompt::OpenPathDelegate;
+
 use collections::HashMap;
 use editor::{scroll::Autoscroll, Bias, Editor};
 use file_finder_settings::FileFinderSettings;

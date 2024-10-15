@@ -685,6 +685,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
         VimCommand::new(("0", ""), StartOfDocument),
+        VimCommand::new(("e", "dit"), editor::actions::ReloadFile)
+            .bang(editor::actions::ReloadFile),
     ]
 }
 

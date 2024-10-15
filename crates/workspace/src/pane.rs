@@ -1,7 +1,7 @@
 use crate::{
     item::{
-        ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings, TabContentParams,
-        WeakItemHandle,
+        ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
+        TabContentParams, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -1400,6 +1400,7 @@ impl Pane {
         focus_on_pane_if_closed: Option<View<Pane>>,
         cx: &mut ViewContext<Self>,
     ) {
+        let activate_on_close = &ItemSettings::get_global(cx).activate_on_close;
         self.activation_history
             .retain(|entry| entry.entity_id != self.items[item_index].item_id());
 
@@ -1407,12 +1408,26 @@ impl Pane {
             self.pinned_tab_count -= 1;
         }
         if item_index == self.active_item_index {
-            self.activation_history.pop();
-
-            let index_to_activate = if item_index + 1 < self.items.len() {
-                item_index + 1
-            } else {
-                item_index.saturating_sub(1)
+            let index_to_activate = match activate_on_close {
+                ActivateOnClose::History => self
+                    .activation_history
+                    .pop()
+                    .and_then(|last_activated_item| {
+                        self.items.iter().enumerate().find_map(|(index, item)| {
+                            (item.item_id() == last_activated_item.entity_id).then_some(index)
+                        })
+                    })
+                    // We didn't have a valid activation history entry, so fallback
+                    // to activating the item to the left
+                    .unwrap_or_else(|| item_index.min(self.items.len()).saturating_sub(1)),
+                ActivateOnClose::Neighbour => {
+                    self.activation_history.pop();
+                    if item_index + 1 < self.items.len() {
+                        item_index + 1
+                    } else {
+                        item_index.saturating_sub(1)
+                    }
+                }
             };
 
             let should_activate = activate_pane || self.has_focus(cx);
@@ -1729,17 +1744,6 @@ impl Pane {
             abs_path.canonicalize().ok()
         } else {
             Some(abs_path)
-        }
-    }
-
-    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some(clipboard_text) = self
-            .active_item()
-            .as_ref()
-            .and_then(|entry| entry.project_path(cx))
-            .map(|p| p.path.to_string_lossy().to_string())
-        {
-            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
         }
     }
 
@@ -2087,6 +2091,11 @@ impl Pane {
                         let parent_abs_path = entry_abs_path
                             .as_deref()
                             .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                        let relative_path = pane
+                            .read(cx)
+                            .item_for_entry(entry, cx)
+                            .and_then(|item| item.project_path(cx))
+                            .map(|project_path| project_path.path);
 
                         let entry_id = entry.to_proto();
                         menu = menu
@@ -2102,13 +2111,17 @@ impl Pane {
                                     }),
                                 )
                             })
-                            .entry(
-                                "Copy Relative Path",
-                                Some(Box::new(CopyRelativePath)),
-                                cx.handler_for(&pane, move |pane, cx| {
-                                    pane.copy_relative_path(&CopyRelativePath, cx);
-                                }),
-                            )
+                            .when_some(relative_path, |menu, relative_path| {
+                                menu.entry(
+                                    "Copy Relative Path",
+                                    Some(Box::new(CopyRelativePath)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            relative_path.to_string_lossy().to_string(),
+                                        ));
+                                    }),
+                                )
+                            })
                             .map(pin_tab_entries)
                             .separator()
                             .entry(
@@ -3292,8 +3305,68 @@ mod tests {
     }
 
     #[gpui::test]
-    async fn test_remove_item_ordering(cx: &mut TestAppContext) {
+    async fn test_remove_item_ordering_history(cx: &mut TestAppContext) {
         init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        add_labeled_item(&pane, "A", false, cx);
+        add_labeled_item(&pane, "B", false, cx);
+        add_labeled_item(&pane, "C", false, cx);
+        add_labeled_item(&pane, "D", false, cx);
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(1, false, false, cx));
+        add_labeled_item(&pane, "1", false, cx);
+        assert_item_labels(&pane, ["A", "B", "1*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B*", "C", "D"], cx);
+
+        pane.update(cx, |pane, cx| pane.activate_item(3, false, false, cx));
+        assert_item_labels(&pane, ["A", "B", "C", "D*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "B*", "C"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A", "C*"], cx);
+
+        pane.update(cx, |pane, cx| {
+            pane.close_active_item(&CloseActiveItem { save_intent: None }, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap();
+        assert_item_labels(&pane, ["A*"], cx);
+    }
+
+    #[gpui::test]
+    async fn test_remove_item_ordering_neighbour(cx: &mut TestAppContext) {
+        init_test(cx);
+        cx.update_global::<SettingsStore, ()>(|s, cx| {
+            s.update_user_settings::<ItemSettings>(cx, |s| {
+                s.activate_on_close = Some(ActivateOnClose::Neighbour);
+            });
+        });
         let fs = FakeFs::new(cx.executor());
 
         let project = Project::test(fs, None, cx).await;

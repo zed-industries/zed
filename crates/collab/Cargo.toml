@@ -38,7 +38,6 @@ futures.workspace = true
 google_ai.workspace = true
 hex.workspace = true
 http_client.workspace = true
-isahc_http_client.workspace = true
 jsonwebtoken.workspace = true
 live_kit_server.workspace = true
 log.workspace = true
@@ -49,6 +48,7 @@ prometheus = "0.13"
 prost.workspace = true
 rand.workspace = true
 reqwest = { version = "0.11", features = ["json"] }
+reqwest_client.workspace = true
 rpc.workspace = true
 rustc-demangle.workspace = true
 scrypt = "0.11"
@@ -67,7 +67,7 @@ telemetry_events.workspace = true
 text.workspace = true
 thiserror.workspace = true
 time.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["full"] }
 toml.workspace = true
 tower = "0.4"
 tower-http = { workspace = true, features = ["trace"] }

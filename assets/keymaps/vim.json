@@ -128,6 +128,10 @@
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",
       // z commands
+      "z enter": ["workspace::SendKeystrokes", "z t ^"],
+      "z -": ["workspace::SendKeystrokes", "z b ^"],
+      "z ^": ["workspace::SendKeystrokes", "shift-h k z b ^"],
+      "z +": ["workspace::SendKeystrokes", "shift-l j z t ^"],
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
       "z .": ["workspace::SendKeystrokes", "z z ^"],

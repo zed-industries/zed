@@ -24,9 +24,10 @@ use gpui::{
     UpdateGlobal as _, VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
-use isahc_http_client::IsahcHttpClient;
 use language::LanguageRegistry;
 use log::LevelFilter;
+use remote::SshConnectionOptions;
+use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -55,7 +56,7 @@ use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
     notifications::{simple_message_notification::MessageNotification, NotificationId},
-    AppState, WorkspaceSettings, WorkspaceStore,
+    AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore,
 };
 use zed::{
     app_menus, build_window_options, derive_paths_with_position, handle_cli_connection,
@@ -335,9 +336,7 @@ fn main() {
 
     log::info!("========== starting zed ==========");
 
-    let app = App::new()
-        .with_assets(Assets)
-        .with_http_client(IsahcHttpClient::new(None, None));
+    let app = App::new().with_assets(Assets);
 
     let system_id = app.background_executor().block(system_id()).ok();
     let installation_id = app.background_executor().block(installation_id()).ok();
@@ -471,8 +470,9 @@ fn main() {
                     .ok()
             })
             .or_else(read_proxy_from_env);
-        let http = IsahcHttpClient::new(proxy_url, Some(user_agent));
-        cx.set_http_client(http);
+        let http = ReqwestClient::proxy_and_user_agent(proxy_url, &user_agent)
+            .expect("could not start HTTP client");
+        cx.set_http_client(Arc::new(http));
 
         <dyn Fs>::set_global(fs.clone(), cx);
 
@@ -869,15 +869,41 @@ async fn restore_or_create_workspace(
 ) -> Result<()> {
     if let Some(locations) = restorable_workspace_locations(cx, &app_state).await {
         for location in locations {
-            cx.update(|cx| {
-                workspace::open_paths(
-                    location.paths().as_ref(),
-                    app_state.clone(),
-                    workspace::OpenOptions::default(),
-                    cx,
-                )
-            })?
-            .await?;
+            match location {
+                SerializedWorkspaceLocation::Local(location, _) => {
+                    let task = cx.update(|cx| {
+                        workspace::open_paths(
+                            location.paths().as_ref(),
+                            app_state.clone(),
+                            workspace::OpenOptions::default(),
+                            cx,
+                        )
+                    })?;
+                    task.await?;
+                }
+                SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                    let connection_options = SshConnectionOptions {
+                        host: ssh_project.host.clone(),
+                        username: ssh_project.user.clone(),
+                        port: ssh_project.port,
+                        password: None,
+                    };
+                    let app_state = app_state.clone();
+                    cx.spawn(move |mut cx| async move {
+                        recent_projects::open_ssh_project(
+                            connection_options,
+                            ssh_project.paths.into_iter().map(PathBuf::from).collect(),
+                            app_state,
+                            workspace::OpenOptions::default(),
+                            &mut cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                }
+                SerializedWorkspaceLocation::DevServer(_) => {}
+            }
         }
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
@@ -896,7 +922,7 @@ async fn restore_or_create_workspace(
 pub(crate) async fn restorable_workspace_locations(
     cx: &mut AsyncAppContext,
     app_state: &Arc<AppState>,
-) -> Option<Vec<workspace::LocalPaths>> {
+) -> Option<Vec<SerializedWorkspaceLocation>> {
     let mut restore_behavior = cx
         .update(|cx| WorkspaceSettings::get(None, cx).restore_on_startup)
         .ok()?;
@@ -924,7 +950,7 @@ pub(crate) async fn restorable_workspace_locations(
 
     match restore_behavior {
         workspace::RestoreOnStartupBehavior::LastWorkspace => {
-            workspace::last_opened_workspace_paths()
+            workspace::last_opened_workspace_location()
                 .await
                 .map(|location| vec![location])
         }

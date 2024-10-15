@@ -231,6 +231,9 @@ impl WorktreeStore {
         if abs_path.starts_with("/~") {
             abs_path = abs_path[1..].to_string();
         }
+        if abs_path.is_empty() {
+            abs_path = "~/".to_string();
+        }
         let root_name = PathBuf::from(abs_path.clone())
             .file_name()
             .unwrap()
