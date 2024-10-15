@@ -1,6 +1,6 @@
 # Globs
 
-Zed supports the use of [glob](<https://en.wikipedia.org/wiki/Glob_(programming)>) patterns that are the formal name for Unix shell-style path matching wildcards like `*.md` or `docs/src/**/*.md` supported by sh, bash, zsh, etc. A glob is similar but distinct from a [regex (regular expression)](./regex.md). You may be In Zed these are commonly used when matching filenames.
+Zed supports the use of [glob](<https://en.wikipedia.org/wiki/Glob_(programming)>) patterns that are the formal name for Unix shell-style path matching wildcards like `*.md` or `docs/src/**/*.md` supported by sh, bash, zsh, etc. A glob is similar but distinct from a [regex (regular expression)](https://en.wikipedia.org/wiki/Regular_expression). You may be In Zed these are commonly used when matching filenames.
 
 ## Glob Flavor
 
