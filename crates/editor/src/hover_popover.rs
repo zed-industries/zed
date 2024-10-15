@@ -293,6 +293,7 @@ fn show_hover(
                             || ('\u{000B}'..='\u{000C}').contains(&ch)
                             || ('\u{000E}'..='\u{001F}').contains(&ch)
                             || ('\u{007F}'..='\u{009F}').contains(&ch)
+                            || ('\0') == ch
                         {
                             let anchor_end = Anchor {
                                 text_anchor: snapshot.anchor_before(offset),

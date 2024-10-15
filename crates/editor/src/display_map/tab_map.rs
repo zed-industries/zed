@@ -344,6 +344,9 @@ impl TabSnapshot {
                 let tab_len = tab_size - expanded_chars % tab_size;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
+            } else if c == '\0' {
+                expanded_chars += 1;
+                expanded_bytes += 3;
             } else if ('\u{200B}'..='\u{200F}').contains(&c) {
                 expanded_bytes += 1;
                 expanded_chars += 1;
@@ -407,10 +410,10 @@ impl TabSnapshot {
                 || ('\u{000B}'..='\u{000C}').contains(&c)
                 || ('\u{000E}'..='\u{001F}').contains(&c)
                 || ('\u{007F}'..='\u{009F}').contains(&c)
+                || '\0' == c
             {
                 expanded_chars += 1;
                 expanded_bytes += 3;
-
             } else {
                 expanded_chars += 1;
                 expanded_bytes += c.len_utf8() as u32;
@@ -608,7 +611,8 @@ impl<'a> Iterator for TabChunks<'a> {
                 '\u{0001}'..='\u{0008}'
                 | '\u{000B}'..='\u{000C}'
                 | '\u{000E}'..='\u{001F}'
-                | '\u{007F}'..='\u{009F}' => {
+                | '\u{007F}'..='\u{009F}'
+                | '\0' => {
                     if ix > 0 {
                         let (prefix, suffix) = self.chunk.text.split_at(ix);
                         self.chunk.text = suffix;
@@ -618,7 +622,7 @@ impl<'a> Iterator for TabChunks<'a> {
                             ..self.chunk.clone()
                         });
                     } else {
-                        let c_len =  c.len_utf8();
+                        let c_len = c.len_utf8();
                         if self.chunk.text.len() >= c_len {
                             self.chunk.text = &self.chunk.text[c_len..];
                         } else {
