@@ -323,7 +323,6 @@ fn render_markdown_table_row(
             .w(Length::Definite(relative(*max_width)))
             .h_full()
             .children(contents)
-
             .px_2()
             .py_1()
             .border_color(cx.border_color);
