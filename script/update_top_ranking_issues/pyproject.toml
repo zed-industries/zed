@@ -2,7 +2,7 @@
 name = "update-top-ranking-issues"
 version = "0.1.0"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.13"
 dependencies = [
     "mypy>=1.11.2",
     "pygithub>=2.4.0",
