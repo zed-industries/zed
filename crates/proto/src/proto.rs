@@ -366,6 +366,7 @@ messages!(
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
     (RemoveWorktree, Foreground),
+    (LanguageServerLog, Foreground),
 );
 
 request_messages!(
@@ -562,6 +563,7 @@ entity_messages!(
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
     CheckFileExists,
+    LanguageServerLog,
 );
 
 entity_messages!(
