@@ -3,7 +3,7 @@ mod context_tests;
 
 use crate::{
     prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantEdit, AssistantPatch,
-    MessageId, MessageStatus,
+    AssistantPatchStatus, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -943,17 +943,10 @@ impl Context {
                 Ordering::Equal
             }
         });
-        match index {
-            Ok(ix) => Some(&self.patches[ix]),
-            Err(ix) => {
-                if ix > 0 {
-                    let prev_patch = &self.patches[ix - 1];
-                    if prev_patch.range.end.to_point(buffer) + Point::new(1, 0) == position {
-                        return Some(prev_patch);
-                    }
-                }
-                None
-            }
+        if let Ok(ix) = index {
+            Some(&self.patches[ix])
+        } else {
+            None
         }
     }
 
@@ -1393,7 +1386,7 @@ impl Context {
         }
 
         // Rebuild the patches in the range.
-        let new_patches = self.parse_patches(tags_start_ix, range.end, buffer);
+        let new_patches = self.parse_patches(tags_start_ix, range.end, buffer, cx);
         updated.extend(new_patches.iter().map(|patch| patch.range.clone()));
         let removed_patches = self.patches.splice(intersecting_patches_range, new_patches);
         removed.extend(
@@ -1464,6 +1457,7 @@ impl Context {
         tags_start_ix: usize,
         buffer_end: text::Anchor,
         buffer: &BufferSnapshot,
+        cx: &AppContext,
     ) -> Vec<AssistantPatch> {
         let mut new_patches = Vec::new();
         let mut pending_patch = None;
@@ -1482,6 +1476,7 @@ impl Context {
                     range: patch_start..patch_start,
                     title: String::new().into(),
                     edits: Default::default(),
+                    status: crate::AssistantPatchStatus::Pending,
                 };
 
                 while let Some(tag) = tags.next() {
@@ -1489,6 +1484,22 @@ impl Context {
                         patch_tag_depth -= 1;
                         if patch_tag_depth == 0 {
                             patch.range.end = tag.range.end;
+
+                            // Include the line immediately after this <patch> tag if it's empty.
+                            let patch_end_offset = patch.range.end.to_offset(buffer);
+                            let mut patch_end_chars = buffer.chars_at(patch_end_offset);
+                            if patch_end_chars.next() == Some('\n')
+                                && patch_end_chars.next().map_or(true, |ch| ch == '\n')
+                            {
+                                let messages = self.messages_for_offsets(
+                                    [patch_end_offset, patch_end_offset + 1],
+                                    cx,
+                                );
+                                if messages.len() == 1 {
+                                    patch.range.end = buffer.anchor_before(patch_end_offset + 1);
+                                }
+                            }
+
                             edits.sort_unstable_by(|a, b| {
                                 if let (Ok(a), Ok(b)) = (a, b) {
                                     a.path.cmp(&b.path)
@@ -1497,6 +1508,7 @@ impl Context {
                                 }
                             });
                             patch.edits = edits.into();
+                            patch.status = AssistantPatchStatus::Ready;
                             new_patches.push(patch);
                             continue 'tags;
                         }
@@ -1576,12 +1588,24 @@ impl Context {
                     }
                 }
 
+                patch.edits = edits.into();
                 pending_patch = Some(patch);
             }
         }
 
         if let Some(mut pending_patch) = pending_patch {
-            pending_patch.range.end = text::Anchor::MAX;
+            let patch_start = pending_patch.range.start.to_offset(buffer);
+            if let Some(message) = self.message_for_offset(patch_start, cx) {
+                if message.anchor_range.end == text::Anchor::MAX {
+                    pending_patch.range.end = text::Anchor::MAX;
+                } else {
+                    let message_end = buffer.anchor_after(message.offset_range.end - 1);
+                    pending_patch.range.end = message_end;
+                }
+            } else {
+                pending_patch.range.end = text::Anchor::MAX;
+            }
+
             new_patches.push(pending_patch);
         }
 

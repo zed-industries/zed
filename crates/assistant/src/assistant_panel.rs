@@ -11,12 +11,12 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, AssistantPatch, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId,
-    ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
-    DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
+    ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
+    DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
+    Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
+    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -26,8 +26,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseMetadata,
-        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease,
+        CreaseMetadata, CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
@@ -65,7 +65,6 @@ use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp,
-    collections::hash_map,
     ops::{ControlFlow, Range},
     path::PathBuf,
     sync::Arc,
@@ -1445,9 +1444,8 @@ struct ScrollPosition {
 }
 
 struct PatchViewState {
-    header_block_id: CustomBlockId,
-    footer_block_id: Option<CustomBlockId>,
-    crease_id: Option<CreaseId>,
+    footer_block_id: CustomBlockId,
+    crease_id: CreaseId,
     editor: Option<PatchEditorState>,
     update_task: Option<Task<()>>,
 }
@@ -2159,160 +2157,124 @@ impl ContextEditor {
         for range in removed {
             if let Some(state) = self.patches.remove(range) {
                 editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
-                removed_block_ids.insert(state.header_block_id);
-                removed_block_ids.extend(state.footer_block_id);
-                removed_crease_ids.extend(state.crease_id);
+                removed_block_ids.insert(state.footer_block_id);
+                removed_crease_ids.push(state.crease_id);
             }
         }
 
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let multibuffer = &snapshot.buffer_snapshot;
-            let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
 
+            let mut replaced_blocks = HashMap::default();
             for range in updated {
                 let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
                     continue;
                 };
 
                 let path_count = patch.path_count();
-                let patch_start = patch.range.start;
-                let mut patch_end = patch.range.end.to_offset(&buffer);
-                if buffer.contains_str_at(patch_end, "\n") {
-                    // Only include the newline if it belongs to the same message.
-                    let messages = self
-                        .context
-                        .read(cx)
-                        .messages_for_offsets([patch_end, patch_end + 1], cx);
-                    if messages.len() == 1 {
-                        patch_end += 1;
-                    }
-                }
-                let patch_end = buffer.anchor_before(patch_end);
                 let patch_start = multibuffer
-                    .anchor_in_excerpt(excerpt_id, patch_start)
+                    .anchor_in_excerpt(excerpt_id, patch.range.start)
                     .unwrap();
                 let patch_end = multibuffer
-                    .anchor_in_excerpt(excerpt_id, patch_end)
+                    .anchor_in_excerpt(excerpt_id, patch.range.end)
                     .unwrap();
-
-                let block_ids = editor.insert_blocks(
-                    [BlockProperties {
-                        position: patch_start,
-                        height: path_count as u32 + 1,
-                        style: BlockStyle::Flex,
-                        render: Box::new({
-                            let this = this.clone();
-                            let range = patch.range.clone();
-                            move |cx| {
-                                let block_id = cx.block_id;
-                                let max_width = cx.max_width;
-                                let gutter_width = cx.gutter_dimensions.full_width();
-                                this.update(&mut **cx, |this, cx| {
-                                    this.render_patch_header(
-                                        range.clone(),
-                                        max_width,
-                                        gutter_width,
-                                        block_id,
-                                        cx,
-                                    )
-                                })
-                                .ok()
-                                .flatten()
-                                .unwrap_or_else(|| Empty.into_any())
-                            }
-                        }),
-                        disposition: BlockDisposition::Above,
-                        priority: 0,
-                    }]
-                    .into_iter()
-                    .chain(if patch_end.text_anchor != text::Anchor::MAX {
-                        Some(BlockProperties {
-                            position: patch_end,
-                            height: 1,
-                            style: BlockStyle::Flex,
-                            render: Box::new(move |cx| {
-                                let max_width = cx.max_width;
-                                let gutter_width = cx.gutter_dimensions.full_width();
-                                Self::render_patch_footer(max_width, gutter_width, cx)
-                                    .unwrap_or_else(|| Empty.into_any())
-                            }),
-                            disposition: BlockDisposition::Below,
-                            priority: 0,
+                let render_block: RenderBlock = Box::new({
+                    let this = this.clone();
+                    let patch_range = range.clone();
+                    move |cx: &mut BlockContext<'_, '_>| {
+                        let max_width = cx.max_width;
+                        let gutter_width = cx.gutter_dimensions.full_width();
+                        let block_id = cx.block_id;
+                        this.update(&mut **cx, |this, cx| {
+                            this.render_patch_footer(
+                                patch_range.clone(),
+                                max_width,
+                                gutter_width,
+                                block_id,
+                                cx,
+                            )
                         })
-                    } else {
-                        None
-                    }),
-                    None,
-                    cx,
-                );
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| Empty.into_any())
+                    }
+                });
 
                 let header_placeholder = FoldPlaceholder {
-                    render: render_fold_icon_button(
-                        cx.view().downgrade(),
-                        IconName::Code,
-                        "Edits".into(),
-                    ),
+                    render: {
+                        let this = this.clone();
+                        let patch_range = range.clone();
+                        Arc::new(move |fold_id, _range, cx| {
+                            this.update(cx, |this, cx| {
+                                this.render_patch_header(patch_range.clone(), fold_id, cx)
+                            })
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| Empty.into_any())
+                        })
+                    },
                     constrain_width: false,
                     merge_adjacent: false,
                 };
 
-                let new_crease_ids = editor.insert_creases(
-                    [Crease::new(
-                        patch_start..patch_end,
-                        header_placeholder.clone(),
-                        fold_toggle("patch-header"),
-                        |_, _, _| Empty.into_any_element(),
-                    )],
-                    cx,
-                );
-
-                let mut state = PatchViewState {
-                    header_block_id: block_ids[0],
-                    footer_block_id: block_ids.get(1).copied(),
-                    crease_id: new_crease_ids.get(0).copied(),
-                    editor: None,
-                    update_task: None,
-                };
-
-                let mut folds_to_insert = vec![(patch_start..patch_end, header_placeholder)];
-
-                match self.patches.entry(range.clone()) {
-                    hash_map::Entry::Vacant(entry) => {
-                        entry.insert(state);
-                    }
-                    hash_map::Entry::Occupied(mut entry) => {
-                        let entry = entry.get_mut();
-                        removed_block_ids.insert(entry.header_block_id);
-                        removed_block_ids.extend(entry.footer_block_id);
-                        removed_crease_ids.extend(entry.crease_id);
-                        folds_to_insert.retain(|(range, _)| snapshot.intersects_fold(range.start));
-                        if let Some(editor_state) = &entry.editor {
-                            if editor_state.opened_patch != patch {
-                                state.update_task = Some({
-                                    let this = this.clone();
-                                    cx.spawn(|_, cx| async move {
-                                        Self::update_patch_editor(this.clone(), patch, cx)
-                                            .await
-                                            .log_err();
-                                    })
-                                });
-                            }
+                if let Some(state) = self.patches.get_mut(&range) {
+                    replaced_blocks.insert(state.footer_block_id, render_block);
+                    if let Some(editor_state) = &state.editor {
+                        if editor_state.opened_patch != patch {
+                            state.update_task = Some({
+                                let this = this.clone();
+                                cx.spawn(|_, cx| async move {
+                                    Self::update_patch_editor(this.clone(), patch, cx)
+                                        .await
+                                        .log_err();
+                                })
+                            });
                         }
-                        state.editor = entry.editor.take();
-                        *entry = state;
                     }
+                } else {
+                    let block_ids = editor.insert_blocks(
+                        [BlockProperties {
+                            position: patch_start,
+                            height: path_count as u32 + 1,
+                            style: BlockStyle::Flex,
+                            render: render_block,
+                            disposition: BlockDisposition::Below,
+                            priority: 0,
+                        }],
+                        None,
+                        cx,
+                    );
+
+                    let new_crease_ids = editor.insert_creases(
+                        [Crease::new(
+                            patch_start..patch_end,
+                            header_placeholder.clone(),
+                            fold_toggle("patch-header"),
+                            |_, _, _| Empty.into_any_element(),
+                        )],
+                        cx,
+                    );
+
+                    self.patches.insert(
+                        range.clone(),
+                        PatchViewState {
+                            footer_block_id: block_ids[0],
+                            crease_id: new_crease_ids[0],
+                            editor: None,
+                            update_task: None,
+                        },
+                    );
                 }
 
                 editor.unfold_ranges([patch_start..patch_end], true, false, cx);
-
-                if !folds_to_insert.is_empty() {
-                    editor.fold_ranges(folds_to_insert, false, cx);
-                }
+                editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
             }
 
             editor.remove_creases(removed_crease_ids, cx);
             editor.remove_blocks(removed_block_ids, None, cx);
+            editor.replace_blocks(replaced_blocks, None, cx);
         });
 
         for editor in editors_to_close {
@@ -3465,6 +3427,27 @@ impl ContextEditor {
     fn render_patch_header(
         &self,
         range: Range<text::Anchor>,
+        _id: FoldId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement> {
+        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
+        let theme = cx.theme().clone();
+        Some(
+            h_flex()
+                .px_1()
+                .py_0p5()
+                .border_b_1()
+                .border_color(theme.status().info_border)
+                .gap_1()
+                .child(Icon::new(IconName::Diff).size(IconSize::Small))
+                .child(Label::new(patch.title.clone()).size(LabelSize::Small))
+                .into_any(),
+        )
+    }
+
+    fn render_patch_footer(
+        &mut self,
+        range: Range<text::Anchor>,
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
@@ -3476,8 +3459,6 @@ impl ContextEditor {
             .paths()
             .map(|p| SharedString::from(p.to_string()))
             .collect::<BTreeSet<_>>();
-
-        let theme = cx.theme().status();
         let editor = self.editor.read(cx);
         let buffer = editor.buffer().read(cx).snapshot(cx);
         let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
@@ -3487,8 +3468,9 @@ impl ContextEditor {
         Some(
             v_flex()
                 .id(id)
-                .w(max_width)
                 .pl(gutter_width)
+                .w(max_width)
+                .py_2()
                 .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.editor.update(cx, |editor, cx| {
@@ -3498,38 +3480,27 @@ impl ContextEditor {
                     });
                     this.focus_active_patch(cx);
                 }))
-                .child(
-                    h_flex()
-                        .w_full()
-                        .h_8()
-                        .border_b_1()
-                        .border_color(theme.info_border)
-                        .gap_1()
-                        .child(Icon::new(IconName::Diff))
-                        .child(Label::new(patch.title.clone()).size(LabelSize::Small)),
-                )
                 .children(paths.into_iter().map(|path| {
                     h_flex()
+                        .pl_1()
                         .gap_1()
-                        .child(Icon::new(IconName::File))
-                        .child(Label::new(path))
+                        .child(Icon::new(IconName::File).size(IconSize::Small))
+                        .child(Label::new(path).size(LabelSize::Small))
                 }))
-                .into_any(),
-        )
-    }
-
-    fn render_patch_footer(
-        max_width: Pixels,
-        gutter_width: Pixels,
-        cx: &mut AppContext,
-    ) -> Option<AnyElement> {
-        let theme = cx.theme().status();
-        Some(
-            v_flex()
-                .w(max_width)
-                .pt_1()
-                .pl(gutter_width)
-                .child(h_flex().h(px(1.)).bg(theme.info_border))
+                .when(patch.status == AssistantPatchStatus::Pending, |div| {
+                    div.child(
+                        Label::new("Generating")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small)
+                            .with_animation(
+                                "pulsating-label",
+                                Animation::new(Duration::from_secs(2))
+                                    .repeat()
+                                    .with_easing(pulsating_between(0.4, 1.)),
+                                |label, delta| label.alpha(delta),
+                            ),
+                    )
+                })
                 .into_any(),
         )
     }

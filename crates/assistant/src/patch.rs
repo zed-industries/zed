@@ -13,6 +13,13 @@ pub(crate) struct AssistantPatch {
     pub range: Range<language::Anchor>,
     pub title: SharedString,
     pub edits: Arc<[Result<AssistantEdit>]>,
+    pub status: AssistantPatchStatus,
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum AssistantPatchStatus {
+    Pending,
+    Ready,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
