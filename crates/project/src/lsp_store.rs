@@ -696,7 +696,7 @@ pub struct LspStore {
 }
 
 pub enum LspStoreEvent {
-    LanguageServerAdded(LanguageServerId),
+    LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerUpdate {
         language_server_id: LanguageServerId,
@@ -752,6 +752,7 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_restart_language_servers);
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
+        client.add_model_message_handler(Self::handle_language_server_log);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_resolve_completion_documentation);
@@ -3087,6 +3088,7 @@ impl LspStore {
                     server: Some(proto::LanguageServer {
                         id: server_id.0 as u64,
                         name: status.name.clone(),
+                        worktree_id: None,
                     }),
                 })
                 .log_err();
@@ -3907,16 +3909,23 @@ impl LspStore {
             .payload
             .server
             .ok_or_else(|| anyhow!("invalid server"))?;
+
         this.update(&mut cx, |this, cx| {
+            let server_id = LanguageServerId(server.id as usize);
             this.language_server_statuses.insert(
-                LanguageServerId(server.id as usize),
+                server_id,
                 LanguageServerStatus {
-                    name: server.name,
+                    name: server.name.clone(),
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                 },
             );
+            cx.emit(LspStoreEvent::LanguageServerAdded(
+                server_id,
+                LanguageServerName(server.name.into()),
+                server.worktree_id.map(WorktreeId::from_proto),
+            ));
             cx.notify();
         })?;
         Ok(())
@@ -3982,6 +3991,29 @@ impl LspStore {
 
             Ok(())
         })?
+    }
+
+    async fn handle_language_server_log(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::LanguageServerLog>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        let log_type = envelope
+            .payload
+            .log_type
+            .map(LanguageServerLogType::from_proto)
+            .context("invalid language server log type")?;
+
+        let message = envelope.payload.message;
+
+        this.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::LanguageServerLog(
+                language_server_id,
+                log_type,
+                message,
+            ));
+        })
     }
 
     pub fn disk_based_diagnostics_started(
@@ -6356,7 +6388,11 @@ impl LspStore {
             },
         );
 
-        cx.emit(LspStoreEvent::LanguageServerAdded(server_id));
+        cx.emit(LspStoreEvent::LanguageServerAdded(
+            server_id,
+            language_server.name().into(),
+            Some(key.0),
+        ));
 
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
@@ -6365,6 +6401,7 @@ impl LspStore {
                     server: Some(proto::LanguageServer {
                         id: server_id.0 as u64,
                         name: language_server.name().to_string(),
+                        worktree_id: Some(key.0.to_proto()),
                     }),
                 })
                 .log_err();
@@ -6546,8 +6583,8 @@ impl LspStore {
         if let Some(local) = self.as_local_mut() {
             local
                 .supplementary_language_servers
-                .insert(id, (name, server));
-            cx.emit(LspStoreEvent::LanguageServerAdded(id));
+                .insert(id, (name.clone(), server));
+            cx.emit(LspStoreEvent::LanguageServerAdded(id, name, None));
         }
     }
 
@@ -7287,6 +7324,46 @@ impl PartialEq for LanguageServerPromptRequest {
 pub enum LanguageServerLogType {
     Log(MessageType),
     Trace(Option<String>),
+}
+
+impl LanguageServerLogType {
+    pub fn to_proto(&self) -> proto::language_server_log::LogType {
+        match self {
+            Self::Log(log_type) => {
+                let message_type = match *log_type {
+                    MessageType::ERROR => 1,
+                    MessageType::WARNING => 2,
+                    MessageType::INFO => 3,
+                    MessageType::LOG => 4,
+                    other => {
+                        log::warn!("Unknown lsp log message type: {:?}", other);
+                        4
+                    }
+                };
+                proto::language_server_log::LogType::LogMessageType(message_type)
+            }
+            Self::Trace(message) => {
+                proto::language_server_log::LogType::LogTrace(proto::LspLogTrace {
+                    message: message.clone(),
+                })
+            }
+        }
+    }
+
+    pub fn from_proto(log_type: proto::language_server_log::LogType) -> Self {
+        match log_type {
+            proto::language_server_log::LogType::LogMessageType(message_type) => {
+                Self::Log(match message_type {
+                    1 => MessageType::ERROR,
+                    2 => MessageType::WARNING,
+                    3 => MessageType::INFO,
+                    4 => MessageType::LOG,
+                    _ => MessageType::LOG,
+                })
+            }
+            proto::language_server_log::LogType::LogTrace(trace) => Self::Trace(trace.message),
+        }
+    }
 }
 
 pub enum LanguageServerState {
