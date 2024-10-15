@@ -424,12 +424,6 @@ pub struct SshRemoteClient {
     state: Arc<Mutex<Option<State>>>,
 }
 
-impl Drop for SshRemoteClient {
-    fn drop(&mut self) {
-        self.shutdown_processes();
-    }
-}
-
 #[derive(Debug)]
 pub enum SshRemoteEvent {
     Disconnected,
@@ -449,19 +443,11 @@ impl SshRemoteClient {
             let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
 
             let client = cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx))?;
-            let this = cx.new_model(|cx| {
-                cx.on_app_quit(|this: &mut Self, _| {
-                    this.shutdown_processes();
-                    futures::future::ready(())
-                })
-                .detach();
-
-                Self {
-                    client: client.clone(),
-                    unique_identifier: unique_identifier.clone(),
-                    connection_options: connection_options.clone(),
-                    state: Arc::new(Mutex::new(Some(State::Connecting))),
-                }
+            let this = cx.new_model(|_| Self {
+                client: client.clone(),
+                unique_identifier: unique_identifier.clone(),
+                connection_options: connection_options.clone(),
+                state: Arc::new(Mutex::new(Some(State::Connecting))),
             })?;
 
             let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
@@ -506,25 +492,44 @@ impl SshRemoteClient {
         })
     }
 
-    fn shutdown_processes(&self) {
-        let Some(state) = self.state.lock().take() else {
-            return;
-        };
+    pub fn shutdown_processes<T: RequestMessage>(
+        &self,
+        shutdown_request: Option<T>,
+    ) -> Option<impl Future<Output = ()>> {
+        let state = self.state.lock().take()?;
         log::info!("shutting down ssh processes");
 
         let State::Connected {
             multiplex_task,
             heartbeat_task,
-            ..
+            ssh_connection,
+            delegate,
+            forwarder,
         } = state
         else {
-            return;
+            return None;
         };
-        // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
-        // child of master_process.
-        drop(multiplex_task);
-        // Now drop the rest of state, which kills master process.
-        drop(heartbeat_task);
+
+        let client = self.client.clone();
+
+        Some(async move {
+            if let Some(shutdown_request) = shutdown_request {
+                client.send(shutdown_request).log_err();
+                // We wait 50ms instead of waiting for a response, because
+                // waiting for a response would require us to wait on the main thread
+                // which we want to avoid in an `on_app_quit` callback.
+                Timer::after(Duration::from_millis(50)).await;
+            }
+
+            // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
+            // child of master_process.
+            drop(multiplex_task);
+            // Now drop the rest of state, which kills master process.
+            drop(heartbeat_task);
+            drop(ssh_connection);
+            drop(delegate);
+            drop(forwarder);
+        })
     }
 
     fn reconnect(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {

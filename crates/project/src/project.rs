@@ -788,16 +788,6 @@ impl Project {
                     cx,
                 )
             });
-            cx.on_release(|this, cx| {
-                if let Some(ssh_client) = this.ssh_client.as_ref() {
-                    ssh_client
-                        .read(cx)
-                        .to_proto_client()
-                        .send(proto::ShutdownRemoteServer {})
-                        .log_err();
-                }
-            })
-            .detach();
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
@@ -812,7 +802,22 @@ impl Project {
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
                 client_subscriptions: Vec::new(),
-                _subscriptions: vec![cx.on_release(Self::release)],
+                _subscriptions: vec![
+                    cx.on_release(Self::release),
+                    cx.on_app_quit(|this, cx| {
+                        let shutdown = this.ssh_client.take().and_then(|client| {
+                            client
+                                .read(cx)
+                                .shutdown_processes(Some(proto::ShutdownRemoteServer {}))
+                        });
+
+                        cx.background_executor().spawn(async move {
+                            if let Some(shutdown) = shutdown {
+                                shutdown.await;
+                            }
+                        })
+                    }),
+                ],
                 active_entry: None,
                 snippets,
                 languages,
@@ -1143,6 +1148,20 @@ impl Project {
     }
 
     fn release(&mut self, cx: &mut AppContext) {
+        if let Some(client) = self.ssh_client.take() {
+            let shutdown = client
+                .read(cx)
+                .shutdown_processes(Some(proto::ShutdownRemoteServer {}));
+
+            cx.background_executor()
+                .spawn(async move {
+                    if let Some(shutdown) = shutdown {
+                        shutdown.await;
+                    }
+                })
+                .detach()
+        }
+
         match &self.client_state {
             ProjectClientState::Local => {}
             ProjectClientState::Shared { .. } => {
