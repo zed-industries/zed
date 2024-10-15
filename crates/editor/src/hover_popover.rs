@@ -195,32 +195,22 @@ fn show_hover(
     anchor: Anchor,
     ignore_timeout: bool,
     cx: &mut ViewContext<Editor>,
-) {
+) -> Option<()> {
     if editor.pending_rename.is_some() {
-        return;
+        return None;
     }
 
     let snapshot = editor.snapshot(cx);
 
-    let (buffer, buffer_position) =
-        if let Some(output) = editor.buffer.read(cx).text_anchor_for_position(anchor, cx) {
-            output
-        } else {
-            return;
-        };
+    let (buffer, buffer_position) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(anchor, cx)?;
 
-    let excerpt_id =
-        if let Some((excerpt_id, _, _)) = editor.buffer().read(cx).excerpt_containing(anchor, cx) {
-            excerpt_id
-        } else {
-            return;
-        };
+    let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
 
-    let project = if let Some(project) = editor.project.clone() {
-        project
-    } else {
-        return;
-    };
+    let language_registry = editor.project.as_ref()?.read(cx).languages().clone();
+    let provider = editor.semantics_provider.clone()?;
 
     if !ignore_timeout {
         if same_info_hover(editor, &snapshot, anchor)
@@ -228,7 +218,7 @@ fn show_hover(
             || editor.hover_state.diagnostic_popover.is_some()
         {
             // Hover triggered from same location as last time. Don't show again.
-            return;
+            return None;
         } else {
             hide_hover(editor, cx);
         }
@@ -240,7 +230,7 @@ fn show_hover(
             .cmp(&anchor, &snapshot.buffer_snapshot)
             .is_eq()
         {
-            return;
+            return None;
         }
     }
 
@@ -262,12 +252,7 @@ fn show_hover(
                 total_delay
             };
 
-            // query the LSP for hover info
-            let hover_request = cx.update(|cx| {
-                project.update(cx, |project, cx| {
-                    project.hover(&buffer, buffer_position, cx)
-                })
-            })?;
+            let hover_request = cx.update(|cx| provider.hover(&buffer, buffer_position, cx))?;
 
             if let Some(delay) = delay {
                 delay.await;
@@ -377,8 +362,11 @@ fn show_hover(
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
-            let hovers_response = hover_request.await;
-            let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+            let hovers_response = if let Some(hover_request) = hover_request {
+                hover_request.await
+            } else {
+                Vec::new()
+            };
             let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
             let mut info_popovers = Vec::with_capacity(hovers_response.len());
@@ -451,6 +439,7 @@ fn show_hover(
     });
 
     editor.hover_state.info_task = Some(task);
+    None
 }
 
 fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
@@ -821,7 +810,7 @@ mod tests {
                 hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
                 completion_provider: Some(lsp::CompletionOptions {
                     trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
-                    resolve_provider: Some(false),
+                    resolve_provider: Some(true),
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -913,15 +902,12 @@ mod tests {
         assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
         //apply a completion and check it was successfully applied
-        let () = cx
-            .update_editor(|editor, cx| {
-                editor.context_menu_next(&Default::default(), cx);
-                editor
-                    .confirm_completion(&ConfirmCompletion::default(), cx)
-                    .unwrap()
-            })
-            .await
-            .unwrap();
+        let _apply_additional_edits = cx.update_editor(|editor, cx| {
+            editor.context_menu_next(&Default::default(), cx);
+            editor
+                .confirm_completion(&ConfirmCompletion::default(), cx)
+                .unwrap()
+        });
         cx.assert_editor_state(indoc! {"
             one.second_completionˇ
             two

@@ -1,0 +1,34 @@
+[package]
+name = "reqwest_client"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[lib]
+path = "src/reqwest_client.rs"
+doctest = true
+
+[[example]]
+name = "client"
+path = "examples/client.rs"
+
+[dependencies]
+anyhow.workspace = true
+bytes.workspace = true
+futures.workspace = true
+http_client.workspace = true
+serde.workspace = true
+smol.workspace = true
+log.workspace = true
+tokio = { workspace = true, features = ["rt", "rt-multi-thread"] }
+reqwest.workspace = true
+
+[dev-dependencies]
+gpui.workspace = true

@@ -26,6 +26,7 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
+    provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
@@ -294,6 +295,8 @@ impl ContextOperation {
 #[derive(Debug, Clone)]
 pub enum ContextEvent {
     ShowAssistError(SharedString),
+    ShowPaymentRequiredError,
+    ShowMaxMonthlySpendReachedError,
     MessagesEdited,
     SummaryChanged,
     StreamedCompletion,
@@ -2112,25 +2115,36 @@ impl Context {
                 let result = stream_completion.await;
 
                 this.update(&mut cx, |this, cx| {
-                    let error_message = result
-                        .as_ref()
-                        .err()
-                        .map(|error| error.to_string().trim().to_string());
-
-                    if let Some(error_message) = error_message.as_ref() {
-                        cx.emit(ContextEvent::ShowAssistError(SharedString::from(
-                            error_message.clone(),
-                        )));
-                    }
-
-                    this.update_metadata(assistant_message_id, cx, |metadata| {
-                        if let Some(error_message) = error_message.as_ref() {
-                            metadata.status =
-                                MessageStatus::Error(SharedString::from(error_message.clone()));
+                    let error_message = if let Some(error) = result.as_ref().err() {
+                        if error.is::<PaymentRequiredError>() {
+                            cx.emit(ContextEvent::ShowPaymentRequiredError);
+                            this.update_metadata(assistant_message_id, cx, |metadata| {
+                                metadata.status = MessageStatus::Canceled;
+                            });
+                            Some(error.to_string())
+                        } else if error.is::<MaxMonthlySpendReachedError>() {
+                            cx.emit(ContextEvent::ShowMaxMonthlySpendReachedError);
+                            this.update_metadata(assistant_message_id, cx, |metadata| {
+                                metadata.status = MessageStatus::Canceled;
+                            });
+                            Some(error.to_string())
                         } else {
-                            metadata.status = MessageStatus::Done;
+                            let error_message = error.to_string().trim().to_string();
+                            cx.emit(ContextEvent::ShowAssistError(SharedString::from(
+                                error_message.clone(),
+                            )));
+                            this.update_metadata(assistant_message_id, cx, |metadata| {
+                                metadata.status =
+                                    MessageStatus::Error(SharedString::from(error_message.clone()));
+                            });
+                            Some(error_message)
                         }
-                    });
+                    } else {
+                        this.update_metadata(assistant_message_id, cx, |metadata| {
+                            metadata.status = MessageStatus::Done;
+                        });
+                        None
+                    };
 
                     if let Some(telemetry) = this.telemetry.as_ref() {
                         let language_name = this
@@ -2146,7 +2160,7 @@ impl Context {
                             model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
-                            language_name,
+                            language_name: language_name.map(|name| name.to_proto()),
                         });
                     }
 

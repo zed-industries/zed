@@ -823,6 +823,10 @@ impl Workspace {
                     }
                 }
 
+                project::Event::DisconnectedFromSshRemote => {
+                    this.update_window_edited(cx);
+                }
+
                 project::Event::Closed => {
                     cx.remove_window();
                 }
@@ -1464,6 +1468,10 @@ impl Workspace {
         self.on_prompt_for_open_path = Some(prompt)
     }
 
+    pub fn serialized_ssh_project(&self) -> Option<SerializedSshProject> {
+        self.serialized_ssh_project.clone()
+    }
+
     pub fn set_serialized_ssh_project(&mut self, serialized_ssh_project: SerializedSshProject) {
         self.serialized_ssh_project = Some(serialized_ssh_project);
     }
@@ -1791,7 +1799,7 @@ impl Workspace {
         mut save_intent: SaveIntent,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<bool>> {
-        if self.project.read(cx).is_disconnected() {
+        if self.project.read(cx).is_disconnected(cx) {
             return Task::ready(Ok(true));
         }
         let dirty_items = self
@@ -3447,7 +3455,7 @@ impl Workspace {
     }
 
     fn update_window_edited(&mut self, cx: &mut WindowContext) {
-        let is_edited = !self.project.read(cx).is_disconnected()
+        let is_edited = !self.project.read(cx).is_disconnected(cx)
             && self
                 .items(cx)
                 .any(|item| item.has_conflict(cx) || item.is_dirty(cx));
@@ -4858,7 +4866,7 @@ impl Render for Workspace {
                         .children(self.render_notifications(cx)),
                 )
                 .child(self.status_bar.clone())
-                .children(if self.project.read(cx).is_disconnected() {
+                .children(if self.project.read(cx).is_disconnected(cx) {
                     if let Some(render) = self.render_disconnected_overlay.take() {
                         let result = render(self, cx);
                         self.render_disconnected_overlay = Some(render);
@@ -5038,14 +5046,14 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
+pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<LocalPaths>> {
+) -> Option<Vec<SerializedWorkspaceLocation>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
