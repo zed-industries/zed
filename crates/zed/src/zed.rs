@@ -196,6 +196,8 @@ pub fn initialize_workspace(
             inline_completion_button::InlineCompletionButton::new(app_state.fs.clone(), cx)
         });
 
+        let project_search =
+            cx.new_view(|_| search::items::ProjectSearchIndicator::new(workspace));
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
@@ -206,6 +208,7 @@ pub fn initialize_workspace(
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
+            status_bar.add_left_item(project_search, cx);
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(inline_completion_button, cx);
