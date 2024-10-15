@@ -3,7 +3,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use fs::{FakeFs, Fs};
 use gpui::{Context, Model, TestAppContext};
-use http_client::FakeHttpClient;
+use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
@@ -662,8 +662,11 @@ async fn init_test(
     );
 
     server_cx.update(HeadlessProject::init);
-    let headless =
-        server_cx.new_model(|cx| HeadlessProject::new(ssh_server_client, fs.clone(), cx));
+    let http_client = Arc::new(BlockedHttpClient);
+    let node_runtime = NodeRuntime::unavailable();
+    let headless = server_cx.new_model(|cx| {
+        HeadlessProject::new(ssh_server_client, fs.clone(), http_client, node_runtime, cx)
+    });
     let project = build_project(ssh_remote_client, cx);
 
     project

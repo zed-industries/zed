@@ -218,6 +218,7 @@ pub fn initialize_workspace(
 
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {
+
             handle
                 .update(cx, |workspace, cx| {
                     // We'll handle closing asynchronously

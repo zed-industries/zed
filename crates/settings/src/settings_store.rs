@@ -165,7 +165,7 @@ pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
-    raw_server_settings: serde_json::Value,
+    raw_server_settings: Option<serde_json::Value>,
     raw_extension_settings: serde_json::Value,
     raw_local_settings:
         BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
@@ -223,7 +223,7 @@ impl SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
-            raw_server_settings: serde_json::json!({}),
+            raw_server_settings: None,
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
@@ -274,9 +274,12 @@ impl SettingsStore {
                     .log_err();
             }
 
-            let server_value = setting_value
-                .deserialize_setting(&self.raw_server_settings)
-                .log_err();
+            let server_value = self
+                .raw_server_settings
+                .as_ref()
+                .and_then(|server_setting| {
+                    setting_value.deserialize_setting(server_setting).log_err()
+                });
 
             let extension_value = setting_value
                 .deserialize_setting(&self.raw_extension_settings)
@@ -537,13 +540,19 @@ impl SettingsStore {
         server_settings_content: &str,
         cx: &mut AppContext,
     ) -> Result<()> {
-        let settings: serde_json::Value = if server_settings_content.is_empty() {
-            parse_json_with_comments("{}")?
+        let settings: Option<serde_json::Value> = if server_settings_content.is_empty() {
+            None
         } else {
             parse_json_with_comments(server_settings_content)?
         };
 
-        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        anyhow::ensure!(
+            settings
+                .as_ref()
+                .map(|value| value.is_object())
+                .unwrap_or(true),
+            "settings must be an object"
+        );
         self.raw_server_settings = settings;
         self.recompute_values(None, cx)?;
         Ok(())
@@ -758,15 +767,10 @@ impl SettingsStore {
                 }
             };
 
-            let server_settings = match setting_value.deserialize_setting(&self.raw_server_settings)
-            {
-                Ok(settings) => Some(settings),
-                Err(error) => {
-                    return Err(anyhow!(InvalidSettingsError::ServerSettings {
-                        message: error.to_string()
-                    }));
-                }
-            };
+            let server_settings = self
+                .raw_server_settings
+                .as_ref()
+                .and_then(|setting| setting_value.deserialize_setting(setting).ok());
 
             let mut release_channel_settings = None;
             if let Some(release_settings) = &self

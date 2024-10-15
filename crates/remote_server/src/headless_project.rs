@@ -1,26 +1,23 @@
 use anyhow::{anyhow, Result};
-use client::ProxySettings;
 use fs::Fs;
-use futures::channel::mpsc;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, UpdateGlobal};
-use http_client::{read_proxy_from_env, Uri};
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
-use node_runtime::{NodeBinaryOptions, NodeRuntime};
+use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
-    project_settings::{ProjectSettings, SettingsObserver},
+    project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
     LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
-use reqwest_client::ReqwestClient;
 use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
-use settings::{watch_config_file, InvalidSettingsError, Settings as _, SettingsStore};
+use settings::InvalidSettingsError;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -48,28 +45,14 @@ impl HeadlessProject {
         project::Project::init_settings(cx);
     }
 
-    pub fn new(session: Arc<ChannelClient>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
-
+    pub fn new(
+        session: Arc<ChannelClient>,
+        fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
+        node_runtime: NodeRuntime,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         client::init_settings(cx);
-
-        let proxy_url = read_proxy_settings(cx);
-
-        let http_client = Arc::new(
-            ReqwestClient::proxy_and_user_agent(
-                proxy_url,
-                &format!(
-                    "Zed-Server/{} ({}; {})",
-                    env!("CARGO_PKG_VERSION"),
-                    std::env::consts::OS,
-                    std::env::consts::ARCH
-                ),
-            )
-            .expect("Could not start HTTP client"),
-        );
-
-        let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
-
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
@@ -498,119 +481,4 @@ impl HeadlessProject {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
     }
-}
-
-fn read_proxy_settings(cx: &mut ModelContext<'_, HeadlessProject>) -> Option<Uri> {
-    let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
-    let proxy_url = proxy_str
-        .as_ref()
-        .and_then(|input: &String| {
-            input
-                .parse::<Uri>()
-                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
-                .ok()
-        })
-        .or_else(read_proxy_from_env);
-    proxy_url
-}
-
-fn initialize_settings(
-    session: Arc<ChannelClient>,
-    fs: Arc<dyn Fs>,
-    cx: &mut AppContext,
-) -> async_watch::Receiver<Option<NodeBinaryOptions>> {
-    let user_settings_file_rx = watch_config_file(
-        &cx.background_executor(),
-        fs,
-        paths::settings_file().clone(),
-    );
-
-    handle_settings_file_changes(user_settings_file_rx, cx, {
-        let session = session.clone();
-        move |err, _cx| {
-            if let Some(e) = err {
-                log::info!("Server settings failed to change: {}", e);
-
-                session
-                    .send(proto::Toast {
-                        project_id: SSH_PROJECT_ID,
-                        notification_id: "server-settings-failed".to_string(),
-                        message: format!(
-                            "Error in settings on remote host {:?}: {}",
-                            paths::settings_file(),
-                            e
-                        ),
-                    })
-                    .log_err();
-            } else {
-                session
-                    .send(proto::HideToast {
-                        project_id: SSH_PROJECT_ID,
-                        notification_id: "server-settings-failed".to_string(),
-                    })
-                    .log_err();
-            }
-        }
-    });
-
-    let (tx, rx) = async_watch::channel(None);
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let settings = &ProjectSettings::get_global(cx).node;
-        log::info!("Got new node settings: {:?}", settings);
-        let options = NodeBinaryOptions {
-            allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
-            // TODO: Implement this setting
-            allow_binary_download: true,
-            use_paths: settings.path.as_ref().map(|node_path| {
-                let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
-                let npm_path = settings
-                    .npm_path
-                    .as_ref()
-                    .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
-                (
-                    node_path.clone(),
-                    npm_path.unwrap_or_else(|| {
-                        let base_path = PathBuf::new();
-                        node_path.parent().unwrap_or(&base_path).join("npm")
-                    }),
-                )
-            }),
-        };
-        tx.send(Some(options)).log_err();
-    })
-    .detach();
-
-    rx
-}
-
-pub fn handle_settings_file_changes(
-    mut server_settings_file: mpsc::UnboundedReceiver<String>,
-    cx: &mut AppContext,
-    settings_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
-) {
-    let server_settings_content = cx
-        .background_executor()
-        .block(server_settings_file.next())
-        .unwrap();
-    SettingsStore::update_global(cx, |store, cx| {
-        store
-            .set_server_settings(&server_settings_content, cx)
-            .log_err();
-    });
-    cx.spawn(move |cx| async move {
-        while let Some(server_settings_content) = server_settings_file.next().await {
-            let result = cx.update_global(|store: &mut SettingsStore, cx| {
-                let result = store.set_server_settings(&server_settings_content, cx);
-                if let Err(err) = &result {
-                    log::error!("Failed to load server settings: {err}");
-                }
-                settings_changed(result.err(), cx);
-                cx.refresh();
-            });
-            if result.is_err() {
-                break; // App dropped
-            }
-        }
-    })
-    .detach();
 }
