@@ -720,7 +720,7 @@ fn subscribe_for_terminal_events(
                             .await;
                         let paths_to_open = valid_files_to_open
                             .iter()
-                            .map(|(p, _)| (*p.path).clone())
+                            .map(|(p, _)| p.path.clone().into())
                             .collect();
                         let opened_items = task_workspace
                             .update(&mut cx, |workspace, cx| {
