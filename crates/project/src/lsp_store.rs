@@ -696,7 +696,7 @@ pub struct LspStore {
 }
 
 pub enum LspStoreEvent {
-    LanguageServerAdded(LanguageServerId),
+    LanguageServerAdded(LanguageServerId, LanguageServerName, Option<WorktreeId>),
     LanguageServerRemoved(LanguageServerId),
     LanguageServerUpdate {
         language_server_id: LanguageServerId,
@@ -3088,6 +3088,7 @@ impl LspStore {
                     server: Some(proto::LanguageServer {
                         id: server_id.0 as u64,
                         name: status.name.clone(),
+                        worktree_id: None,
                     }),
                 })
                 .log_err();
@@ -3908,16 +3909,23 @@ impl LspStore {
             .payload
             .server
             .ok_or_else(|| anyhow!("invalid server"))?;
+
         this.update(&mut cx, |this, cx| {
+            let server_id = LanguageServerId(server.id as usize);
             this.language_server_statuses.insert(
-                LanguageServerId(server.id as usize),
+                server_id,
                 LanguageServerStatus {
-                    name: server.name,
+                    name: server.name.clone(),
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
                 },
             );
+            cx.emit(LspStoreEvent::LanguageServerAdded(
+                server_id,
+                LanguageServerName(server.name.into()),
+                server.worktree_id.map(|id| WorktreeId::from_proto(id)),
+            ));
             cx.notify();
         })?;
         Ok(())
@@ -6390,7 +6398,11 @@ impl LspStore {
             },
         );
 
-        cx.emit(LspStoreEvent::LanguageServerAdded(server_id));
+        cx.emit(LspStoreEvent::LanguageServerAdded(
+            server_id,
+            language_server.name().into(),
+            Some(key.0),
+        ));
 
         if let Some((downstream_client, project_id)) = self.downstream_client.as_ref() {
             downstream_client
@@ -6399,6 +6411,7 @@ impl LspStore {
                     server: Some(proto::LanguageServer {
                         id: server_id.0 as u64,
                         name: language_server.name().to_string(),
+                        worktree_id: Some(key.0.to_proto()),
                     }),
                 })
                 .log_err();
@@ -6580,8 +6593,8 @@ impl LspStore {
         if let Some(local) = self.as_local_mut() {
             local
                 .supplementary_language_servers
-                .insert(id, (name, server));
-            cx.emit(LspStoreEvent::LanguageServerAdded(id));
+                .insert(id, (name.clone(), server));
+            cx.emit(LspStoreEvent::LanguageServerAdded(id, name, None));
         }
     }
 

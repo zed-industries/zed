@@ -11,7 +11,7 @@ use language::{LanguageServerId, LanguageServerName};
 use lsp::{
     notification::SetTrace, IoKind, LanguageServer, MessageType, SetTraceParams, TraceValue,
 };
-use project::{search::SearchQuery, Project};
+use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
 use ui::{prelude::*, Button, Checkbox, ContextMenu, Label, PopoverMenu, Selection};
 use workspace::{
@@ -99,6 +99,8 @@ impl Message for RpcMessage {
 }
 
 struct LanguageServerState {
+    name: Option<LanguageServerName>,
+    worktree_id: Option<WorktreeId>,
     kind: LanguageServerKind,
     log_messages: VecDeque<LogMessage>,
     trace_messages: VecDeque<TraceMessage>,
@@ -110,7 +112,7 @@ struct LanguageServerState {
 
 enum LanguageServerKind {
     Local { project: WeakModel<Project> },
-    Global { name: LanguageServerName },
+    Global,
 }
 
 impl LanguageServerKind {
@@ -233,11 +235,12 @@ impl LogStore {
                                         .ok();
                                 },
                             ));
+                        let name = LanguageServerName::new_static("copilot");
                         this.add_language_server(
-                            LanguageServerKind::Global {
-                                name: LanguageServerName::new_static("copilot"),
-                            },
+                            LanguageServerKind::Global,
                             server.server_id(),
+                            Some(name),
+                            None,
                             Some(server.clone()),
                             cx,
                         );
@@ -280,18 +283,17 @@ impl LogStore {
                             .retain(|_, state| state.kind.project() != Some(&weak_project));
                     }),
                     cx.subscribe(project, |this, project, event, cx| match event {
-                        project::Event::LanguageServerAdded(id) => {
-                            let read_project = project.read(cx);
-                            if let Some(server) = read_project.language_server_for_id(*id, cx) {
-                                this.add_language_server(
-                                    LanguageServerKind::Local {
-                                        project: project.downgrade(),
-                                    },
-                                    server.server_id(),
-                                    Some(server),
-                                    cx,
-                                );
-                            }
+                        project::Event::LanguageServerAdded(id, name, worktree_id) => {
+                            this.add_language_server(
+                                LanguageServerKind::Local {
+                                    project: project.downgrade(),
+                                },
+                                *id,
+                                Some(name.clone()),
+                                *worktree_id,
+                                project.read(cx).language_server_for_id(*id, cx),
+                                cx,
+                            );
                         }
                         project::Event::LanguageServerRemoved(id) => {
                             this.remove_language_server(*id, cx);
@@ -302,6 +304,8 @@ impl LogStore {
                                     project: project.downgrade(),
                                 },
                                 *id,
+                                None,
+                                None,
                                 None,
                                 cx,
                             );
@@ -332,12 +336,16 @@ impl LogStore {
         &mut self,
         kind: LanguageServerKind,
         server_id: LanguageServerId,
+        name: Option<LanguageServerName>,
+        worktree_id: Option<WorktreeId>,
         server: Option<Arc<LanguageServer>>,
         cx: &mut ModelContext<Self>,
     ) -> Option<&mut LanguageServerState> {
         let server_state = self.language_servers.entry(server_id).or_insert_with(|| {
             cx.notify();
             LanguageServerState {
+                name: None,
+                worktree_id: None,
                 kind,
                 rpc_state: None,
                 log_messages: VecDeque::with_capacity(MAX_STORED_LOG_ENTRIES),
@@ -347,6 +355,13 @@ impl LogStore {
                 io_logs_subscription: None,
             }
         });
+
+        if let Some(name) = name {
+            server_state.name = Some(name);
+        }
+        if let Some(worktree_id) = worktree_id {
+            server_state.worktree_id = Some(worktree_id);
+        }
 
         if let Some(server) = server.filter(|_| server_state.io_logs_subscription.is_none()) {
             let io_tx = self.io_tx.clone();
@@ -455,7 +470,7 @@ impl LogStore {
                         None
                     }
                 }
-                LanguageServerKind::Global { .. } => Some(*id),
+                LanguageServerKind::Global => Some(*id),
             })
     }
 
@@ -662,21 +677,38 @@ impl LspLogView {
     pub(crate) fn menu_items<'a>(&'a self, cx: &'a AppContext) -> Option<Vec<LogMenuItem>> {
         let log_store = self.log_store.read(cx);
 
-        let mut rows = self
-            .project
-            .read(cx)
-            .language_servers(cx)
-            .filter_map(|(server_id, language_server_name, worktree_id)| {
-                let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
-                let state = log_store.language_servers.get(&server_id)?;
-                Some(LogMenuItem {
-                    server_id,
-                    server_name: language_server_name,
-                    worktree_root_name: worktree.read(cx).root_name().to_string(),
+        let unknown_server = LanguageServerName::new_static("unknown server");
+
+        let mut rows = log_store
+            .language_servers
+            .iter()
+            .filter_map(|(server_id, state)| match &state.kind {
+                LanguageServerKind::Local { .. } => {
+                    let worktree_root_name = state
+                        .worktree_id
+                        .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
+                        .map(|worktree| worktree.read(cx).root_name().to_string())
+                        .unwrap_or_else(|| "Unknown worktree".to_string());
+
+                    let state = log_store.language_servers.get(&server_id)?;
+                    Some(LogMenuItem {
+                        server_id: *server_id,
+                        server_name: state.name.clone().unwrap_or(unknown_server.clone()),
+                        worktree_root_name,
+                        rpc_trace_enabled: state.rpc_state.is_some(),
+                        selected_entry: self.active_entry_kind,
+                        trace_level: lsp::TraceValue::Off,
+                    })
+                }
+
+                LanguageServerKind::Global => Some(LogMenuItem {
+                    server_id: *server_id,
+                    server_name: state.name.clone().unwrap_or(unknown_server.clone()),
+                    worktree_root_name: "supplementary".to_string(),
                     rpc_trace_enabled: state.rpc_state.is_some(),
                     selected_entry: self.active_entry_kind,
                     trace_level: lsp::TraceValue::Off,
-                })
+                }),
             })
             .chain(
                 self.project
@@ -692,53 +724,6 @@ impl LspLogView {
                             selected_entry: self.active_entry_kind,
                             trace_level: lsp::TraceValue::Off,
                         })
-                    }),
-            )
-            .chain(
-                log_store
-                    .language_servers
-                    .iter()
-                    .filter_map(|(server_id, state)| match &state.kind {
-                        LanguageServerKind::Global { name } => Some(LogMenuItem {
-                            server_id: *server_id,
-                            server_name: name.clone(),
-                            worktree_root_name: "supplementary".to_string(),
-                            rpc_trace_enabled: state.rpc_state.is_some(),
-                            selected_entry: self.active_entry_kind,
-                            trace_level: lsp::TraceValue::Off,
-                        }),
-                        _ => None,
-                    }),
-            )
-            .chain(
-                log_store
-                    .language_servers
-                    .iter()
-                    .filter_map(|(server_id, state)| match &state.kind {
-                        LanguageServerKind::Local { project } => {
-                            let Some(project) = project.upgrade() else {
-                                return None;
-                            };
-
-                            let Some(name) = project
-                                .read(cx)
-                                .language_server_statuses(cx)
-                                .find(|(id, _)| *id == *server_id)
-                                .map(|(_, status)| status.name.clone())
-                            else {
-                                return None;
-                            };
-
-                            Some(LogMenuItem {
-                                server_id: *server_id,
-                                server_name: LanguageServerName(name.into()),
-                                worktree_root_name: "remote on SSH host".to_string(),
-                                rpc_trace_enabled: false,
-                                selected_entry: self.active_entry_kind,
-                                trace_level: lsp::TraceValue::Off,
-                            })
-                        }
-                        _ => None,
                     }),
             )
             .collect::<Vec<_>>();

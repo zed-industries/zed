@@ -1296,6 +1296,7 @@ message LamportTimestamp {
 message LanguageServer {
     uint64 id = 1;
     string name = 2;
+    optional uint64 worktree_id = 3;
 }
 
 message StartLanguageServer {
