@@ -231,7 +231,7 @@ fn render_markdown_list_item(
     cx.with_common_p(item).into_any()
 }
 
-fn calculate_content_length(paragraphs: &Vec<MarkdownParagraph>) -> usize {
+fn paragraph_len(paragraphs: &Vec<MarkdownParagraph>) -> usize {
     paragraphs
         .iter()
         .map(|paragraph| match paragraph {
@@ -246,13 +246,13 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
 
     for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = calculate_content_length(&cell);
+        let length = paragraph_len(&cell);
         max_lengths[index] = length;
     }
 
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
-            let length = calculate_content_length(&cell);
+            let length = paragraph_len(&cell);
 
             if length > max_lengths[index] {
                 max_lengths[index] = length;
@@ -507,7 +507,7 @@ fn render_markdown_text(
                     Some(link) => {
                         let link_click = link.clone();
                         let link_tooltip = link.clone();
-                        let element = div()
+                        let image_element = div()
                             .child(img(image_source))
                             .id(element_id)
                             .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
@@ -530,7 +530,7 @@ fn render_markdown_text(
                                 }
                             })
                             .into_any();
-                        any_element.push(element);
+                        any_element.push(image_element);
                     }
                 }
             }
