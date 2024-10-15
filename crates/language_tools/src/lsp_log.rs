@@ -710,6 +710,37 @@ impl LspLogView {
                         _ => None,
                     }),
             )
+            .chain(
+                log_store
+                    .language_servers
+                    .iter()
+                    .filter_map(|(server_id, state)| match &state.kind {
+                        LanguageServerKind::Local { project } => {
+                            let Some(project) = project.upgrade() else {
+                                return None;
+                            };
+
+                            let Some(name) = project
+                                .read(cx)
+                                .language_server_statuses(cx)
+                                .find(|(id, _)| *id == *server_id)
+                                .map(|(_, status)| status.name.clone())
+                            else {
+                                return None;
+                            };
+
+                            Some(LogMenuItem {
+                                server_id: *server_id,
+                                server_name: LanguageServerName(name.into()),
+                                worktree_root_name: "remote on SSH host".to_string(),
+                                rpc_trace_enabled: false,
+                                selected_entry: self.active_entry_kind,
+                                trace_level: lsp::TraceValue::Off,
+                            })
+                        }
+                        _ => None,
+                    }),
+            )
             .collect::<Vec<_>>();
         rows.sort_by_key(|row| row.server_id);
         rows.dedup_by_key(|row| row.server_id);
