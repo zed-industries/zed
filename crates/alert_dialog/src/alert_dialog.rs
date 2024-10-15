@@ -229,9 +229,11 @@ impl AlertDialog {
     /// Spawns the alert dialog in a new modal
     pub fn show(&self, workspace: WeakView<Workspace>, cx: &mut ViewContext<Self>) {
         let this = self.clone();
+        let focus_handle = self.focus_handle.clone();
         cx.spawn(|_, mut cx| async move {
             workspace.update(&mut cx, |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| this);
+                cx.focus(&focus_handle);
             })
         })
         .detach();
@@ -252,12 +254,10 @@ impl Render for AlertDialog {
         };
 
         v_flex()
+            .key_context("Alert")
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::cancel))
-            // TODO: I don't think this is necessary
             .occlude()
-            .debug_below()
-            // .w(px(MIN_DIALOG_WIDTH))
             .min_w(px(MIN_DIALOG_WIDTH))
             .max_w(if layout == AlertDialogLayout::Horizontal {
                 px(MAX_DIALOG_WIDTH)
@@ -320,17 +320,7 @@ impl Render for AlertDialog {
                             .h(ButtonSize::Large.rems())
                             .gap(Spacing::Medium.rems(cx))
                     })
-                    .child(
-                        div()
-                            .flex_shrink_0() // This space is reserved for adding a optional checkbox to the dialog
-                            .child(
-                                IconButton::new("back", IconName::ArrowLeft)
-                                    .shape(IconButtonShape::Square)
-                                    .on_click(|_, cx| {
-                                        cx.dispatch_action(menu::Cancel.boxed_clone());
-                                    }),
-                            ),
-                    )
+                    .child(div().flex_shrink_0())
                     .child(
                         div()
                             .flex()
