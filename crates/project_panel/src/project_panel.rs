@@ -317,14 +317,10 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
-                vertical_scrollbar_state: ScrollbarState::for_scrollable(
-                    cx.view(),
-                    scroll_handle.clone(),
-                ),
-                horizontal_scrollbar_state: ScrollbarState::for_scrollable(
-                    cx.view(),
-                    scroll_handle.clone(),
-                ),
+                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(cx.view()),
+                horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(cx.view()),
                 max_width_item_index: None,
                 scroll_handle,
             };

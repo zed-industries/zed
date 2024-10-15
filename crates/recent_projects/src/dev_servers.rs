@@ -34,6 +34,8 @@ use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
+use ui::Scrollbar;
+use ui::ScrollbarState;
 use ui::Section;
 use ui::{prelude::*, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
 use util::ResultExt;
@@ -301,13 +303,19 @@ impl gpui::Render for ProjectPicker {
     }
 }
 enum Mode {
-    Default,
+    Default(ScrollbarState),
     ViewServerOptions(usize, SshConnection),
     EditNickname(EditNicknameState),
     ProjectPicker(View<ProjectPicker>),
     CreateDevServer(CreateDevServer),
 }
 
+impl Mode {
+    fn default_mode() -> Self {
+        let handle = ScrollHandle::new();
+        Self::Default(ScrollbarState::new(handle))
+    }
+}
 impl DevServerProjects {
     pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
@@ -338,7 +346,7 @@ impl DevServerProjects {
         });
 
         Self {
-            mode: Mode::Default,
+            mode: Mode::default_mode(),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             dev_server_store,
@@ -349,13 +357,13 @@ impl DevServerProjects {
     }
 
     fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default | Mode::ViewServerOptions(_, _)) {
+        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
         self.selectable_items.next(cx);
     }
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default | Mode::ViewServerOptions(_, _)) {
+        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
         self.selectable_items.prev(cx);
@@ -431,7 +439,7 @@ impl DevServerProjects {
                         });
 
                         this.add_ssh_server(connection_options, cx);
-                        this.mode = Mode::Default;
+                        this.mode = Mode::default_mode();
                         this.selectable_items.reset_selection();
                         cx.notify()
                     })
@@ -535,7 +543,7 @@ impl DevServerProjects {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default | Mode::ViewServerOptions(_, _) => {
+            Mode::Default(_) | Mode::ViewServerOptions(_, _) => {
                 let items = std::mem::take(&mut self.selectable_items);
                 items.confirm(self, cx);
                 self.selectable_items = items;
@@ -566,7 +574,7 @@ impl DevServerProjects {
                         }
                     }
                 });
-                self.mode = Mode::Default;
+                self.mode = Mode::default_mode();
                 self.selectable_items.reset_selection();
                 self.focus_handle.focus(cx);
             }
@@ -575,14 +583,14 @@ impl DevServerProjects {
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default => cx.emit(DismissEvent),
+            Mode::Default(_) => cx.emit(DismissEvent),
             Mode::CreateDevServer(state) if state.ssh_prompt.is_some() => {
                 self.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
                 self.selectable_items.reset_selection();
                 cx.notify();
             }
             _ => {
-                self.mode = Mode::Default;
+                self.mode = Mode::default_mode();
                 self.selectable_items.reset_selection();
                 self.focus_handle(cx).focus(cx);
                 cx.notify();
@@ -1019,7 +1027,7 @@ impl DevServerProjects {
                                             move |cx| {
                                                 dev_servers.update(cx, |this, cx| {
                                                     this.delete_ssh_server(index, cx);
-                                                    this.mode = Mode::Default;
+                                                    this.mode = Mode::default_mode();
                                                     cx.notify();
                                                 })
                                             },
@@ -1062,7 +1070,7 @@ impl DevServerProjects {
                     .child({
                         self.selectable_items.add_item(Box::new({
                             move |this, cx| {
-                                this.mode = Mode::Default;
+                                this.mode = Mode::default_mode();
                                 cx.notify();
                             }
                         }));
@@ -1074,7 +1082,7 @@ impl DevServerProjects {
                             .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
                             .child(Label::new("Go Back"))
                             .on_click(cx.listener(|this, _, cx| {
-                                this.mode = Mode::Default;
+                                this.mode = Mode::default_mode();
                                 cx.notify()
                             }))
                     }),
@@ -1106,7 +1114,12 @@ impl DevServerProjects {
             .child(h_flex().p_2().child(state.editor.clone()))
     }
 
-    fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render_default(
+        &mut self,
+        scroll_state: ScrollbarState,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let scroll_state = scroll_state.parent_view(cx.view());
         let dev_servers = self.dev_server_store.read(cx).dev_servers();
         let ssh_connections = SshSettings::get_global(cx)
             .ssh_connections()
@@ -1131,21 +1144,27 @@ impl DevServerProjects {
             }));
 
         let footer = format!("Servers: {}", ssh_connections.len() + dev_servers.len());
+        let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() else {
+            unreachable!()
+        };
         let mut modal_section = v_flex()
             .id("ssh-server-list")
             .overflow_y_scroll()
+            .track_scroll(&scroll_handle)
             .size_full()
             .child(connect_button)
             .child(ListSeparator)
             .child(
-                List::new()
-                    .empty_message("No dev servers registered yet.")
-                    .children(ssh_connections.iter().cloned().enumerate().map(
-                        |(ix, connection)| {
-                            self.render_ssh_connection(ix, connection, cx)
-                                .into_any_element()
-                        },
-                    )),
+                h_flex().child(
+                    List::new()
+                        .empty_message("No dev servers registered yet.")
+                        .children(ssh_connections.iter().cloned().enumerate().map(
+                            |(ix, connection)| {
+                                self.render_ssh_connection(ix, connection, cx)
+                                    .into_any_element()
+                            },
+                        )),
+                ),
             )
             .into_any_element();
 
@@ -1160,7 +1179,7 @@ impl DevServerProjects {
             )
             .section(
                 Section::new().padded(false).child(
-                    v_flex()
+                    h_flex()
                         .min_h(rems(28.))
                         .size_full()
                         .pt_1p5()
@@ -1183,6 +1202,17 @@ impl DevServerProjects {
                             .size_full()
                             .min_h_full()
                             .flex_1(),
+                        )
+                        .child(
+                            div()
+                                .occlude()
+                                .h_full()
+                                .absolute()
+                                .right_1()
+                                .top_1()
+                                .bottom_1()
+                                .w(px(12.))
+                                .children(Scrollbar::vertical(scroll_state)),
                         ),
                 ),
             )
@@ -1218,13 +1248,13 @@ impl Render for DevServerProjects {
                 this.focus_handle(cx).focus(cx);
             }))
             .on_mouse_down_out(cx.listener(|this, _, cx| {
-                if matches!(this.mode, Mode::Default) {
+                if matches!(this.mode, Mode::Default(_)) {
                     cx.emit(DismissEvent)
                 }
             }))
             .w(rems(34.))
             .child(match &self.mode {
-                Mode::Default => self.render_default(cx).into_any_element(),
+                Mode::Default(state) => self.render_default(state.clone(), cx).into_any_element(),
                 Mode::ViewServerOptions(index, connection) => self
                     .render_view_options(*index, connection.clone(), cx)
                     .into_any_element(),
