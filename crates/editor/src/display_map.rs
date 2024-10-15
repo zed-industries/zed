@@ -8,7 +8,7 @@
 //! of several smaller structures that form a hierarchy (starting at the bottom):
 //! - [`InlayMap`] that decides where the [`Inlay`]s should be displayed.
 //! - [`FoldMap`] that decides where the fold indicators should be; it also tracks parts of a source file that are currently folded.
-//! - [`TabMap`] that keeps track of hard tabs in a buffer.
+//! - [`TabMap`] that keeps track of hard tabs in a buffer and invisible characters.
 //! - [`WrapMap`] that handles soft wrapping.
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.

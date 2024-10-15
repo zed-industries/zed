@@ -399,13 +399,6 @@ impl TabSnapshot {
             } else if ('\u{200B}'..='\u{200F}').contains(&c) {
                 expanded_chars += 1;
                 expanded_bytes += 1;
-                if expanded_bytes > column {
-                    expanded_chars -= expanded_bytes - column;
-                    return match bias {
-                        Bias::Left => (collapsed_bytes, expanded_chars, expanded_bytes - column),
-                        Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
-                    };
-                }
             } else if ('\u{0001}'..='\u{0008}').contains(&c)
                 || ('\u{000B}'..='\u{000C}').contains(&c)
                 || ('\u{000E}'..='\u{001F}').contains(&c)
