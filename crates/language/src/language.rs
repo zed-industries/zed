@@ -15,6 +15,7 @@ mod outline;
 pub mod proto;
 mod syntax_map;
 mod task_context;
+mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
