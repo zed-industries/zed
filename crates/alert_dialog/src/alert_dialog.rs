@@ -12,34 +12,55 @@ use ui::{
     div, px, relative, v_flex, vh, ActiveTheme, Button, ButtonCommon, ButtonSize,
     CheckboxWithLabel, Clickable, Color, ElementId, ElevationIndex, FixedWidth, FluentBuilder,
     Headline, HeadlineSize, IconButton, IconButtonShape, IconName, InteractiveElement, IntoElement,
-    Label, LabelCommon, ParentElement, Render, Selection, SharedString, Spacing,
+    Label, LabelCommon, ParentElement, Render, RenderOnce, Selection, SharedString, Spacing,
     StatefulInteractiveElement, Styled, StyledExt, StyledTypography, ViewContext, VisualContext,
     WindowContext,
 };
 use workspace::{ModalView, Workspace};
 
-const MAX_DIALOG_WIDTH: f32 = 440.0;
-const MIN_DIALOG_WIDTH: f32 = 260.0;
-
-/// A button that appears in an alert dialog.
-#[derive(Clone)]
-pub struct AlertDialogButton {
-    /// The label of the button
-    pub label: SharedString,
-    /// The action to take when the button is clicked
-    pub on_click: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+#[derive(Clone, IntoElement)]
+struct AlertDialogButton {
+    id: ElementId,
+    label: SharedString,
+    on_click: Option<Arc<dyn Fn(&ClickEvent, &mut WindowContext) + 'static>>,
+    focus_handle: FocusHandle,
 }
 
-impl From<&str> for AlertDialogButton {
-    fn from(label: &str) -> Self {
-        let label: SharedString = label.to_string().into();
-
+impl AlertDialogButton {
+    fn new(
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        focus_handle: FocusHandle,
+    ) -> Self {
         Self {
-            label,
+            id: id.into(),
+            label: label.into(),
             on_click: None,
+            focus_handle,
         }
     }
+
+    fn on_click(mut self, handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static) -> Self {
+        self.on_click = Some(Arc::new(handler));
+        self
+    }
 }
+
+impl RenderOnce for AlertDialogButton {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        Button::new(self.id, self.label)
+            .size(ButtonSize::Large)
+            .layer(ElevationIndex::ModalSurface)
+            .when_some(self.on_click, |this, on_click| {
+                this.on_click(move |event, cx| {
+                    on_click(event, cx);
+                })
+            })
+    }
+}
+
+const MAX_DIALOG_WIDTH: f32 = 440.0;
+const MIN_DIALOG_WIDTH: f32 = 260.0;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum AlertDialogLayout {
@@ -74,11 +95,11 @@ pub struct AlertDialog {
     /// The main message or content of the alert
     pub message: Option<SharedString>,
 
-    /// The primart action the user can take
-    pub primary_action: AlertDialogButton,
+    /// The primary action the user can take
+    primary_action: AlertDialogButton,
 
     /// The secondary action the user can take
-    pub secondary_action: AlertDialogButton,
+    secondary_action: AlertDialogButton,
 
     focus_handle: FocusHandle,
 }
@@ -94,7 +115,6 @@ impl ModalView for AlertDialog {
         true
     }
 }
-
 impl AlertDialog {
     /// Create a new alert dialog
     pub fn new(
@@ -108,8 +128,16 @@ impl AlertDialog {
                 Self {
                     title: "Untitled Alert".into(),
                     message: None,
-                    primary_action: "OK".into(),
-                    secondary_action: "Cancel".into(),
+                    primary_action: AlertDialogButton::new(
+                        "primary-action",
+                        "OK",
+                        focus_handle.clone(),
+                    ),
+                    secondary_action: AlertDialogButton::new(
+                        "secondary-action",
+                        "Cancel",
+                        focus_handle.clone(),
+                    ),
                     focus_handle,
                 },
                 cx,
@@ -129,26 +157,15 @@ impl AlertDialog {
         self
     }
 
-    fn add_action(
-        &mut self,
-        label: impl Into<SharedString>,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
-    ) -> AlertDialogButton {
-        let action = AlertDialogButton {
-            label: label.into(),
-            on_click: Some(Arc::new(handler)),
-        };
-
-        action
-    }
-
     /// Set the primary action the user can take
     pub fn primary_action(
         mut self,
         label: impl Into<SharedString>,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.primary_action = self.add_action(label, handler);
+        self.primary_action =
+            AlertDialogButton::new("primary-action", label, self.focus_handle.clone())
+                .on_click(handler);
         self
     }
 
@@ -156,20 +173,21 @@ impl AlertDialog {
     pub fn secondary_action(
         mut self,
         label: impl Into<SharedString>,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
-        self.secondary_action = self.add_action(label, handler);
+        self.secondary_action =
+            AlertDialogButton::new("secondary-action", label, self.focus_handle.clone())
+                .on_click(handler);
         self
     }
 
-    /// Set the primary action to dismiss the dialog
-    pub fn secondary_dismiss_action(
-        mut self,
-        label: impl Into<SharedString>,
-        cx: &ViewContext<Self>,
-    ) -> Self {
+    /// Set the secondary action to a dismiss action with a custom label
+    ///
+    /// Example: "Close", "Dismiss", "No"
+    pub fn secondary_dismiss_action(mut self, label: impl Into<SharedString>) -> Self {
         self.secondary_action =
-            self.add_action(label.into(), cx.listener(|_, _, cx| cx.emit(DismissEvent)));
+            AlertDialogButton::new("secondary-action", label, self.focus_handle.clone())
+                .on_click(|_, cx| cx.dispatch_action(menu::Cancel.boxed_clone()));
         self
     }
 
@@ -323,8 +341,8 @@ impl Render for AlertDialog {
                             .when(layout == AlertDialogLayout::Horizontal, |this| {
                                 this.items_center()
                             })
-                            .child(self.render_button(cx, self.secondary_action.clone()))
-                            .child(self.render_button(cx, self.primary_action.clone())),
+                            .child(self.secondary_action.clone())
+                            .child(self.primary_action.clone()),
                     ),
             )
     }

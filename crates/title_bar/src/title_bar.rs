@@ -231,12 +231,12 @@ impl TitleBar {
             }
         };
 
-        let test_dialog = AlertDialog::new(cx, |dialog, cx| {
+        let test_dialog = AlertDialog::new(cx, |dialog, _| {
             dialog
                 .title("Do you want to leave the current call?")
                 .message("The current window will be closed, and connections to any shared projects will be terminated.")
                 .primary_action("Leave Call", |_, _| {})
-                .secondary_dismiss_action("Cancel", cx)
+                .secondary_dismiss_action("Cancel")
         });
 
         let mut subscriptions = Vec::new();
