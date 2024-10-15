@@ -12,6 +12,7 @@ use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use futures::future::Shared;
 use futures::FutureExt;
+use gpui::canvas;
 use gpui::pulsating_between;
 use gpui::AsyncWindowContext;
 use gpui::ClipboardItem;
@@ -1127,6 +1128,24 @@ impl DevServerProjects {
 
         let footer = format!("Connections: {}", ssh_connections.len() + dev_servers.len());
 
+        let mut modal_section = v_flex()
+            .id("lmao")
+            .overflow_y_scroll()
+            .size_full()
+            .child(connect_button)
+            .child(ListSeparator)
+            .child(
+                List::new()
+                    .empty_message("No dev servers registered yet.")
+                    .children(ssh_connections.iter().cloned().enumerate().map(
+                        |(ix, connection)| {
+                            self.render_ssh_connection(ix, connection, cx)
+                                .into_any_element()
+                        },
+                    )),
+            )
+            .into_any_element();
+
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
                 ModalHeader::new().child(
@@ -1138,22 +1157,25 @@ impl DevServerProjects {
             )
             .section(
                 Section::new().padded(false).child(
-                    div()
+                    v_flex()
+                        .min_h(rems(28.))
                         .size_full()
                         .pt_1p5()
                         .border_y_1()
                         .border_color(cx.theme().colors().border_variant)
-                        .child(connect_button)
-                        .child(ListSeparator)
                         .child(
-                            List::new()
-                                .empty_message("No dev servers registered yet.")
-                                .children(ssh_connections.iter().cloned().enumerate().map(
-                                    |(ix, connection)| {
-                                        self.render_ssh_connection(ix, connection, cx)
-                                            .into_any_element()
-                                    },
-                                )),
+                            canvas(
+                                |bounds, cx| {
+                                    element.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
+                                    element
+                                },
+                                |_, mut element, cx| {
+                                    element.paint(cx);
+                                },
+                            )
+                            .size_full()
+                            .min_h_full()
+                            .flex_1(),
                         ),
                 ),
             )
@@ -1194,7 +1216,6 @@ impl Render for DevServerProjects {
                 }
             }))
             .w(rems(34.))
-            .max_h(rems(28.))
             .child(match &self.mode {
                 Mode::Default => self.render_default(cx).into_any_element(),
                 Mode::ViewServerOptions(index, connection) => self
