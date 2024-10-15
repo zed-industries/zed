@@ -72,8 +72,12 @@ struct CreateDevServer {
 
 impl CreateDevServer {
     fn new(cx: &mut WindowContext<'_>) -> Self {
+        let address_editor = cx.new_view(Editor::single_line);
+        address_editor.update(cx, |this, cx| {
+            this.focus_handle(cx).focus(cx);
+        });
         Self {
-            address_editor: cx.new_view(Editor::single_line),
+            address_editor,
             creating: None,
             ssh_prompt: None,
         }
@@ -1166,11 +1170,15 @@ impl DevServerProjects {
                         .child(
                             canvas(
                                 |bounds, cx| {
-                                    element.prepaint_as_root(bounds.origin, bounds.size.into(), cx);
-                                    element
+                                    modal_section.prepaint_as_root(
+                                        bounds.origin,
+                                        bounds.size.into(),
+                                        cx,
+                                    );
+                                    modal_section
                                 },
-                                |_, mut element, cx| {
-                                    element.paint(cx);
+                                |_, mut modal_section, cx| {
+                                    modal_section.paint(cx);
                                 },
                             )
                             .size_full()
