@@ -156,14 +156,14 @@ impl HeadlessProject {
                             .session
                             .send(proto::HideToast {
                                 project_id: SSH_PROJECT_ID,
-                                notification_id: format!("project-settings-error"),
+                                notification_id: "project-settings-error".into(),
                             })
                             .log_err(),
                         Err(InvalidSettingsError::LocalSettings { message, path }) => this
                             .session
                             .send(proto::Toast {
                                 project_id: SSH_PROJECT_ID,
-                                notification_id: format!("project-settings-error"),
+                                notification_id: "project-settings-error".into(),
                                 message: format!(
                                     "Failed to set project settings ({:?}): {}",
                                     path, message
