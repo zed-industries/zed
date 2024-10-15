@@ -3924,7 +3924,7 @@ impl LspStore {
             cx.emit(LspStoreEvent::LanguageServerAdded(
                 server_id,
                 LanguageServerName(server.name.into()),
-                server.worktree_id.map(|id| WorktreeId::from_proto(id)),
+                server.worktree_id.map(WorktreeId::from_proto),
             ));
             cx.notify();
         })?;
@@ -4006,7 +4006,8 @@ impl LspStore {
                         1 => MessageType::ERROR,
                         2 => MessageType::WARNING,
                         3 => MessageType::INFO,
-                        4 | _ => MessageType::LOG,
+                        4 => MessageType::LOG,
+                        _ => MessageType::LOG,
                     })
                 }
                 proto::language_server_log::LogType::LogTrace(trace) => {
