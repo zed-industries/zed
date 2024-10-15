@@ -101,7 +101,6 @@ def main(
                 if issue_reference_number:
                     issue._issue.add_to_labels(*NEW_ISSSUE_LABELS)
 
-
     remaining_requests_after: int = github.rate_limiting[0]
     print(f"Remaining requests after: {remaining_requests_after}")
     print(f"Requests used: {remaining_requests_before - remaining_requests_after}")
