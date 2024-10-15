@@ -35,6 +35,7 @@ http_client.workspace = true
 language.workspace = true
 languages.workspace = true
 log.workspace = true
+lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
 paths = { workspace = true }

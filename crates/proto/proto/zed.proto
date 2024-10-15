@@ -287,8 +287,10 @@ message Envelope {
 
         RemoveWorktree remove_worktree = 258;
 
-        Toast toast = 260;
-        HideToast hide_toast = 261; // current max
+        LanguageServerLog language_server_log = 260;
+        
+        Toast toast = 261;
+        HideToast hide_toast = 262; // current max
     }
 
     reserved 87 to 88;
@@ -1297,6 +1299,7 @@ message LamportTimestamp {
 message LanguageServer {
     uint64 id = 1;
     string name = 2;
+    optional uint64 worktree_id = 3;
 }
 
 message StartLanguageServer {
@@ -1349,6 +1352,20 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message LanguageServerLog {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    oneof log_type {
+        uint32 log_message_type = 3;
+        LspLogTrace log_trace = 4;
+    }
+    string message = 5;
+}
+
+message LspLogTrace {
+    optional string message = 1;
+}
 
 message UpdateChannels {
     repeated Channel channels = 1;

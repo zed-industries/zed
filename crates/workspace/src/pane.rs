@@ -1747,17 +1747,6 @@ impl Pane {
         }
     }
 
-    fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some(clipboard_text) = self
-            .active_item()
-            .as_ref()
-            .and_then(|entry| entry.project_path(cx))
-            .map(|p| p.path.to_string_lossy().to_string())
-        {
-            cx.write_to_clipboard(ClipboardItem::new_string(clipboard_text));
-        }
-    }
-
     pub fn icon_color(selected: bool) -> Color {
         if selected {
             Color::Default
@@ -2102,6 +2091,11 @@ impl Pane {
                         let parent_abs_path = entry_abs_path
                             .as_deref()
                             .and_then(|abs_path| Some(abs_path.parent()?.to_path_buf()));
+                        let relative_path = pane
+                            .read(cx)
+                            .item_for_entry(entry, cx)
+                            .and_then(|item| item.project_path(cx))
+                            .map(|project_path| project_path.path);
 
                         let entry_id = entry.to_proto();
                         menu = menu
@@ -2117,13 +2111,17 @@ impl Pane {
                                     }),
                                 )
                             })
-                            .entry(
-                                "Copy Relative Path",
-                                Some(Box::new(CopyRelativePath)),
-                                cx.handler_for(&pane, move |pane, cx| {
-                                    pane.copy_relative_path(&CopyRelativePath, cx);
-                                }),
-                            )
+                            .when_some(relative_path, |menu, relative_path| {
+                                menu.entry(
+                                    "Copy Relative Path",
+                                    Some(Box::new(CopyRelativePath)),
+                                    cx.handler_for(&pane, move |_, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            relative_path.to_string_lossy().to_string(),
+                                        ));
+                                    }),
+                                )
+                            })
                             .map(pin_tab_entries)
                             .separator()
                             .entry(
