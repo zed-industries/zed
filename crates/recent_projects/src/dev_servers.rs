@@ -126,9 +126,11 @@ impl SelectableItemList {
     fn reset(&mut self) {
         self.items.clear();
     }
+
     fn reset_selection(&mut self) {
         self.active_item.take();
     }
+
     fn prev(&mut self, _: &mut WindowContext<'_>) {
         match self.active_item.as_mut() {
             Some(active_index) => {
@@ -139,6 +141,7 @@ impl SelectableItemList {
             }
         }
     }
+
     fn next(&mut self, _: &mut WindowContext<'_>) {
         match self.active_item.as_mut() {
             Some(active_index) => {
@@ -157,9 +160,11 @@ impl SelectableItemList {
     fn add_item(&mut self, callback: SelectedItemCallback) {
         self.items.push(callback)
     }
+
     fn is_selected(&self) -> bool {
         self.active_item == self.items.len().checked_sub(1)
     }
+
     fn confirm(&self, dev_modal: &mut DevServerProjects, cx: &mut ViewContext<DevServerProjects>) {
         if let Some(active_item) = self.active_item.and_then(|ix| self.items.get(ix)) {
             active_item(dev_modal, cx);
