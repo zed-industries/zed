@@ -445,6 +445,8 @@ messages!(
     (GitShow, Background),
     (GitCommitDetails, Background),
     (SetIndexText, Background),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
 );
 
 request_messages!(
@@ -582,6 +584,7 @@ request_messages!(
     (GitReset, Ack),
     (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
 );
 
 entity_messages!(
@@ -678,6 +681,7 @@ entity_messages!(
     GitReset,
     GitCheckoutFiles,
     SetIndexText,
+    GetDocumentDiagnostics,
 );
 
 entity_messages!(

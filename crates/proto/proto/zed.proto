@@ -321,7 +321,10 @@ message Envelope {
         GitCommitDetails git_commit_details = 302;
 
         SetIndexText set_index_text = 299;
-        GitCheckoutFiles git_checkout_files = 303; // current max
+        GitCheckoutFiles git_checkout_files = 303;
+        
+        GetDocumentDiagnostics get_document_diagnostics = 304;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 305; // current max
     }
 
     reserved 87 to 88;
@@ -2771,4 +2774,15 @@ message OpenCommitMessageBuffer {
     uint64 project_id = 1;
     uint64 worktree_id = 2;
     uint64 work_directory_id = 3;
+}
+
+message GetDocumentDiagnostics {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentDiagnosticsResponse {
+    string result_id = 1;
+    repeated Diagnostic diagnostics = 2;
 }
