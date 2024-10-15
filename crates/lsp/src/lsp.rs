@@ -630,7 +630,7 @@ impl LanguageServer {
                         refresh_support: Some(true),
                     }),
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
-                        refresh_support: None,
+                        refresh_support: Some(true),
                     }),
                     code_lens: Some(CodeLensWorkspaceClientCapabilities {
                         refresh_support: Some(true),
@@ -768,6 +768,10 @@ impl LanguageServer {
                     }),
                     code_lens: Some(CodeLensClientCapabilities {
                         dynamic_registration: Some(false),
+                    }),
+                    diagnostic: Some(DiagnosticClientCapabilities {
+                        dynamic_registration: Some(true),
+                        related_document_support: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),

@@ -351,7 +351,10 @@ message Envelope {
         CodeLens code_lens = 322;
         GetCodeLens get_code_lens = 323;
         GetCodeLensResponse get_code_lens_response = 324;
-        RefreshCodeLens refresh_code_lens = 325;  // current max
+        RefreshCodeLens refresh_code_lens = 325;
+
+        GetDocumentDiagnostics get_document_diagnostics = 326;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 327; // current max
     }
 
     reserved 87 to 88;
@@ -2975,4 +2978,15 @@ message GitInit {
     uint64 project_id = 1;
     string abs_path = 2;
     string fallback_branch_name = 3;
+}
+
+message GetDocumentDiagnostics {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentDiagnosticsResponse {
+    string result_id = 1;
+    repeated Diagnostic diagnostics = 2;
 }
