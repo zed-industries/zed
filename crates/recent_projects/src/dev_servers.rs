@@ -604,19 +604,16 @@ impl DevServerProjects {
         };
         v_flex()
             .w_full()
-            .border_b_1()
-            .border_color(cx.theme().colors().border_variant)
-            .mb_1()
+            .child(ListSeparator)
             .child(
                 h_flex()
                     .group("ssh-server")
                     .w_full()
                     .pt_0p5()
-                    .px_2p5()
+                    .px_3()
                     .gap_1()
                     .overflow_hidden()
                     .whitespace_nowrap()
-                    .w_full()
                     .child(
                         Label::new(main_label)
                             .size(LabelSize::Small)
@@ -630,68 +627,63 @@ impl DevServerProjects {
                     ),
             )
             .child(
-                v_flex().w_full().gap_1().mb_1().child(
-                    List::new()
-                        .empty_message("No projects.")
-                        .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
-                            v_flex().gap_0p5().child(self.render_ssh_project(
-                                ix,
-                                &ssh_connection,
-                                pix,
-                                p,
-                                cx,
-                            ))
-                        }))
-                        .child(h_flex().map(|this| {
-                            self.selectable_items.add_item(Box::new({
-                                let ssh_connection = ssh_connection.clone();
-                                move |this, cx| {
-                                    this.create_ssh_project(ix, ssh_connection.clone(), cx);
-                                }
-                            }));
-                            let is_selected = self.selectable_items.is_selected();
-                            this.child(
-                                ListItem::new(("new-remote-project", ix))
-                                    .selected(is_selected)
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
-                                    .child(Label::new("Open Folder"))
-                                    .on_click(cx.listener({
-                                        let ssh_connection = ssh_connection.clone();
-                                        move |this, _, cx| {
-                                            this.create_ssh_project(ix, ssh_connection.clone(), cx);
-                                        }
-                                    })),
-                            )
-                        }))
-                        .child(h_flex().map(|this| {
-                            self.selectable_items.add_item(Box::new({
-                                let ssh_connection = ssh_connection.clone();
-                                move |this, cx| {
-                                    this.view_server_options((ix, ssh_connection.clone()), cx);
-                                }
-                            }));
-                            let is_selected = self.selectable_items.is_selected();
-                            this.child(
-                                ListItem::new(("server-options", ix))
-                                    .selected(is_selected)
-                                    .inset(true)
-                                    .spacing(ui::ListItemSpacing::Sparse)
-                                    .start_slot(Icon::new(IconName::Settings).color(Color::Muted))
-                                    .child(Label::new("View Server Options"))
-                                    .on_click(cx.listener({
-                                        let ssh_connection = ssh_connection.clone();
-                                        move |this, _, cx| {
-                                            this.view_server_options(
-                                                (ix, ssh_connection.clone()),
-                                                cx,
-                                            );
-                                        }
-                                    })),
-                            )
-                        })),
-                ),
+                List::new()
+                    .empty_message("No projects.")
+                    .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
+                        v_flex().gap_0p5().child(self.render_ssh_project(
+                            ix,
+                            &ssh_connection,
+                            pix,
+                            p,
+                            cx,
+                        ))
+                    }))
+                    .child(h_flex().map(|this| {
+                        self.selectable_items.add_item(Box::new({
+                            let ssh_connection = ssh_connection.clone();
+                            move |this, cx| {
+                                this.create_ssh_project(ix, ssh_connection.clone(), cx);
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        this.child(
+                            ListItem::new(("new-remote-project", ix))
+                                .selected(is_selected)
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                                .child(Label::new("Open Folder"))
+                                .on_click(cx.listener({
+                                    let ssh_connection = ssh_connection.clone();
+                                    move |this, _, cx| {
+                                        this.create_ssh_project(ix, ssh_connection.clone(), cx);
+                                    }
+                                })),
+                        )
+                    }))
+                    .child(h_flex().map(|this| {
+                        self.selectable_items.add_item(Box::new({
+                            let ssh_connection = ssh_connection.clone();
+                            move |this, cx| {
+                                this.view_server_options((ix, ssh_connection.clone()), cx);
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        this.child(
+                            ListItem::new(("server-options", ix))
+                                .selected(is_selected)
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Settings).color(Color::Muted))
+                                .child(Label::new("View Server Options"))
+                                .on_click(cx.listener({
+                                    let ssh_connection = ssh_connection.clone();
+                                    move |this, _, cx| {
+                                        this.view_server_options((ix, ssh_connection.clone()), cx);
+                                    }
+                                })),
+                        )
+                    })),
             )
     }
 
@@ -1118,6 +1110,7 @@ impl DevServerProjects {
         }));
 
         let is_selected = self.selectable_items.is_selected();
+
         let connect_button = ListItem::new("register-dev-server-button")
             .selected(is_selected)
             .inset(true)
@@ -1136,10 +1129,16 @@ impl DevServerProjects {
             .overflow_y_scroll()
             .size_full()
             .child(connect_button)
-            .child(ListSeparator)
             .child(
                 List::new()
-                    .empty_message("No dev servers registered yet.")
+                    .empty_message(
+                        v_flex()
+                            .child(ListSeparator)
+                            .child(div().px_3().child(
+                                Label::new("No dev servers registered yet.").color(Color::Muted),
+                            ))
+                            .into_any_element(),
+                    )
                     .children(ssh_connections.iter().cloned().enumerate().map(
                         |(ix, connection)| {
                             self.render_ssh_connection(ix, connection, cx)
@@ -1155,6 +1154,7 @@ impl DevServerProjects {
             .header(
                 ModalHeader::new().child(
                     h_flex()
+                        .items_center()
                         .justify_between()
                         .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall))
                         .child(Label::new(server_count).size(LabelSize::Small)),
@@ -1163,11 +1163,10 @@ impl DevServerProjects {
             .section(
                 Section::new().padded(false).child(
                     v_flex()
-                        .min_h(rems(28.))
+                        .min_h(rems(20.))
+                        .flex_1()
                         .size_full()
-                        .pt_1p5()
-                        .border_y_1()
-                        .border_color(cx.theme().colors().border_variant)
+                        .child(ListSeparator)
                         .child(
                             canvas(
                                 |bounds, cx| {
@@ -1182,9 +1181,7 @@ impl DevServerProjects {
                                     modal_section.paint(cx);
                                 },
                             )
-                            .size_full()
-                            .min_h_full()
-                            .flex_1(),
+                            .size_full(),
                         ),
                 ),
             )
