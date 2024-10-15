@@ -11,9 +11,6 @@ workspace = true
 [lib]
 path = "src/paths.rs"
 
-[features]
-remote_server = []
-
 [dependencies]
 dirs.workspace = true
 util.workspace = true

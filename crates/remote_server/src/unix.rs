@@ -341,13 +341,14 @@ struct ServerPaths {
 
 impl ServerPaths {
     fn new(identifier: &str) -> Result<Self> {
-        let project_dir = create_state_directory(identifier)?;
+        let server_dir = paths::remote_server_state_dir().join(identifier);
+        std::fs::create_dir_all(&server_dir)?;
 
-        let pid_file = project_dir.join("server.pid");
-        let stdin_socket = project_dir.join("stdin.sock");
-        let stdout_socket = project_dir.join("stdout.sock");
-        let stderr_socket = project_dir.join("stderr.sock");
-        let log_file = logs_dir().join(identifier).join("server.log");
+        let pid_file = server_dir.join("server.pid");
+        let stdin_socket = server_dir.join("stdin.sock");
+        let stdout_socket = server_dir.join("stdout.sock");
+        let stderr_socket = server_dir.join("stderr.sock");
+        let log_file = logs_dir().join(format!("server-{}.log", identifier));
 
         Ok(Self {
             pid_file,
@@ -443,14 +444,6 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn create_state_directory(identifier: &str) -> Result<PathBuf> {
-    let server_dir = paths::remote_server_state_dir().join(identifier);
-
-    std::fs::create_dir_all(&server_dir)?;
-
-    Ok(server_dir)
 }
 
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {

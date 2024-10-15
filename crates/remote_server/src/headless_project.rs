@@ -20,7 +20,7 @@ use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
-use settings::{watch_config_file, Settings as _, SettingsStore};
+use settings::{watch_config_file, InvalidSettingsError, Settings as _, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -53,8 +53,6 @@ impl HeadlessProject {
 
         client::init_settings(cx);
 
-        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
-
         let proxy_url = read_proxy_settings(cx);
 
         let http_client = Arc::new(
@@ -70,7 +68,11 @@ impl HeadlessProject {
             .expect("Could not start HTTP client"),
         );
 
-        let node_runtime = NodeRuntime::new(http_client, node_settings_rx);
+        let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
+
+        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
+        languages.set_language_server_download_dir(paths::languages_dir().clone());
+        let languages = Arc::new(languages);
 
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
@@ -123,7 +125,7 @@ impl HeadlessProject {
                 prettier_store.clone(),
                 environment,
                 languages.clone(),
-                None,
+                http_client,
                 fs.clone(),
                 cx,
             );
@@ -140,6 +142,37 @@ impl HeadlessProject {
                     cx.subscribe(buffer, Self::on_buffer_event).detach();
                 }
                 _ => {}
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &settings_observer,
+            |this, _settings_observer, event, _cx| match event {
+                project::project_settings::SettingsObserverEvent::LocalSettingsUpdated(result) => {
+                    log::info!("local settings updated");
+                    match result {
+                        Ok(_) => this
+                            .session
+                            .send(proto::HideToast {
+                                project_id: SSH_PROJECT_ID,
+                                notification_id: format!("project-settings-error"),
+                            })
+                            .log_err(),
+                        Err(InvalidSettingsError::LocalSettings { message, path }) => this
+                            .session
+                            .send(proto::Toast {
+                                project_id: SSH_PROJECT_ID,
+                                notification_id: format!("project-settings-error"),
+                                message: format!(
+                                    "Failed to set project settings ({:?}): {}",
+                                    path, message
+                                ),
+                            })
+                            .log_err(),
+                        Err(_) => None,
+                    };
+                }
             },
         )
         .detach();
@@ -227,6 +260,16 @@ impl HeadlessProject {
                     })
                     .log_err();
             }
+            LspStoreEvent::Notification(message) => {
+                self.session
+                    .send(proto::Toast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "lsp".to_string(),
+                        message: message.clone(),
+                    })
+                    .log_err();
+            }
+            // TODO: Prompt
             _ => {}
         }
     }
@@ -473,14 +516,31 @@ fn initialize_settings(
         paths::settings_file().clone(),
     );
 
-    handle_settings_file_changes(user_settings_file_rx, cx, |err, cx| {
-        if let Some(e) = err {
-            log::info!("Server settings failed to change: {}", e);
+    handle_settings_file_changes(user_settings_file_rx, cx, {
+        let session = session.clone();
+        move |err, _cx| {
+            if let Some(e) = err {
+                log::info!("Server settings failed to change: {}", e);
 
-            // TODO: Show this as an alert locally
-            // session.send(Alert {
-            //     message: format!("Server settings weren't updated: {}", e)
-            // })
+                session
+                    .send(proto::Toast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "server-settings-failed".to_string(),
+                        message: format!(
+                            "Error in settings on remote host {:?}: {}",
+                            paths::settings_file(),
+                            e
+                        ),
+                    })
+                    .log_err();
+            } else {
+                session
+                    .send(proto::HideToast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "server-settings-failed".to_string(),
+                    })
+                    .log_err();
+            }
         }
     });
 

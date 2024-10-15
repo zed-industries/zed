@@ -197,7 +197,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     cx.update_global(|settings_store: &mut SettingsStore, cx| {
         settings_store.set_user_settings(
-            r#"{"languages":{"Rust":{"language_servers":["custom-rust-analyzer"]}}}"#,
+            r#"{"languages":{"Rust":{"language_servers":["from-local-settings"]}}}"#,
             cx,
         )
     })
@@ -210,7 +210,27 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(Some(&"Rust".into()))
                 .language_servers,
-            ["custom-rust-analyzer".to_string()]
+            ["from-local-settings".to_string()]
+        )
+    });
+
+    server_cx
+        .update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store.set_server_settings(
+                r#"{"languages":{"Rust":{"language_servers":["from-server-settings"]}}}"#,
+                cx,
+            )
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    server_cx.read(|cx| {
+        assert_eq!(
+            AllLanguageSettings::get_global(cx)
+                .language(Some(&"Rust".into()))
+                .language_servers,
+            ["from-server-settings".to_string()]
         )
     });
 

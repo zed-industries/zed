@@ -10,7 +10,7 @@ use gpui::{
     Transformation, View,
 };
 use gpui::{AppContext, Model};
-use paths::remote_server_dir_relative;
+
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
@@ -358,7 +358,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
         let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
-        Ok(remote_server_dir_relative().join(format!(
+        Ok(paths::remote_server_dir_relative().join(format!(
             "zed-remote-server-{}-{}-{}",
             release_channel.dev_name(),
             platform.os,

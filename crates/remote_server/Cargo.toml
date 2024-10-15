@@ -37,7 +37,7 @@ languages.workspace = true
 log.workspace = true
 node_runtime.workspace = true
 project.workspace = true
-paths = { workspace = true, features = ["remote_server"]}
+paths = { workspace = true }
 remote.workspace = true
 reqwest_client.workspace = true
 rpc.workspace = true

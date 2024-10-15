@@ -366,6 +366,8 @@ messages!(
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
     (RemoveWorktree, Foreground),
+    (Toast, Background),
+    (HideToast, Background),
 );
 
 request_messages!(
@@ -562,6 +564,8 @@ entity_messages!(
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
     CheckFileExists,
+    Toast,
+    HideToast,
 );
 
 entity_messages!(
