@@ -30,12 +30,6 @@ with open(LABEL_DATA_FILE_PATH, "r") as label_data_file:
     IGNORED_LABEL: str = label_data["ignored_label"]
 
 
-class MissingCoreLabelError(Exception):
-    """Raised when an issue is missing a core label."""
-
-    pass
-
-
 class IssueData:
     def __init__(self, issue: Issue) -> None:
         self.title = issue.title
