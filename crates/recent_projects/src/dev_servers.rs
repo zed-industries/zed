@@ -1131,7 +1131,6 @@ impl DevServerProjects {
                 cx.notify();
             }));
 
-        let footer = format!("Servers: {}", ssh_connections.len() + dev_servers.len());
         let mut modal_section = v_flex()
             .id("ssh-server-list")
             .overflow_y_scroll()
@@ -1150,13 +1149,15 @@ impl DevServerProjects {
             )
             .into_any_element();
 
+        let server_count = format!("Servers: {}", ssh_connections.len() + dev_servers.len());
+
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
                 ModalHeader::new().child(
                     h_flex()
                         .justify_between()
                         .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall))
-                        .child(Label::new(footer).size(LabelSize::Small)),
+                        .child(Label::new(server_count).size(LabelSize::Small)),
                 ),
             )
             .section(
