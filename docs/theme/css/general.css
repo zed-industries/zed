@@ -174,14 +174,15 @@ h6:target::before {
 }
 .content a {
   text-decoration: underline;
-  text-decoration-color: hsl(219, 93%, 42%, 0.2);
+  text-decoration-color: var(--link-line-decoration);
 }
 .content a:hover {
-  text-decoration-color: hsl(219, 93%, 42%, 0.5);
+  text-decoration-color: var(--link-line-decoration-hover);
 }
 .content img,
 .content video {
   max-width: 100%;
+  background-color: var(--media-bg);
   border: 1px solid;
   border-color: var(--border);
   border-radius: 8px;
@@ -219,7 +220,7 @@ table thead td {
 }
 table thead th {
   padding: 6px 12px;
-  color: #000;
+  color: var(--full-contrast);
   text-align: left;
   border: 1px var(--table-border-color) solid;
 }
@@ -235,7 +236,7 @@ blockquote {
   margin: auto;
   margin-top: 1rem;
   padding: 1rem 1.25rem;
-  color: #000;
+  color: var(--full-contrast);
   background-color: var(--quote-bg);
   border: 1px solid var(--quote-border);
 }
@@ -268,7 +269,7 @@ blockquote .warning:before {
 .warning {
   margin: auto;
   padding: 1rem 1.25rem;
-  color: #000;
+  color: var(--full-contrast);
   background-color: var(--warning-bg);
   border: 1px solid var(--warning-border);
 }
@@ -315,7 +316,7 @@ kbd {
   font-size: 1.4rem;
   margin: 0.5em 0;
   border-bottom: 1px solid;
-  border-color: var(--border-light);
+  border-color: var(--divider);
 }
 .footnote-definition p {
   display: inline;
@@ -355,7 +356,7 @@ kbd {
   font-style: italic;
 }
 
-code.hljs {
-  color: hsl(221, 13%, 10%) !important;
-  background-color: hsla(221, 93%, 42%, 0.1);
+code:not(pre code).hljs {
+  color: var(--code-text) !important;
+  background-color: var(--code-bg) !important;
 }

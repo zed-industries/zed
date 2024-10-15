@@ -1,13 +1,13 @@
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use language_settings::all_language_settings;
 use lsp::LanguageServerBinary;
-use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{
@@ -24,68 +24,46 @@ use util::{fs::remove_matching, maybe, ResultExt};
 pub struct RustLspAdapter;
 
 impl RustLspAdapter {
-    const SERVER_NAME: &'static str = "rust-analyzer";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
 }
 
 #[async_trait(?Send)]
 impl LspAdapter for RustLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx
-            .update(|cx| {
-                language_server_settings(delegate, Self::SERVER_NAME, cx)
-                    .and_then(|s| s.binary.clone())
+        let path = delegate.which("rust-analyzer".as_ref()).await?;
+        let env = delegate.shell_env().await;
+
+        // It is surprisingly common for ~/.cargo/bin/rust-analyzer to be a symlink to
+        // /usr/bin/rust-analyzer that fails when you run it; so we need to test it.
+        log::info!("found rust-analyzer in PATH. trying to run `rust-analyzer --help`");
+        let result = delegate
+            .try_exec(LanguageServerBinary {
+                path: path.clone(),
+                arguments: vec!["--help".into()],
+                env: Some(env.clone()),
             })
-            .ok()?;
+            .await;
+        if let Err(err) = result {
+            log::error!(
+                "failed to run rust-analyzer after detecting it in PATH: binary: {:?}: {}",
+                path,
+                err
+            );
+            return None;
+        }
 
-        let (path, env, arguments) = match configured_binary {
-            // If nothing is configured, or path_lookup explicitly enabled,
-            // we lookup the binary in the path.
-            None
-            | Some(BinarySettings {
-                path: None,
-                path_lookup: Some(true),
-                ..
-            })
-            | Some(BinarySettings {
-                path: None,
-                path_lookup: None,
-                ..
-            }) => {
-                let path = delegate.which(Self::SERVER_NAME.as_ref()).await;
-                let env = delegate.shell_env().await;
-                (path, Some(env), None)
-            }
-            // Otherwise, we use the configured binary.
-            Some(BinarySettings {
-                path: Some(path),
-                arguments,
-                path_lookup,
-            }) => {
-                if path_lookup.is_some() {
-                    log::warn!("Both `path` and `path_lookup` are set, ignoring `path_lookup`");
-                }
-                (Some(path.into()), None, arguments)
-            }
-
-            _ => (None, None, None),
-        };
-
-        path.map(|path| LanguageServerBinary {
+        Some(LanguageServerBinary {
             path,
-            env,
-            arguments: arguments
-                .unwrap_or_default()
-                .iter()
-                .map(|arg| arg.into())
-                .collect(),
+            env: Some(env),
+            arguments: vec![],
         })
     }
 
@@ -162,18 +140,6 @@ impl LspAdapter for RustLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir)
-            .await
-            .map(|mut binary| {
-                binary.arguments = vec!["--help".into()];
-                binary
-            })
     }
 
     fn disk_based_diagnostic_sources(&self) -> Vec<String> {
@@ -413,6 +379,7 @@ impl ContextProvider for RustContextProvider {
         &self,
         task_variables: &TaskVariables,
         location: &Location,
+        project_env: Option<&HashMap<String, String>>,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
         let local_abs_path = location
@@ -428,8 +395,8 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) =
-                local_abs_path.and_then(package_name_and_bin_name_from_abs_path)
+            if let Some((package_name, bin_name)) = local_abs_path
+                .and_then(|path| package_name_and_bin_name_from_abs_path(path, project_env))
             {
                 return Ok(TaskVariables::from_iter([
                     (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
@@ -440,7 +407,7 @@ impl ContextProvider for RustContextProvider {
 
         if let Some(package_name) = local_abs_path
             .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(human_readable_package_name)
+            .and_then(|path| human_readable_package_name(path, project_env))
         {
             return Ok(TaskVariables::from_iter([(
                 RUST_PACKAGE_TASK_VARIABLE.clone(),
@@ -594,8 +561,15 @@ struct CargoTarget {
     src_path: String,
 }
 
-fn package_name_and_bin_name_from_abs_path(abs_path: &Path) -> Option<(String, String)> {
-    let output = std::process::Command::new("cargo")
+fn package_name_and_bin_name_from_abs_path(
+    abs_path: &Path,
+    project_env: Option<&HashMap<String, String>>,
+) -> Option<(String, String)> {
+    let mut command = std::process::Command::new("cargo");
+    if let Some(envs) = project_env {
+        command.envs(envs);
+    }
+    let output = command
         .current_dir(abs_path.parent()?)
         .arg("metadata")
         .arg("--no-deps")
@@ -633,9 +607,17 @@ fn retrieve_package_id_and_bin_name_from_metadata(
     None
 }
 
-fn human_readable_package_name(package_directory: &Path) -> Option<String> {
+fn human_readable_package_name(
+    package_directory: &Path,
+    project_env: Option<&HashMap<String, String>>,
+) -> Option<String> {
+    let mut command = std::process::Command::new("cargo");
+    if let Some(envs) = project_env {
+        command.envs(envs);
+    }
+
     let pkgid = String::from_utf8(
-        std::process::Command::new("cargo")
+        command
             .current_dir(package_directory)
             .arg("pkgid")
             .output()

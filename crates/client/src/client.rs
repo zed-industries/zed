@@ -240,8 +240,6 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http_client::Error),
-    #[error("{0}")]
     InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
@@ -396,7 +394,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Model<T>, cx: &mut AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Model<T>, cx: &AsyncAppContext) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -529,19 +527,13 @@ impl Client {
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
-        let user_agent = format!(
-            "Zed/{} ({}; {})",
-            AppVersion::global(cx),
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
         let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new(
+        let http = Arc::new(HttpClientWithUrl::new_uri(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
-            Some(user_agent),
-            ProxySettings::get_global(cx).proxy.clone(),
+            cx.http_client().proxy().cloned(),
         ));
-        Self::new(clock, http.clone(), cx)
+        Self::new(clock, http, cx)
     }
 
     pub fn id(&self) -> u64 {
@@ -1031,7 +1023,7 @@ impl Client {
         &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> impl Future<Output = Result<Url>> {
+    ) -> impl Future<Output = Result<url::Url>> {
         #[cfg(any(test, feature = "test-support"))]
         let url_override = self.rpc_url.read().clone();
 
@@ -1125,7 +1117,7 @@ impl Client {
             // for us from the RPC URL.
             //
             // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
-            let mut request = rpc_url.into_client_request()?;
+            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
 
             // We then modify the request to add our desired headers.
             let request_headers = request.headers_mut();
@@ -1145,8 +1137,33 @@ impl Client {
 
             match url_scheme {
                 Https => {
+                    let client_config = {
+                        let mut root_store = rustls::RootCertStore::empty();
+
+                        let root_certs = rustls_native_certs::load_native_certs();
+                        for error in root_certs.errors {
+                            log::warn!("error loading native certs: {:?}", error);
+                        }
+                        root_store.add_parsable_certificates(
+                            &root_certs
+                                .certs
+                                .into_iter()
+                                .map(|cert| cert.as_ref().to_owned())
+                                .collect::<Vec<_>>(),
+                        );
+                        rustls::ClientConfig::builder()
+                            .with_safe_defaults()
+                            .with_root_certificates(root_store)
+                            .with_no_client_auth()
+                    };
+
                     let (stream, _) =
-                        async_tungstenite::async_std::client_async_tls(request, stream).await?;
+                        async_tungstenite::async_tls::client_async_tls_with_connector(
+                            request,
+                            stream,
+                            Some(client_config.into()),
+                        )
+                        .await?;
                     Ok(Connection::new(
                         stream
                             .map_err(|error| anyhow!(error))
@@ -1605,6 +1622,10 @@ impl ProtoClient for Client {
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
         &self.handler_set
     }
+
+    fn is_via_collab(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1732,7 +1753,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 }
 
 /// prefix for the zed:// url scheme
-pub static ZED_URL_SCHEME: &str = "zed";
+pub const ZED_URL_SCHEME: &str = "zed";
 
 /// Parses the given link into a Zed link.
 ///

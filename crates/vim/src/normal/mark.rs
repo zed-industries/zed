@@ -54,7 +54,7 @@ impl Vim {
                 );
                 starts.push(
                     map.buffer_snapshot
-                        .anchor_after(selection.start.to_offset(&map, Bias::Right)),
+                        .anchor_before(selection.start.to_offset(&map, Bias::Left)),
                 );
                 reversed.push(selection.reversed)
             }
@@ -63,7 +63,6 @@ impl Vim {
         self.marks.insert("<".to_string(), starts);
         self.marks.insert(">".to_string(), ends);
         self.stored_visual_mode.replace((mode, reversed));
-        self.clear_operator(cx);
     }
 
     pub fn jump(&mut self, text: Arc<str>, line: bool, cx: &mut ViewContext<Self>) {

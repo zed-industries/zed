@@ -8,12 +8,13 @@ pub(crate) fn neutral() -> ColorScaleSet {
     sand()
 }
 
-// Note: We aren't currently making use of the default colors, as all of the
-// themes have a value set for each color.
-//
-// We'll need to revisit these once we're ready to launch user themes, which may
-// not specify a value for each color (and thus should fall back to the defaults).
+/// The default colors for the theme.
+///
+/// Themes that do not specify all colors are refined off of these defaults.
 impl ThemeColors {
+    /// Returns the default colors for light themes.
+    ///
+    /// Themes that do not specify all colors are refined off of these defaults.
     pub fn light() -> Self {
         let system = SystemColors::default();
 
@@ -80,10 +81,12 @@ impl ThemeColors {
             editor_indent_guide_active: neutral().light_alpha().step_6(),
             editor_document_highlight_read_background: neutral().light_alpha().step_3(),
             editor_document_highlight_write_background: neutral().light_alpha().step_4(),
+            editor_document_highlight_bracket_background: green().light_alpha().step_5(),
             terminal_background: neutral().light().step_1(),
             terminal_foreground: black().light().step_12(),
             terminal_bright_foreground: black().light().step_11(),
             terminal_dim_foreground: black().light().step_10(),
+            terminal_ansi_background: neutral().light().step_1(),
             terminal_ansi_bright_black: black().light().step_11(),
             terminal_ansi_bright_red: red().light().step_10(),
             terminal_ansi_bright_green: green().light().step_10(),
@@ -112,6 +115,9 @@ impl ThemeColors {
         }
     }
 
+    /// Returns the default colors for dark themes.
+    ///
+    /// Themes that do not specify all colors are refined off of these defaults.
     pub fn dark() -> Self {
         let system = SystemColors::default();
 
@@ -178,7 +184,9 @@ impl ThemeColors {
             editor_indent_guide_active: neutral().dark_alpha().step_6(),
             editor_document_highlight_read_background: neutral().dark_alpha().step_4(),
             editor_document_highlight_write_background: neutral().dark_alpha().step_4(),
+            editor_document_highlight_bracket_background: green().dark_alpha().step_6(),
             terminal_background: neutral().dark().step_1(),
+            terminal_ansi_background: neutral().dark().step_1(),
             terminal_foreground: white().dark().step_12(),
             terminal_bright_foreground: white().dark().step_11(),
             terminal_dim_foreground: white().dark().step_10(),
@@ -243,6 +251,7 @@ impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
     }
 }
 
+/// Color scales used to build the default themes.
 pub fn default_color_scales() -> ColorScales {
     ColorScales {
         gray: gray(),

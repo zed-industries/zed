@@ -21,12 +21,19 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
   ```sh
   sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
+  sudo xcodebuild -license accept
   ```
 
 - Install the Rust wasm toolchain:
 
   ```sh
   rustup target add wasm32-wasip1
+  ```
+
+- Install `cmake` (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/))
+
+  ```sh
+  brew install cmake
   ```
 
 ## Backend Dependencies

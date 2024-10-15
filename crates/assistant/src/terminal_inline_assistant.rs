@@ -25,6 +25,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
@@ -284,7 +285,7 @@ impl TerminalInlineAssistant {
             messages,
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         })
     }
 
@@ -570,7 +571,7 @@ impl Render for PromptEditor {
             .bg(cx.theme().colors().editor_background)
             .border_y_1()
             .border_color(cx.theme().status().info_border)
-            .py_1p5()
+            .py_2()
             .h_full()
             .w_full()
             .on_action(cx.listener(Self::confirm))
@@ -949,12 +950,11 @@ impl PromptEditor {
             } else {
                 cx.theme().colors().text
             },
-            font_family: settings.ui_font.family.clone(),
-            font_features: settings.ui_font.features.clone(),
-            font_fallbacks: settings.ui_font.fallbacks.clone(),
-            font_size: rems(0.875).into(),
-            font_weight: settings.ui_font.weight,
-            line_height: relative(1.3),
+            font_family: settings.buffer_font.family.clone(),
+            font_fallbacks: settings.buffer_font.fallbacks.clone(),
+            font_size: settings.buffer_font_size.into(),
+            font_weight: settings.buffer_font.weight,
+            line_height: relative(settings.buffer_line_height.value()),
             ..Default::default()
         };
         EditorElement::new(
@@ -1040,6 +1040,7 @@ impl Codegen {
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(|this, mut cx| async move {
             let model_telemetry_id = model.telemetry_id();
+            let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
             let generate = async {
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
@@ -1064,13 +1065,16 @@ impl Codegen {
 
                     let error_message = result.as_ref().err().map(|error| error.to_string());
                     if let Some(telemetry) = telemetry {
-                        telemetry.report_assistant_event(
-                            None,
-                            telemetry_events::AssistantKind::Inline,
-                            model_telemetry_id,
+                        telemetry.report_assistant_event(AssistantEvent {
+                            conversation_id: None,
+                            kind: AssistantKind::Inline,
+                            phase: AssistantPhase::Response,
+                            model: model_telemetry_id,
+                            model_provider: model_provider_id.to_string(),
                             response_latency,
                             error_message,
-                        );
+                            language_name: None,
+                        });
                     }
 
                     result?;

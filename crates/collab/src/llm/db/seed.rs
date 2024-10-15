@@ -40,15 +40,6 @@ pub async fn seed_database(_config: &Config, db: &mut LlmDatabase, _force: bool)
             price_per_million_input_tokens: 25,   // $0.25/MTok
             price_per_million_output_tokens: 125, // $1.25/MTok
         },
-        ModelParams {
-            provider: LanguageModelProvider::Zed,
-            name: "Qwen/Qwen2-7B-Instruct".into(),
-            max_requests_per_minute: 5,
-            max_tokens_per_minute: 25_000, // These are arbitrary limits we've set to cap costs; we control this number
-            max_tokens_per_day: 300_000,
-            price_per_million_input_tokens: 25,
-            price_per_million_output_tokens: 125,
-        },
     ])
     .await
 }

@@ -1,0 +1,14 @@
+#!/bin/sh
+
+set -eu
+
+TYPOS_CLI_VERSION=1.24.6
+TARGET_DIR=${1:-""}
+
+if ! cargo install --list | grep "typos-cli v$TYPOS_CLI_VERSION" > /dev/null; then
+    echo "Installing typos-cli@$TYPOS_CLI_VERSION..."
+    cargo install "typos-cli@$TYPOS_CLI_VERSION"
+else
+    echo "typos-cli@$TYPOS_CLI_VERSION is already installed."
+fi
+typos $TARGET_DIR

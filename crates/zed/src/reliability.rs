@@ -4,8 +4,7 @@ use chrono::Utc;
 use client::telemetry;
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http_client::Method;
-use isahc::config::Configurable;
+use http_client::{HttpRequestExt, Method};
 
 use http_client::{self, HttpClient, HttpClientWithUrl};
 use paths::{crashes_dir, crashes_retired_dir};
@@ -28,8 +27,9 @@ use crate::stdout_is_a_pty;
 static PANIC_COUNT: AtomicU32 = AtomicU32::new(0);
 
 pub fn init_panic_hook(
-    installation_id: Option<String>,
     app_version: SemanticVersion,
+    system_id: Option<String>,
+    installation_id: Option<String>,
     session_id: String,
 ) {
     let is_pty = stdout_is_a_pty();
@@ -102,6 +102,7 @@ pub fn init_panic_hook(
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
+            system_id: system_id.clone(),
             installation_id: installation_id.clone(),
             session_id: session_id.clone(),
         };
@@ -176,7 +177,7 @@ pub fn monitor_main_thread_hangs(
     let background_executor = cx.background_executor();
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
 
-    // Initialize SIGUSR2 handler to send a backrace to a channel.
+    // Initialize SIGUSR2 handler to send a backtrace to a channel.
     let (backtrace_tx, backtrace_rx) = mpsc::channel();
     static BACKTRACE: Mutex<Vec<backtrace::Frame>> = Mutex::new(Vec::new());
     static BACKTRACE_SENDER: OnceLock<mpsc::Sender<()>> = OnceLock::new();
@@ -346,7 +347,7 @@ pub fn monitor_main_thread_hangs(
 fn upload_panics_and_crashes(
     http: Arc<HttpClientWithUrl>,
     installation_id: Option<String>,
-    cx: &mut AppContext,
+    cx: &AppContext,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
@@ -440,7 +441,7 @@ async fn upload_previous_panics(
     Ok::<_, anyhow::Error>(most_recent_panic)
 }
 
-static LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
+const LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 
 /// upload crashes from apple's diagnostic reports to our server.
 /// (only if telemetry is enabled)
@@ -489,7 +490,7 @@ async fn upload_previous_crashes(
                 .context("error reading crash file")?;
 
             let mut request = http_client::Request::post(&crash_report_url.to_string())
-                .redirect_policy(isahc::config::RedirectPolicy::Follow)
+                .follow_redirects(http_client::RedirectPolicy::FollowAll)
                 .header("Content-Type", "text/plain");
 
             if let Some((panicked_on, payload)) = most_recent_panic.as_ref() {

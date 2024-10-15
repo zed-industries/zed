@@ -177,8 +177,10 @@ See the [tasks documentation](tasks.md#custom-keybindings-for-tasks) for more.
 
 #### Global
 
+<!--
 TBD: Update these to reflect current bindings
 TBD: Add Column with Linux shortcuts
+-->
 
 | **Command**               | **Target**   | **Default Shortcut**    |
 | ------------------------- | ------------ | ----------------------- |

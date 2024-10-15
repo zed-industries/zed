@@ -21,11 +21,11 @@ use git::GitHostingProviderRegistry;
 use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
-use node_runtime::FakeNodeRuntime;
+use node_runtime::NodeRuntime;
 use notifications::NotificationStore;
 use parking_lot::Mutex;
 use project::{Project, WorktreeId};
-use remote::SshSession;
+use remote::SshRemoteClient;
 use rpc::{
     proto::{self, ChannelRole},
     RECEIVE_TIMEOUT,
@@ -278,7 +278,7 @@ impl TestServer {
             languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: FakeNodeRuntime::new(),
+            node_runtime: NodeRuntime::unavailable(),
             session,
         });
 
@@ -408,7 +408,7 @@ impl TestServer {
             languages: language_registry,
             fs: fs.clone(),
             build_window_options: |_, _| Default::default(),
-            node_runtime: FakeNodeRuntime::new(),
+            node_runtime: NodeRuntime::unavailable(),
             session,
         });
 
@@ -635,9 +635,11 @@ impl TestServer {
     ) -> Arc<AppState> {
         Arc::new(AppState {
             db: test_db.db().clone(),
+            llm_db: None,
             live_kit_client: Some(Arc::new(live_kit_test_server.create_api_client())),
             blob_store_client: None,
             stripe_client: None,
+            stripe_billing: None,
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
@@ -677,10 +679,7 @@ impl TestServer {
                 migrations_path: None,
                 seed_path: None,
                 stripe_api_key: None,
-                stripe_price_id: None,
                 supermaven_admin_api_key: None,
-                runpod_api_key: None,
-                runpod_api_summary_url: None,
                 user_backfiller_github_access_token: None,
             },
         })
@@ -837,7 +836,7 @@ impl TestClient {
     pub async fn build_ssh_project(
         &self,
         root_path: impl AsRef<Path>,
-        ssh: Arc<SshSession>,
+        ssh: Model<SshRemoteClient>,
         cx: &mut TestAppContext,
     ) -> (Model<Project>, WorktreeId) {
         let project = cx.update(|cx| {
@@ -921,7 +920,7 @@ impl TestClient {
         })
     }
 
-    pub async fn build_dev_server_project(
+    pub async fn join_remote_project(
         &self,
         host_project_id: u64,
         guest_cx: &mut TestAppContext,

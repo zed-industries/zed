@@ -389,10 +389,10 @@ impl BlockMap {
         }
 
         let mut transforms = self.transforms.borrow_mut();
-        let mut new_transforms = SumTree::new();
+        let mut new_transforms = SumTree::default();
         let old_row_count = transforms.summary().input_rows;
         let new_row_count = wrap_snapshot.max_point().row() + 1;
-        let mut cursor = transforms.cursor::<WrapRow>();
+        let mut cursor = transforms.cursor::<WrapRow>(&());
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
         let mut edits = edits.into_iter().peekable();
@@ -757,7 +757,7 @@ impl<'a> BlockMapReader<'a> {
                 .unwrap_or(self.wrap_snapshot.max_point().row() + 1),
         );
 
-        let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>();
+        let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&start_wrap_row, Bias::Left, &());
         while let Some(transform) = cursor.item() {
             if cursor.start().0 > end_wrap_row {
@@ -950,7 +950,7 @@ impl BlockSnapshot {
         highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
-        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         let input_end = {
             cursor.seek(&BlockRow(rows.end), Bias::Right, &());
             let overshoot = if cursor
@@ -990,7 +990,7 @@ impl BlockSnapshot {
     }
 
     pub(super) fn buffer_rows(&self, start_row: BlockRow) -> BlockBufferRows {
-        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&start_row, Bias::Right, &());
         let (output_start, input_start) = cursor.start();
         let overshoot = if cursor.item().map_or(false, |t| t.is_isomorphic()) {
@@ -1008,7 +1008,7 @@ impl BlockSnapshot {
     }
 
     pub fn blocks_in_range(&self, rows: Range<u32>) -> impl Iterator<Item = (u32, &Block)> {
-        let mut cursor = self.transforms.cursor::<BlockRow>();
+        let mut cursor = self.transforms.cursor::<BlockRow>(&());
         cursor.seek(&BlockRow(rows.start), Bias::Left, &());
         while cursor.start().0 < rows.start && cursor.end(&()).0 <= rows.start {
             cursor.next(&());
@@ -1050,7 +1050,7 @@ impl BlockSnapshot {
                 let wrap_point = self
                     .wrap_snapshot
                     .make_wrap_point(excerpt_range.start, Bias::Left);
-                let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>();
+                let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
                 cursor.seek(&WrapRow(wrap_point.row()), Bias::Left, &());
                 while let Some(transform) = cursor.item() {
                     if let Some(block) = transform.block.as_ref() {
@@ -1072,7 +1072,7 @@ impl BlockSnapshot {
                     .wrap_snapshot
                     .make_wrap_point(excerpt_range.end, Bias::Left);
 
-                let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>();
+                let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
                 cursor.seek(&WrapRow(wrap_point.row()), Bias::Left, &());
                 while let Some(transform) = cursor.item() {
                     if let Some(block) = transform.block.as_ref() {
@@ -1102,7 +1102,7 @@ impl BlockSnapshot {
     }
 
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
-        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(row.0), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             let (output_start, input_start) = cursor.start();
@@ -1118,13 +1118,13 @@ impl BlockSnapshot {
     }
 
     pub(super) fn is_block_line(&self, row: BlockRow) -> bool {
-        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&row, Bias::Right, &());
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
-        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(point.row), Bias::Right, &());
 
         let max_input_row = WrapRow(self.transforms.summary().input_rows);
@@ -1172,7 +1172,7 @@ impl BlockSnapshot {
     }
 
     pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
-        let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>();
+        let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             debug_assert!(transform.is_isomorphic());
@@ -1188,7 +1188,7 @@ impl BlockSnapshot {
     }
 
     pub fn to_wrap_point(&self, block_point: BlockPoint) -> WrapPoint {
-        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>();
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(block_point.row), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             match transform.block.as_ref().map(|b| b.disposition()) {
@@ -1360,13 +1360,17 @@ impl<'a> Iterator for BlockBufferRows<'a> {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.summary.clone()
     }
 }
 
 impl sum_tree::Summary for TransformSummary {
     type Context = ();
+
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.input_rows += summary.input_rows;
@@ -1375,12 +1379,20 @@ impl sum_tree::Summary for TransformSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for WrapRow {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += summary.input_rows;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a TransformSummary, _: &()) {
         self.0 += summary.output_rows;
     }
@@ -1659,7 +1671,7 @@ mod tests {
 
         let mut excerpt_ids = Vec::new();
         let multi_buffer = cx.new_model(|cx| {
-            let mut multi_buffer = MultiBuffer::new(0, Capability::ReadWrite);
+            let mut multi_buffer = MultiBuffer::new(Capability::ReadWrite);
             excerpt_ids.extend(multi_buffer.push_excerpts(
                 buffer1.clone(),
                 [ExcerptRange {

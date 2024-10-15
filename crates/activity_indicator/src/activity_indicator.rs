@@ -10,7 +10,7 @@ use gpui::{
 use language::{
     LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
 };
-use project::{LanguageServerProgress, Project};
+use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
@@ -19,7 +19,10 @@ use workspace::{item::ItemHandle, StatusItemView, Workspace};
 actions!(activity_indicator, [ShowErrorMessage]);
 
 pub enum Event {
-    ShowError { lsp_name: Arc<str>, error: String },
+    ShowError {
+        lsp_name: LanguageServerName,
+        error: String,
+    },
 }
 
 pub struct ActivityIndicator {
@@ -98,6 +101,7 @@ impl ActivityIndicator {
                             None,
                             cx,
                         );
+                        buffer.set_capability(language::Capability::ReadOnly, cx);
                     })?;
                     workspace.update(&mut cx, |workspace, cx| {
                         workspace.add_item_to_active_pane(
@@ -123,7 +127,7 @@ impl ActivityIndicator {
         self.statuses.retain(|status| {
             if let LanguageServerBinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {
-                    lsp_name: status.name.0.clone(),
+                    lsp_name: status.name.clone(),
                     error: error.clone(),
                 });
                 false
@@ -172,7 +176,31 @@ impl ActivityIndicator {
             .flatten()
     }
 
+    fn pending_environment_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+        self.project.read(cx).shell_environment_errors(cx)
+    }
+
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
+        // Show if any direnv calls failed
+        if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .into_any_element(),
+                ),
+                message: error.0.clone(),
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.remove_environment_error(cx, worktree_id);
+                    });
+                    cx.dispatch_action(Box::new(workspace::OpenLog));
+                })),
+            });
+        }
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {
@@ -224,10 +252,10 @@ impl ActivityIndicator {
         for status in &self.statuses {
             match status.status {
                 LanguageServerBinaryStatus::CheckingForUpdate => {
-                    checking_for_update.push(status.name.0.as_ref())
+                    checking_for_update.push(status.name.clone())
                 }
-                LanguageServerBinaryStatus::Downloading => downloading.push(status.name.0.as_ref()),
-                LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.0.as_ref()),
+                LanguageServerBinaryStatus::Downloading => downloading.push(status.name.clone()),
+                LanguageServerBinaryStatus::Failed { .. } => failed.push(status.name.clone()),
                 LanguageServerBinaryStatus::None => {}
             }
         }
@@ -239,8 +267,24 @@ impl ActivityIndicator {
                         .size(IconSize::Small)
                         .into_any_element(),
                 ),
-                message: format!("Downloading {}...", downloading.join(", "),),
-                on_click: None,
+                message: format!(
+                    "Downloading {}...",
+                    downloading.iter().map(|name| name.0.as_ref()).fold(
+                        String::new(),
+                        |mut acc, s| {
+                            if !acc.is_empty() {
+                                acc.push_str(", ");
+                            }
+                            acc.push_str(s);
+                            acc
+                        }
+                    )
+                ),
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.statuses
+                        .retain(|status| !downloading.contains(&status.name));
+                    this.dismiss_error_message(&DismissErrorMessage, cx)
+                })),
             });
         }
 
@@ -253,9 +297,22 @@ impl ActivityIndicator {
                 ),
                 message: format!(
                     "Checking for updates to {}...",
-                    checking_for_update.join(", "),
+                    checking_for_update.iter().map(|name| name.0.as_ref()).fold(
+                        String::new(),
+                        |mut acc, s| {
+                            if !acc.is_empty() {
+                                acc.push_str(", ");
+                            }
+                            acc.push_str(s);
+                            acc
+                        }
+                    ),
                 ),
-                on_click: None,
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.statuses
+                        .retain(|status| !checking_for_update.contains(&status.name));
+                    this.dismiss_error_message(&DismissErrorMessage, cx)
+                })),
             });
         }
 
@@ -267,8 +324,17 @@ impl ActivityIndicator {
                         .into_any_element(),
                 ),
                 message: format!(
-                    "Failed to download {}. Click to show error.",
-                    failed.join(", "),
+                    "Failed to run {}. Click to show error.",
+                    failed
+                        .iter()
+                        .map(|name| name.0.as_ref())
+                        .fold(String::new(), |mut acc, s| {
+                            if !acc.is_empty() {
+                                acc.push_str(", ");
+                            }
+                            acc.push_str(s);
+                            acc
+                        }),
                 ),
                 on_click: Some(Arc::new(|this, cx| {
                     this.show_error_message(&Default::default(), cx)
@@ -277,7 +343,7 @@ impl ActivityIndicator {
         }
 
         // Show any formatting failure
-        if let Some(failure) = self.project.read(cx).last_formatting_failure() {
+        if let Some(failure) = self.project.read(cx).last_formatting_failure(cx) {
             return Some(Content {
                 icon: Some(
                     Icon::new(IconName::Warning)
@@ -301,7 +367,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: "Checking for Zed updates…".to_string(),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 }),
                 AutoUpdateStatus::Downloading => Some(Content {
                     icon: Some(
@@ -310,7 +378,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: "Downloading Zed update…".to_string(),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 }),
                 AutoUpdateStatus::Installing => Some(Content {
                     icon: Some(
@@ -319,7 +389,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: "Installing Zed update…".to_string(),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 }),
                 AutoUpdateStatus::Updated { binary_path } => Some(Content {
                     icon: None,
@@ -339,7 +411,7 @@ impl ActivityIndicator {
                     ),
                     message: "Auto update failed".to_string(),
                     on_click: Some(Arc::new(|this, cx| {
-                        this.dismiss_error_message(&Default::default(), cx)
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
                     })),
                 }),
                 AutoUpdateStatus::Idle => None,
@@ -357,7 +429,9 @@ impl ActivityIndicator {
                             .into_any_element(),
                     ),
                     message: format!("Updating {extension_id} extension…"),
-                    on_click: None,
+                    on_click: Some(Arc::new(|this, cx| {
+                        this.dismiss_error_message(&DismissErrorMessage, cx)
+                    })),
                 });
             }
         }

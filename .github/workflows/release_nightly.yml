@@ -1,6 +1,9 @@
 name: Release Nightly
 
 on:
+  schedule:
+    # Fire every day at 7:00am UTC (Roughly before EU workday and after US workday)
+    - cron: "0 7 * * *"
   push:
     tags:
       - "nightly"
@@ -20,7 +23,7 @@ jobs:
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
           fetch-depth: 0
@@ -41,7 +44,7 @@ jobs:
     needs: style
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
 
@@ -67,12 +70,12 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@1e60f620b9541d16bece96c5465dc8ee9832be0b # v4
+        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4
         with:
           node-version: "18"
 
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
 
@@ -97,8 +100,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - self-hosted
-      - deploy
+      - buildjet-16vcpu-ubuntu-2004
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -107,12 +109,18 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
 
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
+      - name: Install Linux dependencies
+        run: ./script/linux && ./script/install-mold 2.34.0
+
+      - name: Limit target directory size
+        run: script/clear-target-dir-if-larger-than 100
 
       - name: Set release channel to nightly
         run: |
@@ -141,7 +149,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
 
@@ -163,3 +171,28 @@ jobs:
 
       - name: Upload Zed Nightly
         run: script/upload-nightly linux-targz
+
+  update-nightly-tag:
+    name: Update nightly tag
+    if: github.repository_owner == 'zed-industries'
+    runs-on: ubuntu-latest
+    needs:
+      - bundle-mac
+      - bundle-linux-x86
+      - bundle-linux-arm
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Update nightly tag
+        run: |
+          if [ "$(git rev-parse nightly)" = "$(git rev-parse HEAD)" ]; then
+            echo "Nightly tag already points to current commit. Skipping tagging."
+            exit 0
+          fi
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git tag -f nightly
+          git push origin nightly --force

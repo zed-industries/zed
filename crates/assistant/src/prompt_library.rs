@@ -521,9 +521,9 @@ impl PromptLibrary {
                             editor.set_show_indent_guides(false, cx);
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                            editor.set_completion_provider(Box::new(
+                            editor.set_completion_provider(Some(Box::new(
                                 SlashCommandCompletionProvider::new(None, None),
-                            ));
+                            )));
                             if focus {
                                 editor.focus(cx);
                             }
@@ -796,7 +796,7 @@ impl PromptLibrary {
                                     }],
                                     tools: Vec::new(),
                                     stop: Vec::new(),
-                                    temperature: 1.,
+                                    temperature: None,
                                 },
                                 cx,
                             )
@@ -910,7 +910,7 @@ impl PromptLibrary {
                                                             .features
                                                             .clone(),
                                                         font_size: HeadlineSize::Large
-                                                            .size()
+                                                            .rems()
                                                             .into(),
                                                         font_weight: settings.ui_font.weight,
                                                         line_height: relative(
@@ -921,10 +921,8 @@ impl PromptLibrary {
                                                     scrollbar_width: Pixels::ZERO,
                                                     syntax: cx.theme().syntax().clone(),
                                                     status: cx.theme().status().clone(),
-                                                    inlay_hints_style: HighlightStyle {
-                                                        color: Some(cx.theme().status().hint),
-                                                        ..HighlightStyle::default()
-                                                    },
+                                                    inlay_hints_style:
+                                                        editor::make_inlay_hints_style(cx),
                                                     suggestions_style: HighlightStyle {
                                                         color: Some(cx.theme().status().predictive),
                                                         ..HighlightStyle::default()

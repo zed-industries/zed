@@ -89,6 +89,16 @@ pub enum ListSizingBehavior {
     Auto,
 }
 
+/// The horizontal sizing behavior to apply during layout.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum ListHorizontalSizingBehavior {
+    /// List items' width can never exceed the width of the list.
+    #[default]
+    FitList,
+    /// List items' width may go over the width of the list, if any item is wider.
+    Unconstrained,
+}
+
 struct LayoutItemsResponse {
     max_item_width: Pixels,
     scroll_top: ListOffset,
@@ -181,7 +191,7 @@ impl ListState {
             last_layout_bounds: None,
             last_padding: None,
             render_item: Box::new(render_item),
-            items: SumTree::new(),
+            items: SumTree::default(),
             logical_scroll_top: None,
             alignment,
             overdraw,
@@ -228,7 +238,7 @@ impl ListState {
     ) {
         let state = &mut *self.0.borrow_mut();
 
-        let mut old_items = state.items.cursor::<Count>();
+        let mut old_items = state.items.cursor::<Count>(&());
         let mut new_items = old_items.slice(&Count(old_range.start), Bias::Right, &());
         old_items.seek_forward(&Count(old_range.end), Bias::Right, &());
 
@@ -297,7 +307,7 @@ impl ListState {
             scroll_top.item_ix = ix;
             scroll_top.offset_in_item = px(0.);
         } else {
-            let mut cursor = state.items.cursor::<ListItemSummary>();
+            let mut cursor = state.items.cursor::<ListItemSummary>(&());
             cursor.seek(&Count(ix + 1), Bias::Right, &());
             let bottom = cursor.start().height + padding.top;
             let goal_top = px(0.).max(bottom - height + padding.bottom);
@@ -326,7 +336,7 @@ impl ListState {
             return None;
         }
 
-        let mut cursor = state.items.cursor::<(Count, Height)>();
+        let mut cursor = state.items.cursor::<(Count, Height)>(&());
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
 
         let scroll_top = cursor.start().1 .0 + scroll_top.offset_in_item;
@@ -348,7 +358,7 @@ impl ListState {
 
 impl StateInner {
     fn visible_range(&self, height: Pixels, scroll_top: &ListOffset) -> Range<usize> {
-        let mut cursor = self.items.cursor::<ListItemSummary>();
+        let mut cursor = self.items.cursor::<ListItemSummary>(&());
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
         let start_y = cursor.start().height + scroll_top.offset_in_item;
         cursor.seek_forward(&Height(start_y + height), Bias::Left, &());
@@ -378,7 +388,7 @@ impl StateInner {
         if self.alignment == ListAlignment::Bottom && new_scroll_top == scroll_max {
             self.logical_scroll_top = None;
         } else {
-            let mut cursor = self.items.cursor::<ListItemSummary>();
+            let mut cursor = self.items.cursor::<ListItemSummary>(&());
             cursor.seek(&Height(new_scroll_top), Bias::Right, &());
             let item_ix = cursor.start().count;
             let offset_in_item = new_scroll_top - cursor.start().height;
@@ -418,7 +428,7 @@ impl StateInner {
     }
 
     fn scroll_top(&self, logical_scroll_top: &ListOffset) -> Pixels {
-        let mut cursor = self.items.cursor::<ListItemSummary>();
+        let mut cursor = self.items.cursor::<ListItemSummary>(&());
         cursor.seek(&Count(logical_scroll_top.item_ix), Bias::Right, &());
         cursor.start().height + logical_scroll_top.offset_in_item
     }
@@ -445,7 +455,7 @@ impl StateInner {
             AvailableSpace::MinContent,
         );
 
-        let mut cursor = old_items.cursor::<Count>();
+        let mut cursor = old_items.cursor::<Count>(&());
 
         // Render items after the scroll top, including those in the trailing overdraw
         cursor.seek(&Count(scroll_top.item_ix), Bias::Right, &());
@@ -560,7 +570,7 @@ impl StateInner {
         }
 
         let measured_range = cursor.start().0..(cursor.start().0 + measured_items.len());
-        let mut cursor = old_items.cursor::<Count>();
+        let mut cursor = old_items.cursor::<Count>(&());
         let mut new_items = cursor.slice(&Count(measured_range.start), Bias::Right, &());
         new_items.extend(measured_items, &());
         cursor.seek(&Count(measured_range.end), Bias::Right, &());
@@ -573,7 +583,7 @@ impl StateInner {
         if !rendered_focused_item {
             let mut cursor = self
                 .items
-                .filter::<_, Count>(|summary| summary.has_focus_handles);
+                .filter::<_, Count>(&(), |summary| summary.has_focus_handles);
             cursor.next(&());
             while let Some(item) = cursor.item() {
                 if item.contains_focused(cx) {
@@ -629,7 +639,7 @@ impl StateInner {
                                     offset_in_item: autoscroll_bounds.top() - item_origin.y,
                                 });
                             } else if autoscroll_bounds.bottom() > bounds.bottom() {
-                                let mut cursor = self.items.cursor::<Count>();
+                                let mut cursor = self.items.cursor::<Count>(&());
                                 cursor.seek(&Count(item.index), Bias::Right, &());
                                 let mut height = bounds.size.height - padding.top - padding.bottom;
 
@@ -858,7 +868,7 @@ impl Styled for List {
 impl sum_tree::Item for ListItem {
     type Summary = ListItemSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         match self {
             ListItem::Unmeasured { focus_handle } => ListItemSummary {
                 count: 1,
@@ -883,6 +893,10 @@ impl sum_tree::Item for ListItem {
 impl sum_tree::Summary for ListItemSummary {
     type Context = ();
 
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &Self, _: &()) {
         self.count += summary.count;
         self.rendered_count += summary.rendered_count;
@@ -893,12 +907,20 @@ impl sum_tree::Summary for ListItemSummary {
 }
 
 impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Count {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a ListItemSummary, _: &()) {
         self.0 += summary.count;
     }
 }
 
 impl<'a> sum_tree::Dimension<'a, ListItemSummary> for Height {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a ListItemSummary, _: &()) {
         self.0 += summary.height;
     }

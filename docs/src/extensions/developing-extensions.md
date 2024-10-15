@@ -76,6 +76,8 @@ zed::register_extension!(MyExtension);
 
 ## Developing an Extension Locally
 
+Before starting to develop an extension for Zed, be sure to [install Rust](https://www.rust-lang.org/tools/install).
+
 When developing an extension, you can use it in Zed without needing to publish it by installing it as a _dev extension_.
 
 From the extensions page, click the `Install Dev Extension` button and select the directory containing your extension.
@@ -85,6 +87,8 @@ If you already have a published extension with the same name installed, your dev
 ## Publishing your extension
 
 To publish an extension, open a PR to [the `zed-industries/extensions` repo](https://github.com/zed-industries/extensions).
+
+> Note: It is very helpful if you fork the `zed-industries/extensions` repo to a personal GitHub account instead of a GitHub organization, as this allows Zed staff to push any needed changes to your PR to expedite the publishing process.
 
 In your PR, do the following:
 

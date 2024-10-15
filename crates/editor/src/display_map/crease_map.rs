@@ -12,19 +12,34 @@ use crate::FoldPlaceholder;
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct CreaseId(usize);
 
-#[derive(Default)]
 pub struct CreaseMap {
     snapshot: CreaseSnapshot,
     next_id: CreaseId,
     id_to_range: HashMap<CreaseId, Range<Anchor>>,
 }
 
-#[derive(Clone, Default)]
+impl CreaseMap {
+    pub fn new(snapshot: &MultiBufferSnapshot) -> Self {
+        CreaseMap {
+            snapshot: CreaseSnapshot::new(snapshot),
+            next_id: CreaseId::default(),
+            id_to_range: HashMap::default(),
+        }
+    }
+}
+
+#[derive(Clone)]
 pub struct CreaseSnapshot {
     creases: SumTree<CreaseItem>,
 }
 
 impl CreaseSnapshot {
+    pub fn new(snapshot: &MultiBufferSnapshot) -> Self {
+        CreaseSnapshot {
+            creases: SumTree::new(snapshot),
+        }
+    }
+
     /// Returns the first Crease starting on the specified buffer row.
     pub fn query_row<'a>(
         &'a self,
@@ -32,7 +47,7 @@ impl CreaseSnapshot {
         snapshot: &'a MultiBufferSnapshot,
     ) -> Option<&'a Crease> {
         let start = snapshot.anchor_before(Point::new(row.0, 0));
-        let mut cursor = self.creases.cursor::<ItemSummary>();
+        let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         cursor.seek(&start, Bias::Left, snapshot);
         while let Some(item) = cursor.item() {
             match Ord::cmp(&item.crease.range.start.to_point(snapshot).row, &row.0) {
@@ -54,9 +69,9 @@ impl CreaseSnapshot {
         &'a self,
         range: Range<MultiBufferRow>,
         snapshot: &'a MultiBufferSnapshot,
-    ) -> impl '_ + Iterator<Item = &'a Crease> {
+    ) -> impl 'a + Iterator<Item = &'a Crease> {
         let start = snapshot.anchor_before(Point::new(range.start.0, 0));
-        let mut cursor = self.creases.cursor::<ItemSummary>();
+        let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         cursor.seek(&start, Bias::Left, snapshot);
 
         std::iter::from_fn(move || {
@@ -79,7 +94,7 @@ impl CreaseSnapshot {
         &self,
         snapshot: &MultiBufferSnapshot,
     ) -> Vec<(CreaseId, Range<Point>)> {
-        let mut cursor = self.creases.cursor::<ItemSummary>();
+        let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         let mut results = Vec::new();
 
         cursor.next(snapshot);
@@ -194,8 +209,8 @@ impl CreaseMap {
     ) -> Vec<CreaseId> {
         let mut new_ids = Vec::new();
         self.snapshot.creases = {
-            let mut new_creases = SumTree::new();
-            let mut cursor = self.snapshot.creases.cursor::<ItemSummary>();
+            let mut new_creases = SumTree::new(snapshot);
+            let mut cursor = self.snapshot.creases.cursor::<ItemSummary>(snapshot);
             for crease in creases {
                 new_creases.append(cursor.slice(&crease.range, Bias::Left, snapshot), snapshot);
 
@@ -227,8 +242,8 @@ impl CreaseMap {
         });
 
         self.snapshot.creases = {
-            let mut new_creases = SumTree::new();
-            let mut cursor = self.snapshot.creases.cursor::<ItemSummary>();
+            let mut new_creases = SumTree::new(snapshot);
+            let mut cursor = self.snapshot.creases.cursor::<ItemSummary>(snapshot);
 
             for (id, range) in removals {
                 new_creases.append(cursor.slice(&range, Bias::Left, snapshot), snapshot);
@@ -264,6 +279,10 @@ impl Default for ItemSummary {
 impl sum_tree::Summary for ItemSummary {
     type Context = MultiBufferSnapshot;
 
+    fn zero(_cx: &Self::Context) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, other: &Self, _snapshot: &MultiBufferSnapshot) {
         self.range = other.range.clone();
     }
@@ -272,7 +291,7 @@ impl sum_tree::Summary for ItemSummary {
 impl sum_tree::Item for CreaseItem {
     type Summary = ItemSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &MultiBufferSnapshot) -> Self::Summary {
         ItemSummary {
             range: self.crease.range.clone(),
         }
@@ -303,7 +322,7 @@ mod test {
         let text = "line1\nline2\nline3\nline4\nline5";
         let buffer = MultiBuffer::build_simple(text, cx);
         let snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let mut crease_map = CreaseMap::default();
+        let mut crease_map = CreaseMap::new(&buffer.read(cx).read(cx));
 
         // Insert creases
         let creases = [
@@ -350,7 +369,7 @@ mod test {
         let text = "line1\nline2\nline3\nline4\nline5\nline6\nline7";
         let buffer = MultiBuffer::build_simple(text, cx);
         let snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
-        let mut crease_map = CreaseMap::default();
+        let mut crease_map = CreaseMap::new(&snapshot);
 
         let creases = [
             Crease::new(

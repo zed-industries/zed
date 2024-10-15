@@ -253,6 +253,7 @@ fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
             let length = calculate_content_length(&cell);
+
             if length > max_lengths[index] {
                 max_lengths[index] = length;
             }
@@ -316,11 +317,13 @@ fn render_markdown_table_row(
             ParsedMarkdownTableAlignment::Center => v_flex().items_center(),
             ParsedMarkdownTableAlignment::Right => v_flex().items_end(),
         };
+
         let max_width = max_column_widths.get(index).unwrap_or(&0.0);
         let mut cell = container
             .w(Length::Definite(relative(*max_width)))
             .h_full()
             .children(contents)
+
             .px_2()
             .py_1()
             .border_color(cx.border_color);

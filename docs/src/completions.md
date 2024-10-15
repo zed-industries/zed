@@ -10,7 +10,7 @@ Zed supports supports two sources for completions:
 When there is an appropriate language server available, Zed will by-default provide completions of variable names, functions, and other symbols in the current file. You can disable these by adding the following to your zed settings.json file:
 
 ```json
-  "show_completions_on_input": false
+"show_completions_on_input": false
 ```
 
 You can manually trigger completions with `ctrl-space` or by triggering the `editor::ShowCompletions` action from the command palette.

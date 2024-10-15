@@ -10,6 +10,24 @@ workspace = true
 
 [features]
 test-support = []
+load-grammars = [
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-go",
+    "tree-sitter-go-mod",
+    "tree-sitter-gowork",
+    "tree-sitter-jsdoc",
+    "tree-sitter-json",
+    "tree-sitter-md",
+    "tree-sitter-python",
+    "tree-sitter-regex",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+    "tree-sitter"
+]
 
 [dependencies]
 anyhow.workspace = true
@@ -36,23 +54,22 @@ settings.workspace = true
 smol.workspace = true
 task.workspace = true
 toml.workspace = true
-tree-sitter-bash.workspace = true
-tree-sitter-c.workspace = true
-tree-sitter-cpp.workspace = true
-tree-sitter-css.workspace = true
-tree-sitter-go.workspace = true
-tree-sitter-go-mod.workspace = true
-tree-sitter-gowork.workspace = true
-tree-sitter-jsdoc.workspace = true
-tree-sitter-json.workspace = true
-tree-sitter-md.workspace = true
-protols-tree-sitter-proto.workspace = true
-tree-sitter-python.workspace = true
-tree-sitter-regex.workspace = true
-tree-sitter-rust.workspace = true
-tree-sitter-typescript.workspace = true
-tree-sitter-yaml.workspace = true
-tree-sitter.workspace = true
+tree-sitter = { workspace = true, optional = true }
+tree-sitter-bash = { workspace = true, optional = true }
+tree-sitter-c = { workspace = true, optional = true }
+tree-sitter-cpp = { workspace = true, optional = true }
+tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-go = { workspace = true, optional = true }
+tree-sitter-go-mod = { workspace = true, optional = true }
+tree-sitter-gowork = { workspace = true, optional = true }
+tree-sitter-jsdoc = { workspace = true, optional = true }
+tree-sitter-json = { workspace = true, optional = true }
+tree-sitter-md = { workspace = true, optional = true }
+tree-sitter-python = { workspace = true, optional = true }
+tree-sitter-regex = { workspace = true, optional = true }
+tree-sitter-rust = { workspace = true, optional = true }
+tree-sitter-typescript = { workspace = true, optional = true }
+tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
 
 [dev-dependencies]

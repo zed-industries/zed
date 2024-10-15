@@ -20,7 +20,7 @@ pub const TREE_BASE: usize = 6;
 pub trait Item: Clone {
     type Summary: Summary;
 
-    fn summary(&self) -> Self::Summary;
+    fn summary(&self, cx: &<Self::Summary as Summary>::Context) -> Self::Summary;
 }
 
 /// An [`Item`] whose summary has a specific key that can be used to identify it
@@ -34,8 +34,10 @@ pub trait KeyedItem: Item {
 ///
 /// Each Summary type can have multiple [`Dimensions`] that it measures,
 /// which can be used to navigate the tree
-pub trait Summary: Default + Clone + fmt::Debug {
+pub trait Summary: Clone {
     type Context;
+
+    fn zero(cx: &Self::Context) -> Self;
 
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
 }
@@ -47,23 +49,29 @@ pub trait Summary: Default + Clone + fmt::Debug {
 /// # Example:
 /// Zed's rope has a `TextSummary` type that summarizes lines, characters, and bytes.
 /// Each of these are different dimensions we may want to seek to
-pub trait Dimension<'a, S: Summary>: Clone + fmt::Debug + Default {
-    fn add_summary(&mut self, _summary: &'a S, _: &S::Context);
+pub trait Dimension<'a, S: Summary>: Clone {
+    fn zero(cx: &S::Context) -> Self;
+
+    fn add_summary(&mut self, summary: &'a S, cx: &S::Context);
 
     fn from_summary(summary: &'a S, cx: &S::Context) -> Self {
-        let mut dimension = Self::default();
+        let mut dimension = Self::zero(cx);
         dimension.add_summary(summary, cx);
         dimension
     }
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for T {
+    fn zero(cx: &T::Context) -> Self {
+        Summary::zero(cx)
+    }
+
     fn add_summary(&mut self, summary: &'a T, cx: &T::Context) {
         Summary::add_summary(self, summary, cx);
     }
 }
 
-pub trait SeekTarget<'a, S: Summary, D: Dimension<'a, S>>: fmt::Debug {
+pub trait SeekTarget<'a, S: Summary, D: Dimension<'a, S>> {
     fn cmp(&self, cursor_location: &D, cx: &S::Context) -> Ordering;
 }
 
@@ -74,10 +82,18 @@ impl<'a, S: Summary, D: Dimension<'a, S> + Ord> SeekTarget<'a, S, D> for D {
 }
 
 impl<'a, T: Summary> Dimension<'a, T> for () {
+    fn zero(_: &T::Context) -> Self {
+        ()
+    }
+
     fn add_summary(&mut self, _: &'a T, _: &T::Context) {}
 }
 
 impl<'a, T: Summary, D1: Dimension<'a, T>, D2: Dimension<'a, T>> Dimension<'a, T> for (D1, D2) {
+    fn zero(cx: &T::Context) -> Self {
+        (D1::zero(cx), D2::zero(cx))
+    }
+
     fn add_summary(&mut self, summary: &'a T, cx: &T::Context) {
         self.0.add_summary(summary, cx);
         self.1.add_summary(summary, cx);
@@ -157,20 +173,30 @@ impl Bias {
 /// The maximum number of items per node is `TREE_BASE * 2`.
 ///
 /// Any [`Dimension`] supported by the [`Summary`] type can be used to seek to a specific location in the tree.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SumTree<T: Item>(Arc<Node<T>>);
 
+impl<T> fmt::Debug for SumTree<T>
+where
+    T: fmt::Debug + Item,
+    T::Summary: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("SumTree").field(&self.0).finish()
+    }
+}
+
 impl<T: Item> SumTree<T> {
-    pub fn new() -> Self {
+    pub fn new(cx: &<T::Summary as Summary>::Context) -> Self {
         SumTree(Arc::new(Node::Leaf {
-            summary: T::Summary::default(),
+            summary: <T::Summary as Summary>::zero(cx),
             items: ArrayVec::new(),
             item_summaries: ArrayVec::new(),
         }))
     }
 
     pub fn from_item(item: T, cx: &<T::Summary as Summary>::Context) -> Self {
-        let mut tree = Self::new();
+        let mut tree = Self::new(cx);
         tree.push(item, cx);
         tree
     }
@@ -185,7 +211,7 @@ impl<T: Item> SumTree<T> {
         while iter.peek().is_some() {
             let items: ArrayVec<T, { 2 * TREE_BASE }> = iter.by_ref().take(2 * TREE_BASE).collect();
             let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                items.iter().map(|item| item.summary()).collect();
+                items.iter().map(|item| item.summary(cx)).collect();
 
             let mut summary = item_summaries[0].clone();
             for item_summary in &item_summaries[1..] {
@@ -206,7 +232,7 @@ impl<T: Item> SumTree<T> {
             let mut current_parent_node = None;
             for child_node in nodes.drain(..) {
                 let parent_node = current_parent_node.get_or_insert_with(|| Node::Internal {
-                    summary: T::Summary::default(),
+                    summary: <T::Summary as Summary>::zero(cx),
                     height,
                     child_summaries: ArrayVec::new(),
                     child_trees: ArrayVec::new(),
@@ -234,7 +260,7 @@ impl<T: Item> SumTree<T> {
         }
 
         if nodes.is_empty() {
-            Self::new()
+            Self::new(cx)
         } else {
             debug_assert_eq!(nodes.len(), 1);
             Self(Arc::new(nodes.pop().unwrap()))
@@ -255,7 +281,7 @@ impl<T: Item> SumTree<T> {
             .map(|items| {
                 let items: ArrayVec<T, { 2 * TREE_BASE }> = items.into_iter().collect();
                 let item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }> =
-                    items.iter().map(|item| item.summary()).collect();
+                    items.iter().map(|item| item.summary(cx)).collect();
                 let mut summary = item_summaries[0].clone();
                 for item_summary in &item_summaries[1..] {
                     <T::Summary as Summary>::add_summary(&mut summary, item_summary, cx);
@@ -296,7 +322,7 @@ impl<T: Item> SumTree<T> {
         }
 
         if nodes.is_empty() {
-            Self::new()
+            Self::new(cx)
         } else {
             debug_assert_eq!(nodes.len(), 1);
             nodes.pop().unwrap()
@@ -306,7 +332,7 @@ impl<T: Item> SumTree<T> {
     #[allow(unused)]
     pub fn items(&self, cx: &<T::Summary as Summary>::Context) -> Vec<T> {
         let mut items = Vec::new();
-        let mut cursor = self.cursor::<()>();
+        let mut cursor = self.cursor::<()>(cx);
         cursor.next(cx);
         while let Some(item) = cursor.item() {
             items.push(item.clone());
@@ -319,21 +345,25 @@ impl<T: Item> SumTree<T> {
         Iter::new(self)
     }
 
-    pub fn cursor<'a, S>(&'a self) -> Cursor<T, S>
+    pub fn cursor<'a, S>(&'a self, cx: &<T::Summary as Summary>::Context) -> Cursor<'a, T, S>
     where
         S: Dimension<'a, T::Summary>,
     {
-        Cursor::new(self)
+        Cursor::new(self, cx)
     }
 
     /// Note: If the summary type requires a non `()` context, then the filter cursor
     /// that is returned cannot be used with Rust's iterators.
-    pub fn filter<'a, F, U>(&'a self, filter_node: F) -> FilterCursor<F, T, U>
+    pub fn filter<'a, F, U>(
+        &'a self,
+        cx: &<T::Summary as Summary>::Context,
+        filter_node: F,
+    ) -> FilterCursor<'a, F, T, U>
     where
         F: FnMut(&T::Summary) -> bool,
         U: Dimension<'a, T::Summary>,
     {
-        FilterCursor::new(self, filter_node)
+        FilterCursor::new(self, cx, filter_node)
     }
 
     #[allow(dead_code)]
@@ -375,7 +405,7 @@ impl<T: Item> SumTree<T> {
                 if let Some((item, item_summary)) = items.last_mut().zip(item_summaries.last_mut())
                 {
                     (f)(item);
-                    *item_summary = item.summary();
+                    *item_summary = item.summary(cx);
                     *summary = sum(item_summaries.iter(), cx);
                     Some(summary.clone())
                 } else {
@@ -389,7 +419,7 @@ impl<T: Item> SumTree<T> {
         &'a self,
         cx: &<T::Summary as Summary>::Context,
     ) -> D {
-        let mut extent = D::default();
+        let mut extent = D::zero(cx);
         match self.0.as_ref() {
             Node::Internal { summary, .. } | Node::Leaf { summary, .. } => {
                 extent.add_summary(summary, cx);
@@ -431,7 +461,7 @@ impl<T: Item> SumTree<T> {
     }
 
     pub fn push(&mut self, item: T, cx: &<T::Summary as Summary>::Context) {
-        let summary = item.summary();
+        let summary = item.summary(cx);
         self.append(
             SumTree(Arc::new(Node::Leaf {
                 summary: summary.clone(),
@@ -636,7 +666,7 @@ impl<T: KeyedItem> SumTree<T> {
     ) -> Option<T> {
         let mut replaced = None;
         *self = {
-            let mut cursor = self.cursor::<T::Key>();
+            let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(&item.key(), Bias::Left, cx);
             if let Some(cursor_item) = cursor.item() {
                 if cursor_item.key() == item.key() {
@@ -654,7 +684,7 @@ impl<T: KeyedItem> SumTree<T> {
     pub fn remove(&mut self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> Option<T> {
         let mut removed = None;
         *self = {
-            let mut cursor = self.cursor::<T::Key>();
+            let mut cursor = self.cursor::<T::Key>(cx);
             let mut new_tree = cursor.slice(key, Bias::Left, cx);
             if let Some(item) = cursor.item() {
                 if item.key() == *key {
@@ -681,11 +711,11 @@ impl<T: KeyedItem> SumTree<T> {
         edits.sort_unstable_by_key(|item| item.key());
 
         *self = {
-            let mut cursor = self.cursor::<T::Key>();
-            let mut new_tree = SumTree::new();
+            let mut cursor = self.cursor::<T::Key>(cx);
+            let mut new_tree = SumTree::new(cx);
             let mut buffered_items = Vec::new();
 
-            cursor.seek(&T::Key::default(), Bias::Left, cx);
+            cursor.seek(&T::Key::zero(cx), Bias::Left, cx);
             for edit in edits {
                 let new_key = edit.key();
                 let mut old_item = cursor.item();
@@ -724,7 +754,7 @@ impl<T: KeyedItem> SumTree<T> {
     }
 
     pub fn get(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> Option<&T> {
-        let mut cursor = self.cursor::<T::Key>();
+        let mut cursor = self.cursor::<T::Key>(cx);
         if cursor.seek(key, Bias::Left, cx) {
             cursor.item()
         } else {
@@ -733,13 +763,17 @@ impl<T: KeyedItem> SumTree<T> {
     }
 }
 
-impl<T: Item> Default for SumTree<T> {
+impl<T, S> Default for SumTree<T>
+where
+    T: Item<Summary = S>,
+    S: Summary<Context = ()>,
+{
     fn default() -> Self {
-        Self::new()
+        Self::new(&())
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum Node<T: Item> {
     Internal {
         height: u8,
@@ -752,6 +786,39 @@ pub enum Node<T: Item> {
         items: ArrayVec<T, { 2 * TREE_BASE }>,
         item_summaries: ArrayVec<T::Summary, { 2 * TREE_BASE }>,
     },
+}
+
+impl<T> fmt::Debug for Node<T>
+where
+    T: Item + fmt::Debug,
+    T::Summary: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Node::Internal {
+                height,
+                summary,
+                child_summaries,
+                child_trees,
+            } => f
+                .debug_struct("Internal")
+                .field("height", height)
+                .field("summary", summary)
+                .field("child_summaries", child_summaries)
+                .field("child_trees", child_trees)
+                .finish(),
+            Node::Leaf {
+                summary,
+                items,
+                item_summaries,
+            } => f
+                .debug_struct("Leaf")
+                .field("summary", summary)
+                .field("items", items)
+                .field("item_summaries", item_summaries)
+                .finish(),
+        }
+    }
 }
 
 impl<T: Item> Node<T> {
@@ -824,7 +891,7 @@ where
     T: 'a + Summary,
     I: Iterator<Item = &'a T>,
 {
-    let mut sum = T::default();
+    let mut sum = T::zero(cx);
     for value in iter {
         sum.add_summary(value, cx);
     }
@@ -846,10 +913,10 @@ mod tests {
 
     #[test]
     fn test_extend_and_push_tree() {
-        let mut tree1 = SumTree::new();
+        let mut tree1 = SumTree::default();
         tree1.extend(0..20, &());
 
-        let mut tree2 = SumTree::new();
+        let mut tree2 = SumTree::default();
         tree2.extend(50..100, &());
 
         tree1.append(tree2, &());
@@ -877,7 +944,7 @@ mod tests {
             let mut rng = StdRng::seed_from_u64(seed);
 
             let rng = &mut rng;
-            let mut tree = SumTree::<u8>::new();
+            let mut tree = SumTree::<u8>::default();
             let count = rng.gen_range(0..10);
             if rng.gen() {
                 tree.extend(rng.sample_iter(distributions::Standard).take(count), &());
@@ -903,7 +970,7 @@ mod tests {
                 reference_items.splice(splice_start..splice_end, new_items.clone());
 
                 tree = {
-                    let mut cursor = tree.cursor::<Count>();
+                    let mut cursor = tree.cursor::<Count>(&());
                     let mut new_tree = cursor.slice(&Count(splice_start), Bias::Right, &());
                     if rng.gen() {
                         new_tree.extend(new_items, &());
@@ -918,12 +985,13 @@ mod tests {
                 assert_eq!(tree.items(&()), reference_items);
                 assert_eq!(
                     tree.iter().collect::<Vec<_>>(),
-                    tree.cursor::<()>().collect::<Vec<_>>()
+                    tree.cursor::<()>(&()).collect::<Vec<_>>()
                 );
 
                 log::info!("tree items: {:?}", tree.items(&()));
 
-                let mut filter_cursor = tree.filter::<_, Count>(|summary| summary.contains_even);
+                let mut filter_cursor =
+                    tree.filter::<_, Count>(&(), |summary| summary.contains_even);
                 let expected_filtered_items = tree
                     .items(&())
                     .into_iter()
@@ -964,7 +1032,7 @@ mod tests {
                 assert_eq!(filter_cursor.item(), None);
 
                 let mut before_start = false;
-                let mut cursor = tree.cursor::<Count>();
+                let mut cursor = tree.cursor::<Count>(&());
                 let start_pos = rng.gen_range(0..=reference_items.len());
                 cursor.seek(&Count(start_pos), Bias::Right, &());
                 let mut pos = rng.gen_range(start_pos..=reference_items.len());
@@ -1015,7 +1083,7 @@ mod tests {
                 let start_bias = if rng.gen() { Bias::Left } else { Bias::Right };
                 let end_bias = if rng.gen() { Bias::Left } else { Bias::Right };
 
-                let mut cursor = tree.cursor::<Count>();
+                let mut cursor = tree.cursor::<Count>(&());
                 cursor.seek(&Count(start), start_bias, &());
                 let slice = cursor.slice(&Count(end), end_bias, &());
 
@@ -1030,8 +1098,8 @@ mod tests {
     #[test]
     fn test_cursor() {
         // Empty tree
-        let tree = SumTree::<u8>::new();
-        let mut cursor = tree.cursor::<IntegersSummary>();
+        let tree = SumTree::<u8>::default();
+        let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
             cursor.slice(&Count(0), Bias::Right, &()).items(&()),
             Vec::<u8>::new()
@@ -1052,9 +1120,9 @@ mod tests {
         assert_eq!(cursor.start().sum, 0);
 
         // Single-element tree
-        let mut tree = SumTree::<u8>::new();
+        let mut tree = SumTree::<u8>::default();
         tree.extend(vec![1], &());
-        let mut cursor = tree.cursor::<IntegersSummary>();
+        let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
             cursor.slice(&Count(0), Bias::Right, &()).items(&()),
             Vec::<u8>::new()
@@ -1076,7 +1144,7 @@ mod tests {
         assert_eq!(cursor.next_item(), None);
         assert_eq!(cursor.start().sum, 0);
 
-        let mut cursor = tree.cursor::<IntegersSummary>();
+        let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(cursor.slice(&Count(1), Bias::Right, &()).items(&()), [1]);
         assert_eq!(cursor.item(), None);
         assert_eq!(cursor.prev_item(), Some(&1));
@@ -1096,9 +1164,9 @@ mod tests {
         assert_eq!(cursor.start().sum, 1);
 
         // Multiple-element tree
-        let mut tree = SumTree::new();
+        let mut tree = SumTree::default();
         tree.extend(vec![1, 2, 3, 4, 5, 6], &());
-        let mut cursor = tree.cursor::<IntegersSummary>();
+        let mut cursor = tree.cursor::<IntegersSummary>(&());
 
         assert_eq!(cursor.slice(&Count(2), Bias::Right, &()).items(&()), [1, 2]);
         assert_eq!(cursor.item(), Some(&3));
@@ -1179,7 +1247,7 @@ mod tests {
         assert_eq!(cursor.next_item(), Some(&2));
         assert_eq!(cursor.start().sum, 0);
 
-        let mut cursor = tree.cursor::<IntegersSummary>();
+        let mut cursor = tree.cursor::<IntegersSummary>(&());
         assert_eq!(
             cursor
                 .slice(&tree.extent::<Count>(&()), Bias::Right, &())
@@ -1227,7 +1295,7 @@ mod tests {
 
     #[test]
     fn test_edit() {
-        let mut tree = SumTree::<u8>::new();
+        let mut tree = SumTree::<u8>::default();
 
         let removed = tree.edit(vec![Edit::Insert(1), Edit::Insert(2), Edit::Insert(0)], &());
         assert_eq!(tree.items(&()), vec![0, 1, 2]);
@@ -1284,7 +1352,7 @@ mod tests {
     impl Item for u8 {
         type Summary = IntegersSummary;
 
-        fn summary(&self) -> Self::Summary {
+        fn summary(&self, _cx: &()) -> Self::Summary {
             IntegersSummary {
                 count: 1,
                 sum: *self as usize,
@@ -1305,6 +1373,10 @@ mod tests {
     impl Summary for IntegersSummary {
         type Context = ();
 
+        fn zero(_cx: &()) -> Self {
+            Default::default()
+        }
+
         fn add_summary(&mut self, other: &Self, _: &()) {
             self.count += other.count;
             self.sum += other.sum;
@@ -1314,12 +1386,20 @@ mod tests {
     }
 
     impl<'a> Dimension<'a, IntegersSummary> for u8 {
+        fn zero(_cx: &()) -> Self {
+            Default::default()
+        }
+
         fn add_summary(&mut self, summary: &IntegersSummary, _: &()) {
             *self = summary.max;
         }
     }
 
     impl<'a> Dimension<'a, IntegersSummary> for Count {
+        fn zero(_cx: &()) -> Self {
+            Default::default()
+        }
+
         fn add_summary(&mut self, summary: &IntegersSummary, _: &()) {
             self.0 += summary.count;
         }
@@ -1332,6 +1412,10 @@ mod tests {
     }
 
     impl<'a> Dimension<'a, IntegersSummary> for Sum {
+        fn zero(_cx: &()) -> Self {
+            Default::default()
+        }
+
         fn add_summary(&mut self, summary: &IntegersSummary, _: &()) {
             self.0 += summary.sum;
         }

@@ -1,7 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{http, AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{value::RawValue, Value};
@@ -83,7 +82,8 @@ fn get_max_tokens(name: &str) -> usize {
         "llama3" | "gemma2" | "gemma" | "codegemma" | "starcoder" | "aya" => 8192,
         "codellama" | "starcoder2" => 16384,
         "mistral" | "codestral" | "mixstral" | "llava" | "qwen2" | "dolphin-mixtral" => 32768,
-        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" | "yi-coder" => 128000,
+        "llama3.1" | "phi3" | "phi3.5" | "command-r" | "deepseek-coder-v2" | "yi-coder"
+        | "llama3.2" | "qwen2.5-coder" => 128000,
         _ => DEFAULT_TOKENS,
     }
     .clamp(1, MAXIMUM_TOKENS)
@@ -265,14 +265,14 @@ pub async fn stream_chat_completion(
     low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<ChatResponseDelta>>> {
     let uri = format!("{api_url}/api/chat");
-    let mut request_builder = HttpRequest::builder()
+    let mut request_builder = http::Request::builder()
         .method(Method::POST)
         .uri(uri)
         .header("Content-Type", "application/json");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
+        request_builder = request_builder.read_timeout(low_speed_timeout);
+    }
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
@@ -305,17 +305,13 @@ pub async fn stream_chat_completion(
 pub async fn get_models(
     client: &dyn HttpClient,
     api_url: &str,
-    low_speed_timeout: Option<Duration>,
+    _: Option<Duration>,
 ) -> Result<Vec<LocalModelListing>> {
     let uri = format!("{api_url}/api/tags");
-    let mut request_builder = HttpRequest::builder()
+    let request_builder = HttpRequest::builder()
         .method(Method::GET)
         .uri(uri)
         .header("Accept", "application/json");
-
-    if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
-    };
 
     let request = request_builder.body(AsyncBody::default())?;
 
@@ -352,17 +348,7 @@ pub async fn preload_model(client: Arc<dyn HttpClient>, api_url: &str, model: &s
             }),
         )?))?;
 
-    let mut response = match client.send(request).await {
-        Ok(response) => response,
-        Err(err) => {
-            // Be ok with a timeout during preload of the model
-            if err.is_timeout() {
-                return Ok(());
-            } else {
-                return Err(err.into());
-            }
-        }
-    };
+    let mut response = client.send(request).await?;
 
     if response.status().is_success() {
         Ok(())

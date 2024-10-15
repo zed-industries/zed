@@ -176,12 +176,11 @@ pub struct ProjectSearchBar {
 
 impl ProjectSearch {
     pub fn new(project: Model<Project>, cx: &mut ModelContext<Self>) -> Self {
-        let replica_id = project.read(cx).replica_id();
         let capability = project.read(cx).capability();
 
         Self {
             project,
-            excerpts: cx.new_model(|_| MultiBuffer::new(replica_id, capability)),
+            excerpts: cx.new_model(|_| MultiBuffer::new(capability)),
             pending_search: Default::default(),
             match_ranges: Default::default(),
             active_query: None,
@@ -264,54 +263,35 @@ impl ProjectSearch {
 
             let mut limit_reached = false;
             while let Some(results) = matches.next().await {
-                let tasks = results
-                    .into_iter()
-                    .map(|result| {
-                        let this = this.clone();
-
-                        cx.spawn(|mut cx| async move {
-                            match result {
-                                project::search::SearchResult::Buffer { buffer, ranges } => {
-                                    let mut match_ranges_rx =
-                                        this.update(&mut cx, |this, cx| {
-                                            this.excerpts.update(cx, |excerpts, cx| {
-                                                excerpts.stream_excerpts_with_context_lines(
-                                                    buffer,
-                                                    ranges,
-                                                    editor::DEFAULT_MULTIBUFFER_CONTEXT,
-                                                    cx,
-                                                )
-                                            })
-                                        })?;
-
-                                    let mut match_ranges = vec![];
-                                    while let Some(range) = match_ranges_rx.next().await {
-                                        match_ranges.push(range);
-                                    }
-                                    anyhow::Ok((match_ranges, false))
-                                }
-                                project::search::SearchResult::LimitReached => {
-                                    anyhow::Ok((vec![], true))
-                                }
-                            }
-                        })
-                    })
-                    .collect::<Vec<_>>();
-
-                let result_ranges = futures::future::join_all(tasks).await;
-                let mut combined_ranges = vec![];
-                for (ranges, result_limit_reached) in result_ranges.into_iter().flatten() {
-                    combined_ranges.extend(ranges);
-                    if result_limit_reached {
-                        limit_reached = result_limit_reached;
+                let mut buffers_with_ranges = Vec::with_capacity(results.len());
+                for result in results {
+                    match result {
+                        project::search::SearchResult::Buffer { buffer, ranges } => {
+                            buffers_with_ranges.push((buffer, ranges));
+                        }
+                        project::search::SearchResult::LimitReached => {
+                            limit_reached = true;
+                        }
                     }
                 }
+
+                let match_ranges = this
+                    .update(&mut cx, |this, cx| {
+                        this.excerpts.update(cx, |excerpts, cx| {
+                            excerpts.push_multiple_excerpts_with_context_lines(
+                                buffers_with_ranges,
+                                editor::DEFAULT_MULTIBUFFER_CONTEXT,
+                                cx,
+                            )
+                        })
+                    })
+                    .ok()?
+                    .await;
+
                 this.update(&mut cx, |this, cx| {
-                    if !combined_ranges.is_empty() {
-                        this.no_results = Some(false);
-                        this.match_ranges.extend(combined_ranges);
-                        cx.notify();
-                    }
+                    this.no_results = Some(false);
+                    this.match_ranges.extend(match_ranges);
+                    cx.notify();
                 })
                 .ok()?;
             }
@@ -1571,6 +1551,7 @@ impl Render for ProjectSearchBar {
             return div();
         };
         let search = search.read(cx);
+        let focus_handle = search.focus_handle(cx);
 
         let query_column = h_flex()
             .flex_1()
@@ -1591,18 +1572,21 @@ impl Render for ProjectSearchBar {
                 h_flex()
                     .child(SearchOptions::CASE_SENSITIVE.as_button(
                         self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
+                        focus_handle.clone(),
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }),
                     ))
                     .child(SearchOptions::WHOLE_WORD.as_button(
                         self.is_option_enabled(SearchOptions::WHOLE_WORD, cx),
+                        focus_handle.clone(),
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
                         }),
                     ))
                     .child(SearchOptions::REGEX.as_button(
                         self.is_option_enabled(SearchOptions::REGEX, cx),
+                        focus_handle.clone(),
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::REGEX, cx);
                         }),
@@ -1623,7 +1607,17 @@ impl Render for ProjectSearchBar {
                                 .map(|search| search.read(cx).filters_enabled)
                                 .unwrap_or_default(),
                         )
-                        .tooltip(|cx| Tooltip::for_action("Toggle filters", &ToggleFilters, cx)),
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                Tooltip::for_action_in(
+                                    "Toggle filters",
+                                    &ToggleFilters,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        }),
                 )
                 .child(
                     IconButton::new("project-search-toggle-replace", IconName::Replace)
@@ -1636,7 +1630,17 @@ impl Render for ProjectSearchBar {
                                 .map(|search| search.read(cx).replace_enabled)
                                 .unwrap_or_default(),
                         )
-                        .tooltip(|cx| Tooltip::for_action("Toggle replace", &ToggleReplace, cx)),
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                Tooltip::for_action_in(
+                                    "Toggle Replace",
+                                    &ToggleReplace,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        }),
                 ),
         );
 
@@ -1670,8 +1674,16 @@ impl Render for ProjectSearchBar {
                             })
                         }
                     }))
-                    .tooltip(|cx| {
-                        Tooltip::for_action("Go to previous match", &SelectPrevMatch, cx)
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Go to previous match",
+                                &SelectPrevMatch,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
                     }),
             )
             .child(
@@ -1684,7 +1696,17 @@ impl Render for ProjectSearchBar {
                             })
                         }
                     }))
-                    .tooltip(|cx| Tooltip::for_action("Go to next match", &SelectNextMatch, cx)),
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Go to next match",
+                                &SelectNextMatch,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    }),
             )
             .child(
                 h_flex()
@@ -1722,6 +1744,7 @@ impl Render for ProjectSearchBar {
                 .border_color(cx.theme().colors().border)
                 .rounded_lg()
                 .child(self.render_text_input(&search.replacement_editor, cx));
+            let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
             let replace_actions = h_flex().when(search.replace_enabled, |this| {
                 this.child(
                     IconButton::new("project-search-replace-next", IconName::ReplaceNext)
@@ -1732,7 +1755,17 @@ impl Render for ProjectSearchBar {
                                 })
                             }
                         }))
-                        .tooltip(|cx| Tooltip::for_action("Replace next match", &ReplaceNext, cx)),
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                Tooltip::for_action_in(
+                                    "Replace next match",
+                                    &ReplaceNext,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        }),
                 )
                 .child(
                     IconButton::new("project-search-replace-all", IconName::ReplaceAll)
@@ -1743,7 +1776,17 @@ impl Render for ProjectSearchBar {
                                 })
                             }
                         }))
-                        .tooltip(|cx| Tooltip::for_action("Replace all matches", &ReplaceAll, cx)),
+                        .tooltip({
+                            let focus_handle = focus_handle.clone();
+                            move |cx| {
+                                Tooltip::for_action_in(
+                                    "Replace all matches",
+                                    &ReplaceAll,
+                                    &focus_handle,
+                                    cx,
+                                )
+                            }
+                        }),
                 )
             });
             h_flex()
@@ -1810,6 +1853,7 @@ impl Render for ProjectSearchBar {
                         search
                             .search_options
                             .contains(SearchOptions::INCLUDE_IGNORED),
+                        focus_handle.clone(),
                         cx.listener(|this, _, cx| {
                             this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
                         }),

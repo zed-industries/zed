@@ -1,7 +1,7 @@
 use rope::Rope;
 use std::{iter, ops::Range};
 use sum_tree::SumTree;
-use text::{Anchor, BufferId, BufferSnapshot, OffsetRangeExt, Point};
+use text::{Anchor, BufferSnapshot, OffsetRangeExt, Point};
 
 pub use git2 as libgit;
 use libgit::{DiffLineType as GitDiffLineType, DiffOptions as GitOptions, Patch as GitPatch};
@@ -13,29 +13,30 @@ pub enum DiffHunkStatus {
     Removed,
 }
 
-/// A diff hunk, representing a range of consequent lines in a singleton buffer, associated with a generic range.
+/// A diff hunk resolved to rows in the buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DiffHunk<T> {
-    /// E.g. a range in multibuffer, that has an excerpt added, singleton buffer for which has this diff hunk.
-    /// Consider a singleton buffer with 10 lines, all of them are modified — so a corresponding diff hunk would have a range 0..10.
-    /// And a multibuffer with the excerpt of lines 2-6 from the singleton buffer.
-    /// If the multibuffer is searched for diff hunks, the associated range would be multibuffer rows, corresponding to rows 2..6 from the singleton buffer.
-    /// But the hunk range would be 0..10, same for any other excerpts from the same singleton buffer.
-    pub associated_range: Range<T>,
-    /// Singleton buffer ID this hunk belongs to.
-    pub buffer_id: BufferId,
-    /// A consequent range of lines in the singleton buffer, that were changed and produced this diff hunk.
+pub struct DiffHunk {
+    /// The buffer range, expressed in terms of rows.
+    pub row_range: Range<u32>,
+    /// The range in the buffer to which this hunk corresponds.
     pub buffer_range: Range<Anchor>,
-    /// Original singleton buffer text before the change, that was instead of the `buffer_range`.
+    /// The range in the buffer's diff base text to which this hunk corresponds.
     pub diff_base_byte_range: Range<usize>,
 }
 
-impl sum_tree::Item for DiffHunk<Anchor> {
+/// We store [`InternalDiffHunk`]s internally so we don't need to store the additional row range.
+#[derive(Debug, Clone)]
+struct InternalDiffHunk {
+    buffer_range: Range<Anchor>,
+    diff_base_byte_range: Range<usize>,
+}
+
+impl sum_tree::Item for InternalDiffHunk {
     type Summary = DiffHunkSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
-            buffer_range: self.associated_range.clone(),
+            buffer_range: self.buffer_range.clone(),
         }
     }
 }
@@ -47,6 +48,10 @@ pub struct DiffHunkSummary {
 
 impl sum_tree::Summary for DiffHunkSummary {
     type Context = text::BufferSnapshot;
+
+    fn zero(_cx: &Self::Context) -> Self {
+        Default::default()
+    }
 
     fn add_summary(&mut self, other: &Self, buffer: &Self::Context) {
         self.buffer_range.start = self
@@ -60,20 +65,14 @@ impl sum_tree::Summary for DiffHunkSummary {
 #[derive(Debug, Clone)]
 pub struct BufferDiff {
     last_buffer_version: Option<clock::Global>,
-    tree: SumTree<DiffHunk<Anchor>>,
-}
-
-impl Default for BufferDiff {
-    fn default() -> Self {
-        Self::new()
-    }
+    tree: SumTree<InternalDiffHunk>,
 }
 
 impl BufferDiff {
-    pub fn new() -> BufferDiff {
+    pub fn new(buffer: &BufferSnapshot) -> BufferDiff {
         BufferDiff {
             last_buffer_version: None,
-            tree: SumTree::new(),
+            tree: SumTree::new(buffer),
         }
     }
 
@@ -81,11 +80,12 @@ impl BufferDiff {
         self.tree.is_empty()
     }
 
+    #[cfg(any(test, feature = "test-support"))]
     pub fn hunks_in_row_range<'a>(
         &'a self,
         range: Range<u32>,
         buffer: &'a BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
         let start = buffer.anchor_before(Point::new(range.start, 0));
         let end = buffer.anchor_after(Point::new(range.end, 0));
 
@@ -96,12 +96,14 @@ impl BufferDiff {
         &'a self,
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
-            !before_start && !after_end
-        });
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let mut cursor = self
+            .tree
+            .filter::<_, DiffHunkSummary>(buffer, move |summary| {
+                let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+                let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+                !before_start && !after_end
+            });
 
         let anchor_iter = std::iter::from_fn(move || {
             cursor.next(buffer);
@@ -109,11 +111,8 @@ impl BufferDiff {
         })
         .flat_map(move |hunk| {
             [
-                (
-                    &hunk.associated_range.start,
-                    hunk.diff_base_byte_range.start,
-                ),
-                (&hunk.associated_range.end, hunk.diff_base_byte_range.end),
+                (&hunk.buffer_range.start, hunk.diff_base_byte_range.start),
+                (&hunk.buffer_range.end, hunk.diff_base_byte_range.end),
             ]
             .into_iter()
         });
@@ -129,10 +128,9 @@ impl BufferDiff {
             }
 
             Some(DiffHunk {
-                associated_range: start_point.row..end_point.row,
+                row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
                 buffer_range: buffer.anchor_before(start_point)..buffer.anchor_after(end_point),
-                buffer_id: buffer.remote_id(),
             })
         })
     }
@@ -141,18 +139,20 @@ impl BufferDiff {
         &'a self,
         range: Range<Anchor>,
         buffer: &'a BufferSnapshot,
-    ) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
-        let mut cursor = self.tree.filter::<_, DiffHunkSummary>(move |summary| {
-            let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
-            let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
-            !before_start && !after_end
-        });
+    ) -> impl 'a + Iterator<Item = DiffHunk> {
+        let mut cursor = self
+            .tree
+            .filter::<_, DiffHunkSummary>(buffer, move |summary| {
+                let before_start = summary.buffer_range.end.cmp(&range.start, buffer).is_lt();
+                let after_end = summary.buffer_range.start.cmp(&range.end, buffer).is_gt();
+                !before_start && !after_end
+            });
 
         std::iter::from_fn(move || {
             cursor.prev(buffer);
 
             let hunk = cursor.item()?;
-            let range = hunk.associated_range.to_point(buffer);
+            let range = hunk.buffer_range.to_point(buffer);
             let end_row = if range.end.column > 0 {
                 range.end.row + 1
             } else {
@@ -160,10 +160,9 @@ impl BufferDiff {
             };
 
             Some(DiffHunk {
-                associated_range: range.start.row..end_row,
+                row_range: range.start.row..end_row,
                 diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                 buffer_range: hunk.buffer_range.clone(),
-                buffer_id: hunk.buffer_id,
             })
         })
     }
@@ -171,11 +170,11 @@ impl BufferDiff {
     #[cfg(test)]
     fn clear(&mut self, buffer: &text::BufferSnapshot) {
         self.last_buffer_version = Some(buffer.version().clone());
-        self.tree = SumTree::new();
+        self.tree = SumTree::new(buffer);
     }
 
     pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        let mut tree = SumTree::new();
+        let mut tree = SumTree::new(buffer);
 
         let diff_base_text = diff_base.to_string();
         let buffer_text = buffer.as_rope().to_string();
@@ -194,7 +193,7 @@ impl BufferDiff {
     }
 
     #[cfg(test)]
-    fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk<u32>> {
+    fn hunks<'a>(&'a self, text: &'a BufferSnapshot) -> impl 'a + Iterator<Item = DiffHunk> {
         let start = text.anchor_before(Point::new(0, 0));
         let end = text.anchor_after(Point::new(u32::MAX, u32::MAX));
         self.hunks_intersecting_range(start..end, text)
@@ -227,7 +226,7 @@ impl BufferDiff {
         hunk_index: usize,
         buffer: &text::BufferSnapshot,
         buffer_row_divergence: &mut i64,
-    ) -> DiffHunk<Anchor> {
+    ) -> InternalDiffHunk {
         let line_item_count = patch.num_lines_in_hunk(hunk_index).unwrap();
         assert!(line_item_count > 0);
 
@@ -282,11 +281,9 @@ impl BufferDiff {
         let start = Point::new(buffer_row_range.start, 0);
         let end = Point::new(buffer_row_range.end, 0);
         let buffer_range = buffer.anchor_before(start)..buffer.anchor_before(end);
-        DiffHunk {
-            associated_range: buffer_range.clone(),
+        InternalDiffHunk {
             buffer_range,
             diff_base_byte_range,
-            buffer_id: buffer.remote_id(),
         }
     }
 }
@@ -300,17 +297,16 @@ pub fn assert_hunks<Iter>(
     diff_base: &str,
     expected_hunks: &[(Range<u32>, &str, &str)],
 ) where
-    Iter: Iterator<Item = DiffHunk<u32>>,
+    Iter: Iterator<Item = DiffHunk>,
 {
     let actual_hunks = diff_hunks
         .map(|hunk| {
             (
-                hunk.associated_range.clone(),
+                hunk.row_range.clone(),
                 &diff_base[hunk.diff_base_byte_range],
                 buffer
                     .text_for_range(
-                        Point::new(hunk.associated_range.start, 0)
-                            ..Point::new(hunk.associated_range.end, 0),
+                        Point::new(hunk.row_range.start, 0)..Point::new(hunk.row_range.end, 0),
                     )
                     .collect::<String>(),
             )
@@ -351,7 +347,7 @@ mod tests {
         .unindent();
 
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let mut diff = BufferDiff::new();
+        let mut diff = BufferDiff::new(&buffer);
         smol::block_on(diff.update(&diff_base_rope, &buffer));
         assert_hunks(
             diff.hunks(&buffer),
@@ -412,7 +408,7 @@ mod tests {
         .unindent();
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
-        let mut diff = BufferDiff::new();
+        let mut diff = BufferDiff::new(&buffer);
         smol::block_on(diff.update(&diff_base_rope, &buffer));
         assert_eq!(diff.hunks(&buffer).count(), 8);
 

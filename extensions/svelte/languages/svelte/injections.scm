@@ -1,74 +1,86 @@
-; injections.scm
-; --------------
+; ; injections.scm
+; ; --------------
 
-; match script tags without a lang tag
-((script_element
-  (start_tag
-    (attribute
-      (attribute_name) @_name)*)
-    (raw_text) @content)
-  (#not-eq? @_name "lang")
-  (#set! "language" "javascript"))
+; Match script tags with a lang attribute
+(script_element
+    (start_tag
+        (attribute
+            (attribute_name) @_attr_name
+            (#eq? @_attr_name "lang")
+            (quoted_attribute_value
+                (attribute_value) @language
+            )
+        )
+    )
+    (raw_text) @content
+)
 
-; match javascript
-((script_element
-  (start_tag
-    (attribute
-      (attribute_name) @_name
-      (quoted_attribute_value (attribute_value) @_value)))
-    (raw_text) @content)
-  (#eq? @_name "lang")
-  (#eq? @_value "js")
-  (#set! "language" "javascript"))
+; Match script tags without a lang attribute
+(script_element
+    (start_tag
+        (attribute
+            (attribute_name) @_attr_name
+        )*
+    )
+    (raw_text) @content
+    (#not-any-of? @_attr_name "lang")
+    (#set! language "javascript")
+)
 
-; match typescript
-((script_element
-  (start_tag
-    (attribute
-      (attribute_name) @_name
-      (quoted_attribute_value (attribute_value) @_value)))
-    (raw_text) @content)
-  (#eq? @_name "lang")
-  (#eq? @_value "ts")
-  (#set! "language" "typescript"))
+; Match the contents of the script's generics="T extends string" as typescript code
+;
+; Disabled for the time-being because tree-sitter is treating the generics
+; attribute as a top-level typescript statement, where `T extends string` is
+; not a valid top-level typescript statement.
+;
+; (script_element
+;     (start_tag
+;         (attribute
+;             (attribute_name) @_attr_name
+;             (#eq? @_attr_name "generics")
+;             (quoted_attribute_value
+;                 (attribute_value) @content
+;             )
+;         )
+;     )
+; 	(#set! language "typescript")
+; )
 
+
+; Mark everything as typescript because it's
+; a more generic superset of javascript
+; Not sure if it's possible to somehow refer to the
+; script's language attribute here.
+((svelte_raw_text) @content
+    (#set! "language" "ts")
+)
+
+; Match style tags with a lang attribute
 (style_element
-  (raw_text) @content
-  (#set! "language" "css"))
+    (start_tag
+        (attribute
+            (attribute_name) @_attr_name
+            (#eq? @_attr_name "lang")
+            (quoted_attribute_value
+                (attribute_value) @language
+            )
+        )
+    )
+    (raw_text) @content
+)
 
-; match style tags without a lang tag
-((style_element
-  (start_tag
-    (attribute
-      (attribute_name) @_name)*)
-    (raw_text) @content)
-  (#not-eq? @_name "lang")
-  (#set! "language" "css"))
+; Match style tags without a lang attribute
+(style_element
+    (start_tag
+        (attribute
+            (attribute_name) @_attr_name
+        )*
+    )
+    (raw_text) @content
+    (#not-any-of? @_attr_name "lang")
+    (#set! language "css")
+)
 
-; match css
-((style_element
-  (start_tag
-    (attribute
-      (attribute_name) @_name
-      (quoted_attribute_value (attribute_value) @_value)))
-    (raw_text) @content)
-  (#eq? @_name "lang")
-  (#eq? @_value "css")
-  (#set! "language" "css"))
 
-; match scss
-((style_element
-  (start_tag
-    (attribute
-      (attribute_name) @_name
-      (quoted_attribute_value (attribute_value) @_value)))
-    (raw_text) @content)
-  (#eq? @_name "lang")
-  (#eq? @_value "scss")
-  (#set! "language" "scss"))
-
-((raw_text_expr) @content
-  (#set! "language" "javascript"))
-
-((raw_text_each) @content
-  (#set! "language" "javascript"))
+; Downstream TODO: Style highlighting for `style:background="red"` and `style="background: red"` strings
+; Downstream TODO: Style component comments as markdown

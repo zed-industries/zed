@@ -1,6 +1,10 @@
 /* Globals */
 
 :root {
+  --color-scheme: light;
+
+  --logo-brightness: brightness(1);
+
   --sidebar-width: 300px;
   --sidebar-resize-indicator-width: 0px;
   --sidebar-resize-indicator-space: 2px;
@@ -22,20 +26,34 @@
   --border-light: hsl(220, 13%, 90%);
   --border-hover: hsl(220, 13%, 70%);
 
+  --media-bg: hsl(50, 25%, 92%);
+
   --sidebar-fg: hsl(0, 0%, 0%);
   --sidebar-non-existant: #aaaaaa;
-  --sidebar-active: hsl(219, 93%, 42%);
-  --sidebar-active-bg: hsl(219, 93%, 42%, 0.1);
-  --sidebar-spacer: #f4f4f4;
+  --sidebar-active: hsl(220, 93%, 42%);
+  --sidebar-active-bg: hsl(220, 93%, 42%, 0.1);
 
+  --divider: hsl(220, 93%, 42%, 0.15);
   --scrollbar: #8f8f8f;
 
   --icons: #747474;
   --icons-hover: #000000;
+  --icon-btn-bg-hover: hsl(220, 93%, 42%, 0.15);
 
-  --links: rgb(8, 76, 207);
+  --links: hsl(220, 92%, 42%);
+  --link-line-decoration: hsl(220, 93%, 42%, 0.2);
+  --link-line-decoration-hover: hsl(220, 93%, 42%, 0.5);
+
+  --full-contrast: #000;
 
   --inline-code-color: #301900;
+  --code-text: hsl(220, 13%, 10%);
+  --code-bg: hsl(220, 93%, 42%, 0.1);
+  --keybinding-bg: hsl(0, 0%, 94%);
+
+  --pre-bg: #fff;
+  --pre-border: hsla(220, 93%, 42%, 0.3);
+  --pre-shadow: hsla(220, 93%, 42%, 0.07);
 
   --theme-popup-bg: #fafafa;
   --theme-popup-border: #cccccc;
@@ -48,9 +66,9 @@
   --warning-bg: hsl(42, 100%, 60%, 0.1);
   --warning-icon: hsl(42, 100%, 30%);
 
-  --table-header-bg: hsl(219, 50%, 90%, 0.4);
-  --table-border-color: hsl(219, 93%, 42%, 0.15);
-  --table-alternate-bg: hsl(219, 10%, 90%, 0.4);
+  --table-header-bg: hsl(220, 50%, 90%, 0.4);
+  --table-border-color: hsl(220, 93%, 42%, 0.15);
+  --table-alternate-bg: hsl(220, 10%, 90%, 0.4);
 
   --searchbar-border-color: #aaa;
   --searchbar-bg: #fafafa;
@@ -61,5 +79,84 @@
   --searchresults-li-bg: #e4f2fe;
   --search-mark-bg: #a2cff5;
 
-  --color-scheme: light;
+  --download-btn-bg: hsl(220, 60%, 95%);
+  --download-btn-bg-hover: hsl(220, 60%, 93%);
+  --download-btn-color: hsl(220, 60%, 30%);
+  --download-btn-border: hsla(220, 60%, 40%, 0.2);
+  --download-btn-border-hover: hsla(220, 60%, 50%, 0.2);
+  --download-btn-shadow: hsla(220, 40%, 60%, 0.1);
+}
+
+.dark {
+  --color-scheme: dark;
+
+  --logo-brightness: brightness(2);
+
+  --bg: hsl(220, 13%, 10%);
+  --fg: hsl(220, 14%, 70%);
+  --title-color: hsl(220, 92%, 80%);
+
+  --border: hsl(220, 13%, 20%);
+  --border-light: hsl(220, 13%, 90%);
+  --border-hover: hsl(220, 13%, 40%);
+
+  --media-bg: hsl(220, 13%, 8%);
+
+  --sidebar-bg: hsl(220, 13%, 10%);
+  --sidebar-fg: hsl(220, 14%, 71%);
+  --sidebar-non-existant: #505254;
+  --sidebar-active: hsl(220, 92%, 75%);
+  --sidebar-active-bg: hsl(220, 93%, 42%, 0.25);
+
+  --divider: hsl(220, 13%, 20%);
+  --scrollbar: hsl(220, 13%, 30%);
+
+  --icons: hsl(220, 14%, 71%);
+  --icons-hover: hsl(220, 14%, 90%);
+  --icon-btn-bg-hover: hsl(220, 93%, 42%, 0.4);
+
+  --links: hsl(220, 93%, 75%);
+  --link-line-decoration: hsl(220, 92%, 80%, 0.4);
+  --link-line-decoration-hover: hsl(220, 92%, 80%, 0.8);
+  --full-contrast: #fff;
+
+  --inline-code-color: hsl(40, 100%, 80%);
+  --code-text: hsl(220, 13%, 95%);
+  --code-bg: hsl(220, 93%, 50%, 0.2);
+  --keybinding-bg: hsl(0, 0%, 12%);
+
+  --pre-bg: hsl(220, 13%, 5%);
+  --pre-border: hsla(220, 93%, 70%, 0.3);
+  --pre-shadow: hsla(220, 93%, 70%, 0.1);
+
+  --theme-popup-bg: hsl(220, 13%, 15%);
+  --theme-popup-border: hsl(220, 13%, 20%);
+  --theme-hover: hsl(220, 13%, 25%);
+
+  --quote-bg: hsl(220, 13%, 25%, 0.4);
+  --quote-border: hsl(220, 13%, 32%, 0.5);
+
+  --table-border-color: hsl(220, 13%, 30%, 0.5);
+  --table-header-bg: hsl(220, 13%, 25%, 0.5);
+  --table-alternate-bg: hsl(220, 13%, 20%, 0.4);
+
+  --warning-border: hsl(25, 100%, 85%, 0.2);
+  --warning-bg: hsl(42, 100%, 40%, 0.1);
+  --warning-icon: hsl(42, 100%, 80%);
+
+  --searchbar-border-color: hsl(220, 13%, 30%);
+  --searchbar-bg: hsl(220, 13%, 22%, 0.5);
+  --searchbar-fg: hsl(220, 14%, 71%);
+  --searchbar-shadow-color: hsl(220, 13%, 15%);
+  --searchresults-header-fg: hsl(220, 14%, 60%);
+  --searchresults-border-color: hsl(220, 13%, 30%);
+  --searchresults-li-bg: hsl(220, 13%, 25%);
+  --search-mark-bg: hsl(220, 93%, 60%);
+
+  --download-btn-bg: hsl(220, 90%, 90%, 0.1);
+  --download-btn-bg-hover: hsl(220, 90%, 50%, 0.2);
+  --download-btn-color: hsl(220, 90%, 95%);
+  --download-btn-border: hsla(220, 90%, 80%, 0.2);
+  --download-btn-border-hover: hsla(220, 90%, 80%, 0.4);
+  --download-btn-shadow: hsla(220, 50%, 60%, 0.15);
 }

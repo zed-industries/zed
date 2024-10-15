@@ -117,7 +117,7 @@ impl App {
         Self(AppContext::new(
             current_platform(false),
             Arc::new(()),
-            http_client::client(None, None),
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -128,7 +128,7 @@ impl App {
         Self(AppContext::new(
             current_platform(true),
             Arc::new(()),
-            http_client::client(None, None),
+            Arc::new(NullHttpClient),
         ))
     }
 
@@ -138,6 +138,14 @@ impl App {
         let asset_source = Arc::new(asset_source);
         context_lock.asset_source = asset_source.clone();
         context_lock.svg_renderer = SvgRenderer::new(asset_source);
+        drop(context_lock);
+        self
+    }
+
+    /// Set the http client for the application
+    pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
+        let mut context_lock = self.0.borrow_mut();
+        context_lock.http_client = http_client;
         drop(context_lock);
         self
     }
@@ -340,7 +348,7 @@ impl AppContext {
     }
 
     /// Gracefully quit the application via the platform's standard routine.
-    pub fn quit(&mut self) {
+    pub fn quit(&self) {
         self.platform.quit();
     }
 
@@ -996,11 +1004,7 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    pub(crate) fn new_view_observer(
-        &mut self,
-        key: TypeId,
-        value: NewViewListener,
-    ) -> Subscription {
+    pub(crate) fn new_view_observer(&self, key: TypeId, value: NewViewListener) -> Subscription {
         let (subscription, activate) = self.new_view_observers.insert(key, value);
         activate();
         subscription
@@ -1008,7 +1012,7 @@ impl AppContext {
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
-        &mut self,
+        &self,
         on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
     ) -> Subscription {
         self.new_view_observer(
@@ -1027,7 +1031,7 @@ impl AppContext {
     /// Observe the release of a model or view. The callback is invoked after the model or view
     /// has no more strong references but before it has been dropped.
     pub fn observe_release<E, T>(
-        &mut self,
+        &self,
         handle: &E,
         on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
@@ -1054,7 +1058,7 @@ impl AppContext {
         mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
         fn inner(
-            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
             handler: KeystrokeObserver,
         ) -> Subscription {
             let (subscription, activate) = keystroke_observers.insert((), handler);
@@ -1132,7 +1136,7 @@ impl AppContext {
     /// Register a callback to be invoked when the application is about to quit.
     /// It is not possible to cancel the quit event at this point.
     pub fn on_app_quit<Fut>(
-        &mut self,
+        &self,
         mut on_quit: impl FnMut(&mut AppContext) -> Fut + 'static,
     ) -> Subscription
     where
@@ -1178,7 +1182,7 @@ impl AppContext {
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
-    pub fn set_menus(&mut self, menus: Vec<Menu>) {
+    pub fn set_menus(&self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
@@ -1188,7 +1192,7 @@ impl AppContext {
     }
 
     /// Sets the right click menu for the app icon in the dock
-    pub fn set_dock_menu(&mut self, menus: Vec<MenuItem>) {
+    pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
         self.platform.set_dock_menu(menus, &self.keymap.borrow());
     }
 
@@ -1196,7 +1200,7 @@ impl AppContext {
     /// The list is usually shown on the application icon's context menu in the dock,
     /// and allows to open the recent files via that context menu.
     /// If the path is already in the list, it will be moved to the bottom of the list.
-    pub fn add_recent_document(&mut self, path: &Path) {
+    pub fn add_recent_document(&self, path: &Path) {
         self.platform.add_recent_document(path);
     }
 
@@ -1511,4 +1515,26 @@ pub struct KeystrokeEvent {
 
     /// The action that was resolved for the keystroke, if any
     pub action: Option<Box<dyn Action>>,
+}
+
+struct NullHttpClient;
+
+impl HttpClient for NullHttpClient {
+    fn send(
+        &self,
+        _req: http_client::Request<http_client::AsyncBody>,
+    ) -> futures::future::BoxFuture<
+        'static,
+        Result<http_client::Response<http_client::AsyncBody>, anyhow::Error>,
+    > {
+        async move { Err(anyhow!("No HttpClient available")) }.boxed()
+    }
+
+    fn proxy(&self) -> Option<&http_client::Uri> {
+        None
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<Self>()
+    }
 }

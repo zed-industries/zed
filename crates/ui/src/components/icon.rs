@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
@@ -46,7 +47,7 @@ impl RenderOnce for AnyIcon {
 /// The decoration for an icon.
 ///
 /// For example, this can show an indicator, an "x",
-/// or a diagonal strkethrough to indicate something is disabled.
+/// or a diagonal strikethrough to indicate something is disabled.
 #[derive(Debug, PartialEq, Copy, Clone, EnumIter)]
 pub enum IconDecoration {
     Strikethrough,
@@ -274,6 +275,7 @@ pub enum IconName {
     Tab,
     Terminal,
     Trash,
+    TrashAlt,
     TriangleRight,
     Undo,
     Unpin,

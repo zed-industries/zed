@@ -1,17 +1,17 @@
 use crate::{
-    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DisplayPoint, Editor, MultiBuffer,
-    RowExt,
+    display_map::ToDisplayPoint, AnchorRangeExt, Autoscroll, DiffRowHighlight, DisplayPoint,
+    Editor, MultiBuffer, RowExt,
 };
 use collections::BTreeMap;
 use futures::Future;
+use git::diff::DiffHunkStatus;
 use gpui::{
     AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, View, ViewContext,
-    VisualTestContext,
+    VisualTestContext, WindowHandle,
 };
-use indoc::indoc;
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
-use multi_buffer::ExcerptRange;
+use multi_buffer::{ExcerptRange, ToPoint};
 use parking_lot::RwLock;
 use project::{FakeFs, Project};
 use std::{
@@ -71,11 +71,21 @@ impl EditorTestContext {
         }
     }
 
+    pub async fn for_editor(editor: WindowHandle<Editor>, cx: &mut gpui::TestAppContext) -> Self {
+        let editor_view = editor.root_view(cx).unwrap();
+        Self {
+            cx: VisualTestContext::from_window(*editor.deref(), cx),
+            window: editor.into(),
+            editor: editor_view,
+            assertion_cx: AssertionContextManager::new(),
+        }
+    }
+
     pub fn new_multibuffer<const COUNT: usize>(
         cx: &mut gpui::TestAppContext,
         excerpts: [&str; COUNT],
     ) -> EditorTestContext {
-        let mut multibuffer = MultiBuffer::new(0, language::Capability::ReadWrite);
+        let mut multibuffer = MultiBuffer::new(language::Capability::ReadWrite);
         let buffer = cx.new_model(|cx| {
             for excerpt in excerpts.into_iter() {
                 let (text, ranges) = marked_text_ranges(excerpt, false);
@@ -297,19 +307,85 @@ impl EditorTestContext {
         state_context
     }
 
+    #[track_caller]
+    pub fn assert_diff_hunks(&mut self, expected_diff: String) {
+        // Normalize the expected diff. If it has no diff markers, then insert blank markers
+        // before each line. Strip any whitespace-only lines.
+        let has_diff_markers = expected_diff
+            .lines()
+            .any(|line| line.starts_with("+") || line.starts_with("-"));
+        let expected_diff_text = expected_diff
+            .split('\n')
+            .map(|line| {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    String::new()
+                } else if has_diff_markers {
+                    line.to_string()
+                } else {
+                    format!("  {line}")
+                }
+            })
+            .join("\n");
+
+        // Read the actual diff from the editor's row highlights and block
+        // decorations.
+        let actual_diff = self.editor.update(&mut self.cx, |editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let text = editor.text(cx);
+            let insertions = editor
+                .highlighted_rows::<DiffRowHighlight>()
+                .map(|(range, _)| {
+                    let start = range.start.to_point(&snapshot.buffer_snapshot);
+                    let end = range.end.to_point(&snapshot.buffer_snapshot);
+                    start.row..end.row
+                })
+                .collect::<Vec<_>>();
+            let deletions = editor
+                .expanded_hunks
+                .hunks
+                .iter()
+                .filter_map(|hunk| {
+                    if hunk.blocks.is_empty() {
+                        return None;
+                    }
+                    let row = hunk
+                        .hunk_range
+                        .start
+                        .to_point(&snapshot.buffer_snapshot)
+                        .row;
+                    let (_, buffer, _) = editor
+                        .buffer()
+                        .read(cx)
+                        .excerpt_containing(hunk.hunk_range.start, cx)
+                        .expect("no excerpt for expanded buffer's hunk start");
+                    let deleted_text = buffer
+                        .read(cx)
+                        .diff_base()
+                        .expect("should have a diff base for expanded hunk")
+                        .slice(hunk.diff_base_byte_range.clone())
+                        .to_string();
+                    if let DiffHunkStatus::Modified | DiffHunkStatus::Removed = hunk.status {
+                        Some((row, deleted_text))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            format_diff(text, deletions, insertions)
+        });
+
+        pretty_assertions::assert_eq!(actual_diff, expected_diff_text, "unexpected diff state");
+    }
+
     /// Make an assertion about the editor's text and the ranges and directions
     /// of its selections using a string containing embedded range markers.
     ///
     /// See the `util::test::marked_text_ranges` function for more information.
     #[track_caller]
     pub fn assert_editor_state(&mut self, marked_text: &str) {
-        let (unmarked_text, expected_selections) = marked_text_ranges(marked_text, true);
-        let buffer_text = self.buffer_text();
-
-        if buffer_text != unmarked_text {
-            panic!("Unmarked text doesn't match buffer text\nBuffer text: {buffer_text:?}\nUnmarked text: {unmarked_text:?}\nRaw buffer text\n{buffer_text}\nRaw unmarked text\n{unmarked_text}");
-        }
-
+        let (expected_text, expected_selections) = marked_text_ranges(marked_text, true);
+        pretty_assertions::assert_eq!(self.buffer_text(), expected_text, "unexpected buffer text");
         self.assert_selections(expected_selections, marked_text.to_string())
     }
 
@@ -382,23 +458,54 @@ impl EditorTestContext {
         let actual_marked_text =
             generate_marked_text(&self.buffer_text(), &actual_selections, true);
         if expected_selections != actual_selections {
-            panic!(
-                indoc! {"
-
-                {}Editor has unexpected selections.
-
-                Expected selections:
-                {}
-
-                Actual selections:
-                {}
-            "},
-                self.assertion_context(),
-                expected_marked_text,
+            pretty_assertions::assert_eq!(
                 actual_marked_text,
+                expected_marked_text,
+                "{}Editor has unexpected selections",
+                self.assertion_context(),
             );
         }
     }
+}
+
+fn format_diff(
+    text: String,
+    actual_deletions: Vec<(u32, String)>,
+    actual_insertions: Vec<Range<u32>>,
+) -> String {
+    let mut diff = String::new();
+    for (row, line) in text.split('\n').enumerate() {
+        let row = row as u32;
+        if row > 0 {
+            diff.push('\n');
+        }
+        if let Some(text) = actual_deletions
+            .iter()
+            .find_map(|(deletion_row, deleted_text)| {
+                if *deletion_row == row {
+                    Some(deleted_text)
+                } else {
+                    None
+                }
+            })
+        {
+            for line in text.lines() {
+                diff.push('-');
+                if !line.is_empty() {
+                    diff.push(' ');
+                    diff.push_str(line);
+                }
+                diff.push('\n');
+            }
+        }
+        let marker = if actual_insertions.iter().any(|range| range.contains(&row)) {
+            "+ "
+        } else {
+            "  "
+        };
+        diff.push_str(format!("{marker}{line}").trim_end());
+    }
+    diff
 }
 
 impl Deref for EditorTestContext {

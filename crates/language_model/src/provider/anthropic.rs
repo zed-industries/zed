@@ -51,6 +51,7 @@ pub struct AvailableModel {
     /// Configuration of Anthropic's caching API.
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
+    pub default_temperature: Option<f32>,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -200,6 +201,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                         }
                     }),
                     max_output_tokens: model.max_output_tokens,
+                    default_temperature: model.default_temperature,
                 },
             );
         }
@@ -375,8 +377,11 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request =
-            request.into_anthropic(self.model.id().into(), self.model.max_output_tokens());
+        let request = request.into_anthropic(
+            self.model.id().into(),
+            self.model.default_temperature(),
+            self.model.max_output_tokens(),
+        );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| anyhow!(err))?;
@@ -405,6 +410,7 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let mut request = request.into_anthropic(
             self.model.tool_model_id().into(),
+            self.model.default_temperature(),
             self.model.max_output_tokens(),
         );
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
