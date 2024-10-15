@@ -3453,17 +3453,23 @@ impl ContextEditor {
         id: BlockId,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
+        let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
+        let (excerpt_id, _buffer_id, _) = snapshot.buffer_snapshot.as_singleton().unwrap();
+        let excerpt_id = *excerpt_id;
+        let anchor = snapshot
+            .buffer_snapshot
+            .anchor_in_excerpt(excerpt_id, range.start)
+            .unwrap();
 
+        if !snapshot.intersects_fold(anchor) {
+            return None;
+        }
+
+        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
         let paths = patch
             .paths()
             .map(|p| SharedString::from(p.to_string()))
             .collect::<BTreeSet<_>>();
-        let editor = self.editor.read(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        let (excerpt_id, _buffer_id, _) = buffer.as_singleton().unwrap();
-        let excerpt_id = *excerpt_id;
-        let anchor = buffer.anchor_in_excerpt(excerpt_id, range.start).unwrap();
 
         Some(
             v_flex()
