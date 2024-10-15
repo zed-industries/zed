@@ -2,7 +2,9 @@ use crate::tests::TestServer;
 use call::ActiveCall;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
+use http_client::BlockedHttpClient;
 use language::language_settings::all_language_settings;
+use node_runtime::NodeRuntime;
 use project::ProjectPath;
 use remote::SshRemoteClient;
 use remote_server::HeadlessProject;
@@ -48,8 +50,11 @@ async fn test_sharing_an_ssh_remote_project(
 
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
-    let _headless_project =
-        server_cx.new_model(|cx| HeadlessProject::new(server_ssh, remote_fs.clone(), cx));
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let _headless_project = server_cx.new_model(|cx| {
+        HeadlessProject::new(server_ssh, remote_fs.clone(), remote_http_client, node, cx)
+    });
 
     let (project_a, worktree_id) = client_a
         .build_ssh_project("/code/project1", client_ssh, cx_a)
