@@ -4,6 +4,7 @@ use fs::RealFs;
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use gpui::{AppContext, Context as _};
+use paths::logs_dir;
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -346,7 +347,7 @@ impl ServerPaths {
         let stdin_socket = project_dir.join("stdin.sock");
         let stdout_socket = project_dir.join("stdout.sock");
         let stderr_socket = project_dir.join("stderr.sock");
-        let log_file = project_dir.join("server.log");
+        let log_file = logs_dir().join(identifier).join("server.log");
 
         Ok(Self {
             pid_file,
