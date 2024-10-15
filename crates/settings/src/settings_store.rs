@@ -110,6 +110,8 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
+    /// The server's settings.
+    pub server: Option<&'a T>,
     /// The project settings, ordered from least specific to most specific.
     pub project: &'a [&'a T],
 }
@@ -126,6 +128,7 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .into_iter()
             .chain(self.user)
             .chain(self.release_channel)
+            .chain(self.server)
             .chain(self.project.iter().copied())
     }
 
@@ -162,6 +165,7 @@ pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
+    raw_server_settings: serde_json::Value,
     raw_extension_settings: serde_json::Value,
     raw_local_settings:
         BTreeMap<(WorktreeId, Arc<Path>), HashMap<LocalSettingsKind, serde_json::Value>>,
@@ -219,6 +223,7 @@ impl SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
+            raw_server_settings: serde_json::json!({}),
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
             tab_size_callback: Default::default(),
@@ -269,6 +274,10 @@ impl SettingsStore {
                     .log_err();
             }
 
+            let server_value = setting_value
+                .deserialize_setting(&self.raw_server_settings)
+                .log_err();
+
             let extension_value = setting_value
                 .deserialize_setting(&self.raw_extension_settings)
                 .log_err();
@@ -277,9 +286,10 @@ impl SettingsStore {
                 .load_setting(
                     SettingsSources {
                         default: &default_settings,
-                        release_channel: release_channel_value.as_ref(),
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
+                        release_channel: release_channel_value.as_ref(),
+                        server: server_value.as_ref(),
                         project: &[],
                     },
                     cx,
@@ -522,6 +532,23 @@ impl SettingsStore {
         Ok(())
     }
 
+    pub fn set_server_settings(
+        &mut self,
+        server_settings_content: &str,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        let settings: serde_json::Value = if server_settings_content.is_empty() {
+            parse_json_with_comments("{}")?
+        } else {
+            parse_json_with_comments(server_settings_content)?
+        };
+
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_server_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
+    }
+
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
@@ -731,6 +758,16 @@ impl SettingsStore {
                 }
             };
 
+            let server_settings = match setting_value.deserialize_setting(&self.raw_server_settings)
+            {
+                Ok(settings) => Some(settings),
+                Err(error) => {
+                    return Err(anyhow!(InvalidSettingsError::ServerSettings {
+                        message: error.to_string()
+                    }));
+                }
+            };
+
             let mut release_channel_settings = None;
             if let Some(release_settings) = &self
                 .raw_user_settings
@@ -753,6 +790,7 @@ impl SettingsStore {
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
+                            server: server_settings.as_ref(),
                             project: &[],
                         },
                         cx,
@@ -804,6 +842,7 @@ impl SettingsStore {
                                         extensions: extension_settings.as_ref(),
                                         user: user_settings.as_ref(),
                                         release_channel: release_channel_settings.as_ref(),
+                                        server: server_settings.as_ref(),
                                         project: &project_settings_stack.iter().collect::<Vec<_>>(),
                                     },
                                     cx,
@@ -835,13 +874,15 @@ impl SettingsStore {
 pub enum InvalidSettingsError {
     LocalSettings { path: PathBuf, message: String },
     UserSettings { message: String },
+    ServerSettings { message: String },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             InvalidSettingsError::LocalSettings { message, .. }
-            | InvalidSettingsError::UserSettings { message } => {
+            | InvalidSettingsError::UserSettings { message }
+            | InvalidSettingsError::ServerSettings { message } => {
                 write!(f, "{}", message)
             }
         }
@@ -892,6 +933,9 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 release_channel: values
                     .release_channel
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                server: values
+                    .server
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 project: values
                     .project

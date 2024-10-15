@@ -13,10 +13,10 @@ use remote::{
 use rpc::proto::Envelope;
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
+
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::{
-    env,
     io::Write,
     mem,
     path::{Path, PathBuf},
@@ -318,6 +318,11 @@ pub fn execute_run(
             HeadlessProject::new(session, Arc::new(RealFs::new(Default::default(), None)), cx)
         });
 
+        cx.on_app_quit(|_cx| async {
+            log::info!("remote server is gracefully shutting down");
+        })
+        .detach();
+
         mem::forget(project);
     });
     log::info!("gpui app is shut down. quitting.");
@@ -363,6 +368,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     let server_pid = check_pid_file(&server_paths.pid_file)?;
     let server_running = server_pid.is_some();
+    let mut child_task = None;
     if is_reconnecting {
         if !server_running {
             log::error!("attempted to reconnect, but no server running");
@@ -374,8 +380,8 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
             kill_running_server(pid, &server_paths)?;
         }
 
-        spawn_server(&server_paths)?;
-    }
+        child_task = Some(spawn_server(&server_paths)?);
+    };
 
     let stdin_task = smol::spawn(async move {
         let stdin = Async::new(std::io::stdin())?;
@@ -409,6 +415,18 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         }
     });
 
+    if let Some(mut child) = child_task {
+        smol::spawn(async move {
+            log::info!(
+                "Server process finished with exit code {:?}",
+                child.status().await
+            )
+        })
+        .detach();
+    } else {
+        log::info!("Reconnected to existing server process, no child process to report.")
+    }
+
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
             result = stdin_task.fuse() => result,
@@ -427,8 +445,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 }
 
 fn create_state_directory(identifier: &str) -> Result<PathBuf> {
-    let server_dir = paths::remote_server_state_dir()
-        .join(identifier);
+    let server_dir = paths::remote_server_state_dir().join(identifier);
 
     std::fs::create_dir_all(&server_dir)?;
 
@@ -454,7 +471,7 @@ fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
     Ok(())
 }
 
-fn spawn_server(paths: &ServerPaths) -> Result<()> {
+fn spawn_server(paths: &ServerPaths) -> Result<smol::process::Child> {
     if paths.stdin_socket.exists() {
         std::fs::remove_file(&paths.stdin_socket)?;
     }
@@ -466,7 +483,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     }
 
     let binary_name = std::env::current_exe()?;
-    let server_process = std::process::Command::new(binary_name)
+    let server_process = smol::process::Command::new(binary_name)
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -497,7 +514,8 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         "server ready to accept connections. total time waited: {:?}",
         total_time_waited
     );
-    Ok(())
+
+    Ok(server_process)
 }
 
 fn check_pid_file(path: &Path) -> Result<Option<u32>> {
