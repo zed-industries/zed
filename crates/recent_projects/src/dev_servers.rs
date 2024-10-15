@@ -446,6 +446,7 @@ impl DevServerProjects {
         (index, connection): (usize, SshConnection),
         cx: &mut ViewContext<Self>,
     ) {
+        self.focusable_items.reset_selection();
         self.mode = Mode::ViewServerOptions(index, connection);
         cx.notify();
     }
