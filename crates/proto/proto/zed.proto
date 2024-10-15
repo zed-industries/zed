@@ -304,7 +304,10 @@ message Envelope {
         InstallExtension install_extension = 287;
 
         GetStagedText get_staged_text = 288;
-        GetStagedTextResponse get_staged_text_response = 289; // current max
+        GetStagedTextResponse get_staged_text_response = 289;
+
+        GetDocumentDiagnostics get_document_diagnostics = 290;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 291; // current max
     }
 
     reserved 87 to 88;
@@ -2581,4 +2584,15 @@ message SyncExtensionsResponse {
 message InstallExtension {
     Extension extension = 1;
     string tmp_dir = 2;
+}
+
+message GetDocumentDiagnostics {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentDiagnosticsResponse {
+    string result_id = 1;
+    repeated Diagnostic diagnostics = 2;
 }

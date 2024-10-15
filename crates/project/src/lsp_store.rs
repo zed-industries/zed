@@ -1764,6 +1764,7 @@ impl LspStore {
 
     pub(crate) fn linked_edit(
         &self,
+
         buffer: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
@@ -2971,10 +2972,10 @@ impl LspStore {
 
     pub fn on_buffer_edited(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer_handle: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let buffer = buffer.read(cx);
+        let buffer = buffer_handle.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
         let uri = lsp::Url::from_file_path(abs_path).unwrap();
@@ -3063,6 +3064,15 @@ impl LspStore {
                     },
                 )
                 .log_err();
+
+            let buffer_handle = buffer_handle.clone();
+            cx.spawn(move |this, mut cx| async move {
+                this.update(&mut cx, |this, cx| {
+                    this.pull_diagnostic(language_server.server_id(), buffer_handle, cx);
+                })
+                .log_err();
+            })
+            .detach();
         }
 
         None
@@ -3100,6 +3110,7 @@ impl LspStore {
 
         for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), cx) {
             self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
+            self.pull_diagnostic(language_server_id, buffer.clone(), cx);
         }
 
         None
@@ -3184,6 +3195,52 @@ impl LspStore {
             drop(settings_observation);
             anyhow::Ok(())
         })
+    }
+
+    fn pull_diagnostic(
+        &mut self,
+        language_server_id: LanguageServerId,
+        buffer_handle: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        let buffer = buffer_handle.read(cx);
+        let file = File::from_dyn(buffer.file())?;
+        let abs_path = file.as_local()?.abs_path(cx);
+        let uri = lsp::Url::from_file_path(abs_path).log_err()?;
+
+        const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
+
+        let lsp_request_task = self.request_lsp(
+            buffer_handle,
+            LanguageServerToQuery::Other(language_server_id),
+            GetDocumentDiagnostics {},
+            cx,
+        );
+
+        cx.spawn(move |this, mut cx| async move {
+            cx.background_executor()
+                .timer(PULL_DIAGNOSTICS_DEBOUNCE)
+                .await;
+
+            let diagnostics = lsp_request_task.await;
+            this.update(&mut cx, |this, cx| {
+                this.update_diagnostics(
+                    language_server_id,
+                    lsp::PublishDiagnosticsParams {
+                        uri: uri.clone(),
+                        diagnostics: diagnostics.unwrap(),
+                        version: None,
+                    },
+                    &[],
+                    cx,
+                )
+                .log_err()
+            })
+            .ok();
+        })
+        .detach();
+
+        None
     }
 
     fn primary_language_server_for_buffer<'a>(
