@@ -46,9 +46,8 @@ pub trait PathExt {
                 .ok_or_else(|| anyhow!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
-    /// TODO:
+
     fn sanitized_pathbuf(&self) -> anyhow::Result<SanitizedPathBuf>;
-    /// TODO:
     fn sanitized_pathbuf_string(&self) -> anyhow::Result<String>;
 }
 
@@ -99,6 +98,14 @@ impl<T: AsRef<Path>> PathExt for T {
         self.as_ref().file_name()?.to_str()?.split('.').last()
     }
 
+    /// Returns a `SanitizedPathBuf` with a cleaned-up version of the current path,
+    /// or an error if the path is empty on Windows.
+    ///
+    /// On Windows, this method removes the `\\?\` prefix from the path. On non-Windows
+    /// platforms, it directly converts the path reference into a `PathBuf`.
+    ///
+    /// Generally, this method should be used when the path is to be displayed to the user,
+    /// and the path should be returned from `canonicalize`.
     fn sanitized_pathbuf(&self) -> anyhow::Result<SanitizedPathBuf> {
         #[cfg(target_os = "windows")]
         return Ok(SanitizedPathBuf(PathBuf::from(
@@ -108,6 +115,14 @@ impl<T: AsRef<Path>> PathExt for T {
         return Ok(SanitizedPathBuf(self.as_ref().to_path_buf()));
     }
 
+    /// Returns a sanitized string representation of the current path, or an error
+    /// if the path is empty on Windows.
+    ///
+    /// On Windows, this method removes the `\\?\` prefix. On other platforms,
+    /// it simply converts the path to a string.
+    ///
+    /// Generally, this method should be used when the path is to be displayed to the user,
+    /// and the path should be returned from `canonicalize`.
     fn sanitized_pathbuf_string(&self) -> anyhow::Result<String> {
         let path_string = self.as_ref().to_string_lossy();
         #[cfg(target_os = "windows")]
