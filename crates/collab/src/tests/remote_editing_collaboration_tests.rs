@@ -53,6 +53,7 @@ async fn test_sharing_an_ssh_remote_project(
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
     let _headless_project = server_cx.new_model(|cx| {
+        client::init_settings(cx);
         HeadlessProject::new(server_ssh, remote_fs.clone(), remote_http_client, node, cx)
     });
 

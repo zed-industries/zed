@@ -17,7 +17,7 @@ use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
-use settings::InvalidSettingsError;
+
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -52,7 +52,6 @@ impl HeadlessProject {
         node_runtime: NodeRuntime,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        client::init_settings(cx);
         let mut languages = LanguageRegistry::new(cx.background_executor().clone());
         languages.set_language_server_download_dir(paths::languages_dir().clone());
         let languages = Arc::new(languages);
@@ -125,37 +124,6 @@ impl HeadlessProject {
                     cx.subscribe(buffer, Self::on_buffer_event).detach();
                 }
                 _ => {}
-            },
-        )
-        .detach();
-
-        cx.subscribe(
-            &settings_observer,
-            |this, _settings_observer, event, _cx| match event {
-                project::project_settings::SettingsObserverEvent::LocalSettingsUpdated(result) => {
-                    log::info!("local settings updated");
-                    match result {
-                        Ok(_) => this
-                            .session
-                            .send(proto::HideToast {
-                                project_id: SSH_PROJECT_ID,
-                                notification_id: "project-settings-error".into(),
-                            })
-                            .log_err(),
-                        Err(InvalidSettingsError::LocalSettings { message, path }) => this
-                            .session
-                            .send(proto::Toast {
-                                project_id: SSH_PROJECT_ID,
-                                notification_id: "project-settings-error".into(),
-                                message: format!(
-                                    "Failed to set project settings ({:?}): {}",
-                                    path, message
-                                ),
-                            })
-                            .log_err(),
-                        Err(_) => None,
-                    };
-                }
             },
         )
         .detach();

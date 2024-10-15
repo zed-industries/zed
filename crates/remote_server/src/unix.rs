@@ -322,6 +322,8 @@ pub fn execute_run(
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
 
+        client::init_settings(cx);
+
         let project = cx.new_model(|cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
