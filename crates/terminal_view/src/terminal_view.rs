@@ -27,10 +27,7 @@ use terminal::{
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{
-    paths::{PathExt, PathWithPosition},
-    ResultExt,
-};
+use util::{paths::PathWithPosition, ResultExt};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
     notifications::NotifyResultExt,
@@ -802,12 +799,12 @@ fn possible_open_paths_metadata(
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
         let mut fetch_metadata_tasks = potential_paths
-            .iter()
+            .into_iter()
             .map(|potential_path| async {
-                let metadata = fs.metadata(potential_path).await.ok().flatten();
+                let metadata = fs.metadata(&potential_path).await.ok().flatten();
                 (
                     PathWithPosition {
-                        path: potential_path.sanitized_pathbuf_with_fallback(),
+                        path: potential_path.into(),
                         row,
                         column,
                     },
