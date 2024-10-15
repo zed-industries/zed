@@ -86,8 +86,13 @@ impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
             prepaint_fn: Box::new(move |mut visible_range, bounds, item_height, cx| {
                 visible_range.end += 1;
                 let visible_entries = &(compute_fn)(visible_range.clone(), cx);
-                let indent_guides =
-                    compute_indent_guides(&visible_entries, visible_range.start, true);
+                // Check if we have an additional indent that is outside of the visible range
+                let includes_trailing_indent = visible_entries.len() == visible_range.len();
+                let indent_guides = compute_indent_guides(
+                    &visible_entries,
+                    visible_range.start,
+                    includes_trailing_indent,
+                );
 
                 let mut indent_guides = if let Some(ref custom_render) = render_fn {
                     let params = RenderIndentGuideParams {
