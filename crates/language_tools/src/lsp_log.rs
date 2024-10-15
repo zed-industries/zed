@@ -110,15 +110,34 @@ struct LanguageServerState {
     io_logs_subscription: Option<lsp::Subscription>,
 }
 
+#[derive(PartialEq, Clone)]
 enum LanguageServerKind {
     Local { project: WeakModel<Project> },
+    Remote { project: WeakModel<Project> },
     Global,
+}
+
+impl LanguageServerKind {
+    fn is_remote(&self) -> bool {
+        matches!(self, LanguageServerKind::Remote { .. })
+    }
+}
+
+impl std::fmt::Debug for LanguageServerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LanguageServerKind::Local { .. } => write!(f, "LanguageServerKind::Local"),
+            LanguageServerKind::Remote { .. } => write!(f, "LanguageServerKind::Remote"),
+            LanguageServerKind::Global => write!(f, "LanguageServerKind::Global"),
+        }
+    }
 }
 
 impl LanguageServerKind {
     fn project(&self) -> Option<&WeakModel<Project>> {
         match self {
             Self::Local { project } => Some(project),
+            Self::Remote { project } => Some(project),
             Self::Global { .. } => None,
         }
     }
@@ -177,6 +196,7 @@ pub(crate) struct LogMenuItem {
     pub rpc_trace_enabled: bool,
     pub selected_entry: LogKind,
     pub trace_level: lsp::TraceValue,
+    server_kind: LanguageServerKind,
 }
 
 actions!(debug, [OpenLanguageServerLogs]);
@@ -282,43 +302,44 @@ impl LogStore {
                         this.language_servers
                             .retain(|_, state| state.kind.project() != Some(&weak_project));
                     }),
-                    cx.subscribe(project, |this, project, event, cx| match event {
-                        project::Event::LanguageServerAdded(id, name, worktree_id) => {
-                            this.add_language_server(
-                                LanguageServerKind::Local {
-                                    project: project.downgrade(),
-                                },
-                                *id,
-                                Some(name.clone()),
-                                *worktree_id,
-                                project.read(cx).language_server_for_id(*id, cx),
-                                cx,
-                            );
-                        }
-                        project::Event::LanguageServerRemoved(id) => {
-                            this.remove_language_server(*id, cx);
-                        }
-                        project::Event::LanguageServerLog(id, typ, message) => {
-                            this.add_language_server(
-                                LanguageServerKind::Local {
-                                    project: project.downgrade(),
-                                },
-                                *id,
-                                None,
-                                None,
-                                None,
-                                cx,
-                            );
-                            match typ {
-                                project::LanguageServerLogType::Log(typ) => {
-                                    this.add_language_server_log(*id, *typ, message, cx);
-                                }
-                                project::LanguageServerLogType::Trace(_) => {
-                                    this.add_language_server_trace(*id, message, cx);
+                    cx.subscribe(project, |this, project, event, cx| {
+                        let server_kind = if project.read(cx).is_via_ssh() {
+                            LanguageServerKind::Remote {
+                                project: project.downgrade(),
+                            }
+                        } else {
+                            LanguageServerKind::Local {
+                                project: project.downgrade(),
+                            }
+                        };
+
+                        match event {
+                            project::Event::LanguageServerAdded(id, name, worktree_id) => {
+                                this.add_language_server(
+                                    server_kind,
+                                    *id,
+                                    Some(name.clone()),
+                                    *worktree_id,
+                                    project.read(cx).language_server_for_id(*id, cx),
+                                    cx,
+                                );
+                            }
+                            project::Event::LanguageServerRemoved(id) => {
+                                this.remove_language_server(*id, cx);
+                            }
+                            project::Event::LanguageServerLog(id, typ, message) => {
+                                this.add_language_server(server_kind, *id, None, None, None, cx);
+                                match typ {
+                                    project::LanguageServerLogType::Log(typ) => {
+                                        this.add_language_server_log(*id, *typ, message, cx);
+                                    }
+                                    project::LanguageServerLogType::Trace(_) => {
+                                        this.add_language_server_trace(*id, message, cx);
+                                    }
                                 }
                             }
+                            _ => {}
                         }
-                        _ => {}
                     }),
                 ],
             },
@@ -463,7 +484,7 @@ impl LogStore {
         self.language_servers
             .iter()
             .filter_map(move |(id, state)| match &state.kind {
-                LanguageServerKind::Local { project } => {
+                LanguageServerKind::Local { project } | LanguageServerKind::Remote { project } => {
                     if project == lookup_project {
                         Some(*id)
                     } else {
@@ -683,7 +704,7 @@ impl LspLogView {
             .language_servers
             .iter()
             .filter_map(|(server_id, state)| match &state.kind {
-                LanguageServerKind::Local { .. } => {
+                LanguageServerKind::Local { .. } | LanguageServerKind::Remote { .. } => {
                     let worktree_root_name = state
                         .worktree_id
                         .and_then(|id| self.project.read(cx).worktree_for_id(id, cx))
@@ -694,6 +715,7 @@ impl LspLogView {
                     Some(LogMenuItem {
                         server_id: *server_id,
                         server_name: state.name.clone().unwrap_or(unknown_server.clone()),
+                        server_kind: state.kind.clone(),
                         worktree_root_name,
                         rpc_trace_enabled: state.rpc_state.is_some(),
                         selected_entry: self.active_entry_kind,
@@ -704,6 +726,7 @@ impl LspLogView {
                 LanguageServerKind::Global => Some(LogMenuItem {
                     server_id: *server_id,
                     server_name: state.name.clone().unwrap_or(unknown_server.clone()),
+                    server_kind: state.kind.clone(),
                     worktree_root_name: "supplementary".to_string(),
                     rpc_trace_enabled: state.rpc_state.is_some(),
                     selected_entry: self.active_entry_kind,
@@ -719,6 +742,7 @@ impl LspLogView {
                         Some(LogMenuItem {
                             server_id,
                             server_name: name.clone(),
+                            server_kind: state.kind.clone(),
                             worktree_root_name: "supplementary".to_string(),
                             rpc_trace_enabled: state.rpc_state.is_some(),
                             selected_entry: self.active_entry_kind,
@@ -1091,13 +1115,9 @@ impl Render for LspLogToolbarItemView {
                                         view.show_logs_for_server(row.server_id, cx);
                                     }),
                                 );
-                            if server_selected && row.selected_entry == LogKind::Logs {
-                                let selected_ix = menu.select_last();
-                                debug_assert_eq!(
-                                    Some(ix * 4 + 1),
-                                    selected_ix,
-                                    "Could not scroll to a just added LSP menu item"
-                                );
+                            // We do not support tracing for remote language servers right now
+                            if row.server_kind.is_remote() {
+                                return menu;
                             }
                             menu = menu.entry(
                                 SERVER_TRACE,
@@ -1106,14 +1126,6 @@ impl Render for LspLogToolbarItemView {
                                     view.show_trace_for_server(row.server_id, cx);
                                 }),
                             );
-                            if server_selected && row.selected_entry == LogKind::Trace {
-                                let selected_ix = menu.select_last();
-                                debug_assert_eq!(
-                                    Some(ix * 4 + 2),
-                                    selected_ix,
-                                    "Could not scroll to a just added LSP menu item"
-                                );
-                            }
                             menu = menu.custom_entry(
                                 {
                                     let log_toolbar_view = log_toolbar_view.clone();
