@@ -296,7 +296,7 @@ impl ProjectSearch {
             }
 
             this.update(&mut cx, |this, cx| {
-                if this.match_ranges.len() > 0 {
+                if !this.match_ranges.is_empty() {
                     this.no_results = Some(false);
                 }
                 this.limit_reached = limit_reached;
