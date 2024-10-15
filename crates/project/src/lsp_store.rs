@@ -3210,10 +3210,21 @@ impl LspStore {
 
         const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
 
+        let previous_result_id = match self.as_local()?.language_servers.get(&language_server_id) {
+            Some(LanguageServerState::Running {
+                previous_document_diagnostic_result_id,
+                ..
+            }) => previous_document_diagnostic_result_id.clone(),
+            _ => None,
+        };
+
         let lsp_request_task = self.request_lsp(
             buffer_handle,
             LanguageServerToQuery::Other(language_server_id),
-            GetDocumentDiagnostics {},
+            GetDocumentDiagnostics {
+                language_server_id,
+                previous_result_id,
+            },
             cx,
         );
 
@@ -6827,6 +6838,7 @@ impl LspStore {
                     language: language.clone(),
                     server: language_server.clone(),
                     simulate_disk_based_diagnostics_completion: None,
+                    previous_document_diagnostic_result_id: None,
                 },
             );
             if let Some(file_ops_caps) = language_server
@@ -7959,6 +7971,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
+        previous_document_diagnostic_result_id: Option<String>,
     },
 }
 
