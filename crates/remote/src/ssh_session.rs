@@ -740,7 +740,6 @@ impl SshRemoteClient {
                 loop {
                     select_biased! {
                         _ = connection_activity_rx.next().fuse() => {
-                            println!("heartbeat: got connection activity while waiting for timer");
                             keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
                         }
                         _ = keepalive_timer => {
@@ -748,7 +747,6 @@ impl SshRemoteClient {
 
                             let result = select_biased! {
                                 _ = connection_activity_rx.next().fuse() => {
-                                    println!("heartbeat: got connection activity while waiting for ping");
                                     Ok(())
                                 }
                                 ping_result = client.ping(HEARTBEAT_TIMEOUT).fuse() => {
