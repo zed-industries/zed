@@ -11,7 +11,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::{NumericPrefixWithSuffix, ResultExt};
+use crate::NumericPrefixWithSuffix;
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
@@ -158,6 +158,8 @@ impl Into<PathBuf> for SanitizedPathBuf {
 impl Into<SanitizedPathBuf> for PathBuf {
     #[cfg(target_os = "windows")]
     fn into(self) -> SanitizedPathBuf {
+        use crate::ResultExt;
+
         self.sanitized_pathbuf()
             .log_err()
             .unwrap_or(SanitizedPathBuf(self))
