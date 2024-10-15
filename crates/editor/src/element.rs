@@ -1040,9 +1040,20 @@ impl EditorElement {
                                     })
                                     .unwrap_or(self.style.text.font());
 
-                                let color = match cx.theme().appearance {
-                                    Appearance::Dark => Hsla::black(),
-                                    Appearance::Light => Hsla::white(),
+                                // Invert the text color for the block cursor. Ensure that the text
+                                // color is opaque enough to be visible against the background color.
+                                //
+                                // 0.75 is an arbitrary threshold to determine if the background color is
+                                // opaque enough to use as a text color.
+                                //
+                                // TODO: In the future we should ensure themes have a `text_inverse` color.
+                                let color = if cx.theme().colors().editor_background.a < 0.75 {
+                                    match cx.theme().appearance {
+                                        Appearance::Dark => Hsla::black(),
+                                        Appearance::Light => Hsla::white(),
+                                    }
+                                } else {
+                                    cx.theme().colors().editor_background
                                 };
 
                                 cx.text_system()
