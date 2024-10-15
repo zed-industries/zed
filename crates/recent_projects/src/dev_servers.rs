@@ -1131,9 +1131,8 @@ impl DevServerProjects {
             }));
 
         let footer = format!("Servers: {}", ssh_connections.len() + dev_servers.len());
-
         let mut modal_section = v_flex()
-            .id("lmao")
+            .id("ssh-server-list")
             .overflow_y_scroll()
             .size_full()
             .child(connect_button)
