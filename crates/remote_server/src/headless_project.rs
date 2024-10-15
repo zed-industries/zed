@@ -2,7 +2,6 @@ use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
-use lsp::MessageType;
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
@@ -205,33 +204,12 @@ impl HeadlessProject {
                     .log_err();
             }
             LspStoreEvent::LanguageServerLog(language_server_id, log_type, message) => {
-                let log_type = match log_type {
-                    project::LanguageServerLogType::Log(log_type) => {
-                        let message_type = match *log_type {
-                            MessageType::ERROR => 1,
-                            MessageType::WARNING => 2,
-                            MessageType::INFO => 3,
-                            MessageType::LOG => 4,
-                            other => {
-                                log::warn!("Unknown lsp log message type: {:?}", other);
-                                4
-                            }
-                        };
-                        proto::language_server_log::LogType::LogMessageType(message_type)
-                    }
-                    project::LanguageServerLogType::Trace(message) => {
-                        proto::language_server_log::LogType::LogTrace(proto::LspLogTrace {
-                            message: message.clone(),
-                        })
-                    }
-                };
-
                 self.session
                     .send(proto::LanguageServerLog {
                         project_id: SSH_PROJECT_ID,
                         language_server_id: language_server_id.to_proto(),
                         message: message.clone(),
-                        log_type: Some(log_type),
+                        log_type: Some(log_type.to_proto()),
                     })
                     .log_err();
             }
