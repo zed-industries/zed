@@ -519,7 +519,7 @@ impl SshRemoteClient {
                 // We wait 50ms instead of waiting for a response, because
                 // waiting for a response would require us to wait on the main thread
                 // which we want to avoid in an `on_app_quit` callback.
-                Timer::after(Duration::from_millis(50)).await;
+                smol::Timer::after(Duration::from_millis(50)).await;
             }
 
             // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
