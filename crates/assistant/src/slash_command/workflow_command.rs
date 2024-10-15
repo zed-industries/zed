@@ -5,8 +5,10 @@ use std::sync::atomic::AtomicBool;
 
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
+use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
@@ -58,22 +60,25 @@ impl SlashCommand for WorkflowSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let prompt_builder = self.prompt_builder.clone();
         cx.spawn(|_cx| async move {
             let text = prompt_builder.generate_workflow_prompt()?;
-            let range = 0..text.len();
 
-            Ok(SlashCommandOutput {
-                text,
-                sections: vec![SlashCommandOutputSection {
-                    range,
+            Ok(stream::iter(vec![
+                SlashCommandEvent::StartSection {
                     icon: IconName::Route,
                     label: "Workflow".into(),
                     metadata: None,
-                }],
-                run_commands_in_text: false,
-            })
+                    ensure_newline: false,
+                },
+                SlashCommandEvent::Content {
+                    text,
+                    run_commands_in_text: false,
+                },
+                SlashCommandEvent::EndSection { metadata: None },
+            ])
+            .boxed())
         })
     }
 }

@@ -1,7 +1,10 @@
-use super::{SlashCommand, SlashCommandOutput};
+use super::SlashCommand;
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+};
+use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -61,7 +64,7 @@ impl SlashCommand for PromptSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let title = arguments.to_owned().join(" ");
         if title.trim().is_empty() {
             return Task::ready(Err(anyhow!("missing prompt name")));
@@ -90,17 +93,22 @@ impl SlashCommand for PromptSlashCommand {
             if prompt.is_empty() {
                 prompt.push('\n');
             }
-            let range = 0..prompt.len();
-            Ok(SlashCommandOutput {
-                text: prompt,
-                sections: vec![SlashCommandOutputSection {
-                    range,
+
+            let stream = stream::iter(vec![
+                SlashCommandEvent::StartSection {
                     icon: IconName::Library,
                     label: title,
                     metadata: None,
-                }],
-                run_commands_in_text: true,
-            })
+                    ensure_newline: false,
+                },
+                SlashCommandEvent::Content {
+                    text: prompt,
+                    run_commands_in_text: true,
+                },
+                SlashCommandEvent::EndSection { metadata: None },
+            ]);
+
+            Ok(stream.boxed())
         })
     }
 }

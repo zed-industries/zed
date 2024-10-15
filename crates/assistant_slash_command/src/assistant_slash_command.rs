@@ -1,8 +1,10 @@
 mod slash_command_registry;
 
 use anyhow::Result;
+use futures::stream::{BoxStream, StreamExt};
 use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
+pub use language_model::Role;
 use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
@@ -56,6 +58,8 @@ pub struct ArgumentCompletion {
     pub replace_previous_arguments: bool,
 }
 
+pub type SlashCommandResult = Result<BoxStream<'static, SlashCommandEvent>>;
+
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
     fn label(&self, _cx: &AppContext) -> CodeLabel {
@@ -87,7 +91,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         // perhaps another kind of delegate is needed here.
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>>;
+    ) -> Task<SlashCommandResult>;
 }
 
 pub type RenderFoldPlaceholder = Arc<
@@ -96,8 +100,40 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
+pub enum SlashCommandEvent {
+    StartMessage {
+        role: Role,
+    },
+    StartSection {
+        icon: IconName,
+        label: SharedString,
+        metadata: Option<serde_json::Value>,
+        ensure_newline: bool,
+    },
+    Content {
+        text: String,
+        run_commands_in_text: bool,
+    },
+    Progress {
+        message: SharedString,
+        complete: f32,
+    },
+    EndSection {
+        metadata: Option<serde_json::Value>,
+    },
+}
+
+pub fn as_stream(event: SlashCommandEvent) -> BoxStream<'static, SlashCommandEvent> {
+    futures::stream::once(async { event }).boxed()
+}
+
+pub fn as_stream_vec(events: Vec<SlashCommandEvent>) -> BoxStream<'static, SlashCommandEvent> {
+    futures::stream::iter(events.into_iter()).boxed()
+}
+
 #[derive(Debug, Default, PartialEq)]
-pub struct SlashCommandOutput {
+pub struct SlashCommandMessage {
+    pub role: Option<Role>,
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
     pub run_commands_in_text: bool,

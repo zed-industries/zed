@@ -3,8 +3,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
+use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -62,7 +64,7 @@ impl SlashCommand for TerminalSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
@@ -85,18 +87,22 @@ impl SlashCommand for TerminalSlashCommand {
         let mut text = String::new();
         text.push_str("Terminal output:\n");
         text.push_str(&lines.join("\n"));
-        let range = 0..text.len();
 
-        Task::ready(Ok(SlashCommandOutput {
-            text,
-            sections: vec![SlashCommandOutputSection {
-                range,
+        let events = vec![
+            SlashCommandEvent::StartSection {
                 icon: IconName::Terminal,
                 label: "Terminal".into(),
                 metadata: None,
-            }],
-            run_commands_in_text: false,
-        }))
+                ensure_newline: false,
+            },
+            SlashCommandEvent::Content {
+                text,
+                run_commands_in_text: false,
+            },
+            SlashCommandEvent::EndSection { metadata: None },
+        ];
+
+        Task::ready(Ok(stream::iter(events).boxed()))
     }
 }
 

@@ -6,7 +6,7 @@ use crate::{
 };
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
     SlashCommandRegistry,
 };
 use collections::HashSet;
@@ -1105,10 +1105,12 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     context.insert_command_output(
                         command_range,
                         Task::ready(Ok(SlashCommandOutput {
+                            role: Some(Role::User),
                             text: output_text,
                             sections,
                             run_commands_in_text: false,
-                        })),
+                        }
+                        .into())),
                         true,
                         false,
                         cx,

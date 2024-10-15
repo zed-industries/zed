@@ -1,14 +1,17 @@
-use super::{diagnostics_command::collect_buffer_diagnostics, SlashCommand, SlashCommandOutput};
+use super::{
+    buffer_to_output, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
+};
+// use super::diagnostics_command::collect_buffer_diagnostics;
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{AfterCompletion, ArgumentCompletion};
+use futures::stream::{self, StreamExt};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
-use project::{PathMatchCandidateSet, Project};
+use project::{Entry, PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
 use std::{
-    fmt::Write,
-    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
@@ -181,7 +184,7 @@ impl SlashCommand for FileSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
@@ -198,7 +201,7 @@ fn collect_files(
     project: Model<Project>,
     glob_inputs: &[String],
     cx: &mut AppContext,
-) -> Task<Result<SlashCommandOutput>> {
+) -> Task<SlashCommandResult> {
     let Ok(matchers) = glob_inputs
         .into_iter()
         .map(|glob_input| {
@@ -218,12 +221,12 @@ fn collect_files(
         .collect::<Vec<_>>();
 
     cx.spawn(|mut cx| async move {
-        let mut output = SlashCommandOutput::default();
+        let mut events = Vec::new();
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
-            let mut directory_stack: Vec<(Arc<Path>, String, usize)> = Vec::new();
-            let mut folded_directory_names_stack = Vec::new();
+            let mut folded_directory_names = Vec::new();
             let mut is_top_level_directory = true;
+            let mut directory_stack = Vec::new();
 
             for entry in snapshot.entries(false, 0) {
                 let mut path_including_worktree_name = PathBuf::new();
@@ -237,19 +240,6 @@ fn collect_files(
                     continue;
                 }
 
-                while let Some((dir, _, _)) = directory_stack.last() {
-                    if entry.path.starts_with(dir) {
-                        break;
-                    }
-                    let (_, entry_name, start) = directory_stack.pop().unwrap();
-                    output.sections.push(build_entry_output_section(
-                        start..output.text.len().saturating_sub(1),
-                        Some(&PathBuf::from(entry_name)),
-                        true,
-                        None,
-                    ));
-                }
-
                 let filename = entry
                     .path
                     .file_name()
@@ -258,156 +248,83 @@ fn collect_files(
                     .unwrap_or_default()
                     .to_string();
 
+                while !directory_stack.is_empty()
+                    && !entry.path.starts_with(directory_stack.last().unwrap())
+                {
+                    log::info!("end dir");
+                    directory_stack.pop();
+                    events.push(SlashCommandEvent::EndSection { metadata: None });
+                }
+
                 if entry.is_dir() {
-                    // Auto-fold directories that contain no files
+                    log::info!("start dir");
                     let mut child_entries = snapshot.child_entries(&entry.path);
                     if let Some(child) = child_entries.next() {
                         if child_entries.next().is_none() && child.kind.is_dir() {
                             if is_top_level_directory {
                                 is_top_level_directory = false;
-                                folded_directory_names_stack.push(
+                                folded_directory_names.push(
                                     path_including_worktree_name.to_string_lossy().to_string(),
                                 );
                             } else {
-                                folded_directory_names_stack.push(filename.to_string());
+                                folded_directory_names.push(filename.to_string())
                             }
-                            continue;
                         }
                     } else {
                         // Skip empty directories
-                        folded_directory_names_stack.clear();
+                        folded_directory_names.clear();
                         continue;
                     }
-                    let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
-                    let entry_start = output.text.len();
-                    if prefix_paths.is_empty() {
+
+                    let prefix_paths = folded_directory_names.drain(..).as_slice().join("/");
+                    let dirname = if prefix_paths.is_empty() {
                         if is_top_level_directory {
-                            output
-                                .text
-                                .push_str(&path_including_worktree_name.to_string_lossy());
                             is_top_level_directory = false;
+                            path_including_worktree_name.to_string_lossy().to_string()
                         } else {
-                            output.text.push_str(&filename);
+                            filename
                         }
-                        directory_stack.push((entry.path.clone(), filename, entry_start));
                     } else {
-                        let entry_name = format!("{}/{}", prefix_paths, &filename);
-                        output.text.push_str(&entry_name);
-                        directory_stack.push((entry.path.clone(), entry_name, entry_start));
-                    }
-                    output.text.push('\n');
+                        format!("{}/{}", prefix_paths, &filename)
+                    };
+                    events.push(SlashCommandEvent::StartSection {
+                        icon: IconName::Folder,
+                        label: dirname.clone().into(),
+                        metadata: None,
+                        ensure_newline: true,
+                    });
+                    events.push(SlashCommandEvent::Content {
+                        text: dirname,
+                        run_commands_in_text: false,
+                    });
+                    directory_stack.push(entry.path.clone());
                 } else if entry.is_file() {
-                    let Some(open_buffer_task) = project_handle
+                    let open_buffer_task = project_handle
                         .update(&mut cx, |project, cx| {
                             project.open_buffer((worktree_id, &entry.path), cx)
                         })
-                        .ok()
-                    else {
+                        .ok();
+                    let Some(open_buffer_task) = open_buffer_task else {
                         continue;
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
                         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-                        append_buffer_to_output(
-                            &snapshot,
-                            Some(&path_including_worktree_name),
-                            &mut output,
-                        )
-                        .log_err();
+                        let mut events_from_buffer =
+                            buffer_to_output(&snapshot, Some(&path_including_worktree_name))?;
+                        events.append(&mut events_from_buffer);
                     }
                 }
             }
 
-            while let Some((dir, entry, start)) = directory_stack.pop() {
-                if directory_stack.is_empty() {
-                    let mut root_path = PathBuf::new();
-                    root_path.push(snapshot.root_name());
-                    root_path.push(&dir);
-                    output.sections.push(build_entry_output_section(
-                        start..output.text.len(),
-                        Some(&root_path),
-                        true,
-                        None,
-                    ));
-                } else {
-                    output.sections.push(build_entry_output_section(
-                        start..output.text.len(),
-                        Some(&PathBuf::from(entry.as_str())),
-                        true,
-                        None,
-                    ));
-                }
+            // Close any remaining open directories
+            while !directory_stack.is_empty() {
+                log::info!("end dir");
+                directory_stack.pop();
+                events.push(SlashCommandEvent::EndSection { metadata: None });
             }
         }
-        Ok(output)
+        Ok(stream::iter(events).boxed())
     })
-}
-
-pub fn codeblock_fence_for_path(
-    path: Option<&Path>,
-    row_range: Option<RangeInclusive<u32>>,
-) -> String {
-    let mut text = String::new();
-    write!(text, "```").unwrap();
-
-    if let Some(path) = path {
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            write!(text, "{} ", extension).unwrap();
-        }
-
-        write!(text, "{}", path.display()).unwrap();
-    } else {
-        write!(text, "untitled").unwrap();
-    }
-
-    if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
-    }
-
-    text.push('\n');
-    text
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct FileCommandMetadata {
-    pub path: String,
-}
-
-pub fn build_entry_output_section(
-    range: Range<usize>,
-    path: Option<&Path>,
-    is_directory: bool,
-    line_range: Option<Range<u32>>,
-) -> SlashCommandOutputSection<usize> {
-    let mut label = if let Some(path) = path {
-        path.to_string_lossy().to_string()
-    } else {
-        "untitled".to_string()
-    };
-    if let Some(line_range) = line_range {
-        write!(label, ":{}-{}", line_range.start, line_range.end).unwrap();
-    }
-
-    let icon = if is_directory {
-        IconName::Folder
-    } else {
-        IconName::File
-    };
-
-    SlashCommandOutputSection {
-        range,
-        icon,
-        label: label.into(),
-        metadata: if is_directory {
-            None
-        } else {
-            path.and_then(|path| {
-                serde_json::to_value(FileCommandMetadata {
-                    path: path.to_string_lossy().to_string(),
-                })
-                .ok()
-            })
-        },
-    }
 }
 
 /// This contains a small fork of the util::paths::PathMatcher, that is stricter about the prefix
@@ -490,36 +407,6 @@ mod custom_path_matcher {
             }
         }
     }
-}
-
-pub fn append_buffer_to_output(
-    buffer: &BufferSnapshot,
-    path: Option<&Path>,
-    output: &mut SlashCommandOutput,
-) -> Result<()> {
-    let prev_len = output.text.len();
-
-    let mut content = buffer.text();
-    LineEnding::normalize(&mut content);
-    output.text.push_str(&codeblock_fence_for_path(path, None));
-    output.text.push_str(&content);
-    if !output.text.ends_with('\n') {
-        output.text.push('\n');
-    }
-    output.text.push_str("```");
-    output.text.push('\n');
-
-    let section_ix = output.sections.len();
-    collect_buffer_diagnostics(output, buffer, false);
-
-    output.sections.insert(
-        section_ix,
-        build_entry_output_section(prev_len..output.text.len(), path, false, None),
-    );
-
-    output.text.push('\n');
-
-    Ok(())
 }
 
 #[cfg(test)]
@@ -716,7 +603,7 @@ mod test {
         assert_eq!(result.sections[6].label, "summercamp");
         assert_eq!(result.sections[7].label, "zed/assets/themes");
 
-        // Ensure that the project lasts until after the last await
+        // Ensure that the project lasts until after the last awai
         drop(project);
     }
 }

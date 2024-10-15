@@ -1,7 +1,10 @@
-use super::{SlashCommand, SlashCommandOutput};
+use super::SlashCommand;
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+};
+use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::{
@@ -48,7 +51,7 @@ impl SlashCommand for DefaultSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let store = PromptStore::global(cx);
         cx.background_executor().spawn(async move {
             let store = store.await?;
@@ -67,16 +70,21 @@ impl SlashCommand for DefaultSlashCommand {
                 text.push('\n');
             }
 
-            Ok(SlashCommandOutput {
-                sections: vec![SlashCommandOutputSection {
-                    range: 0..text.len(),
+            let stream = stream::iter(vec![
+                SlashCommandEvent::StartSection {
                     icon: IconName::Library,
                     label: "Default".into(),
                     metadata: None,
-                }],
-                text,
-                run_commands_in_text: true,
-            })
+                    ensure_newline: false,
+                },
+                SlashCommandEvent::Content {
+                    text,
+                    run_commands_in_text: true,
+                },
+                SlashCommandEvent::EndSection { metadata: None },
+            ]);
+
+            Ok(stream.boxed())
         })
     }
 }

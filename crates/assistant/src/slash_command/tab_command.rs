@@ -1,9 +1,9 @@
-use super::{file_command::append_buffer_to_output, SlashCommand, SlashCommandOutput};
+use super::{buffer_to_output, SlashCommand};
 use anyhow::{Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
 use collections::{HashMap, HashSet};
 use editor::Editor;
-use futures::future::join_all;
+use futures::{future::join_all, stream, StreamExt};
 use gpui::{Entity, Task, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
@@ -132,7 +132,7 @@ impl SlashCommand for TabSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let tab_items_search = tab_items_for_queries(
             Some(workspace),
             arguments,
@@ -142,11 +142,16 @@ impl SlashCommand for TabSlashCommand {
         );
 
         cx.background_executor().spawn(async move {
-            let mut output = SlashCommandOutput::default();
-            for (full_path, buffer, _) in tab_items_search.await? {
-                append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
-            }
-            Ok(output)
+            let stream = {
+                let search_results = tab_items_search.await?;
+                stream::iter(search_results).flat_map(|(full_path, buffer, _)| {
+                    let output = buffer_to_output(&buffer, full_path.as_deref())
+                        .log_err()
+                        .unwrap_or_default();
+                    futures::stream::iter(output)
+                })
+            };
+            Ok(stream.boxed())
         })
     }
 }

@@ -1,7 +1,10 @@
-use super::{SlashCommand, SlashCommandOutput};
+use super::SlashCommand;
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+};
 use editor::Editor;
+use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
@@ -46,7 +49,7 @@ impl SlashCommand for OutlineSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let Some(active_item) = workspace.active_item(cx) else {
                 return Task::ready(Err(anyhow!("no active tab")));
@@ -74,16 +77,21 @@ impl SlashCommand for OutlineSlashCommand {
                     outline_text.push('\n');
                 }
 
-                Ok(SlashCommandOutput {
-                    sections: vec![SlashCommandOutputSection {
-                        range: 0..outline_text.len(),
+                let events = vec![
+                    SlashCommandEvent::StartSection {
                         icon: IconName::ListTree,
                         label: path.to_string_lossy().to_string().into(),
                         metadata: None,
-                    }],
-                    text: outline_text,
-                    run_commands_in_text: false,
-                })
+                        ensure_newline: false,
+                    },
+                    SlashCommandEvent::Content {
+                        text: outline_text,
+                        run_commands_in_text: false,
+                    },
+                    SlashCommandEvent::EndSection { metadata: None },
+                ];
+
+                Ok(stream::iter(events).boxed())
             })
         });
 

@@ -1,7 +1,10 @@
-use super::{SlashCommand, SlashCommandOutput};
+use super::SlashCommand;
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+};
 use fs::Fs;
+use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Model, Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
@@ -123,7 +126,7 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let project = workspace.project().clone();
             let fs = workspace.project().read(cx).fs().clone();
@@ -135,17 +138,20 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
 
             cx.foreground_executor().spawn(async move {
                 let text = output.await?;
-                let range = 0..text.len();
-                Ok(SlashCommandOutput {
-                    text,
-                    sections: vec![SlashCommandOutputSection {
-                        range,
+                Ok(stream::iter(vec![
+                    SlashCommandEvent::StartSection {
                         icon: IconName::FileTree,
                         label: "Project".into(),
                         metadata: None,
-                    }],
-                    run_commands_in_text: false,
-                })
+                        ensure_newline: false,
+                    },
+                    SlashCommandEvent::Content {
+                        text,
+                        run_commands_in_text: false,
+                    },
+                    SlashCommandEvent::EndSection { metadata: None },
+                ])
+                .boxed())
             })
         });
         output.unwrap_or_else(|error| Task::ready(Err(error)))

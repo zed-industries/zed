@@ -1,22 +1,32 @@
 use crate::assistant_panel::ContextEditor;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
-pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
+pub use assistant_slash_command::{
+    SlashCommand, SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry,
+    SlashCommandResult,
+};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
-use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
+use language::{
+    Anchor, Buffer, BufferSnapshot, CodeLabel, Documentation, HighlightId, LanguageServerId,
+    LineEnding, ToPoint,
+};
 use parking_lot::{Mutex, RwLock};
 use project::CompletionIntent;
 use rope::Point;
+use serde::{Deserialize, Serialize};
 use std::{
+    fmt::Write,
     ops::Range,
+    ops::RangeInclusive,
+    path::Path,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
         Arc,
     },
 };
-use ui::ActiveTheme;
+use ui::{ActiveTheme, IconName};
 use workspace::Workspace;
 pub mod auto_command;
 pub mod cargo_workspace_command;
@@ -432,4 +442,86 @@ pub fn create_label_for_command(
     );
     label.filter_range = 0..command_name.len();
     label
+}
+
+/// Creates a Markdown code fence with path and line range information.
+///
+/// Given an optional file path and line range, this function returns a Markdown code block header,
+/// including file extension syntax highlighting, full file path and line numbers if provided.
+pub fn codeblock_fence_for_path(
+    path: Option<&Path>,
+    row_range: Option<RangeInclusive<u32>>,
+) -> String {
+    let mut text = String::new();
+    write!(text, "```").unwrap();
+
+    if let Some(path) = path {
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            write!(text, "{} ", extension).unwrap();
+        }
+
+        write!(text, "{}", path.display()).unwrap();
+    } else {
+        write!(text, "untitled").unwrap();
+    }
+
+    if let Some(row_range) = row_range {
+        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
+    }
+
+    text.push('\n');
+    text
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct FileCommandMetadata {
+    pub path: String,
+}
+
+/// Converts a buffer's contents into a formatted Markdown code block.
+pub fn buffer_to_output(
+    buffer: &BufferSnapshot,
+    path: Option<&Path>,
+) -> Result<Vec<SlashCommandEvent>> {
+    let mut events = Vec::new();
+
+    let mut content = buffer.text();
+    LineEnding::normalize(&mut content);
+
+    let fence = codeblock_fence_for_path(path, None);
+
+    let label = path.map_or("untitled".to_string(), |p| p.to_string_lossy().to_string());
+
+    let metadata = path.and_then(|path| {
+        serde_json::to_value(FileCommandMetadata {
+            path: path.to_string_lossy().to_string(),
+        })
+        .ok()
+    });
+
+    events.push(SlashCommandEvent::StartSection {
+        icon: IconName::File,
+        label: label.into(),
+        metadata,
+        ensure_newline: true,
+    });
+
+    let mut code_content = String::new();
+    code_content.push_str(&fence);
+    code_content.push_str(&content);
+    if !code_content.ends_with('\n') {
+        code_content.push('\n');
+    }
+    code_content.push_str("```\n");
+
+    events.push(SlashCommandEvent::Content {
+        text: code_content.into(),
+        run_commands_in_text: false,
+    });
+
+    events.push(SlashCommandEvent::EndSection { metadata: None });
+
+    // TODO: collect_buffer_diagnostics(events, buffer, false);
+
+    Ok(events)
 }

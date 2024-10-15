@@ -1,10 +1,15 @@
-use crate::slash_command::file_command::{FileCommandMetadata, FileSlashCommand};
+use crate::slash_command::file_command::FileSlashCommand;
+use crate::slash_command::FileCommandMetadata;
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use collections::HashSet;
-use futures::future;
+use futures::{
+    future,
+    stream::{self, StreamExt},
+};
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -48,7 +53,7 @@ impl SlashCommand for DeltaSlashCommand {
         workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let mut paths = HashSet::default();
         let mut file_command_old_outputs = Vec::new();
         let mut file_command_new_outputs = Vec::new();
@@ -77,33 +82,32 @@ impl SlashCommand for DeltaSlashCommand {
         }
 
         cx.background_executor().spawn(async move {
-            let mut output = SlashCommandOutput::default();
+            let mut events = Vec::new();
 
             let file_command_new_outputs = future::join_all(file_command_new_outputs).await;
             for (old_text, new_output) in file_command_old_outputs
                 .into_iter()
                 .zip(file_command_new_outputs)
             {
-                if let Ok(new_output) = new_output {
-                    if let Some(file_command_range) = new_output.sections.first() {
-                        let new_text = &new_output.text[file_command_range.range.clone()];
-                        if old_text.chars().ne(new_text.chars()) {
-                            output.sections.extend(new_output.sections.into_iter().map(
-                                |section| SlashCommandOutputSection {
-                                    range: output.text.len() + section.range.start
-                                        ..output.text.len() + section.range.end,
-                                    icon: section.icon,
-                                    label: section.label,
-                                    metadata: section.metadata,
-                                },
-                            ));
-                            output.text.push_str(&new_output.text);
+                if let Ok(new_events) = new_output {
+                    let new_content = stream::StreamExt::collect::<Vec<_>>(new_events).await;
+                    {
+                        if let Some(first_content) = new_content.iter().find_map(|event| {
+                            if let SlashCommandEvent::Content { text, .. } = event {
+                                Some(text)
+                            } else {
+                                None
+                            }
+                        }) {
+                            if old_text.chars().ne(first_content.chars()) {
+                                events.extend(new_content);
+                            }
                         }
                     }
                 }
             }
 
-            Ok(output)
+            Ok(stream::iter(events).boxed())
         })
     }
 }

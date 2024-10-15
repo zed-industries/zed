@@ -5,9 +5,13 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
-use futures::AsyncReadExt;
+use futures::{
+    stream::{self, StreamExt},
+    AsyncReadExt,
+};
 use gpui::{Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
@@ -133,7 +137,7 @@ impl SlashCommand for FetchSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
         };
@@ -156,17 +160,20 @@ impl SlashCommand for FetchSlashCommand {
                 bail!("no textual content found");
             }
 
-            let range = 0..text.len();
-            Ok(SlashCommandOutput {
-                text,
-                sections: vec![SlashCommandOutputSection {
-                    range,
+            Ok(stream::iter(vec![
+                SlashCommandEvent::StartSection {
                     icon: IconName::AtSign,
                     label: format!("fetch {}", url).into(),
                     metadata: None,
-                }],
-                run_commands_in_text: false,
-            })
+                    ensure_newline: false,
+                },
+                SlashCommandEvent::Content {
+                    text,
+                    run_commands_in_text: false,
+                },
+                SlashCommandEvent::EndSection { metadata: None },
+            ])
+            .boxed())
         })
     }
 }

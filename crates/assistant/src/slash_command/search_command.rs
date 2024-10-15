@@ -1,11 +1,11 @@
-use super::{
-    create_label_for_command,
-    file_command::{build_entry_output_section, codeblock_fence_for_path},
-    SlashCommand, SlashCommandOutput,
-};
+use super::{codeblock_fence_for_path, create_label_for_command};
 use anyhow::Result;
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use feature_flags::FeatureFlag;
+use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use semantic_index::{LoadedSearchResult, SemanticDb};
@@ -63,7 +63,7 @@ impl SlashCommand for SearchSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
@@ -107,40 +107,32 @@ impl SlashCommand for SearchSlashCommand {
 
             let loaded_results = SemanticDb::load_results(results, &fs, &cx).await?;
 
-            let output = cx
-                .background_executor()
+            cx.background_executor()
                 .spawn(async move {
-                    let mut text = format!("Search results for {query}:\n");
-                    let mut sections = Vec::new();
-                    for loaded_result in &loaded_results {
-                        add_search_result_section(loaded_result, &mut text, &mut sections);
-                    }
-
-                    let query = SharedString::from(query);
-                    sections.push(SlashCommandOutputSection {
-                        range: 0..text.len(),
+                    let mut events = Vec::new();
+                    events.push(SlashCommandEvent::StartSection {
                         icon: IconName::MagnifyingGlass,
-                        label: query,
+                        label: SharedString::from(format!("Search results for {query}:")),
                         metadata: None,
+                        ensure_newline: false,
                     });
 
-                    SlashCommandOutput {
-                        text,
-                        sections,
-                        run_commands_in_text: false,
+                    for loaded_result in loaded_results {
+                        add_search_result_section(&loaded_result, &mut events);
                     }
-                })
-                .await;
 
-            Ok(output)
+                    events.push(SlashCommandEvent::EndSection { metadata: None });
+
+                    Ok(stream::iter(events).boxed())
+                })
+                .await
         })
     }
 }
 
 pub fn add_search_result_section(
     loaded_result: &LoadedSearchResult,
-    text: &mut String,
-    sections: &mut Vec<SlashCommandOutputSection<usize>>,
+    events: &mut Vec<SlashCommandEvent>,
 ) {
     let LoadedSearchResult {
         path,
@@ -149,22 +141,24 @@ pub fn add_search_result_section(
         row_range,
         ..
     } = loaded_result;
-    let section_start_ix = text.len();
-    text.push_str(&codeblock_fence_for_path(
-        Some(&path),
-        Some(row_range.clone()),
-    ));
 
+    let mut text = codeblock_fence_for_path(Some(&path), Some(row_range.clone()));
     text.push_str(&excerpt_content);
     if !text.ends_with('\n') {
         text.push('\n');
     }
     writeln!(text, "```\n").unwrap();
-    let section_end_ix = text.len() - 1;
-    sections.push(build_entry_output_section(
-        section_start_ix..section_end_ix,
-        Some(&full_path),
-        false,
-        Some(row_range.start() + 1..row_range.end() + 1),
-    ));
+
+    let path_str = path.to_string_lossy().to_string();
+    events.push(SlashCommandEvent::StartSection {
+        icon: IconName::File,
+        label: path_str.into(),
+        metadata: None,
+        ensure_newline: false,
+    });
+    events.push(SlashCommandEvent::Content {
+        text,
+        run_commands_in_text: false,
+    });
+    events.push(SlashCommandEvent::EndSection { metadata: None });
 }

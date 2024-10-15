@@ -1,3 +1,41 @@
+// todo!()
+// - implement run_commands_in_text
+// - When slash command wants to insert a message, but it wants to insert it after a message that has the same Role and it emits a `StartMessage { merge_same_roles: bool (name TBD) }`, we should ignore it
+// - When a section ends, we should run the following code:
+//         //             this.slash_command_output_sections
+//         //                 .extend(sections.iter().cloned());
+//         //             this.slash_command_output_sections
+//         //                 .sort_by(|a, b| a.range.cmp(&b.range, buffer));
+
+//         //             let output_range =
+//         //                 buffer.anchor_after(start)..buffer.anchor_before(new_end);
+//         //             this.finished_slash_commands.insert(command_id);
+
+//         //             (
+//         //                 ContextOperation::SlashCommandFinished {
+//         //                     id: command_id,
+//         //                     output_range: output_range.clone(),
+//         //                     sections: sections.clone(),
+//         //                     version,
+//         //                 },
+//         //                 ContextEvent::SlashCommandFinished {
+//         //                     output_range,
+//         //                     sections,
+//         //                     run_commands_in_output: output.run_commands_in_text,
+//         //                     expand_result,
+//         //                 },
+//         //             )
+// - Adapt all the commands to use the streaming API
+// - Animation example:
+// Icon::new(IconName::ArrowCircle)
+// .size(IconSize::Small)
+// .with_animation(
+// "arrow-circle",
+// Animation::new(Duration::from_secs(2)).repeat(),
+// |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+// )
+// .into_any_element(),
+
 #[cfg(test)]
 mod context_tests;
 
@@ -7,7 +45,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry,
+    SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
 use assistant_tool::ToolRegistry;
 use client::{self, proto, telemetry::Telemetry};
@@ -41,7 +79,7 @@ use std::{
     cmp::{self, max, Ordering},
     fmt::Debug,
     iter, mem,
-    ops::Range,
+    ops::{Range, RangeBounds},
     path::{Path, PathBuf},
     str::FromStr as _,
     sync::Arc,
@@ -51,6 +89,7 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
+use workspace::ui::IconName;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -1784,7 +1823,7 @@ impl Context {
     pub fn insert_command_output(
         &mut self,
         command_range: Range<language::Anchor>,
-        output: Task<Result<SlashCommandOutput>>,
+        output: Task<SlashCommandResult>,
         ensure_trailing_newline: bool,
         expand_result: bool,
         cx: &mut ModelContext<Self>,
@@ -1794,98 +1833,150 @@ impl Context {
         let insert_output_task = cx.spawn(|this, mut cx| {
             let command_range = command_range.clone();
             async move {
-                let output = output.await;
-                this.update(&mut cx, |this, cx| match output {
-                    Ok(mut output) => {
-                        // Ensure section ranges are valid.
-                        for section in &mut output.sections {
-                            section.range.start = section.range.start.min(output.text.len());
-                            section.range.end = section.range.end.min(output.text.len());
-                            while !output.text.is_char_boundary(section.range.start) {
-                                section.range.start -= 1;
-                            }
-                            while !output.text.is_char_boundary(section.range.end) {
-                                section.range.end += 1;
-                            }
-                        }
+                let mut stream = output.await?;
 
-                        // Ensure there is a newline after the last section.
-                        if ensure_trailing_newline {
-                            let has_newline_after_last_section =
-                                output.sections.last().map_or(false, |last_section| {
-                                    output.text[last_section.range.end..].ends_with('\n')
+                struct PendingSection {
+                    start: language::Anchor,
+                    icon: IconName,
+                    label: SharedString,
+                    metadata: Option<serde_json::Value>,
+                }
+
+                let position = this.update(&mut cx, |this, cx| {
+                    this.buffer.update(cx, |buffer, cx| {
+                        let start = command_range.start.to_offset(buffer);
+                        let end = command_range.end.to_offset(buffer);
+                        buffer.edit([(start..end, "")], None, cx);
+                        buffer.anchor_after(command_range.end)
+                    })
+                })?;
+                let mut finished_sections: Vec<SlashCommandOutputSection<language::Anchor>> =
+                    Vec::new();
+                let mut pending_section_stack: Vec<PendingSection> = Vec::new();
+
+                while let Some(event) = stream.next().await {
+                    match event {
+                        SlashCommandEvent::StartMessage { role } => {
+                            this.update(&mut cx, |this, cx| {
+                                let offset = this
+                                    .buffer
+                                    .read_with(cx, |buffer, _cx| position.to_offset(buffer));
+                                this.insert_message_at_offset(
+                                    offset,
+                                    role,
+                                    MessageStatus::Pending,
+                                    cx,
+                                );
+                            })?;
+                        }
+                        SlashCommandEvent::StartSection {
+                            icon,
+                            label,
+                            metadata,
+                            ensure_newline,
+                        } => {
+                            this.read_with(&cx, |this, cx| {
+                                let buffer = this.buffer.read(cx);
+                                log::info!("Slash command output section start: {:?}", position);
+                                pending_section_stack.push(PendingSection {
+                                    start: buffer.anchor_before(position),
+                                    icon,
+                                    label,
+                                    metadata,
                                 });
-                            if !has_newline_after_last_section {
-                                output.text.push('\n');
+                            })?;
+                        }
+                        SlashCommandEvent::Content {
+                            text,
+                            run_commands_in_text,
+                        } => {
+                            // assert!(!run_commands_in_text, "not yet implemented");
+
+                            this.update(&mut cx, |this, cx| {
+                                this.buffer.update(cx, |buffer, cx| {
+                                    let text = if !text.ends_with('\n') {
+                                        text + "\n"
+                                    } else {
+                                        text
+                                    };
+                                    buffer.edit([(position..position, text)], None, cx)
+                                })
+                            })?;
+                        }
+                        SlashCommandEvent::Progress { message, complete } => {
+                            todo!()
+                        }
+                        SlashCommandEvent::EndSection { metadata } => {
+                            if let Some(pending_section) = pending_section_stack.pop() {
+                                this.update(&mut cx, |this, cx| {
+                                    this.buffer.update(cx, |buffer, cx| {
+                                        let start = pending_section.start;
+                                        let end = buffer.anchor_before(position);
+
+                                        buffer.edit([(position..position, "\n")], None, cx);
+                                        log::info!("Slash command output section end: {:?}", end);
+
+                                        let slash_command_output_section =
+                                            SlashCommandOutputSection {
+                                                range: start..end,
+                                                icon: pending_section.icon,
+                                                label: pending_section.label,
+                                                metadata: metadata.or(pending_section.metadata),
+                                            };
+                                        finished_sections
+                                            .push(slash_command_output_section.clone());
+                                        this.slash_command_output_sections
+                                            .push(slash_command_output_section);
+                                    });
+                                })?;
                             }
                         }
-
-                        let version = this.version.clone();
-                        let command_id = SlashCommandId(this.next_timestamp());
-                        let (operation, event) = this.buffer.update(cx, |buffer, cx| {
-                            let start = command_range.start.to_offset(buffer);
-                            let old_end = command_range.end.to_offset(buffer);
-                            let new_end = start + output.text.len();
-                            buffer.edit([(start..old_end, output.text)], None, cx);
-
-                            let mut sections = output
-                                .sections
-                                .into_iter()
-                                .map(|section| SlashCommandOutputSection {
-                                    range: buffer.anchor_after(start + section.range.start)
-                                        ..buffer.anchor_before(start + section.range.end),
-                                    icon: section.icon,
-                                    label: section.label,
-                                    metadata: section.metadata,
-                                })
-                                .collect::<Vec<_>>();
-                            sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
-
-                            this.slash_command_output_sections
-                                .extend(sections.iter().cloned());
-                            this.slash_command_output_sections
-                                .sort_by(|a, b| a.range.cmp(&b.range, buffer));
-
-                            let output_range =
-                                buffer.anchor_after(start)..buffer.anchor_before(new_end);
-                            this.finished_slash_commands.insert(command_id);
-
-                            (
-                                ContextOperation::SlashCommandFinished {
-                                    id: command_id,
-                                    output_range: output_range.clone(),
-                                    sections: sections.clone(),
-                                    version,
-                                },
-                                ContextEvent::SlashCommandFinished {
-                                    output_range,
-                                    sections,
-                                    run_commands_in_output: output.run_commands_in_text,
-                                    expand_result,
-                                },
-                            )
-                        });
-
-                        this.push_op(operation, cx);
-                        cx.emit(event);
                     }
-                    Err(error) => {
-                        if let Some(pending_command) =
-                            this.pending_command_for_position(command_range.start, cx)
-                        {
-                            pending_command.status =
-                                PendingSlashCommandStatus::Error(error.to_string());
-                            cx.emit(ContextEvent::PendingSlashCommandsUpdated {
-                                removed: vec![pending_command.source_range.clone()],
-                                updated: vec![pending_command.clone()],
-                            });
-                        }
-                    }
+                }
+                assert!(pending_section_stack.is_empty());
+                this.update(&mut cx, |this, cx| {
+                    let command_id = SlashCommandId(this.next_timestamp());
+                    this.finished_slash_commands.insert(command_id);
+
+                    let version = this.version.clone();
+                    let (op, ev) = this.buffer.update(cx, |buffer, cx| {
+                        let start = command_range.start;
+                        let output_range = start..position;
+
+                        this.slash_command_output_sections
+                            .sort_by(|a, b| a.range.cmp(&b.range, buffer));
+                        finished_sections.sort_by(|a, b| a.range.cmp(&b.range, buffer));
+
+                        // Remove the command range from the buffer
+                        (
+                            ContextOperation::SlashCommandFinished {
+                                id: command_id,
+                                output_range: output_range.clone(),
+                                sections: finished_sections.clone(),
+                                version,
+                            },
+                            ContextEvent::SlashCommandFinished {
+                                output_range,
+                                sections: finished_sections,
+                                run_commands_in_output: false,
+                                expand_result,
+                            },
+                        )
+                    });
+
+                    this.push_op(op, cx);
+                    cx.emit(ev);
                 })
-                .ok();
             }
         });
 
+        let insert_output_task = cx.background_executor().spawn(async move {
+            if let Err(error) = insert_output_task.await {
+                log::error!("failed to run command: {:?}", error)
+            }
+        });
+
+        // We are inserting a pending command and update it.
         if let Some(pending_command) = self.pending_command_for_position(command_range.start, cx) {
             pending_command.status = PendingSlashCommandStatus::Running {
                 _task: insert_output_task.shared(),
@@ -2366,41 +2457,52 @@ impl Context {
                 next_message_ix += 1;
             }
 
-            let start = self.buffer.update(cx, |buffer, cx| {
-                let offset = self
-                    .message_anchors
-                    .get(next_message_ix)
-                    .map_or(buffer.len(), |message| {
-                        buffer.clip_offset(message.start.to_offset(buffer) - 1, Bias::Left)
-                    });
-                buffer.edit([(offset..offset, "\n")], None, cx);
-                buffer.anchor_before(offset + 1)
-            });
-
-            let version = self.version.clone();
-            let anchor = MessageAnchor {
-                id: MessageId(self.next_timestamp()),
-                start,
-            };
-            let metadata = MessageMetadata {
-                role,
-                status,
-                timestamp: anchor.id.0,
-                cache: None,
-            };
-            self.insert_message(anchor.clone(), metadata.clone(), cx);
-            self.push_op(
-                ContextOperation::InsertMessage {
-                    anchor: anchor.clone(),
-                    metadata,
-                    version,
-                },
-                cx,
-            );
-            Some(anchor)
+            let buffer = self.buffer.read(cx);
+            let offset = self
+                .message_anchors
+                .get(next_message_ix)
+                .map_or(buffer.len(), |message| {
+                    buffer.clip_offset(message.start.to_offset(buffer) - 1, Bias::Left)
+                });
+            Some(self.insert_message_at_offset(offset, role, status, cx))
         } else {
             None
         }
+    }
+
+    fn insert_message_at_offset(
+        &mut self,
+        offset: usize,
+        role: Role,
+        status: MessageStatus,
+        cx: &mut ModelContext<Self>,
+    ) -> MessageAnchor {
+        let start = self.buffer.update(cx, |buffer, cx| {
+            buffer.edit([(offset..offset, "\n")], None, cx);
+            buffer.anchor_before(offset + 1)
+        });
+
+        let version = self.version.clone();
+        let anchor = MessageAnchor {
+            id: MessageId(self.next_timestamp()),
+            start,
+        };
+        let metadata = MessageMetadata {
+            role,
+            status,
+            timestamp: anchor.id.0,
+            cache: None,
+        };
+        self.insert_message(anchor.clone(), metadata.clone(), cx);
+        self.push_op(
+            ContextOperation::InsertMessage {
+                anchor: anchor.clone(),
+                metadata,
+                version,
+            },
+            cx,
+        );
+        anchor
     }
 
     pub fn insert_content(&mut self, content: Content, cx: &mut ModelContext<Self>) {
