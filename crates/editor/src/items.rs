@@ -39,7 +39,7 @@ use std::{
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{h_flex, prelude::*, Label};
+use ui::{h_flex, prelude::*, IconDecoration, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::{
@@ -1482,19 +1482,23 @@ pub fn entry_label_color(selected: bool) -> Color {
     }
 }
 
-pub fn entry_text_color_and_extra_icon_name(
-    diagnostic_severity: Option<&DiagnosticSeverity>,
-    git_status: Option<GitFileStatus>,
-    ignored: bool,
-    selected: bool,
-) -> (Color, Option<IconName>) {
+pub fn entry_diagnostic_aware_icon_name_and_color(
+    diagnostic_severity: Option<DiagnosticSeverity>,
+) -> Option<(IconName, Color)> {
     match diagnostic_severity {
-        Some(&DiagnosticSeverity::ERROR) => (Color::Error, Some(IconName::XCircle)),
-        Some(&DiagnosticSeverity::WARNING) => (Color::Warning, Some(IconName::Warning)),
-        _ => (
-            entry_git_aware_label_color(git_status, ignored, selected),
-            None,
-        ),
+        Some(DiagnosticSeverity::ERROR) => Some((IconName::X, Color::Error)),
+        Some(DiagnosticSeverity::WARNING) => Some((IconName::Triangle, Color::Warning)),
+        _ => None,
+    }
+}
+
+pub fn entry_diagnostic_aware_decoration_and_color(
+    diagnostic_severity: Option<DiagnosticSeverity>,
+) -> Option<(IconDecoration, Color)> {
+    match diagnostic_severity {
+        Some(DiagnosticSeverity::ERROR) => Some((IconDecoration::X, Color::Error)),
+        Some(DiagnosticSeverity::WARNING) => Some((IconDecoration::Warning, Color::Warning)),
+        _ => None,
     }
 }
 

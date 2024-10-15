@@ -52,6 +52,7 @@ impl RenderOnce for AnyIcon {
 pub enum IconDecoration {
     Strikethrough,
     IndicatorDot,
+    Warning,
     X,
 }
 
@@ -206,6 +207,7 @@ pub enum IconName {
     HistoryRerun,
     Indicator,
     IndicatorX,
+    IndicatorWarning,
     InlayHint,
     Library,
     LineHeight,
@@ -276,6 +278,7 @@ pub enum IconName {
     Terminal,
     Trash,
     TrashAlt,
+    Triangle,
     TriangleRight,
     Undo,
     Unpin,
@@ -284,13 +287,14 @@ pub enum IconName {
     Visible,
     Warning,
     WholeWord,
+    X,
     XCircle,
     ZedAssistant,
     ZedAssistantFilled,
     ZedXCopilot,
 }
 
-#[derive(IntoElement)]
+#[derive(Debug, IntoElement)]
 pub struct Icon {
     path: SharedString,
     color: Color,
@@ -393,6 +397,7 @@ impl RenderOnce for DecoratedIcon {
             IconDecoration::Strikethrough => IconName::Strikethrough,
             IconDecoration::IndicatorDot => IconName::Indicator,
             IconDecoration::X => IconName::IndicatorX,
+            IconDecoration::Warning => IconName::IndicatorWarning,
         };
 
         let decoration_svg = |icon: IconName| {

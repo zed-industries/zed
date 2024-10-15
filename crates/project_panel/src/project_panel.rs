@@ -7,7 +7,10 @@ use settings::{Settings, SettingsStore};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    items::entry_text_color_and_extra_icon_name,
+    items::{
+        entry_diagnostic_aware_decoration_and_color, entry_diagnostic_aware_icon_name_and_color,
+        entry_git_aware_label_color,
+    },
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
@@ -32,7 +35,7 @@ use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics};
 use serde::{Deserialize, Serialize};
 use std::{
     cell::{Cell, OnceCell},
@@ -45,7 +48,9 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
+use ui::{
+    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, KeyBinding, Label, ListItem, Tooltip,
+};
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -122,7 +127,7 @@ struct EntryDetails {
     is_processing: bool,
     is_cut: bool,
     filename_text_color: Color,
-    extra_icon_name: Option<IconName>,
+    diagnostic_severity: Option<DiagnosticSeverity>,
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
@@ -2284,15 +2289,11 @@ impl ProjectPanel {
 
                     let diagnostic_severity = self
                         .diagnostics
-                        .get(&(*worktree_id, entry.path.to_path_buf()));
+                        .get(&(*worktree_id, entry.path.to_path_buf()))
+                        .cloned();
 
-                    let (filename_text_color, extra_icon_name) =
-                        entry_text_color_and_extra_icon_name(
-                            diagnostic_severity,
-                            status,
-                            entry.is_ignored,
-                            is_marked,
-                        );
+                    let filename_text_color =
+                        entry_git_aware_label_color(status, entry.is_ignored, is_marked);
 
                     let mut details = EntryDetails {
                         filename,
@@ -2311,7 +2312,7 @@ impl ProjectPanel {
                             .as_ref()
                             .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
                         filename_text_color,
-                        extra_icon_name,
+                        diagnostic_severity,
                         git_status: status,
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
@@ -2401,7 +2402,6 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color = details.filename_text_color;
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
@@ -2410,6 +2410,9 @@ impl ProjectPanel {
                 icon = FileIcons::get_icon(Path::new(&filename), cx);
             }
         }
+
+        let filename_text_color = details.filename_text_color;
+        let diagnostic_severity = details.diagnostic_severity;
 
         let canonical_path = details
             .canonical_path
@@ -2425,7 +2428,6 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
-        let extra_icon_name = details.extra_icon_name;
 
         div()
             .id(entry_id.to_proto() as usize)
@@ -2516,12 +2518,30 @@ impl ProjectPanel {
                         )
                     })
                     .child(if let Some(icon) = &icon {
-                        h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
+                        let icon = Icon::from_path(icon.to_string());
+                        if let Some((decoration, decoration_color)) =
+                            entry_diagnostic_aware_decoration_and_color(diagnostic_severity)
+                        {
+                            h_flex().child(
+                                DecoratedIcon::new(icon.color(Color::Muted), decoration)
+                                    .decoration_color(decoration_color),
+                            )
+                        } else {
+                            h_flex().child(icon.color(filename_text_color))
+                        }
                     } else {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .invisible()
-                            .flex_none()
+                        if let Some((icon_name, color)) =
+                            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                        {
+                            h_flex()
+                                .size(IconSize::default().rems())
+                                .child(Icon::new(icon_name).color(color).size(IconSize::Small))
+                        } else {
+                            h_flex()
+                                .size(IconSize::default().rems())
+                                .invisible()
+                                .flex_none()
+                        }
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
@@ -2594,18 +2614,6 @@ impl ProjectPanel {
                         }
                         .ml_1(),
                     )
-                    .end_slot(if let Some(icon_name) = extra_icon_name {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .opacity(0.7)
-                            .child(
-                                Icon::new(icon_name)
-                                    .size(IconSize::XSmall)
-                                    .color(filename_text_color),
-                            )
-                    } else {
-                        div()
-                    })
                     .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                         if event.down.button == MouseButton::Right || event.down.first_mouse {
                             return;
