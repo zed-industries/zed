@@ -237,7 +237,7 @@ impl AlertDialog {
         .detach();
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         cx.emit(DismissEvent)
     }
 }
@@ -253,7 +253,7 @@ impl Render for AlertDialog {
 
         v_flex()
             .track_focus(&self.focus_handle)
-            .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::cancel))
             // TODO: I don't think this is necessary
             .occlude()
             .debug_below()
