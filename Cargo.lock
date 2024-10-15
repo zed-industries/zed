@@ -8968,6 +8968,7 @@ dependencies = [
  "client",
  "dev_server_projects",
  "editor",
+ "file_finder",
  "futures 0.3.30",
  "fuzzy",
  "gpui",
@@ -8988,7 +8989,6 @@ dependencies = [
  "task",
  "terminal_view",
  "ui",
- "ui_input",
  "util",
  "workspace",
 ]
