@@ -306,12 +306,7 @@ impl TitleBar {
             .items_center()
             .justify_center()
             .overflow_hidden()
-            .child(
-                div()
-                    .rounded_full()
-                    .size_1p5()
-                    .bg(indicator_color.color(cx)),
-            );
+            .child(Indicator::dot().color(indicator_color));
 
         Some(
             div()
