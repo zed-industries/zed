@@ -752,6 +752,7 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_restart_language_servers);
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
+        client.add_model_message_handler(Self::handle_language_server_log);
         client.add_model_message_handler(Self::handle_update_diagnostic_summary);
         client.add_model_request_handler(Self::handle_format_buffers);
         client.add_model_request_handler(Self::handle_resolve_completion_documentation);
@@ -3982,6 +3983,39 @@ impl LspStore {
 
             Ok(())
         })?
+    }
+
+    async fn handle_language_server_log(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::LanguageServerLog>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        let language_server_id = LanguageServerId(envelope.payload.language_server_id as usize);
+        let log_type = match envelope.payload.log_type {
+            Some(log_type) => match log_type {
+                proto::language_server_log::LogType::LogMessageType(message_type) => {
+                    LanguageServerLogType::Log(match message_type {
+                        1 => MessageType::ERROR,
+                        2 => MessageType::WARNING,
+                        3 => MessageType::INFO,
+                        4 | _ => MessageType::LOG,
+                    })
+                }
+                proto::language_server_log::LogType::LogTrace(trace) => {
+                    LanguageServerLogType::Trace(trace.message)
+                }
+            },
+            None => return Ok(()),
+        };
+        let message = envelope.payload.message;
+
+        this.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::LanguageServerLog(
+                language_server_id,
+                log_type,
+                message,
+            ));
+        })
     }
 
     pub fn disk_based_diagnostics_started(
