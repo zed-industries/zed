@@ -9,8 +9,8 @@ use ui::{ButtonStyle, IconButton, IconButtonShape};
 use workspace::notifications::NotificationId;
 use workspace::{Toast, Workspace};
 
-pub mod items;
 pub mod buffer_search;
+pub mod items;
 pub mod project_search;
 pub(crate) mod search_bar;
 
