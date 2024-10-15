@@ -10,7 +10,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::NumericPrefixWithSuffix;
+use crate::{NumericPrefixWithSuffix, ResultExt};
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
@@ -46,9 +46,11 @@ pub trait PathExt {
         }
     }
     /// TODO:
-    fn to_absolute_pathbuf(&self) -> anyhow::Result<AbsolutePathBuf>;
+    fn sanitized_pathbuf(&self) -> anyhow::Result<SanitizedPathBuf>;
     /// TODO:
-    fn to_absolute_pathbuf_string(&self) -> anyhow::Result<String>;
+    fn sanitized_pathbuf_with_fallback(&self) -> SanitizedPathBuf;
+    /// TODO:
+    fn sanitized_pathbuf_string(&self) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -98,16 +100,26 @@ impl<T: AsRef<Path>> PathExt for T {
         self.as_ref().file_name()?.to_str()?.split('.').last()
     }
 
-    fn to_absolute_pathbuf(&self) -> anyhow::Result<AbsolutePathBuf> {
+    fn sanitized_pathbuf(&self) -> anyhow::Result<SanitizedPathBuf> {
         #[cfg(target_os = "windows")]
-        return Ok(AbsolutePathBuf(PathBuf::from(
-            self.to_absolute_pathbuf_string()?,
+        return Ok(SanitizedPathBuf(PathBuf::from(
+            self.sanitized_pathbuf_string()?,
         )));
         #[cfg(not(target_os = "windows"))]
-        return Ok(AbsolutePathBuf(self.as_ref().to_path_buf()));
+        return Ok(SanitizedPathBuf(self.as_ref().to_path_buf()));
     }
 
-    fn to_absolute_pathbuf_string(&self) -> anyhow::Result<String> {
+    fn sanitized_pathbuf_with_fallback(&self) -> SanitizedPathBuf {
+        #[cfg(target_os = "windows")]
+        return self
+            .sanitized_pathbuf()
+            .log_err()
+            .unwrap_or(SanitizedPathBuf(self.as_ref().to_path_buf()));
+        #[cfg(not(target_os = "windows"))]
+        return SanitizedPathBuf(self.as_ref().to_path_buf());
+    }
+
+    fn sanitized_pathbuf_string(&self) -> anyhow::Result<String> {
         let path_string = self.as_ref().to_string_lossy();
         #[cfg(target_os = "windows")]
         {
@@ -123,7 +135,7 @@ impl<T: AsRef<Path>> PathExt for T {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct AbsolutePathBuf(PathBuf);
+pub struct SanitizedPathBuf(PathBuf);
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
@@ -147,7 +159,7 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
 /// Matching values example: `te`, `test.rs:22`, `te:22:5`, `test.c(22)`, `test.c(22,5)`etc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct PathWithPosition {
-    pub path: AbsolutePathBuf,
+    pub path: SanitizedPathBuf,
     pub row: Option<u32>,
     // Absent if row is absent.
     pub column: Option<u32>,
@@ -157,7 +169,7 @@ impl PathWithPosition {
     /// Returns a PathWithPosition from a path.
     pub fn from_path(path: PathBuf) -> Self {
         Self {
-            path: path.to_absolute_pathbuf().unwrap(),
+            path: path.sanitized_pathbuf().unwrap(),
             row: None,
             column: None,
         }
@@ -257,7 +269,7 @@ impl PathWithPosition {
                 // TODO:
                 // If `s = "text_file.txt"` some relative file path, is it okay
                 // if we trimed the path here?
-                path: PathBuf::from(s).to_absolute_pathbuf().unwrap(),
+                path: PathBuf::from(s).sanitized_pathbuf().unwrap(),
                 row: None,
                 column: None,
             };
@@ -281,14 +293,14 @@ impl PathWithPosition {
 
                 Self {
                     path: PathBuf::from(path_without_suffix)
-                        .to_absolute_pathbuf()
+                        .sanitized_pathbuf()
                         .unwrap(),
                     row,
                     column,
                 }
             }
             None => Self {
-                path: PathBuf::from(s).to_absolute_pathbuf().unwrap(),
+                path: PathBuf::from(s).sanitized_pathbuf().unwrap(),
                 row: None,
                 column: None,
             },
@@ -300,7 +312,7 @@ impl PathWithPosition {
         mapping: impl FnOnce(PathBuf) -> Result<PathBuf, E>,
     ) -> Result<PathWithPosition, E> {
         Ok(PathWithPosition {
-            path: AbsolutePathBuf(mapping(self.path.0)?),
+            path: SanitizedPathBuf(mapping(self.path.0)?),
             row: self.row,
             column: self.column,
         })
@@ -468,8 +480,8 @@ mod tests {
         );
     }
 
-    fn generate_test_absolute_path_buf<T: ?Sized + AsRef<OsStr>>(s: &T) -> AbsolutePathBuf {
-        AbsolutePathBuf(PathBuf::from(s))
+    fn generate_test_absolute_path_buf<T: ?Sized + AsRef<OsStr>>(s: &T) -> SanitizedPathBuf {
+        SanitizedPathBuf(PathBuf::from(s))
     }
 
     #[test]
