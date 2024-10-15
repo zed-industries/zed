@@ -141,13 +141,10 @@ impl SlashCommand for AutoCommand {
             prompt.push('\n');
             prompt.push_str(&original_prompt);
 
-            Ok(stream::iter(vec![
-                SlashCommandEvent::StartMessage { role: Role::User },
-                SlashCommandEvent::Content {
-                    text: prompt,
-                    run_commands_in_text: true,
-                },
-            ])
+            Ok(stream::iter(vec![SlashCommandEvent::Content {
+                text: prompt,
+                run_commands_in_text: true,
+            }])
             .boxed())
         })
     }

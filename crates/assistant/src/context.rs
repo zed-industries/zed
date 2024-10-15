@@ -1856,21 +1856,29 @@ impl Context {
                 let mut pending_section_stack: Vec<PendingSection> = Vec::new();
                 let mut run_commands_in_ranges: Vec<Range<language::Anchor>> = Vec::new();
                 let mut has_newline = false;
+                let mut last_role: Option<Role> = None;
 
                 while let Some(event) = stream.next().await {
                     match event {
-                        SlashCommandEvent::StartMessage { role } => {
-                            this.update(&mut cx, |this, cx| {
-                                let offset = this
-                                    .buffer
-                                    .read_with(cx, |buffer, _cx| position.to_offset(buffer));
-                                this.insert_message_at_offset(
-                                    offset,
-                                    role,
-                                    MessageStatus::Pending,
-                                    cx,
-                                );
-                            })?;
+                        SlashCommandEvent::StartMessage {
+                            role,
+                            merge_same_roles,
+                        } => {
+                            if !merge_same_roles && Some(role) != last_role {
+                                this.update(&mut cx, |this, cx| {
+                                    let offset = this
+                                        .buffer
+                                        .read_with(cx, |buffer, _cx| position.to_offset(buffer));
+                                    this.insert_message_at_offset(
+                                        offset,
+                                        role,
+                                        MessageStatus::Pending,
+                                        cx,
+                                    );
+                                })?;
+                            }
+
+                            last_role = Some(role);
                         }
                         SlashCommandEvent::StartSection {
                             icon,

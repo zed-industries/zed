@@ -152,7 +152,8 @@ impl SlashCommand for ContextServerSlashCommand {
 
                 let mut events = Vec::new();
                 events.push(SlashCommandEvent::StartMessage {
-                    role: Role::Assistant,
+                    role: Role::User,
+                    merge_same_roles: true,
                 });
 
                 if let Some(ref description) = result.description {

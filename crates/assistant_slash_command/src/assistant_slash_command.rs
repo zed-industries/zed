@@ -103,6 +103,7 @@ pub type RenderFoldPlaceholder = Arc<
 pub enum SlashCommandEvent {
     StartMessage {
         role: Role,
+        merge_same_roles: bool,
     },
     StartSection {
         icon: IconName,

@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
+use assistant_slash_command::SlashCommandEvent;
 use assistant_slash_command::{
     as_stream_vec, ArgumentCompletion, SlashCommand, SlashCommandOutputSection, SlashCommandResult,
 };
-use assistant_slash_command::{Role, SlashCommandEvent};
 use futures::FutureExt;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
@@ -116,13 +116,6 @@ impl SlashCommand for ExtensionSlashCommand {
             let _output = output.await?;
 
             let events = vec![
-                SlashCommandEvent::StartMessage {
-                    role: Role::Assistant,
-                },
-                SlashCommandEvent::Content {
-                    run_commands_in_text: false,
-                    text: "Here is some fake output from the extension slash command:".to_string(),
-                },
                 SlashCommandEvent::StartSection {
                     icon: IconName::Code,
                     label: "Code Output".into(),
@@ -134,10 +127,6 @@ impl SlashCommand for ExtensionSlashCommand {
                     text: "let x = 42;\nprintln!(\"The answer is {}\", x);".to_string(),
                 },
                 SlashCommandEvent::EndSection { metadata: None },
-                SlashCommandEvent::Content {
-                    run_commands_in_text: false,
-                    text: "\nThis concludes the fake output.".to_string(),
-                },
             ];
 
             return Ok(as_stream_vec(events));
