@@ -147,6 +147,11 @@ impl Render for SshPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let cx = cx.window_context();
         let theme = cx.theme();
+        let message = match (self.error_message.clone(), self.status_message.clone()) {
+            (Some(msg), _) => format!("SSH Error － {}", msg.trim()),
+            (_, Some(msg)) => format!("SSH Connection － {}", msg.trim()),
+            _ => "SSH Connection".to_string(),
+        };
         v_flex()
             .key_context("PasswordPrompt")
             .size_full()
@@ -176,27 +181,9 @@ impl Render for SshPrompt {
                     .child(
                         div()
                             .ml_1()
-                            .child(Label::new("SSH Connection").size(LabelSize::Small)),
-                    )
-                    .child(
-                        div()
                             .text_ellipsis()
                             .overflow_x_hidden()
-                            .when_some(self.error_message.as_ref(), |el, error| {
-                                el.child(Label::new(format!("－{}", error)).size(LabelSize::Small))
-                            })
-                            .when(
-                                self.error_message.is_none() && self.status_message.is_some(),
-                                |el| {
-                                    el.child(
-                                        Label::new(format!(
-                                            "－{}",
-                                            self.status_message.clone().unwrap()
-                                        ))
-                                        .size(LabelSize::Small),
-                                    )
-                                },
-                            ),
+                            .child(Label::new(message).size(LabelSize::Small)),
                     ),
             )
             .child(div().when_some(self.prompt.as_ref(), |el, prompt| {
