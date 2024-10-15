@@ -7,7 +7,7 @@ use assistant_slash_command::{
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
-    types::Prompt,
+    types::{Prompt, SamplingContent, SamplingRole},
 };
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
@@ -145,32 +145,42 @@ impl SlashCommand for ContextServerSlashCommand {
                     return Err(anyhow!("Context server not initialized"));
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
-                let mut prompt = result.prompt;
-
-                // We must normalize the line endings here, since servers might return CR characters.
-                LineEnding::normalize(&mut prompt);
 
                 let mut events = Vec::new();
-                events.push(SlashCommandEvent::StartMessage {
-                    role: Role::User,
-                    merge_same_roles: true,
-                });
 
-                if let Some(ref description) = result.description {
+                for message in result.messages {
+                    events.push(SlashCommandEvent::StartMessage {
+                        role: match message.role {
+                            SamplingRole::User => Role::User,
+                            SamplingRole::Assistant => Role::Assistant,
+                        },
+                        merge_same_roles: true,
+                    });
+
                     events.push(SlashCommandEvent::StartSection {
                         icon: IconName::Ai,
-                        label: description.clone().into(),
+                        label: "".into(),
                         metadata: None,
                         ensure_newline: false,
                     });
-                }
 
-                events.push(SlashCommandEvent::Content {
-                    text: prompt,
-                    run_commands_in_text: false,
-                });
+                    match message.content {
+                        SamplingContent::Text { text } => {
+                            let mut normalized_text = text;
+                            LineEnding::normalize(&mut normalized_text);
+                            events.push(SlashCommandEvent::Content {
+                                text: normalized_text,
+                                run_commands_in_text: false,
+                            });
+                        }
+                        SamplingContent::Image {
+                            data: _,
+                            mime_type: _,
+                        } => {
+                            todo!()
+                        }
+                    }
 
-                if result.description.is_some() {
                     events.push(SlashCommandEvent::EndSection { metadata: None });
                 }
 
