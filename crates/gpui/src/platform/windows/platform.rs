@@ -637,7 +637,7 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
         if let Some(full_path) = directory.canonicalize().log_err() {
-            if let Some(full_path_string) = full_path.to_absolute_pathbuf_string().log_err() {
+            if let Some(full_path_string) = full_path.sanitized_pathbuf_string().log_err() {
                 let path_item: IShellItem =
                     unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
                 unsafe { dialog.SetFolder(&path_item).log_err() };
