@@ -373,6 +373,8 @@ messages!(
     (GetPermalinkToLine, Foreground),
     (GetPermalinkToLineResponse, Foreground),
     (FlushBufferedMessages, Foreground),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
 );
 
 request_messages!(
@@ -500,6 +502,7 @@ request_messages!(
     (OpenServerSettings, OpenBufferResponse),
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse)
 );
 
 entity_messages!(
@@ -577,6 +580,7 @@ entity_messages!(
     HideToast,
     OpenServerSettings,
     GetPermalinkToLine,
+    GetDocumentDiagnostics,
 );
 
 entity_messages!(
