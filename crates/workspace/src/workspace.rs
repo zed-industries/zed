@@ -60,12 +60,13 @@ use persistence::{
 use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
+    WorktreeSettings,
 };
 use release_channel::ReleaseChannel;
 use remote::{SshClientDelegate, SshConnectionOptions};
 use serde::Deserialize;
 use session::AppSession;
-use settings::{InvalidSettingsError, Settings};
+use settings::{update_settings_file, InvalidSettingsError, Settings};
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -153,6 +154,7 @@ actions!(
         SaveWithoutFormat,
         ToggleBottomDock,
         ToggleCenteredLayout,
+        ToggleGitignore,
         ToggleLeftDock,
         ToggleRightDock,
         ToggleZoom,
@@ -4427,6 +4429,14 @@ impl Workspace {
                 }),
             )
             .on_action(cx.listener(Workspace::toggle_centered_layout))
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &ToggleGitignore, cx| {
+                    let fs = workspace.app_state().fs.clone();
+                    update_settings_file::<WorktreeSettings>(fs, cx, move |setting, _| {
+                        setting.exclusions_gitignore = !setting.exclusions_gitignore;
+                    });
+                }),
+            )
     }
 
     #[cfg(any(test, feature = "test-support"))]
