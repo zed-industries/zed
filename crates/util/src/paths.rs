@@ -342,14 +342,14 @@ impl PathWithPosition {
         mapping: impl FnOnce(PathBuf) -> Result<PathBuf, E>,
     ) -> Result<PathWithPosition, E> {
         Ok(PathWithPosition {
-            path: SanitizedPathBuf(mapping(self.path.0)?),
+            path: SanitizedPathBuf(mapping(self.path.into())?),
             row: self.row,
             column: self.column,
         })
     }
 
     pub fn to_string(&self, path_to_string: impl Fn(&PathBuf) -> String) -> String {
-        let path_string = path_to_string(&self.path.0);
+        let path_string = path_to_string(&*self.path);
         if let Some(row) = self.row {
             if let Some(column) = self.column {
                 format!("{path_string}:{row}:{column}")
