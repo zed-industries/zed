@@ -249,7 +249,6 @@ impl LspCommand for OpenDocs {
         _: Model<Buffer>,
         _: AsyncAppContext,
     ) -> anyhow::Result<DocsUrls> {
-        println!("{:?}", message);
         Ok(DocsUrls {
             web: message.web,
             local: message.local,

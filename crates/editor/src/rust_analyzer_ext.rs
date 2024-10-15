@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use anyhow::{Context as _, Ok};
+use anyhow::Context as _;
 use gpui::{Context, View, ViewContext, VisualContext, WindowContext};
 use language::Language;
 use multi_buffer::MultiBuffer;
