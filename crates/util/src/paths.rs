@@ -49,8 +49,6 @@ pub trait PathExt {
     /// TODO:
     fn sanitized_pathbuf(&self) -> anyhow::Result<SanitizedPathBuf>;
     /// TODO:
-    fn sanitized_pathbuf_with_fallback(&self) -> SanitizedPathBuf;
-    /// TODO:
     fn sanitized_pathbuf_string(&self) -> anyhow::Result<String>;
 }
 
@@ -110,16 +108,6 @@ impl<T: AsRef<Path>> PathExt for T {
         return Ok(SanitizedPathBuf(self.as_ref().to_path_buf()));
     }
 
-    fn sanitized_pathbuf_with_fallback(&self) -> SanitizedPathBuf {
-        #[cfg(target_os = "windows")]
-        return self
-            .sanitized_pathbuf()
-            .log_err()
-            .unwrap_or(SanitizedPathBuf(self.as_ref().to_path_buf()));
-        #[cfg(not(target_os = "windows"))]
-        return SanitizedPathBuf(self.as_ref().to_path_buf());
-    }
-
     fn sanitized_pathbuf_string(&self) -> anyhow::Result<String> {
         let path_string = self.as_ref().to_string_lossy();
         #[cfg(target_os = "windows")]
@@ -149,6 +137,20 @@ impl Deref for SanitizedPathBuf {
 impl Into<PathBuf> for SanitizedPathBuf {
     fn into(self) -> PathBuf {
         self.0
+    }
+}
+
+impl Into<SanitizedPathBuf> for PathBuf {
+    #[cfg(target_os = "windows")]
+    fn into(self) -> SanitizedPathBuf {
+        self.sanitized_pathbuf()
+            .log_err()
+            .unwrap_or(SanitizedPathBuf(self))
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn into(self) -> SanitizedPathBuf {
+        SanitizedPathBuf(self)
     }
 }
 
@@ -184,7 +186,7 @@ impl PathWithPosition {
     /// Returns a PathWithPosition from a path.
     pub fn from_path(path: PathBuf) -> Self {
         Self {
-            path: path.sanitized_pathbuf_with_fallback(),
+            path: path.into(),
             row: None,
             column: None,
         }
@@ -284,7 +286,7 @@ impl PathWithPosition {
                 // TODO:
                 // If `s = "text_file.txt"` some relative file path, is it okay
                 // if we trimed the path here?
-                path: PathBuf::from(s).sanitized_pathbuf_with_fallback(),
+                path: PathBuf::from(s).into(),
                 row: None,
                 column: None,
             };
@@ -307,13 +309,13 @@ impl PathWithPosition {
                 let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
 
                 Self {
-                    path: PathBuf::from(path_without_suffix).sanitized_pathbuf_with_fallback(),
+                    path: PathBuf::from(path_without_suffix).into(),
                     row,
                     column,
                 }
             }
             None => Self {
-                path: PathBuf::from(s).sanitized_pathbuf_with_fallback(),
+                path: PathBuf::from(s).into(),
                 row: None,
                 column: None,
             },
