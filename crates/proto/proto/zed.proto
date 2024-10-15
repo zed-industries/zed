@@ -311,7 +311,10 @@ message Envelope {
 
         Stage stage = 293;
         Unstage unstage = 294;
-        Commit commit = 295; // current max
+        Commit commit = 295;
+        
+        GetDocumentDiagnostics get_document_diagnostics = 296;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 297; // current max
     }
 
     reserved 87 to 88;
@@ -2658,4 +2661,15 @@ message Commit {
     string message = 4;
     optional string name = 5;
     optional string email = 6;
+}
+
+message GetDocumentDiagnostics {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    repeated VectorClockEntry version = 3;
+}
+
+message GetDocumentDiagnosticsResponse {
+    string result_id = 1;
+    repeated Diagnostic diagnostics = 2;
 }
