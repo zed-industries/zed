@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
-    SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
+    SlashCommandOutputSection, SlashCommandResult,
 };
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
@@ -346,7 +346,6 @@ impl SlashCommand for DocsSlashCommand {
 
         cx.foreground_executor().spawn(async move {
             let (provider, text, _) = task.await?;
-
             let events = vec![
                 SlashCommandEvent::StartSection {
                     icon: IconName::FileDoc,
@@ -354,10 +353,10 @@ impl SlashCommand for DocsSlashCommand {
                     metadata: None,
                     ensure_newline: false,
                 },
-                SlashCommandEvent::Content {
+                SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text,
                     run_commands_in_text: false,
-                },
+                }),
                 SlashCommandEvent::EndSection { metadata: None },
             ];
 

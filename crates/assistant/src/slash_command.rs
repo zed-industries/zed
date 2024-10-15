@@ -1,6 +1,6 @@
 use crate::assistant_panel::ContextEditor;
 use anyhow::Result;
-use assistant_slash_command::AfterCompletion;
+use assistant_slash_command::{AfterCompletion, SlashCommandContentType};
 pub use assistant_slash_command::{
     SlashCommand, SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry,
     SlashCommandResult,
@@ -514,10 +514,10 @@ pub fn buffer_to_output(
     }
     code_content.push_str("```\n");
 
-    events.push(SlashCommandEvent::Content {
-        text: code_content.into(),
+    events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
+        text: code_content,
         run_commands_in_text: false,
-    });
+    }));
 
     events.push(SlashCommandEvent::EndSection { metadata: None });
 

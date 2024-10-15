@@ -1,6 +1,7 @@
 use super::create_label_for_command;
 use super::SlashCommand;
 use anyhow::{anyhow, Result};
+use assistant_slash_command::SlashCommandContentType;
 use assistant_slash_command::{ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection};
 use feature_flags::FeatureFlag;
 use futures::stream::BoxStream;
@@ -141,10 +142,12 @@ impl SlashCommand for AutoCommand {
             prompt.push('\n');
             prompt.push_str(&original_prompt);
 
-            Ok(stream::iter(vec![SlashCommandEvent::Content {
-                text: prompt,
-                run_commands_in_text: true,
-            }])
+            Ok(stream::iter(vec![SlashCommandEvent::Content(
+                SlashCommandContentType::Text {
+                    text: prompt,
+                    run_commands_in_text: true,
+                },
+            )])
             .boxed())
         })
     }

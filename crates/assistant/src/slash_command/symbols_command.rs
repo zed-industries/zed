@@ -1,7 +1,8 @@
 use super::SlashCommand;
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use editor::Editor;
 use futures::stream::{self, StreamExt};
@@ -76,7 +77,6 @@ impl SlashCommand for OutlineSlashCommand {
                     outline_text.push_str(&item.string);
                     outline_text.push('\n');
                 }
-
                 let events = vec![
                     SlashCommandEvent::StartSection {
                         icon: IconName::ListTree,
@@ -84,10 +84,10 @@ impl SlashCommand for OutlineSlashCommand {
                         metadata: None,
                         ensure_newline: false,
                     },
-                    SlashCommandEvent::Content {
+                    SlashCommandEvent::Content(SlashCommandContentType::Text {
                         text: outline_text,
                         run_commands_in_text: false,
-                    },
+                    }),
                     SlashCommandEvent::EndSection { metadata: None },
                 ];
 

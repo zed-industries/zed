@@ -1,7 +1,8 @@
 use super::{create_label_for_command, SlashCommand};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use futures::stream::{BoxStream, StreamExt};
 use fuzzy::{PathMatch, StringMatchCandidate};
@@ -269,15 +270,15 @@ fn collect_diagnostics(
         let mut events = Vec::new();
 
         if let Some(error_source) = error_source.as_ref() {
-            events.push(SlashCommandEvent::Content {
+            events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                 text: format!("diagnostics: {}\n", error_source),
                 run_commands_in_text: false,
-            });
+            }));
         } else {
-            events.push(SlashCommandEvent::Content {
+            events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                 text: "diagnostics\n".to_string(),
                 run_commands_in_text: false,
-            });
+            }));
         }
 
         let mut project_summary = DiagnosticSummary::default();
@@ -303,10 +304,10 @@ fn collect_diagnostics(
                     metadata: None,
                     ensure_newline: false,
                 });
-                events.push(SlashCommandEvent::Content {
+                events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text: format!("{}\n", file_path),
                     run_commands_in_text: false,
-                });
+                }));
                 events.push(SlashCommandEvent::EndSection { metadata: None });
             }
 
@@ -441,10 +442,10 @@ fn collect_diagnostic(
             metadata: None,
             ensure_newline: false,
         },
-        SlashCommandEvent::Content {
+        SlashCommandEvent::Content(SlashCommandContentType::Text {
             text,
             run_commands_in_text: false,
-        },
+        }),
         SlashCommandEvent::EndSection { metadata: None },
     ]
 }

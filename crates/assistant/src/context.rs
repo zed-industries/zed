@@ -45,7 +45,8 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
+    SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry,
+    SlashCommandResult,
 };
 use assistant_tool::ToolRegistry;
 use client::{self, proto, telemetry::Telemetry};
@@ -1898,35 +1899,57 @@ impl Context {
                                 });
                             })?;
                         }
-                        SlashCommandEvent::Content {
-                            text,
-                            run_commands_in_text,
-                        } => {
-                            this.update(&mut cx, |this, cx| {
-                                let start = this.buffer.read(cx).anchor_before(position);
-
-                                let result = this.buffer.update(cx, |buffer, cx| {
-                                    let ensure_newline = pending_section_stack
-                                        .last()
-                                        .map(|ps| ps.ensure_newline)
-                                        .unwrap_or(false);
-                                    let text = if ensure_newline && !text.ends_with('\n') {
-                                        text + "\n"
-                                    } else {
-                                        text
+                        SlashCommandEvent::Content(content) => match content {
+                            SlashCommandContentType::Image { image } => {
+                                this.update(&mut cx, |this, cx| {
+                                    let Some(render_image) = image.to_image_data(cx).log_err()
+                                    else {
+                                        return;
                                     };
-                                    has_newline = text.ends_with("\n");
-                                    buffer.edit([(position..position, text)], None, cx)
-                                });
+                                    let image_id = image.id();
+                                    let image_task =
+                                        LanguageModelImage::from_image(image, cx).shared();
+                                    this.insert_content(
+                                        Content::Image {
+                                            anchor: position,
+                                            image_id,
+                                            image: image_task,
+                                            render_image,
+                                        },
+                                        cx,
+                                    );
+                                })?;
+                            }
+                            SlashCommandContentType::Text {
+                                text,
+                                run_commands_in_text,
+                            } => {
+                                this.update(&mut cx, |this, cx| {
+                                    let start = this.buffer.read(cx).anchor_before(position);
 
-                                let end = this.buffer.read(cx).anchor_before(position);
-                                if run_commands_in_text {
-                                    run_commands_in_ranges.push(start..end);
-                                }
+                                    let result = this.buffer.update(cx, |buffer, cx| {
+                                        let ensure_newline = pending_section_stack
+                                            .last()
+                                            .map(|ps| ps.ensure_newline)
+                                            .unwrap_or(false);
+                                        let text = if ensure_newline && !text.ends_with('\n') {
+                                            text + "\n"
+                                        } else {
+                                            text
+                                        };
+                                        has_newline = text.ends_with("\n");
+                                        buffer.edit([(position..position, text)], None, cx)
+                                    });
 
-                                result
-                            })?;
-                        }
+                                    let end = this.buffer.read(cx).anchor_before(position);
+                                    if run_commands_in_text {
+                                        run_commands_in_ranges.push(start..end);
+                                    }
+
+                                    result
+                                })?;
+                            }
+                        },
                         SlashCommandEvent::Progress {
                             message: _,
                             complete: _,

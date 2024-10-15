@@ -2,8 +2,8 @@ use crate::slash_command::file_command::FileSlashCommand;
 use crate::slash_command::FileCommandMetadata;
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
-    SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
+    SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashSet;
 use futures::{
@@ -93,7 +93,11 @@ impl SlashCommand for DeltaSlashCommand {
                     let new_content = stream::StreamExt::collect::<Vec<_>>(new_events).await;
                     {
                         if let Some(first_content) = new_content.iter().find_map(|event| {
-                            if let SlashCommandEvent::Content { text, .. } = event {
+                            if let SlashCommandEvent::Content(SlashCommandContentType::Text {
+                                text,
+                                ..
+                            }) = event
+                            {
                                 Some(text)
                             } else {
                                 None

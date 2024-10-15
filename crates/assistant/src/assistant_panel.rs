@@ -2202,7 +2202,7 @@ impl ContextEditor {
                 })
             }
             ContextEvent::SlashCommandFinished {
-                output_range,
+                output_range: _output_range,
                 sections,
                 run_commands_in_ranges,
                 expand_result,

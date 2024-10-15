@@ -1,7 +1,8 @@
 use super::SlashCommand;
 use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use fs::Fs;
 use futures::stream::{self, StreamExt};
@@ -145,10 +146,10 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
                         metadata: None,
                         ensure_newline: false,
                     },
-                    SlashCommandEvent::Content {
+                    SlashCommandEvent::Content(SlashCommandContentType::Text {
                         text,
                         run_commands_in_text: false,
-                    },
+                    }),
                     SlashCommandEvent::EndSection { metadata: None },
                 ])
                 .boxed())

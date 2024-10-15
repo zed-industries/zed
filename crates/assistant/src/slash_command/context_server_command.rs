@@ -1,8 +1,8 @@
 use super::create_label_for_command;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    as_stream_vec, AfterCompletion, ArgumentCompletion, Role, SlashCommand, SlashCommandEvent,
-    SlashCommandOutputSection, SlashCommandResult,
+    as_stream_vec, AfterCompletion, ArgumentCompletion, Role, SlashCommand,
+    SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
 use context_servers::{
@@ -168,16 +168,18 @@ impl SlashCommand for ContextServerSlashCommand {
                         SamplingContent::Text { text } => {
                             let mut normalized_text = text;
                             LineEnding::normalize(&mut normalized_text);
-                            events.push(SlashCommandEvent::Content {
-                                text: normalized_text,
-                                run_commands_in_text: false,
-                            });
+                            events.push(SlashCommandEvent::Content(
+                                SlashCommandContentType::Text {
+                                    text: normalized_text,
+                                    run_commands_in_text: false,
+                                },
+                            ));
                         }
                         SamplingContent::Image {
-                            data: _,
-                            mime_type: _,
+                            data: _data,
+                            mime_type: _mime_type,
                         } => {
-                            todo!()
+                            todo!("unsupported")
                         }
                     }
 

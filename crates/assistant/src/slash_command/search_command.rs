@@ -1,8 +1,8 @@
 use super::{codeblock_fence_for_path, create_label_for_command};
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
-    SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
+    SlashCommandOutputSection, SlashCommandResult,
 };
 use feature_flags::FeatureFlag;
 use futures::stream::{self, StreamExt};
@@ -147,7 +147,6 @@ pub fn add_search_result_section(
         text.push('\n');
     }
     writeln!(text, "```\n").unwrap();
-
     let path_str = path.to_string_lossy().to_string();
     events.push(SlashCommandEvent::StartSection {
         icon: IconName::File,
@@ -155,9 +154,9 @@ pub fn add_search_result_section(
         metadata: None,
         ensure_newline: false,
     });
-    events.push(SlashCommandEvent::Content {
+    events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
         text,
         run_commands_in_text: false,
-    });
+    }));
     events.push(SlashCommandEvent::EndSection { metadata: None });
 }

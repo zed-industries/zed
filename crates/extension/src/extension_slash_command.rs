@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandEvent;
 use assistant_slash_command::{
     as_stream_vec, ArgumentCompletion, SlashCommand, SlashCommandOutputSection, SlashCommandResult,
 };
+use assistant_slash_command::{SlashCommandContentType, SlashCommandEvent};
 use futures::FutureExt;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
@@ -122,10 +122,10 @@ impl SlashCommand for ExtensionSlashCommand {
                     metadata: None,
                     ensure_newline: true,
                 },
-                SlashCommandEvent::Content {
-                    run_commands_in_text: false,
+                SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text: "let x = 42;\nprintln!(\"The answer is {}\", x);".to_string(),
-                },
+                    run_commands_in_text: false,
+                }),
                 SlashCommandEvent::EndSection { metadata: None },
             ];
 

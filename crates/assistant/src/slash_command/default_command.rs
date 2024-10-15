@@ -2,7 +2,8 @@ use super::SlashCommand;
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
@@ -77,10 +78,10 @@ impl SlashCommand for DefaultSlashCommand {
                     metadata: None,
                     ensure_newline: false,
                 },
-                SlashCommandEvent::Content {
+                SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text,
                     run_commands_in_text: true,
-                },
+                }),
                 SlashCommandEvent::EndSection { metadata: None },
             ]);
 

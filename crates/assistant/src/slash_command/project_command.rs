@@ -2,7 +2,8 @@ use super::{create_label_for_command, SlashCommand};
 use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use feature_flags::FeatureFlag;
 use futures::stream::{self, StreamExt};
@@ -133,10 +134,10 @@ impl SlashCommand for ProjectSlashCommand {
                     });
 
                     let output = "Project context:\n".to_string();
-                    events.push(SlashCommandEvent::Content {
+                    events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                         text: output.clone(),
                         run_commands_in_text: true,
-                    });
+                    }));
 
                     for (ix, query) in search_queries.into_iter().enumerate() {
                         let mut has_results = false;
@@ -156,10 +157,12 @@ impl SlashCommand for ProjectSlashCommand {
                         }
 
                         if has_results {
-                            events.push(SlashCommandEvent::Content {
-                                text: section_text,
-                                run_commands_in_text: true,
-                            });
+                            events.push(SlashCommandEvent::Content(
+                                SlashCommandContentType::Text {
+                                    text: section_text,
+                                    run_commands_in_text: true,
+                                },
+                            ));
                             events.push(SlashCommandEvent::EndSection { metadata: None });
                         }
                     }

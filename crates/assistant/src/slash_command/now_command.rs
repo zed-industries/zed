@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
-    SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
+    SlashCommandOutputSection, SlashCommandResult,
 };
 use chrono::Local;
 use futures::stream::{self, StreamExt};
@@ -61,10 +61,10 @@ impl SlashCommand for NowSlashCommand {
                 metadata: None,
                 ensure_newline: false,
             },
-            SlashCommandEvent::Content {
+            SlashCommandEvent::Content(SlashCommandContentType::Text {
                 text,
                 run_commands_in_text: false,
-            },
+            }),
             SlashCommandEvent::EndSection { metadata: None },
         ])
         .boxed()))

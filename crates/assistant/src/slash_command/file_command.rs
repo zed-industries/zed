@@ -4,7 +4,7 @@ use super::{
 };
 // use super::diagnostics_command::collect_buffer_diagnostics;
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{AfterCompletion, ArgumentCompletion};
+use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandContentType};
 use futures::stream::{self, StreamExt};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
@@ -292,10 +292,10 @@ fn collect_files(
                         metadata: None,
                         ensure_newline: true,
                     });
-                    events.push(SlashCommandEvent::Content {
+                    events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                         text: dirname,
                         run_commands_in_text: false,
-                    });
+                    }));
                     directory_stack.push(entry.path.clone());
                 } else if entry.is_file() {
                     let open_buffer_task = project_handle
@@ -418,7 +418,7 @@ mod test {
     use settings::SettingsStore;
 
     use crate::slash_command::file_command::collect_files;
-    use assistant_slash_command::SlashCommandEvent;
+    use assistant_slash_command::{SlashCommandContentType, SlashCommandEvent};
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {
@@ -564,9 +564,8 @@ mod test {
             .iter()
             .filter(|e| matches!(e, SlashCommandEvent::Content { text, .. }))
             .collect();
-
         let content = content_events.iter().fold(String::new(), |mut acc, e| {
-            if let SlashCommandEvent::Content { text, .. } = e {
+            if let SlashCommandEvent::Content(SlashCommandContentType::Text { text, .. }) = e {
                 acc.push_str(text);
             }
             acc
@@ -624,7 +623,12 @@ mod test {
             .iter()
             .map(|e| match e {
                 SlashCommandEvent::StartSection { label, .. } => format!("StartSection: {}", label),
-                SlashCommandEvent::Content { text, .. } => format!("Content: {}", text),
+                SlashCommandEvent::Content(SlashCommandContentType::Text { text, .. }) => {
+                    format!("Content: {}", text)
+                }
+                SlashCommandEvent::Content(SlashCommandContentType::Image { .. }) => {
+                    "Content: Image".to_string()
+                }
                 SlashCommandEvent::EndSection { .. } => "EndSection".to_string(),
                 _ => "Unknown event".to_string(),
             })
@@ -643,7 +647,7 @@ mod test {
                     }
                     i += 1;
                 }
-                SlashCommandEvent::Content { text, .. } => match i {
+                SlashCommandEvent::Content(SlashCommandContentType::Text { text, .. }) => match i {
                     1 => assert!(
                         text.contains("zed/assets/themes"),
                         "Expected text to contain 'LICENSE' but got: {}",
