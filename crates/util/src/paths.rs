@@ -302,7 +302,7 @@ impl PathWithPosition {
             return Self {
                 // TODO:
                 // If `s = "text_file.txt"` some relative file path, is it okay
-                // if we trimed the path here?
+                // if we trimmed the path here?
                 path: PathBuf::from(s).into(),
                 row: None,
                 column: None,
