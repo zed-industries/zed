@@ -630,7 +630,7 @@ impl LanguageServer {
                         refresh_support: Some(true),
                     }),
                     diagnostic: Some(DiagnosticWorkspaceClientCapabilities {
-                        refresh_support: None,
+                        refresh_support: Some(true),
                     }),
                     workspace_edit: Some(WorkspaceEditClientCapabilities {
                         resource_operations: Some(vec![
@@ -756,6 +756,10 @@ impl LanguageServer {
                     synchronization: Some(TextDocumentSyncClientCapabilities {
                         did_save: Some(true),
                         ..TextDocumentSyncClientCapabilities::default()
+                    }),
+                    diagnostic: Some(DiagnosticClientCapabilities {
+                        dynamic_registration: Some(true),
+                        related_document_support: Some(true),
                     }),
                     ..TextDocumentClientCapabilities::default()
                 }),
