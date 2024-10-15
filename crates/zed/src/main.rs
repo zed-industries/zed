@@ -727,7 +727,10 @@ fn handle_open_request(
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
                 connection_info,
-                paths_with_position.into_iter().map(|p| p.path).collect(),
+                paths_with_position
+                    .into_iter()
+                    .map(|p| p.path.into())
+                    .collect(),
                 app_state,
                 workspace::OpenOptions::default(),
                 nickname,

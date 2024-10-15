@@ -1,4 +1,5 @@
 use std::cmp;
+use std::ops::Deref;
 use std::sync::OnceLock;
 use std::{
     ffi::OsStr,
@@ -136,6 +137,20 @@ impl<T: AsRef<Path>> PathExt for T {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct SanitizedPathBuf(PathBuf);
+
+impl Deref for SanitizedPathBuf {
+    type Target = PathBuf;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl Into<PathBuf> for SanitizedPathBuf {
+    fn into(self) -> PathBuf {
+        self.0
+    }
+}
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';

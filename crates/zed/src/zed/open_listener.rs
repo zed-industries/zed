@@ -208,7 +208,7 @@ pub async fn open_paths_with_positions(
     let paths = path_positions
         .iter()
         .map(|path_with_position| {
-            let path = path_with_position.path.clone();
+            let path = (*path_with_position.path).clone();
             if let Some(row) = path_with_position.row {
                 if path.is_file() {
                     let row = row.saturating_sub(1);

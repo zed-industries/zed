@@ -27,7 +27,10 @@ use terminal::{
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{paths::PathWithPosition, ResultExt};
+use util::{
+    paths::{PathExt, PathWithPosition},
+    ResultExt,
+};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
     notifications::NotifyResultExt,
@@ -717,7 +720,7 @@ fn subscribe_for_terminal_events(
                             .await;
                         let paths_to_open = valid_files_to_open
                             .iter()
-                            .map(|(p, _)| p.path.clone())
+                            .map(|(p, _)| (*p.path).clone())
                             .collect();
                         let opened_items = task_workspace
                             .update(&mut cx, |workspace, cx| {
@@ -798,33 +801,18 @@ fn possible_open_paths_metadata(
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
-        #[cfg(not(target_os = "windows"))]
         let mut fetch_metadata_tasks = potential_paths
-            .into_iter()
+            .iter()
             .map(|potential_path| async {
-                let metadata = fs.metadata(&potential_path).await.ok().flatten();
+                let metadata = fs.metadata(potential_path).await.ok().flatten();
                 (
                     PathWithPosition {
-                        path: potential_path,
+                        path: potential_path.sanitized_pathbuf_with_fallback(),
                         row,
                         column,
                     },
                     metadata,
                 )
-            })
-            .collect::<FuturesUnordered<_>>();
-
-        #[cfg(target_os = "windows")]
-        let mut fetch_metadata_tasks = potential_paths
-            .iter()
-            .map(|potential_path| async {
-                let metadata = fs.metadata(potential_path).await.ok().flatten();
-                let path = PathBuf::from(
-                    potential_path
-                        .to_string_lossy()
-                        .trim_start_matches("\\\\?\\"),
-                );
-                (PathWithPosition { path, row, column }, metadata)
             })
             .collect::<FuturesUnordered<_>>();
 
@@ -851,7 +839,7 @@ fn possible_open_targets(
     let maybe_path = path_position.path;
 
     let abs_path = if maybe_path.is_absolute() {
-        Some(maybe_path)
+        Some(maybe_path.into())
     } else if maybe_path.starts_with("~") {
         maybe_path
             .strip_prefix("~")
@@ -860,7 +848,7 @@ fn possible_open_targets(
     } else {
         let mut potential_cwd_and_workspace_paths = HashSet::default();
         if let Some(cwd) = cwd {
-            let abs_path = Path::join(cwd, &maybe_path);
+            let abs_path = Path::join(cwd, &*maybe_path);
             let canonicalized_path = abs_path.canonicalize().unwrap_or(abs_path);
             potential_cwd_and_workspace_paths.insert(canonicalized_path);
         }
@@ -868,7 +856,7 @@ fn possible_open_targets(
             workspace.update(cx, |workspace, cx| {
                 for potential_worktree_path in workspace
                     .worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
+                    .map(|worktree| worktree.read(cx).abs_path().join(&*maybe_path))
                 {
                     potential_cwd_and_workspace_paths.insert(potential_worktree_path);
                 }
