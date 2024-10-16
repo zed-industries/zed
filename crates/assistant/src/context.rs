@@ -45,7 +45,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
-use text::{BufferSnapshot, ToPoint};
+use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
