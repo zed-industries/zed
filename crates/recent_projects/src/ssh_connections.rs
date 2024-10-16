@@ -468,6 +468,8 @@ impl SshClientDelegate {
                 "build",
                 "--package",
                 "remote_server",
+                "--features",
+                "debug-embed",
                 "--target-dir",
                 "target/remote_server",
             ]))
