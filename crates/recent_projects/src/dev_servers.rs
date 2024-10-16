@@ -16,7 +16,6 @@ use gpui::canvas;
 use gpui::pulsating_between;
 use gpui::AsyncWindowContext;
 use gpui::ClipboardItem;
-use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
@@ -60,9 +59,7 @@ pub struct DevServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
-    dev_server_store: Model<dev_server_projects::Store>,
     workspace: WeakView<Workspace>,
-    _dev_server_subscription: Subscription,
     selectable_items: SelectableItemList,
 }
 
@@ -333,11 +330,6 @@ impl DevServerProjects {
 
     pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
         let focus_handle = cx.focus_handle();
-        let dev_server_store = dev_server_projects::Store::global(cx);
-
-        let subscription = cx.observe(&dev_server_store, |_, _, cx| {
-            cx.notify();
-        });
 
         let mut base_style = cx.text_style();
         base_style.refine(&gpui::TextStyleRefinement {
@@ -349,9 +341,7 @@ impl DevServerProjects {
             mode: Mode::default_mode(),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
-            dev_server_store,
             workspace,
-            _dev_server_subscription: subscription,
             selectable_items: Default::default(),
         }
     }
@@ -1113,7 +1103,6 @@ impl DevServerProjects {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let scroll_state = scroll_state.parent_view(cx.view());
-        let dev_servers = self.dev_server_store.read(cx).dev_servers();
         let ssh_connections = SshSettings::get_global(cx)
             .ssh_connections()
             .collect::<Vec<_>>();
@@ -1171,7 +1160,7 @@ impl DevServerProjects {
             )
             .into_any_element();
 
-        let server_count = format!("Servers: {}", ssh_connections.len() + dev_servers.len());
+        let server_count = format!("Servers: {}", ssh_connections.len());
 
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
