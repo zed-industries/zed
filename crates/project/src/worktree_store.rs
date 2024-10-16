@@ -247,14 +247,9 @@ impl WorktreeStore {
         if abs_path.starts_with("/~") {
             abs_path = abs_path[1..].to_string();
         }
-        if abs_path.is_empty() {
+        if abs_path.is_empty() || abs_path == "/" {
             abs_path = "~/".to_string();
         }
-        let root_name = PathBuf::from(abs_path.clone())
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
         cx.spawn(|this, mut cx| async move {
             let this = this.upgrade().context("Dropped worktree store")?;
 
@@ -271,6 +266,11 @@ impl WorktreeStore {
             })? {
                 return Ok(existing_worktree);
             }
+
+            let root_name = PathBuf::from(&response.canonicalized_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(response.canonicalized_path.to_string());
 
             let worktree = cx.update(|cx| {
                 Worktree::remote(
