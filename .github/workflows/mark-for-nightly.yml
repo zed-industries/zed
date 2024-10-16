@@ -1,0 +1,50 @@
+name: Mark for Nightly
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  mark-for-nightly:
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/nightly')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get PR details and check if open
+        id: pr_details
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+            if (pr.data.state !== 'open') {
+              console.log('PR is not open. Skipping.');
+              return null;
+            }
+            return {
+              sha: pr.data.head.sha,
+              ref: pr.data.head.ref
+            }
+
+      - name: Edit comment with SHA
+        if: steps.pr_details.outputs.result != 'null'
+        uses: actions/github-script@v6
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            const sha = '${{ fromJson(steps.pr_details.outputs.result).sha }}';
+            const originalBody = context.payload.comment.body;
+            const updatedBody = originalBody.replace('/nightly', `/nightly:${sha}`);
+            const finalBody = `${updatedBody}\n\nThis PR's current HEAD (${sha}) will be included in the next nightly build. To remove it from the nightly build, comment with \`/nightly:remove\`.`;
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              body: finalBody
+            });

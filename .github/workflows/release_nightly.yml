@@ -14,6 +14,63 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
+  prepare-nightly-train:
+    name: Prepare nightly-train branch
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Create or update nightly-train branch
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git checkout -B nightly-train main
+
+          # Find all comments with /nightly:SHA
+          nightly_comments=$(gh api graphql -f query='
+            query($owner:String!, $repo:String!) {
+              repository(owner:$owner, name:$repo) {
+                pullRequests(last:128, states:OPEN) {
+                  nodes {
+                    number
+                    comments(last:128) {
+                      nodes {
+                        body
+                      }
+                    }
+                  }
+                }
+              }
+            }' -f owner=${{ github.repository_owner }} -f repo=${{ github.event.repository.name }} | jq -r '.data.repository.pullRequests.nodes[] | select(.comments.nodes[].body | contains("/nightly:")) | {number: .number, comments: [.comments.nodes[].body | select(contains("/nightly:"))]} | @json')
+
+          # Process each PR
+          echo "$nightly_comments" | jq -c '.' | while read -r pr; do
+            pr_number=$(echo "$pr" | jq -r '.number')
+            last_command=$(echo "$pr" | jq -r '.comments[-1]')
+
+            sha=$(echo "$last_command" | grep -oP '/nightly:\K[a-f0-9]+')
+            if [ -n "$sha" ]; then
+              if git cherry-pick $sha; then
+                if cargo check --workspace; then
+                  echo "Successfully cherry-picked and checked $sha from PR #$pr_number"
+                else
+                  git reset --hard HEAD~1
+                  echo "::warning::Commit $sha from PR #$pr_number failed cargo check, excluding from nightly-train"
+                fi
+              else
+                echo "::warning::Failed to cherry-pick $sha from PR #$pr_number, skipping"
+                git cherry-pick --abort
+              fi
+            elif [[ $last_command == *"/nightly:remove"* ]]; then
+              echo "Skipping PR #$pr_number due to /nightly:remove command"
+            fi
+          done
+
+          git push origin nightly-train --force
+
   style:
     timeout-minutes: 60
     name: Check formatting and Clippy lints
@@ -21,12 +78,14 @@ jobs:
     runs-on:
       - self-hosted
       - test
+    needs: prepare-nightly-train
     steps:
       - name: Checkout repo
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
           fetch-depth: 0
+          ref: nightly-train
 
       - name: Run style checks
         uses: ./.github/actions/check_style
@@ -47,6 +106,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
+          ref: nightly-train
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -78,6 +138,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
+          ref: nightly-train
 
       - name: Set release channel to nightly
         run: |
@@ -112,6 +173,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
+          ref: nightly-train
 
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -152,6 +214,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
+          ref: nightly-train
 
       - name: Install Linux dependencies
         run: ./script/linux
@@ -185,6 +248,7 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           fetch-depth: 0
+          ref: nightly-train
 
       - name: Update nightly tag
         run: |
