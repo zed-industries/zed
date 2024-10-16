@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
@@ -16,6 +17,8 @@ use rpc::{
     proto::{self, SSH_PEER_ID, SSH_PROJECT_ID},
     AnyProtoClient, TypedEnvelope,
 };
+
+use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -36,6 +39,14 @@ pub struct HeadlessProject {
     pub languages: Arc<LanguageRegistry>,
 }
 
+pub struct HeadlessAppState {
+    pub session: Arc<ChannelClient>,
+    pub fs: Arc<dyn Fs>,
+    pub http_client: Arc<dyn HttpClient>,
+    pub node_runtime: NodeRuntime,
+    pub languages: Arc<LanguageRegistry>,
+}
+
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
         settings::init(cx);
@@ -43,11 +54,16 @@ impl HeadlessProject {
         project::Project::init_settings(cx);
     }
 
-    pub fn new(session: Arc<ChannelClient>, fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
-        let languages = Arc::new(LanguageRegistry::new(cx.background_executor().clone()));
-
-        let node_runtime = NodeRuntime::unavailable();
-
+    pub fn new(
+        HeadlessAppState {
+            session,
+            fs,
+            http_client,
+            node_runtime,
+            languages,
+        }: HeadlessAppState,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new_model(|cx| {
@@ -99,7 +115,7 @@ impl HeadlessProject {
                 prettier_store.clone(),
                 environment,
                 languages.clone(),
-                None,
+                http_client,
                 fs.clone(),
                 cx,
             );
@@ -139,6 +155,7 @@ impl HeadlessProject {
 
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_find_search_candidates);
+        client.add_model_request_handler(Self::handle_open_server_settings);
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
@@ -200,6 +217,15 @@ impl HeadlessProject {
                         project_id: SSH_PROJECT_ID,
                         language_server_id: language_server_id.to_proto(),
                         variant: Some(message.clone()),
+                    })
+                    .log_err();
+            }
+            LspStoreEvent::Notification(message) => {
+                self.session
+                    .send(proto::Toast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "lsp".to_string(),
+                        message: message.clone(),
                     })
                     .log_err();
             }
@@ -329,6 +355,59 @@ impl HeadlessProject {
             buffer_store
                 .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
                 .detach_and_log_err(cx);
+        })?;
+
+        Ok(proto::OpenBufferResponse {
+            buffer_id: buffer_id.to_proto(),
+        })
+    }
+
+    pub async fn handle_open_server_settings(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::OpenServerSettings>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let settings_path = paths::settings_file();
+        let (worktree, path) = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store.update(cx, |worktree_store, cx| {
+                    worktree_store.find_or_create_worktree(settings_path, false, cx)
+                })
+            })?
+            .await?;
+
+        let (buffer, buffer_store) = this.update(&mut cx, |this, cx| {
+            let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.open_buffer(
+                    ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: path.into(),
+                    },
+                    cx,
+                )
+            });
+
+            (buffer, this.buffer_store.clone())
+        })?;
+
+        let buffer = buffer.await?;
+
+        let buffer_id = cx.update(|cx| {
+            if buffer.read(cx).is_empty() {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit([(0..0, initial_server_settings_content())], None, cx)
+                });
+            }
+
+            let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+
+            buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store
+                    .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                    .detach_and_log_err(cx);
+            });
+
+            buffer_id
         })?;
 
         Ok(proto::OpenBufferResponse {

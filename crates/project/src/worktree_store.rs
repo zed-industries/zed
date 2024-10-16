@@ -153,6 +153,22 @@ impl WorktreeStore {
         None
     }
 
+    pub fn find_or_create_worktree(
+        &mut self,
+        abs_path: impl AsRef<Path>,
+        visible: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
+        let abs_path = abs_path.as_ref();
+        if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
+            Task::ready(Ok((tree, relative_path)))
+        } else {
+            let worktree = self.create_worktree(abs_path, visible, cx);
+            cx.background_executor()
+                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
+        }
+    }
+
     pub fn entry_for_id<'a>(
         &'a self,
         entry_id: ProjectEntryId,
@@ -957,7 +973,7 @@ impl WorktreeStore {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum WorktreeHandle {
     Strong(Model<Worktree>),
     Weak(WeakModel<Worktree>),

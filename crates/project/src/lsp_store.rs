@@ -27,7 +27,7 @@ use gpui::{
     AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, PromptLevel,
     Task, WeakModel,
 };
-use http_client::{BlockedHttpClient, HttpClient};
+use http_client::HttpClient;
 use language::{
     language_settings::{
         all_language_settings, language_settings, AllLanguageSettings, FormatOnSave, Formatter,
@@ -116,7 +116,7 @@ impl FormatTrigger {
 }
 
 pub struct LocalLspStore {
-    http_client: Option<Arc<dyn HttpClient>>,
+    http_client: Arc<dyn HttpClient>,
     environment: Model<ProjectEnvironment>,
     fs: Arc<dyn Fs>,
     yarn: Model<YarnPathStore>,
@@ -839,7 +839,7 @@ impl LspStore {
         prettier_store: Model<PrettierStore>,
         environment: Model<ProjectEnvironment>,
         languages: Arc<LanguageRegistry>,
-        http_client: Option<Arc<dyn HttpClient>>,
+        http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -7579,10 +7579,7 @@ impl LocalLspAdapterDelegate {
             .as_local()
             .expect("LocalLspAdapterDelegate cannot be constructed on a remote");
 
-        let http_client = local
-            .http_client
-            .clone()
-            .unwrap_or_else(|| Arc::new(BlockedHttpClient));
+        let http_client = local.http_client.clone();
 
         Self::new(lsp_store, worktree, http_client, local.fs.clone(), cx)
     }

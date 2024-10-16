@@ -367,7 +367,11 @@ pub fn wrap_for_ssh(
         // replace ith with something that works
         let tilde_prefix = "~/";
         if path.starts_with(tilde_prefix) {
-            let trimmed_path = &path_string[tilde_prefix.len()..];
+            let trimmed_path = path_string
+                .trim_start_matches("/")
+                .trim_start_matches("~")
+                .trim_start_matches("/");
+
             format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
         } else {
             format!("cd {path:?}; {env_changes} {to_run}")

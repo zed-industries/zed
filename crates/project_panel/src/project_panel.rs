@@ -880,9 +880,10 @@ impl ProjectPanel {
 
                             if is_dir {
                                 project_panel.project.update(cx, |_, cx| {
-                                    cx.emit(project::Event::Notification(format!(
-                                        "Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel"
-                                    )))
+                                    cx.emit(project::Event::Toast {
+                                        notification_id: "excluded-directory".into(),
+                                        message: format!("Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel")
+                                    })
                                 });
                                 None
                             } else {
