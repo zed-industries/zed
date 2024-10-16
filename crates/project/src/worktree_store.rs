@@ -973,7 +973,7 @@ impl WorktreeStore {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum WorktreeHandle {
     Strong(Model<Worktree>),
     Weak(WeakModel<Worktree>),

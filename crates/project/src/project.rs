@@ -2657,22 +2657,28 @@ impl Project {
         &mut self,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
+        let guard = self.retain_remotely_created_models(cx);
         let Some(ssh_client) = self.ssh_client.as_ref() else {
             return Task::ready(Err(anyhow!("not an ssh project")));
         };
-        let request = ssh_client
-            .read(cx)
-            .proto_client()
-            .request(proto::OpenServerSettingsFile {
-                project_id: SSH_PROJECT_ID,
-            });
+
+        let proto_client = ssh_client.read(cx).proto_client();
 
         cx.spawn(|this, mut cx| async move {
-            let response = request.await?;
-            this.update(&mut cx, |this, cx| {
-                anyhow::Ok(this.wait_for_remote_buffer(BufferId::new(response.buffer_id)?, cx))
-            })??
-            .await
+            let buffer = proto_client
+                .request(proto::OpenServerSettings {
+                    project_id: SSH_PROJECT_ID,
+                })
+                .await?;
+
+            let buffer = this
+                .update(&mut cx, |this, cx| {
+                    anyhow::Ok(this.wait_for_remote_buffer(BufferId::new(buffer.buffer_id)?, cx))
+                })??
+                .await;
+
+            drop(guard);
+            buffer
         })
     }
 

@@ -364,11 +364,10 @@ impl HeadlessProject {
 
     pub async fn handle_open_server_settings(
         this: Model<Self>,
-        _: TypedEnvelope<proto::OpenServerSettingsFile>,
+        _: TypedEnvelope<proto::OpenServerSettings>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
         let settings_path = paths::settings_file();
-
         let (worktree, path) = this
             .update(&mut cx, |this, cx| {
                 this.worktree_store.update(cx, |worktree_store, cx| {
