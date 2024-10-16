@@ -16,8 +16,10 @@
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
-<!-- - [Fonts](./fonts.md) -->
 - [Vim Mode](./vim.md)
+
+<!-- - [Globs](./globs.md) -->
+<!-- - [Fonts](./fonts.md) -->
 
 # Using Zed
 

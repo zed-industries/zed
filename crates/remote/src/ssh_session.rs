@@ -846,7 +846,10 @@ impl SshRemoteClient {
                                 child_stdin.close().await?;
                                 outgoing_rx.close();
                                 let status = ssh_proxy_process.status().await?;
-                                return Ok(status.code());
+                                // If we don't have a code, we assume process
+                                // has been killed and treat it as non-zero exit
+                                // code
+                                return Ok(status.code().or_else(|| Some(1)));
                             }
                             Ok(len) => {
                                 if len < stdout_buffer.len() {
@@ -1175,14 +1178,7 @@ impl SshRemoteConnection {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
-            .args([
-                "-N",
-                "-o",
-                "ControlPersist=no",
-                "-o",
-                "ControlMaster=yes",
-                "-o",
-            ])
+            .args(["-N", "-o", "ControlMaster=yes", "-o"])
             .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .spawn()?;
