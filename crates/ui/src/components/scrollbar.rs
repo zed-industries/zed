@@ -1,4 +1,4 @@
-#![expect(missing_docs)]
+#![allow(missing_docs)]
 use std::{cell::Cell, ops::Range, rc::Rc};
 
 use crate::{prelude::*, px, relative, IntoElement};
@@ -9,12 +9,14 @@ use gpui::{
     UniformListScrollHandle, View, WindowContext,
 };
 
+///
 pub struct Scrollbar {
     thumb: Range<f32>,
     state: ScrollbarState,
     kind: ScrollbarAxis,
 }
 
+/// Wrapper around scroll handles.
 #[derive(Clone)]
 pub enum ScrollableHandle {
     Uniform(UniformListScrollHandle),
@@ -89,9 +91,10 @@ impl From<ScrollHandle> for ScrollableHandle {
     }
 }
 
+/// A scrollbar state that should be persisted across frames.
 #[derive(Clone)]
 pub struct ScrollbarState {
-    // If Some(), there's an active drag, offset by percentage from the top of thumb.
+    // If Some(), there's an active drag, offset by percentage from the origin of a thumb.
     drag: Rc<Cell<Option<f32>>>,
     parent_id: Option<EntityId>,
     scroll_handle: ScrollableHandle,
@@ -106,6 +109,7 @@ impl ScrollbarState {
         }
     }
 
+    /// Set a parent view which should be notified whenever this Scrollbar gets a scroll event.
     pub fn parent_view<V: 'static>(mut self, v: &View<V>) -> Self {
         self.parent_id = Some(v.entity_id());
         self
@@ -114,6 +118,7 @@ impl ScrollbarState {
     pub fn scroll_handle(&self) -> ScrollableHandle {
         self.scroll_handle.clone()
     }
+
     pub fn is_dragging(&self) -> bool {
         self.drag.get().is_some()
     }
