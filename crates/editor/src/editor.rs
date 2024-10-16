@@ -10403,7 +10403,7 @@ impl Editor {
             .selections
             .all_adjusted(cx)
             .into_iter()
-            .filter(|s| s.start != s.end)
+            .filter(|s| !s.is_empty())
             .collect_vec();
 
         Some(self.perform_format(

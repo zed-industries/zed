@@ -399,14 +399,11 @@ impl LocalLspStore {
                                         )
                                         .await
                                     } else {
-                                        let formatter = primary_language_server
-                                            .as_ref()
-                                            .map(|l| Formatter::LanguageServer {
-                                                name: Some(l.name().to_string()),
-                                            })
-                                            .unwrap_or_else(|| Formatter::LanguageServer {
-                                                name: None,
-                                            });
+                                        let formatter = Formatter::LanguageServer {
+                                            name: primary_language_server
+                                                .as_ref()
+                                                .map(|server| server.name().to_string()),
+                                        };
                                         Self::perform_format(
                                             &formatter,
                                             &target,
@@ -1928,7 +1925,7 @@ impl LspStore {
     ) -> Result<Vec<(Range<Anchor>, String)>> {
         let capabilities = &language_server.capabilities();
         let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
-        if matches!(range_formatting_provider, Some(p) if *p == OneOf::Left(false)) {
+        if range_formatting_provider.map_or(false, |provider| provider == &OneOf::Left(false)) {
             return Err(anyhow!(
                 "{} language server does not support range formatting",
                 language_server.name()
