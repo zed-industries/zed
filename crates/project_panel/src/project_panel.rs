@@ -3063,8 +3063,8 @@ impl Render for ProjectPanel {
                         }
                     })
                     .when(indent_guides, |this| {
-                        let line_color = cx.theme().colors().editor_indent_guide;
-                        let active_line_color = cx.theme().colors().editor_indent_guide_active;
+                        let line_color = cx.theme().colors().panel_indent_guide;
+                        let active_line_color = cx.theme().colors().panel_indent_guide_active;
                         this.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
