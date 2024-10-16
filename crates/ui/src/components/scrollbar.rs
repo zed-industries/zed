@@ -9,7 +9,6 @@ use gpui::{
     UniformListScrollHandle, View, WindowContext,
 };
 
-///
 pub struct Scrollbar {
     thumb: Range<f32>,
     state: ScrollbarState,
