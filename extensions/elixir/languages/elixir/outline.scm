@@ -3,6 +3,16 @@
   (arguments (alias) @name)
   (#match? @context "^(defmodule|defprotocol)$")) @item
 
+(call
+  target: (identifier) @context
+  (arguments (_) @name)?
+  (#match? @context "^(setup|setup_all)$")) @item
+
+(call
+  target: (identifier) @context
+  (arguments (string) @name)
+  (#match? @context "^(describe|test)$")) @item
+
 (unary_operator
   operator: "@" @name
   operand: (call
