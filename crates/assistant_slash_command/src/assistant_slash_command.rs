@@ -100,6 +100,7 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
+#[derive(Debug)]
 pub enum SlashCommandContentType {
     Text {
         text: String,
@@ -110,6 +111,7 @@ pub enum SlashCommandContentType {
     },
 }
 
+#[derive(Debug)]
 pub enum SlashCommandEvent {
     StartMessage {
         role: Role,

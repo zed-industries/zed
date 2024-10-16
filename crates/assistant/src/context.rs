@@ -1846,8 +1846,8 @@ impl Context {
                     this.buffer.update(cx, |buffer, cx| {
                         let start = command_range.start.to_offset(buffer);
                         let end = command_range.end.to_offset(buffer);
-                        buffer.edit([(start..end, "")], None, cx);
-                        buffer.anchor_after(command_range.end)
+                        buffer.edit([(end..end, "\n")], None, cx);
+                        buffer.anchor_after(end + 1)
                     })
                 })?;
                 let mut finished_sections: Vec<SlashCommandOutputSection<language::Anchor>> =
@@ -1858,6 +1858,7 @@ impl Context {
                 let mut last_role: Option<Role> = None;
 
                 while let Some(event) = stream.next().await {
+                    dbg!(&event);
                     match event {
                         SlashCommandEvent::StartMessage {
                             role,

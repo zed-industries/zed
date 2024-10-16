@@ -6,8 +6,8 @@ use crate::{
 };
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandEvent, SlashCommandOutputSection,
-    SlashCommandRegistry, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
+    SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
 use collections::HashSet;
 use fs::FakeFs;
@@ -1080,7 +1080,10 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         .take(10)
                         .collect::<String>();
 
-                    let mut events = vec![SlashCommandEvent::StartMessage { role: Role::User }];
+                    let mut events = vec![SlashCommandEvent::StartMessage {
+                        role: Role::User,
+                        merge_same_roles: true,
+                    }];
 
                     let num_sections = rng.gen_range(0..=3);
                     let mut section_start = 0;
@@ -1091,19 +1094,19 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             label: "section".into(),
                             metadata: None,
                         });
-                        events.push(SlashCommandEvent::Content {
+                        events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                             text: output_text[section_start..section_end].to_string(),
                             run_commands_in_text: false,
-                        });
+                        }));
                         events.push(SlashCommandEvent::EndSection { metadata: None });
                         section_start = section_end;
                     }
 
                     if section_start < output_text.len() {
-                        events.push(SlashCommandEvent::Content {
+                        events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                             text: output_text[section_start..].to_string(),
                             run_commands_in_text: false,
-                        });
+                        }));
                     }
 
                     log::info!(
@@ -1443,10 +1446,10 @@ impl SlashCommand for FakeSlashCommand {
                 label: "Fake Command".into(),
                 metadata: None,
             },
-            SlashCommandEvent::Content {
+            SlashCommandEvent::Content(SlashCommandContentType::Text {
                 text: format!("Executed fake command: {}", self.0),
                 run_commands_in_text: false,
-            },
+            }),
             SlashCommandEvent::EndSection { metadata: None },
         ])
         .boxed()))

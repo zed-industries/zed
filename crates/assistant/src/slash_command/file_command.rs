@@ -5,7 +5,10 @@ use super::{
 // use super::diagnostics_command::collect_buffer_diagnostics;
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandContentType};
-use futures::stream::{self, StreamExt};
+use futures::{
+    channel::mpsc,
+    stream::{self, StreamExt},
+};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
@@ -219,8 +222,8 @@ fn collect_files(
         .map(|worktree| worktree.read(cx).snapshot())
         .collect::<Vec<_>>();
 
+    let (events_tx, events_rx) = mpsc::unbounded();
     cx.spawn(|mut cx| async move {
-        let mut events = Vec::new();
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
             let mut folded_directory_names = Vec::new();
@@ -252,7 +255,7 @@ fn collect_files(
                 {
                     log::info!("end dir");
                     directory_stack.pop();
-                    events.push(SlashCommandEvent::EndSection { metadata: None });
+                    events_tx.unbounded_send(SlashCommandEvent::EndSection { metadata: None })?;
                 }
 
                 if entry.is_dir() {
@@ -286,15 +289,17 @@ fn collect_files(
                     } else {
                         format!("{}/{}", prefix_paths, &filename)
                     };
-                    events.push(SlashCommandEvent::StartSection {
+                    events_tx.unbounded_send(SlashCommandEvent::StartSection {
                         icon: IconName::Folder,
                         label: dirname.clone().into(),
                         metadata: None,
-                    });
-                    events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
-                        text: dirname,
-                        run_commands_in_text: false,
-                    }));
+                    })?;
+                    events_tx.unbounded_send(SlashCommandEvent::Content(
+                        SlashCommandContentType::Text {
+                            text: dirname,
+                            run_commands_in_text: false,
+                        },
+                    ))?;
                     directory_stack.push(entry.path.clone());
                 } else if entry.is_file() {
                     let open_buffer_task = project_handle
@@ -307,9 +312,11 @@ fn collect_files(
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
                         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-                        let mut events_from_buffer =
+                        let events_from_buffer =
                             buffer_to_output(&snapshot, Some(&path_including_worktree_name))?;
-                        events.append(&mut events_from_buffer);
+                        for event in events_from_buffer {
+                            events_tx.unbounded_send(event)?;
+                        }
                     }
                 }
             }
@@ -318,11 +325,13 @@ fn collect_files(
             while !directory_stack.is_empty() {
                 log::info!("end dir");
                 directory_stack.pop();
-                events.push(SlashCommandEvent::EndSection { metadata: None });
+                events_tx.unbounded_send(SlashCommandEvent::EndSection { metadata: None })?;
             }
         }
-        Ok(stream::iter(events).boxed())
+        anyhow::Ok(())
     })
+    .detach();
+    Task::ready(Ok(events_rx.boxed()))
 }
 
 /// This contains a small fork of the util::paths::PathMatcher, that is stricter about the prefix
@@ -561,7 +570,12 @@ mod test {
         // Check content is included in the events
         let content_events: Vec<_> = events
             .iter()
-            .filter(|e| matches!(e, SlashCommandEvent::Content { text, .. }))
+            .filter(|e| {
+                matches!(
+                    e,
+                    SlashCommandEvent::Content(SlashCommandContentType::Text { .. })
+                )
+            })
             .collect();
         let content = content_events.iter().fold(String::new(), |mut acc, e| {
             if let SlashCommandEvent::Content(SlashCommandContentType::Text { text, .. }) = e {
