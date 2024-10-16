@@ -1025,7 +1025,7 @@ impl SshRemoteClient {
             .map(|ssh_connection| ssh_connection.socket.ssh_args())
     }
 
-    pub fn to_proto_client(&self) -> AnyProtoClient {
+    pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
     }
 

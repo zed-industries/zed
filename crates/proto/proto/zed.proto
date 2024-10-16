@@ -288,9 +288,11 @@ message Envelope {
         RemoveWorktree remove_worktree = 258;
 
         LanguageServerLog language_server_log = 260;
-        
+
         Toast toast = 261;
-        HideToast hide_toast = 262; // current max
+        HideToast hide_toast = 262;
+
+        OpenServerSettingsFile open_server_settings_file = 263; // current max
     }
 
     reserved 87 to 88;
@@ -2500,4 +2502,8 @@ message Toast {
 message HideToast {
     uint64 project_id = 1;
     string notification_id = 2;
+}
+
+message OpenServerSettingsFile {
+    uint64 project_id = 1;
 }

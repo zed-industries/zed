@@ -369,6 +369,7 @@ messages!(
     (LanguageServerLog, Foreground),
     (Toast, Background),
     (HideToast, Background),
+    (OpenServerSettingsFile, Background)
 );
 
 request_messages!(
@@ -492,7 +493,8 @@ request_messages!(
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
     (ShutdownRemoteServer, Ack),
-    (RemoveWorktree, Ack)
+    (RemoveWorktree, Ack),
+    (OpenServerSettingsFile, OpenBufferResponse)
 );
 
 entity_messages!(
@@ -568,6 +570,7 @@ entity_messages!(
     LanguageServerLog,
     Toast,
     HideToast,
+    OpenServerSettingsFile
 );
 
 entity_messages!(

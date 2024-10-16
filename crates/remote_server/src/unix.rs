@@ -367,6 +367,7 @@ impl ServerPaths {
     fn new(identifier: &str) -> Result<Self> {
         let server_dir = paths::remote_server_state_dir().join(identifier);
         std::fs::create_dir_all(&server_dir)?;
+        std::fs::create_dir_all(&logs_dir())?;
 
         let pid_file = server_dir.join("server.pid");
         let stdin_socket = server_dir.join("stdin.sock");

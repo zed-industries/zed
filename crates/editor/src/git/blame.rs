@@ -623,7 +623,7 @@ mod tests {
         assert_eq!(
             event,
             project::Event::Toast {
-                notification_id: "test-notification".into(),
+                notification_id: "git-blame".into(),
                 message: "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
                     .to_string()
             }

@@ -18,6 +18,7 @@ use rpc::{
     AnyProtoClient, TypedEnvelope,
 };
 
+use settings::initial_server_settings_content;
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -147,6 +148,7 @@ impl HeadlessProject {
 
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
         client.add_model_request_handler(Self::handle_find_search_candidates);
+        client.add_model_request_handler(Self::handle_open_server_settings);
 
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
@@ -351,6 +353,58 @@ impl HeadlessProject {
         Ok(proto::OpenBufferResponse {
             buffer_id: buffer_id.to_proto(),
         })
+    }
+
+    pub async fn handle_open_server_settings(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::OpenServerSettingsFile>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let settings_path = paths::settings_file();
+
+        let (worktree, path) = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store.update(cx, |worktree_store, cx| {
+                    worktree_store.find_or_create_worktree(settings_path, false, cx)
+                })
+            })?
+            .await?;
+
+        let buffer = this
+            .update(&mut cx, |this, cx| {
+                this.buffer_store.update(cx, |buffer_store, cx| {
+                    buffer_store.open_buffer(
+                        ProjectPath {
+                            worktree_id: worktree.read(cx).id(),
+                            path: path.into(),
+                        },
+                        cx,
+                    )
+                })
+            })?
+            .await?;
+
+        cx.update(|cx| {
+            if buffer.read(cx).is_empty() {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.edit([(0..0, initial_server_settings_content())], None, cx)
+                });
+            }
+
+            let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
+
+            this.update(cx, |this, cx| {
+                this.buffer_store.update(cx, |buffer_store, cx| {
+                    buffer_store
+                        .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                        .detach_and_log_err(cx);
+                });
+            });
+
+            Ok(proto::OpenBufferResponse {
+                buffer_id: buffer_id.to_proto(),
+            })
+        })?
     }
 
     pub async fn handle_find_search_candidates(

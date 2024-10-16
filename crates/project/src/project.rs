@@ -699,7 +699,7 @@ impl Project {
             let snippets =
                 SnippetProvider::new(fs.clone(), BTreeSet::from_iter([global_snippets_dir]), cx);
 
-            let ssh_proto = ssh.read(cx).to_proto_client();
+            let ssh_proto = ssh.read(cx).proto_client();
             let worktree_store =
                 cx.new_model(|_| WorktreeStore::remote(false, ssh_proto.clone(), 0, None));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
@@ -708,7 +708,7 @@ impl Project {
             let buffer_store = cx.new_model(|cx| {
                 BufferStore::remote(
                     worktree_store.clone(),
-                    ssh.read(cx).to_proto_client(),
+                    ssh.read(cx).proto_client(),
                     SSH_PROJECT_ID,
                     cx,
                 )
@@ -721,7 +721,7 @@ impl Project {
                     fs.clone(),
                     buffer_store.downgrade(),
                     worktree_store.clone(),
-                    ssh.read(cx).to_proto_client(),
+                    ssh.read(cx).proto_client(),
                     SSH_PROJECT_ID,
                     cx,
                 )
@@ -2072,7 +2072,7 @@ impl Project {
                 if let Some(ref ssh_client) = self.ssh_client {
                     ssh_client
                         .read(cx)
-                        .to_proto_client()
+                        .proto_client()
                         .send(proto::CloseBuffer {
                             project_id: 0,
                             buffer_id: buffer_id.to_proto(),
@@ -2283,7 +2283,7 @@ impl Project {
 
         if let Some(ssh) = &self.ssh_client {
             ssh.read(cx)
-                .to_proto_client()
+                .proto_client()
                 .send(proto::RemoveWorktree {
                     worktree_id: id_to_remove.to_proto(),
                 })
@@ -2316,7 +2316,7 @@ impl Project {
 
                 if let Some(ssh) = &self.ssh_client {
                     ssh.read(cx)
-                        .to_proto_client()
+                        .proto_client()
                         .send(proto::UpdateBuffer {
                             project_id: 0,
                             buffer_id: buffer_id.to_proto(),
@@ -2650,6 +2650,29 @@ impl Project {
     ) -> Task<Result<Model<Buffer>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.open_buffer_for_symbol(symbol, cx)
+        })
+    }
+
+    pub fn open_server_settings(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Buffer>>> {
+        let Some(ssh_client) = self.ssh_client.as_ref() else {
+            return Task::ready(Err(anyhow!("not an ssh project")));
+        };
+        let request = ssh_client
+            .read(cx)
+            .proto_client()
+            .request(proto::OpenServerSettingsFile {
+                project_id: SSH_PROJECT_ID,
+            });
+
+        cx.spawn(|this, mut cx| async move {
+            let response = request.await?;
+            this.update(&mut cx, |this, cx| {
+                anyhow::Ok(this.wait_for_remote_buffer(BufferId::new(response.buffer_id)?, cx))
+            })??
+            .await
         })
     }
 
@@ -3003,7 +3026,7 @@ impl Project {
         let (tx, rx) = smol::channel::unbounded();
 
         let (client, remote_id): (AnyProtoClient, _) = if let Some(ssh_client) = &self.ssh_client {
-            (ssh_client.read(cx).to_proto_client(), 0)
+            (ssh_client.read(cx).proto_client(), 0)
         } else if let Some(remote_id) = self.remote_id() {
             (self.client.clone().into(), remote_id)
         } else {
@@ -3090,14 +3113,9 @@ impl Project {
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
-        let abs_path = abs_path.as_ref();
-        if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
-            Task::ready(Ok((tree, relative_path)))
-        } else {
-            let worktree = self.create_worktree(abs_path, visible, cx);
-            cx.background_executor()
-                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
-        }
+        self.worktree_store.update(cx, |worktree_store, cx| {
+            worktree_store.find_or_create_worktree(abs_path, visible, cx)
+        })
     }
 
     pub fn find_worktree(
@@ -3159,7 +3177,7 @@ impl Project {
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
             let request = ssh_client
                 .read(cx)
-                .to_proto_client()
+                .proto_client()
                 .request(proto::CheckFileExists {
                     project_id: SSH_PROJECT_ID,
                     path: path.to_string(),
@@ -3236,7 +3254,7 @@ impl Project {
                 path: query,
             };
 
-            let response = session.read(cx).to_proto_client().request(request);
+            let response = session.read(cx).proto_client().request(request);
             cx.background_executor().spawn(async move {
                 let response = response.await?;
                 Ok(response.entries.into_iter().map(PathBuf::from).collect())
@@ -3260,7 +3278,7 @@ impl Project {
         }
     }
 
-    fn create_worktree(
+    pub fn create_worktree(
         &mut self,
         abs_path: impl AsRef<Path>,
         visible: bool,
@@ -3620,7 +3638,7 @@ impl Project {
                 let mut payload = envelope.payload.clone();
                 payload.project_id = SSH_PROJECT_ID;
                 cx.background_executor()
-                    .spawn(ssh.read(cx).to_proto_client().request(payload))
+                    .spawn(ssh.read(cx).proto_client().request(payload))
                     .detach_and_log_err(cx);
             }
             this.buffer_store.clone()
