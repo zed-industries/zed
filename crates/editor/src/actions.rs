@@ -295,6 +295,7 @@ gpui::actions!(
         RevealInFileManager,
         ReverseLines,
         RevertFile,
+        ReloadFile,
         RevertSelectedHunks,
         Rewrap,
         ScrollCursorBottom,

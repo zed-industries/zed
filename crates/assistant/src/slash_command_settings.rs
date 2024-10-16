@@ -38,7 +38,10 @@ impl Settings for SlashCommandSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut AppContext) -> Result<Self> {
         SettingsSources::<Self::FileContent>::json_merge_with(
-            [sources.default].into_iter().chain(sources.user),
+            [sources.default]
+                .into_iter()
+                .chain(sources.user)
+                .chain(sources.server),
         )
     }
 }

@@ -6373,6 +6373,7 @@ dependencies = [
  "tree-sitter-c",
  "tree-sitter-cpp",
  "tree-sitter-css",
+ "tree-sitter-diff",
  "tree-sitter-go",
  "tree-sitter-gomod",
  "tree-sitter-gowork",
@@ -8976,6 +8977,7 @@ dependencies = [
  "log",
  "menu",
  "ordered-float 2.10.1",
+ "paths",
  "picker",
  "project",
  "release_channel",
@@ -9135,6 +9137,7 @@ name = "remote_server"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-watch",
  "backtrace",
  "cargo_toml",
  "clap",
@@ -9150,8 +9153,10 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "paths",
  "project",
  "remote",
+ "reqwest_client",
  "rpc",
  "rust-embed",
  "serde",
@@ -12309,6 +12314,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tree-sitter-diff"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dfe1e5ca280a65dfe5ba4205c1bcc84edf486464fed315db53dee6da9a335889"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
 name = "tree-sitter-elixir"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14824,13 +14839,6 @@ dependencies = [
 [[package]]
 name = "zed_purescript"
 version = "0.0.1"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_ruby"
-version = "0.2.0"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
