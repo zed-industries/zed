@@ -393,12 +393,19 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
     slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
+    slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
     if let Some(prompt_builder) = prompt_builder {
-        slash_command_registry.register_command(
-            workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
-            true,
-        );
+        let settings = AssistantSettings::get_global(cx);
+        if settings.are_live_diffs_enabled(cx) {
+            // For now, /workflow is only available when this setting is enabled.
+            // In the future, we plan to replace /workflow with a different design.
+            slash_command_registry.register_command(
+                workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
+                true,
+            );
+        }
+
         cx.observe_flag::<project_command::ProjectSlashCommandFeatureFlag, _>({
             let slash_command_registry = slash_command_registry.clone();
             move |is_enabled, _cx| {
