@@ -17,7 +17,7 @@ use project::{
 };
 use remote::SshRemoteClient;
 use serde_json::json;
-use settings::{Settings, SettingsLocation, SettingsStore};
+use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -622,6 +622,21 @@ async fn test_adding_then_removing_then_adding_worktrees(
         assert_eq!(
             entries[1].path.to_string_lossy().to_string(),
             "README.md".to_string()
+        )
+    })
+}
+
+#[gpui::test]
+async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let buffer = project.update(cx, |project, cx| project.open_server_settings(cx));
+    cx.executor().run_until_parked();
+    let buffer = buffer.await.unwrap();
+
+    cx.update(|cx| {
+        assert_eq!(
+            buffer.read(cx).text(),
+            initial_server_settings_content().to_string()
         )
     })
 }

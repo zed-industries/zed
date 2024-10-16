@@ -377,21 +377,23 @@ impl HeadlessProject {
             })?
             .await?;
 
-        let buffer = this
-            .update(&mut cx, |this, cx| {
-                this.buffer_store.update(cx, |buffer_store, cx| {
-                    buffer_store.open_buffer(
-                        ProjectPath {
-                            worktree_id: worktree.read(cx).id(),
-                            path: path.into(),
-                        },
-                        cx,
-                    )
-                })
-            })?
-            .await?;
+        let (buffer, buffer_store) = this.update(&mut cx, |this, cx| {
+            let buffer = this.buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store.open_buffer(
+                    ProjectPath {
+                        worktree_id: worktree.read(cx).id(),
+                        path: path.into(),
+                    },
+                    cx,
+                )
+            });
 
-        cx.update(|cx| {
+            (buffer, this.buffer_store.clone())
+        })?;
+
+        let buffer = buffer.await?;
+
+        let buffer_id = cx.update(|cx| {
             if buffer.read(cx).is_empty() {
                 buffer.update(cx, |buffer, cx| {
                     buffer.edit([(0..0, initial_server_settings_content())], None, cx)
@@ -400,18 +402,18 @@ impl HeadlessProject {
 
             let buffer_id = buffer.read_with(cx, |b, _| b.remote_id());
 
-            this.update(cx, |this, cx| {
-                this.buffer_store.update(cx, |buffer_store, cx| {
-                    buffer_store
-                        .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
-                        .detach_and_log_err(cx);
-                });
+            buffer_store.update(cx, |buffer_store, cx| {
+                buffer_store
+                    .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                    .detach_and_log_err(cx);
             });
 
-            Ok(proto::OpenBufferResponse {
-                buffer_id: buffer_id.to_proto(),
-            })
-        })?
+            buffer_id
+        })?;
+
+        Ok(proto::OpenBufferResponse {
+            buffer_id: buffer_id.to_proto(),
+        })
     }
 
     pub async fn handle_find_search_candidates(
