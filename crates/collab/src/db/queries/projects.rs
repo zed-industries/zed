@@ -838,6 +838,7 @@ impl Database {
                 .map(|language_server| proto::LanguageServer {
                     id: language_server.id as u64,
                     name: language_server.name,
+                    worktree_id: None,
                 })
                 .collect(),
             dev_server_project_id: project.dev_server_project_id,

@@ -9,7 +9,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::HashMap;
 use futures::{
     channel::{
-        mpsc::{self, UnboundedReceiver, UnboundedSender},
+        mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
     },
     future::BoxFuture,
@@ -28,7 +28,6 @@ use rpc::{
 use smol::{
     fs,
     process::{self, Child, Stdio},
-    Timer,
 };
 use std::{
     any::TypeId,
@@ -424,12 +423,6 @@ pub struct SshRemoteClient {
     state: Arc<Mutex<Option<State>>>,
 }
 
-impl Drop for SshRemoteClient {
-    fn drop(&mut self) {
-        self.shutdown_processes();
-    }
-}
-
 #[derive(Debug)]
 pub enum SshRemoteEvent {
     Disconnected,
@@ -447,21 +440,14 @@ impl SshRemoteClient {
         cx.spawn(|mut cx| async move {
             let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
             let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+            let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
             let client = cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx))?;
-            let this = cx.new_model(|cx| {
-                cx.on_app_quit(|this: &mut Self, _| {
-                    this.shutdown_processes();
-                    futures::future::ready(())
-                })
-                .detach();
-
-                Self {
-                    client: client.clone(),
-                    unique_identifier: unique_identifier.clone(),
-                    connection_options: connection_options.clone(),
-                    state: Arc::new(Mutex::new(Some(State::Connecting))),
-                }
+            let this = cx.new_model(|_| Self {
+                client: client.clone(),
+                unique_identifier: unique_identifier.clone(),
+                connection_options: connection_options.clone(),
+                state: Arc::new(Mutex::new(Some(State::Connecting))),
             })?;
 
             let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
@@ -481,6 +467,7 @@ impl SshRemoteClient {
                 ssh_proxy_process,
                 proxy_incoming_tx,
                 proxy_outgoing_rx,
+                connection_activity_tx,
                 &mut cx,
             );
 
@@ -490,7 +477,7 @@ impl SshRemoteClient {
                 return Err(error);
             }
 
-            let heartbeat_task = Self::heartbeat(this.downgrade(), &mut cx);
+            let heartbeat_task = Self::heartbeat(this.downgrade(), connection_activity_rx, &mut cx);
 
             this.update(&mut cx, |this, _| {
                 *this.state.lock() = Some(State::Connected {
@@ -506,25 +493,44 @@ impl SshRemoteClient {
         })
     }
 
-    fn shutdown_processes(&self) {
-        let Some(state) = self.state.lock().take() else {
-            return;
-        };
+    pub fn shutdown_processes<T: RequestMessage>(
+        &self,
+        shutdown_request: Option<T>,
+    ) -> Option<impl Future<Output = ()>> {
+        let state = self.state.lock().take()?;
         log::info!("shutting down ssh processes");
 
         let State::Connected {
             multiplex_task,
             heartbeat_task,
-            ..
+            ssh_connection,
+            delegate,
+            forwarder,
         } = state
         else {
-            return;
+            return None;
         };
-        // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
-        // child of master_process.
-        drop(multiplex_task);
-        // Now drop the rest of state, which kills master process.
-        drop(heartbeat_task);
+
+        let client = self.client.clone();
+
+        Some(async move {
+            if let Some(shutdown_request) = shutdown_request {
+                client.send(shutdown_request).log_err();
+                // We wait 50ms instead of waiting for a response, because
+                // waiting for a response would require us to wait on the main thread
+                // which we want to avoid in an `on_app_quit` callback.
+                smol::Timer::after(Duration::from_millis(50)).await;
+            }
+
+            // Drop `multiplex_task` because it owns our ssh_proxy_process, which is a
+            // child of master_process.
+            drop(multiplex_task);
+            // Now drop the rest of state, which kills master process.
+            drop(heartbeat_task);
+            drop(ssh_connection);
+            drop(delegate);
+            drop(forwarder);
+        })
     }
 
     fn reconnect(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
@@ -627,6 +633,7 @@ impl SshRemoteClient {
             let (incoming_tx, outgoing_rx) = forwarder.into_channels().await;
             let (forwarder, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
+            let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
             let (ssh_connection, ssh_process) = match Self::establish_connection(
                 identifier,
@@ -648,6 +655,7 @@ impl SshRemoteClient {
                 ssh_process,
                 proxy_incoming_tx,
                 proxy_outgoing_rx,
+                connection_activity_tx,
                 &mut cx,
             );
 
@@ -660,7 +668,7 @@ impl SshRemoteClient {
                 delegate,
                 forwarder,
                 multiplex_task,
-                heartbeat_task: Self::heartbeat(this.clone(), &mut cx),
+                heartbeat_task: Self::heartbeat(this.clone(), connection_activity_rx, &mut cx),
             }
         });
 
@@ -712,41 +720,60 @@ impl SshRemoteClient {
         Ok(())
     }
 
-    fn heartbeat(this: WeakModel<Self>, cx: &mut AsyncAppContext) -> Task<Result<()>> {
+    fn heartbeat(
+        this: WeakModel<Self>,
+        mut connection_activity_rx: mpsc::Receiver<()>,
+        cx: &mut AsyncAppContext,
+    ) -> Task<Result<()>> {
         let Ok(client) = this.update(cx, |this, _| this.client.clone()) else {
             return Task::ready(Err(anyhow!("SshRemoteClient lost")));
         };
+
         cx.spawn(|mut cx| {
             let this = this.clone();
             async move {
                 let mut missed_heartbeats = 0;
 
-                let mut timer = Timer::interval(HEARTBEAT_INTERVAL);
+                let keepalive_timer = cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse();
+                futures::pin_mut!(keepalive_timer);
+
                 loop {
-                    timer.next().await;
+                    select_biased! {
+                        _ = connection_activity_rx.next().fuse() => {
+                            keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
+                        }
+                        _ = keepalive_timer => {
+                            log::debug!("Sending heartbeat to server...");
 
-                    log::debug!("Sending heartbeat to server...");
+                            let result = select_biased! {
+                                _ = connection_activity_rx.next().fuse() => {
+                                    Ok(())
+                                }
+                                ping_result = client.ping(HEARTBEAT_TIMEOUT).fuse() => {
+                                    ping_result
+                                }
+                            };
+                            if result.is_err() {
+                                missed_heartbeats += 1;
+                                log::warn!(
+                                    "No heartbeat from server after {:?}. Missed heartbeat {} out of {}.",
+                                    HEARTBEAT_TIMEOUT,
+                                    missed_heartbeats,
+                                    MAX_MISSED_HEARTBEATS
+                                );
+                            } else if missed_heartbeats != 0 {
+                                missed_heartbeats = 0;
+                            } else {
+                                continue;
+                            }
 
-                    let result = client.ping(HEARTBEAT_TIMEOUT).await;
-                    if result.is_err() {
-                        missed_heartbeats += 1;
-                        log::warn!(
-                            "No heartbeat from server after {:?}. Missed heartbeat {} out of {}.",
-                            HEARTBEAT_TIMEOUT,
-                            missed_heartbeats,
-                            MAX_MISSED_HEARTBEATS
-                        );
-                    } else if missed_heartbeats != 0 {
-                        missed_heartbeats = 0;
-                    } else {
-                        continue;
-                    }
-
-                    let result = this.update(&mut cx, |this, mut cx| {
-                        this.handle_heartbeat_result(missed_heartbeats, &mut cx)
-                    })?;
-                    if result.is_break() {
-                        return Ok(());
+                            let result = this.update(&mut cx, |this, mut cx| {
+                                this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                            })?;
+                            if result.is_break() {
+                                return Ok(());
+                            }
+                        }
                     }
                 }
             }
@@ -787,6 +814,7 @@ impl SshRemoteClient {
         mut ssh_proxy_process: Child,
         incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
+        mut connection_activity_tx: Sender<()>,
         cx: &AsyncAppContext,
     ) -> Task<Result<()>> {
         let mut child_stderr = ssh_proxy_process.stderr.take().unwrap();
@@ -828,6 +856,7 @@ impl SshRemoteClient {
                                 let message_len = message_len_from_buffer(&stdout_buffer);
                                 match read_message_with_len(&mut child_stdout, &mut stdout_buffer, message_len).await {
                                     Ok(envelope) => {
+                                        connection_activity_tx.try_send(()).ok();
                                         incoming_tx.unbounded_send(envelope).ok();
                                     }
                                     Err(error) => {
@@ -858,6 +887,8 @@ impl SshRemoteClient {
                                 }
                                 stderr_buffer.drain(0..start_ix);
                                 stderr_offset -= start_ix;
+
+                                connection_activity_tx.try_send(()).ok();
                             }
                             Err(error) => {
                                 Err(anyhow!("error reading stderr: {error:?}"))?;
@@ -1144,7 +1175,14 @@ impl SshRemoteConnection {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
-            .args(["-N", "-o", "ControlMaster=yes", "-o"])
+            .args([
+                "-N",
+                "-o",
+                "ControlPersist=no",
+                "-o",
+                "ControlMaster=yes",
+                "-o",
+            ])
             .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .spawn()?;
@@ -1380,16 +1418,19 @@ impl ChannelClient {
                             cx.clone(),
                         ) {
                             log::debug!("ssh message received. name:{type_name}");
-                            match future.await {
-                                Ok(_) => {
-                                    log::debug!("ssh message handled. name:{type_name}");
+                            cx.foreground_executor().spawn(async move {
+                                match future.await {
+                                    Ok(_) => {
+                                        log::debug!("ssh message handled. name:{type_name}");
+                                    }
+                                    Err(error) => {
+                                        log::error!(
+                                            "error handling message. type:{type_name}, error:{error}",
+                                        );
+                                    }
                                 }
-                                Err(error) => {
-                                    log::error!(
-                                        "error handling message. type:{type_name}, error:{error}",
-                                    );
-                                }
-                            }
+                            }).detach();
+
                         } else {
                             log::error!("unhandled ssh message name:{type_name}");
                         }

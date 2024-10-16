@@ -18,6 +18,7 @@ auto_update.workspace = true
 release_channel.workspace = true
 client.workspace = true
 editor.workspace = true
+file_finder.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -36,7 +37,6 @@ smol.workspace = true
 task.workspace = true
 terminal_view.workspace = true
 ui.workspace = true
-ui_input.workspace = true
 util.workspace = true
 workspace.workspace = true
 
