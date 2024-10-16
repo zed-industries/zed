@@ -443,9 +443,6 @@ pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(10);
 /// Used to prevent surprise bills.
 pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
 
-/// The maximum lifetime spending an individual user can reach before being cut off.
-const LIFETIME_SPENDING_LIMIT: Cents = Cents::from_dollars(1_000);
-
 async fn check_usage_limit(
     state: &Arc<LlmState>,
     provider: LanguageModelProvider,
@@ -485,14 +482,6 @@ async fn check_usage_limit(
                 ));
             }
         }
-    }
-
-    // TODO: Remove this once we've rolled out monthly spending limits.
-    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT {
-        return Err(Error::http(
-            StatusCode::FORBIDDEN,
-            "Maximum spending limit reached.".to_string(),
-        ));
     }
 
     let active_users = state.get_active_user_count(provider, model_name).await?;
