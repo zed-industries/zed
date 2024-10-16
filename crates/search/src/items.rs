@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{IntoElement, Render, ViewContext, WeakView};
+use gpui::{IntoElement, Render, ViewContext, WeakView, Empty};
 use ui::{prelude::*, Color, IconName, Tooltip};
 use workspace::{item::ItemHandle, DeploySearch, StatusItemView, Workspace};
 
@@ -38,9 +38,9 @@ impl Render for ProjectSearchIndicator {
         };
 
         if let Some(search_indicator) = project_search_indicator {
-            h_flex().h(rems(1.375)).gap_2().child(search_indicator)
+            h_flex().h(rems(1.375)).gap_2().child(search_indicator).into_any()
         } else {
-            div().w(rems(0.0))
+            Empty.into_any()
         }
     }
 }
