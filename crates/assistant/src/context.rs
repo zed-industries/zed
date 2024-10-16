@@ -1964,9 +1964,7 @@ impl Context {
                                         let start = pending_section.start;
                                         let end = buffer.anchor_before(position);
 
-                                        if !text_ends_with_newline && ensure_trailing_newline {
-                                            buffer.edit([(position..position, "\n")], None, cx);
-                                        }
+                                        buffer.edit([(position..position, "\n")], None, cx);
 
                                         log::info!("Slash command output section end: {:?}", end);
 

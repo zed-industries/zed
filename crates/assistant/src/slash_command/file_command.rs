@@ -330,7 +330,7 @@ fn collect_files(
         }
         anyhow::Ok(())
     })
-    .detach();
+    .detach_and_log_err(cx);
     Task::ready(Ok(events_rx.boxed()))
 }
 
