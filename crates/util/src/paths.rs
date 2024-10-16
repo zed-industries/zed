@@ -95,7 +95,7 @@ impl<T: AsRef<Path>> PathExt for T {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
 pub struct SanitizedPathBuf {
     raw: PathBuf,
     #[cfg(target_os = "windows")]
@@ -151,6 +151,25 @@ impl AsRef<Path> for SanitizedPathBuf {
 // }
 
 impl SanitizedPathBuf {
+    pub fn new() -> Self {
+        PathBuf::new().into()
+    }
+
+    pub fn as_raw_path_buf(&self) -> &PathBuf {
+        &self.raw
+    }
+
+    pub fn as_trimmed_path_buf(&self) -> &PathBuf {
+        #[cfg(target_os = "windows")]
+        {
+            &self.trimmed
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            &self.raw
+        }
+    }
+
     pub fn to_trimmed_string(&self) -> String {
         #[cfg(target_os = "windows")]
         {
