@@ -1,13 +1,13 @@
 use std::time::Duration;
 
-use gpui::{div, prelude::*, percentage, Animation, AnimationExt, AnyElement, Transformation, View};
+use gpui::{percentage, prelude::*, Animation, AnimationExt, AnyElement, Transformation, View};
 use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
     SessionSupport,
 };
 use ui::{
-    prelude::*, ButtonLike, Button, Label, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
-    Tooltip,
+    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, Label,
+    PopoverMenu, Tooltip,
 };
 
 use gpui::ElementId;
@@ -378,9 +378,6 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         },
     }
 }
-
-
-
 
 // pub fn render_jupyter_url_input(cx: &mut WindowContext) -> AnyElement {
 //     let input_id = "jupyter-url-input".to_string();

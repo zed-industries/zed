@@ -10,6 +10,7 @@ use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
 
+use crate::jupyter_servers::JupyterServers;
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
 use crate::KernelSpecification;
@@ -29,6 +30,8 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
+    cx.observe_new_views(JupyterServers::register).detach();
+
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace.register_action(|workspace, _: &Sessions, cx| {

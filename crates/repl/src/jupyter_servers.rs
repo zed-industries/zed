@@ -7,7 +7,7 @@ use workspace::{ModalView, Workspace};
 
 gpui::actions!(repl, [ConnectJupyterServer]);
 
-struct JupyterServers {
+pub struct JupyterServers {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     workspace: WeakView<Workspace>,
