@@ -948,7 +948,7 @@ impl DevServerProjects {
 
                                     this.show_toast(
                                         Toast::new(
-                                            NotificationId::identified::<
+                                            NotificationId::composite::<
                                                 SshServerAddressCopiedToClipboard,
                                             >(
                                                 connection_string.clone()
@@ -1002,7 +1002,7 @@ impl DevServerProjects {
                                     );
                                     this.show_toast(
                                         Toast::new(
-                                            NotificationId::identified::<SshServerRemoval>(
+                                            NotificationId::composite::<SshServerRemoval>(
                                                 connection_string.clone(),
                                             ),
                                             notification,

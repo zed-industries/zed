@@ -1,27 +1,37 @@
+use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
-use fs::RealFs;
+use client::ProxySettings;
+use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
-use gpui::{AppContext, Context as _};
+use gpui::{AppContext, Context as _, ModelContext, UpdateGlobal as _};
+use http_client::{read_proxy_from_env, Uri};
+use language::LanguageRegistry;
+use node_runtime::{NodeBinaryOptions, NodeRuntime};
+use paths::logs_dir;
+use project::project_settings::ProjectSettings;
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
     json_log::LogRecord,
     protocol::{read_message, write_message},
 };
-use rpc::proto::Envelope;
+use reqwest_client::ReqwestClient;
+use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
+use settings::{watch_config_file, Settings, SettingsStore};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
+
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
 use std::{
-    env,
     io::Write,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use util::ResultExt;
 
 fn init_logging_proxy() {
     env_logger::builder()
@@ -266,6 +276,22 @@ fn start_server(
     ChannelClient::new(incoming_rx, outgoing_tx, cx)
 }
 
+fn init_paths() -> anyhow::Result<()> {
+    for path in [
+        paths::config_dir(),
+        paths::extensions_dir(),
+        paths::languages_dir(),
+        paths::logs_dir(),
+        paths::temp_dir(),
+    ]
+    .iter()
+    {
+        std::fs::create_dir_all(path)
+            .map_err(|e| anyhow!("Could not create directory {:?}: {}", path, e))?;
+    }
+    Ok(())
+}
+
 pub fn execute_run(
     log_file: PathBuf,
     pid_file: PathBuf,
@@ -275,6 +301,7 @@ pub fn execute_run(
 ) -> Result<()> {
     let log_rx = init_logging_server(log_file)?;
     init_panic_hook();
+    init_paths()?;
 
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
@@ -297,8 +324,43 @@ pub fn execute_run(
         log::info!("gpui app started, initializing server");
         let session = start_server(listeners, log_rx, cx);
 
+        client::init_settings(cx);
+
         let project = cx.new_model(|cx| {
-            HeadlessProject::new(session, Arc::new(RealFs::new(Default::default(), None)), cx)
+            let fs = Arc::new(RealFs::new(Default::default(), None));
+            let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
+
+            let proxy_url = read_proxy_settings(cx);
+
+            let http_client = Arc::new(
+                ReqwestClient::proxy_and_user_agent(
+                    proxy_url,
+                    &format!(
+                        "Zed-Server/{} ({}; {})",
+                        env!("CARGO_PKG_VERSION"),
+                        std::env::consts::OS,
+                        std::env::consts::ARCH
+                    ),
+                )
+                .expect("Could not start HTTP client"),
+            );
+
+            let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
+
+            let mut languages = LanguageRegistry::new(cx.background_executor().clone());
+            languages.set_language_server_download_dir(paths::languages_dir().clone());
+            let languages = Arc::new(languages);
+
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session,
+                    fs,
+                    http_client,
+                    node_runtime,
+                    languages,
+                },
+                cx,
+            )
         });
 
         mem::forget(project);
@@ -318,13 +380,15 @@ struct ServerPaths {
 
 impl ServerPaths {
     fn new(identifier: &str) -> Result<Self> {
-        let project_dir = create_state_directory(identifier)?;
+        let server_dir = paths::remote_server_state_dir().join(identifier);
+        std::fs::create_dir_all(&server_dir)?;
+        std::fs::create_dir_all(&logs_dir())?;
 
-        let pid_file = project_dir.join("server.pid");
-        let stdin_socket = project_dir.join("stdin.sock");
-        let stdout_socket = project_dir.join("stdout.sock");
-        let stderr_socket = project_dir.join("stderr.sock");
-        let log_file = project_dir.join("server.log");
+        let pid_file = server_dir.join("server.pid");
+        let stdin_socket = server_dir.join("stdin.sock");
+        let stdout_socket = server_dir.join("stdout.sock");
+        let stderr_socket = server_dir.join("stderr.sock");
+        let log_file = logs_dir().join(format!("server-{}.log", identifier));
 
         Ok(Self {
             pid_file,
@@ -358,7 +422,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         }
 
         spawn_server(&server_paths)?;
-    }
+    };
 
     let stdin_task = smol::spawn(async move {
         let stdin = Async::new(std::io::stdin())?;
@@ -409,19 +473,6 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     Ok(())
 }
 
-fn create_state_directory(identifier: &str) -> Result<PathBuf> {
-    let home_dir = env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let server_dir = PathBuf::from(home_dir)
-        .join(".local")
-        .join("state")
-        .join("zed-remote-server")
-        .join(identifier);
-
-    std::fs::create_dir_all(&server_dir)?;
-
-    Ok(server_dir)
-}
-
 fn kill_running_server(pid: u32, paths: &ServerPaths) -> Result<()> {
     log::info!("killing existing server with PID {}", pid);
     std::process::Command::new("kill")
@@ -453,7 +504,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     }
 
     let binary_name = std::env::current_exe()?;
-    let server_process = std::process::Command::new(binary_name)
+    let server_process = smol::process::Command::new(binary_name)
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -484,6 +535,7 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         "server ready to accept connections. total time waited: {:?}",
         total_time_waited
     );
+
     Ok(())
 }
 
@@ -555,4 +607,119 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
     stream.write_all(len.to_le_bytes().as_slice()).await?;
     stream.write_all(buffer).await?;
     Ok(())
+}
+
+fn initialize_settings(
+    session: Arc<ChannelClient>,
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+) -> async_watch::Receiver<Option<NodeBinaryOptions>> {
+    let user_settings_file_rx = watch_config_file(
+        &cx.background_executor(),
+        fs,
+        paths::settings_file().clone(),
+    );
+
+    handle_settings_file_changes(user_settings_file_rx, cx, {
+        let session = session.clone();
+        move |err, _cx| {
+            if let Some(e) = err {
+                log::info!("Server settings failed to change: {}", e);
+
+                session
+                    .send(proto::Toast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "server-settings-failed".to_string(),
+                        message: format!(
+                            "Error in settings on remote host {:?}: {}",
+                            paths::settings_file(),
+                            e
+                        ),
+                    })
+                    .log_err();
+            } else {
+                session
+                    .send(proto::HideToast {
+                        project_id: SSH_PROJECT_ID,
+                        notification_id: "server-settings-failed".to_string(),
+                    })
+                    .log_err();
+            }
+        }
+    });
+
+    let (tx, rx) = async_watch::channel(None);
+    cx.observe_global::<SettingsStore>(move |cx| {
+        let settings = &ProjectSettings::get_global(cx).node;
+        log::info!("Got new node settings: {:?}", settings);
+        let options = NodeBinaryOptions {
+            allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
+            // TODO: Implement this setting
+            allow_binary_download: true,
+            use_paths: settings.path.as_ref().map(|node_path| {
+                let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
+                let npm_path = settings
+                    .npm_path
+                    .as_ref()
+                    .map(|path| PathBuf::from(shellexpand::tilde(&path).as_ref()));
+                (
+                    node_path.clone(),
+                    npm_path.unwrap_or_else(|| {
+                        let base_path = PathBuf::new();
+                        node_path.parent().unwrap_or(&base_path).join("npm")
+                    }),
+                )
+            }),
+        };
+        tx.send(Some(options)).log_err();
+    })
+    .detach();
+
+    rx
+}
+
+pub fn handle_settings_file_changes(
+    mut server_settings_file: mpsc::UnboundedReceiver<String>,
+    cx: &mut AppContext,
+    settings_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
+) {
+    let server_settings_content = cx
+        .background_executor()
+        .block(server_settings_file.next())
+        .unwrap();
+    SettingsStore::update_global(cx, |store, cx| {
+        store
+            .set_server_settings(&server_settings_content, cx)
+            .log_err();
+    });
+    cx.spawn(move |cx| async move {
+        while let Some(server_settings_content) = server_settings_file.next().await {
+            let result = cx.update_global(|store: &mut SettingsStore, cx| {
+                let result = store.set_server_settings(&server_settings_content, cx);
+                if let Err(err) = &result {
+                    log::error!("Failed to load server settings: {err}");
+                }
+                settings_changed(result.err(), cx);
+                cx.refresh();
+            });
+            if result.is_err() {
+                break; // App dropped
+            }
+        }
+    })
+    .detach();
+}
+
+fn read_proxy_settings(cx: &mut ModelContext<'_, HeadlessProject>) -> Option<Uri> {
+    let proxy_str = ProxySettings::get_global(cx).proxy.to_owned();
+    let proxy_url = proxy_str
+        .as_ref()
+        .and_then(|input: &String| {
+            input
+                .parse::<Uri>()
+                .inspect_err(|e| log::error!("Error parsing proxy settings: {}", e))
+                .ok()
+        })
+        .or_else(read_proxy_from_env);
+    proxy_url
 }
