@@ -208,7 +208,19 @@ async fn load_shell_environment(
     (Some(fake_env), None)
 }
 
-#[cfg(not(any(test, feature = "test-support")))]
+#[cfg(all(target_os = "windows", not(any(test, feature = "test-support"))))]
+async fn load_shell_environment(
+    _dir: &Path,
+    _load_direnv: &DirenvSettings,
+) -> (
+    Option<HashMap<String, String>>,
+    Option<EnvironmentErrorMessage>,
+) {
+    // TODO the current code works with Unix $SHELL only, implement environment loading on windows
+    (None, None)
+}
+
+#[cfg(not(any(target_os = "windows", test, feature = "test-support")))]
 async fn load_shell_environment(
     dir: &Path,
     load_direnv: &DirenvSettings,
@@ -224,18 +236,6 @@ async fn load_shell_environment(
         let message = EnvironmentErrorMessage::from_str(with);
         (None, Some(message))
     }
-
-    let (direnv_environment, direnv_error) = match load_direnv {
-        DirenvSettings::ShellHook => (None, None),
-        DirenvSettings::Direct => match load_direnv_environment(dir).await {
-            Ok(env) => (Some(env), None),
-            Err(err) => (
-                None,
-                <Option<EnvironmentErrorMessage> as From<DirenvError>>::from(err),
-            ),
-        },
-    };
-    let direnv_environment = direnv_environment.unwrap_or(HashMap::default());
 
     let marker = "ZED_SHELL_START";
     let Some(shell) = std::env::var("SHELL").log_err() else {
@@ -279,7 +279,6 @@ async fn load_shell_environment(
 
     let Some(output) = smol::process::Command::new(&shell)
         .args(["-l", "-i", "-c", &command])
-        .envs(direnv_environment)
         .output()
         .await
         .log_err()
@@ -304,6 +303,21 @@ async fn load_shell_environment(
     parse_env_output(env_output, |key, value| {
         parsed_env.insert(key, value);
     });
+
+    let (direnv_environment, direnv_error) = match load_direnv {
+        DirenvSettings::ShellHook => (None, None),
+        DirenvSettings::Direct => match load_direnv_environment(&parsed_env, dir).await {
+            Ok(env) => (Some(env), None),
+            Err(err) => (
+                None,
+                <Option<EnvironmentErrorMessage> as From<DirenvError>>::from(err),
+            ),
+        },
+    };
+
+    for (key, value) in direnv_environment.unwrap_or(HashMap::default()) {
+        parsed_env.insert(key, value);
+    }
 
     (Some(parsed_env), direnv_error)
 }
