@@ -1278,10 +1278,23 @@ impl Context {
             .edits_since_last_parse
             .consume()
             .into_iter()
-            .map(|edit| {
-                let start_row = buffer.offset_to_point(edit.new.start).row;
-                let end_row = buffer.offset_to_point(edit.new.end).row + 1;
-                start_row..end_row
+            .filter_map(|edit| {
+                let new_start = buffer.offset_to_point(edit.new.start);
+                let new_end = buffer.offset_to_point(edit.new.end);
+                let mut start_row = new_start.row;
+                let end_row = new_end.row + 1;
+                if edit.old_len() == 0
+                    && new_start.column == buffer.line_len(new_start.row)
+                    && buffer.chars_at(new_start).next() == Some('\n')
+                {
+                    start_row += 1;
+                }
+
+                if start_row <= end_row {
+                    Some(start_row..end_row)
+                } else {
+                    None
+                }
             })
             .peekable();
 
@@ -1373,7 +1386,7 @@ impl Context {
                                 .last()
                                 .map_or(command_line.name.end, |argument| argument.end);
                         let source_range =
-                            buffer.anchor_after(start_ix)..buffer.anchor_after(end_ix);
+                            buffer.anchor_after(start_ix)..buffer.anchor_before(end_ix);
                         let pending_command = PendingSlashCommand {
                             name: name.to_string(),
                             arguments,
