@@ -1,6 +1,6 @@
 use editor::Editor;
-use gpui::{rems, IntoElement, ParentElement, Render, Styled, ViewContext, WeakView};
-use ui::{h_flex, prelude::*, ButtonLike, Color, Icon, IconName, Tooltip};
+use gpui::{IntoElement, Render, ViewContext, WeakView};
+use ui::{prelude::*, Color, IconName, Tooltip};
 use workspace::{item::ItemHandle, DeploySearch, StatusItemView, Workspace};
 
 use crate::ProjectSearchView;
