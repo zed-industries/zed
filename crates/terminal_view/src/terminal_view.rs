@@ -798,6 +798,7 @@ fn possible_open_paths_metadata(
     cx.background_executor().spawn(async move {
         let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
 
+        #[cfg(not(target_os = "windows"))]
         let mut fetch_metadata_tasks = potential_paths
             .into_iter()
             .map(|potential_path| async {
@@ -810,6 +811,20 @@ fn possible_open_paths_metadata(
                     },
                     metadata,
                 )
+            })
+            .collect::<FuturesUnordered<_>>();
+
+        #[cfg(target_os = "windows")]
+        let mut fetch_metadata_tasks = potential_paths
+            .iter()
+            .map(|potential_path| async {
+                let metadata = fs.metadata(potential_path).await.ok().flatten();
+                let path = PathBuf::from(
+                    potential_path
+                        .to_string_lossy()
+                        .trim_start_matches("\\\\?\\"),
+                );
+                (PathWithPosition { path, row, column }, metadata)
             })
             .collect::<FuturesUnordered<_>>();
 

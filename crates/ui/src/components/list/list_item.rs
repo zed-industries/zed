@@ -193,6 +193,7 @@ impl RenderOnce for ListItem {
                     .id("inner_list_item")
                     .w_full()
                     .relative()
+                    .items_center()
                     .gap_1()
                     .px(Spacing::Medium.rems(cx))
                     .map(|this| match self.spacing {
@@ -247,7 +248,7 @@ impl RenderOnce for ListItem {
                             .flex_grow()
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
-                            .gap(Spacing::Small.rems(cx))
+                            .gap(Spacing::Medium.rems(cx))
                             .map(|list_content| {
                                 if self.overflow_x {
                                     list_content

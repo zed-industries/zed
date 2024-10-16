@@ -161,11 +161,11 @@ use ui::{
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
-use workspace::notifications::{DetachAndPromptErr, NotificationId};
+use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
 };
-use workspace::{OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
+use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSettings, Toast};
 
 use crate::hover_links::find_url;
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
@@ -6239,6 +6239,13 @@ impl Editor {
                 editor.revert(revert_changes, cx);
             });
         }
+    }
+
+    pub fn reload_file(&mut self, _: &ReloadFile, cx: &mut ViewContext<Self>) {
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+        self.reload(project, cx).detach_and_notify_err(cx);
     }
 
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
@@ -13087,18 +13094,11 @@ fn snippet_completions(
         return vec![];
     }
     let snapshot = buffer.read(cx).text_snapshot();
-    let chunks = snapshot.reversed_chunks_in_range(text::Anchor::MIN..buffer_position);
-
-    let mut lines = chunks.lines();
-    let Some(line_at) = lines.next().filter(|line| !line.is_empty()) else {
-        return vec![];
-    };
+    let chars = snapshot.reversed_chars_for_range(text::Anchor::MIN..buffer_position);
 
     let scope = language.map(|language| language.default_scope());
     let classifier = CharClassifier::new(scope).for_completion(true);
-    let mut last_word = line_at
-        .chars()
-        .rev()
+    let mut last_word = chars
         .take_while(|c| classifier.is_word(*c))
         .collect::<String>();
     last_word = last_word.chars().rev().collect();
@@ -13631,6 +13631,7 @@ pub enum EditorEvent {
     TransactionBegun {
         transaction_id: clock::Lamport,
     },
+    Reloaded,
     CursorShapeChanged,
 }
 

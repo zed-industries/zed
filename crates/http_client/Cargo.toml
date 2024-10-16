@@ -16,6 +16,7 @@ path = "src/http_client.rs"
 doctest = true
 
 [dependencies]
+bytes.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true
@@ -23,5 +24,4 @@ http = "1.1"
 log.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-smol.workspace = true
 url.workspace = true

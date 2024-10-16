@@ -494,7 +494,14 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": false
+    "file_icons": false,
+    // What to do after closing the current tab.
+    //
+    // 1. Activate the tab that was open previously (default)
+    //     "History"
+    // 2. Activate the neighbour tab (prefers the right one, if present)
+    //     "Neighbour"
+    "activate_on_close": "history"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -842,6 +849,10 @@
     },
     "Dart": {
       "tab_size": 2
+    },
+    "Diff": {
+      "remove_trailing_whitespace_on_save": false,
+      "ensure_final_newline_on_save": false
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
