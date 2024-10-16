@@ -12,30 +12,17 @@ pub struct ProjectSearchIndicator {
 
 impl Render for ProjectSearchIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let project_search_indicator = h_flex().map(|this| {
-            this.child(
-                Icon::new(IconName::MagnifyingGlass)
-                    .size(IconSize::Small)
-                    .color(Color::Default),
-            )
-        });
-
-        h_flex().h(rems(1.375)).gap_2().child(
-            ButtonLike::new("project-search-indicator")
-                .child(project_search_indicator)
-                .tooltip(|cx| Tooltip::for_action("Project Search", &DeploySearch::default(), cx))
-                .on_click(cx.listener(|this, _, cx| {
-                    if let Some(workspace) = this.workspace.upgrade() {
-                        workspace.update(cx, |workspace, cx| {
-                            ProjectSearchView::deploy_search(
-                                workspace,
-                                &DeploySearch::default(),
-                                cx,
-                            )
-                        })
-                    }
-                })),
-        )
+        IconButton::new("project-search-indicator", IconName::MagnifyingGlass)
+            .icon_size(IconSize::Small)
+            .icon_color(Color::Default)
+            .tooltip(|cx| Tooltip::for_action("Project Search", &DeploySearch::default(), cx))
+            .on_click(cx.listener(|this, _, cx| {
+                if let Some(workspace) = this.workspace.upgrade() {
+                    workspace.update(cx, |workspace, cx| {
+                        ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), cx)
+                    })
+                }
+            }))
     }
 }
 
