@@ -717,7 +717,7 @@ fn subscribe_for_terminal_events(
                             .await;
                         let paths_to_open = valid_files_to_open
                             .iter()
-                            .map(|(p, _)| p.path.clone().into())
+                            .map(|(p, _)| p.path.clone())
                             .collect();
                         let opened_items = task_workspace
                             .update(&mut cx, |workspace, cx| {
@@ -804,7 +804,7 @@ fn possible_open_paths_metadata(
                 let metadata = fs.metadata(&potential_path).await.ok().flatten();
                 (
                     PathWithPosition {
-                        path: potential_path.into(),
+                        path: potential_path,
                         row,
                         column,
                     },
@@ -836,7 +836,7 @@ fn possible_open_targets(
     let maybe_path = path_position.path;
 
     let abs_path = if maybe_path.is_absolute() {
-        Some(maybe_path.into())
+        Some(maybe_path)
     } else if maybe_path.starts_with("~") {
         maybe_path
             .strip_prefix("~")
@@ -845,7 +845,7 @@ fn possible_open_targets(
     } else {
         let mut potential_cwd_and_workspace_paths = HashSet::default();
         if let Some(cwd) = cwd {
-            let abs_path = Path::join(cwd, &*maybe_path);
+            let abs_path = Path::join(cwd, &maybe_path);
             let canonicalized_path = abs_path.canonicalize().unwrap_or(abs_path);
             potential_cwd_and_workspace_paths.insert(canonicalized_path);
         }
@@ -853,7 +853,7 @@ fn possible_open_targets(
             workspace.update(cx, |workspace, cx| {
                 for potential_worktree_path in workspace
                     .worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().join(&*maybe_path))
+                    .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
                 {
                     potential_cwd_and_workspace_paths.insert(potential_worktree_path);
                 }

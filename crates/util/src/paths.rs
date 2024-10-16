@@ -193,7 +193,7 @@ const ROW_COL_CAPTURE_REGEX: &str = r"(?x)
 /// Matching values example: `te`, `test.rs:22`, `te:22:5`, `test.c(22)`, `test.c(22,5)`etc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
 pub struct PathWithPosition {
-    pub path: SanitizedPathBuf,
+    pub path: PathBuf,
     pub row: Option<u32>,
     // Absent if row is absent.
     pub column: Option<u32>,
@@ -203,7 +203,7 @@ impl PathWithPosition {
     /// Returns a PathWithPosition from a path.
     pub fn from_path(path: PathBuf) -> Self {
         Self {
-            path: path.into(),
+            path,
             row: None,
             column: None,
         }
@@ -300,10 +300,7 @@ impl PathWithPosition {
         let maybe_file_name_with_row_col = path.file_name().unwrap_or_default().to_string_lossy();
         if maybe_file_name_with_row_col.is_empty() {
             return Self {
-                // TODO:
-                // If `s = "text_file.txt"` some relative file path, is it okay
-                // if we trimmed the path here?
-                path: PathBuf::from(s).into(),
+                path: PathBuf::from(s),
                 row: None,
                 column: None,
             };
@@ -326,13 +323,13 @@ impl PathWithPosition {
                 let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
 
                 Self {
-                    path: PathBuf::from(path_without_suffix).into(),
+                    path: PathBuf::from(path_without_suffix),
                     row,
                     column,
                 }
             }
             None => Self {
-                path: PathBuf::from(s).into(),
+                path: PathBuf::from(s),
                 row: None,
                 column: None,
             },
@@ -344,7 +341,7 @@ impl PathWithPosition {
         mapping: impl FnOnce(PathBuf) -> Result<PathBuf, E>,
     ) -> Result<PathWithPosition, E> {
         Ok(PathWithPosition {
-            path: SanitizedPathBuf(mapping(self.path.into())?),
+            path: mapping(self.path)?,
             row: self.row,
             column: self.column,
         })
@@ -512,10 +509,6 @@ mod tests {
         );
     }
 
-    fn generate_test_sanitized_path_buf<T: ?Sized + AsRef<OsStr>>(s: &T) -> SanitizedPathBuf {
-        SanitizedPathBuf(PathBuf::from(s))
-    }
-
     #[test]
     fn compare_paths_case_semi_sensitive() {
         let mut paths = vec![
@@ -555,7 +548,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str(" test_file"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("test_file"),
+                path: PathBuf::from("test_file"),
                 row: None,
                 column: None
             }
@@ -564,7 +557,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("a:bc:.zip:1"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("a:bc:.zip"),
+                path: PathBuf::from("a:bc:.zip"),
                 row: Some(1),
                 column: None
             }
@@ -573,7 +566,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("one.second.zip:1"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("one.second.zip"),
+                path: PathBuf::from("one.second.zip"),
                 row: Some(1),
                 column: None
             }
@@ -583,7 +576,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file:10:1:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("test_file"),
+                path: PathBuf::from("test_file"),
                 row: Some(10),
                 column: Some(1)
             }
@@ -592,7 +585,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("test_file.rs"),
+                path: PathBuf::from("test_file.rs"),
                 row: None,
                 column: None
             }
@@ -601,7 +594,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("test_file.rs:1:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("test_file.rs"),
+                path: PathBuf::from("test_file.rs"),
                 row: Some(1),
                 column: None
             }
@@ -614,9 +607,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("app-editors:zed-0.143.6:20240710-201212.log:34:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf(
-                    "app-editors:zed-0.143.6:20240710-201212.log"
-                ),
+                path: PathBuf::from("app-editors:zed-0.143.6:20240710-201212.log"),
                 row: Some(34),
                 column: None,
             }
@@ -625,7 +616,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("crates/file_finder/src/file_finder.rs:1902:13:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("crates/file_finder/src/file_finder.rs"),
+                path: PathBuf::from("crates/file_finder/src/file_finder.rs"),
                 row: Some(1902),
                 column: Some(13),
             }
@@ -634,7 +625,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("crate/utils/src/test:today.log:34"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("crate/utils/src/test:today.log"),
+                path: PathBuf::from("crate/utils/src/test:today.log"),
                 row: Some(34),
                 column: None,
             }
@@ -647,7 +638,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("crates\\utils\\paths.rs"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("crates\\utils\\paths.rs"),
+                path: PathBuf::from("crates\\utils\\paths.rs"),
                 row: None,
                 column: None
             }
@@ -656,7 +647,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
                 row: None,
                 column: None
             }
@@ -669,7 +660,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("crates\\utils\\paths.rs:101"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("crates\\utils\\paths.rs"),
+                path: PathBuf::from("crates\\utils\\paths.rs"),
                 row: Some(101),
                 column: None
             }
@@ -678,7 +669,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1:20"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                 row: Some(1),
                 column: Some(20)
             }
@@ -687,7 +678,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs(1902,13)"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
                 row: Some(1902),
                 column: Some(13)
             }
@@ -697,7 +688,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                 row: Some(1902),
                 column: Some(13)
             }
@@ -706,9 +697,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:13:15:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf(
-                    "\\\\?\\C:\\Users\\someone\\test_file.rs:1902"
-                ),
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs:1902"),
                 row: Some(13),
                 column: Some(15)
             }
@@ -717,9 +706,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs:1902:::15:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf(
-                    "\\\\?\\C:\\Users\\someone\\test_file.rs:1902"
-                ),
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs:1902"),
                 row: Some(15),
                 column: None
             }
@@ -728,7 +715,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs(1902,13):"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                 row: Some(1902),
                 column: Some(13),
             }
@@ -737,7 +724,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("\\\\?\\C:\\Users\\someone\\test_file.rs(1902):"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("\\\\?\\C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("\\\\?\\C:\\Users\\someone\\test_file.rs"),
                 row: Some(1902),
                 column: None,
             }
@@ -746,7 +733,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs:1902:13:"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
                 row: Some(1902),
                 column: Some(13),
             }
@@ -755,7 +742,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs(1902,13):"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
                 row: Some(1902),
                 column: Some(13),
             }
@@ -764,7 +751,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("C:\\Users\\someone\\test_file.rs(1902):"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("C:\\Users\\someone\\test_file.rs"),
+                path: PathBuf::from("C:\\Users\\someone\\test_file.rs"),
                 row: Some(1902),
                 column: None,
             }
@@ -773,7 +760,7 @@ mod tests {
         assert_eq!(
             PathWithPosition::parse_str("crates/utils/paths.rs:101"),
             PathWithPosition {
-                path: generate_test_sanitized_path_buf("crates\\utils\\paths.rs"),
+                path: PathBuf::from("crates\\utils\\paths.rs"),
                 row: Some(101),
                 column: None,
             }
