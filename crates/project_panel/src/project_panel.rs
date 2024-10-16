@@ -8,8 +8,8 @@ use settings::{Settings, SettingsStore};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::{
-        entry_diagnostic_aware_decoration_and_color, entry_diagnostic_aware_icon_name_and_color,
-        entry_git_aware_label_color,
+        entry_diagnostic_aware_icon_decoration_and_color,
+        entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
     },
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
@@ -2428,7 +2428,6 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
-
         div()
             .id(entry_id.to_proto() as usize)
             .on_drag_move::<ExternalPaths>(cx.listener(
@@ -2520,7 +2519,7 @@ impl ProjectPanel {
                     .child(if let Some(icon) = &icon {
                         let icon = Icon::from_path(icon.to_string());
                         if let Some((decoration, decoration_color)) =
-                            entry_diagnostic_aware_decoration_and_color(diagnostic_severity)
+                            entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
                         {
                             h_flex().child(
                                 DecoratedIcon::new(icon.color(Color::Muted), decoration)

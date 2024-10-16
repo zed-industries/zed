@@ -294,7 +294,7 @@ pub enum IconName {
     ZedXCopilot,
 }
 
-#[derive(Debug, IntoElement)]
+#[derive(IntoElement)]
 pub struct Icon {
     path: SharedString,
     color: Color,

@@ -1492,7 +1492,7 @@ pub fn entry_diagnostic_aware_icon_name_and_color(
     }
 }
 
-pub fn entry_diagnostic_aware_decoration_and_color(
+pub fn entry_diagnostic_aware_icon_decoration_and_color(
     diagnostic_severity: Option<DiagnosticSeverity>,
 ) -> Option<(IconDecoration, Color)> {
     match diagnostic_severity {
