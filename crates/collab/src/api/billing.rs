@@ -748,6 +748,7 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
             loop {
                 sync_with_stripe(&app, &llm_db, &stripe_billing)
                     .await
+                    .context("failed to sync LLM usage to Stripe")
                     .trace_err();
                 executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
             }
