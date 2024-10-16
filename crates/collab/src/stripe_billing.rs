@@ -45,7 +45,13 @@ impl StripeBilling {
 
         let (meters, prices) = futures::try_join!(
             StripeMeter::list(&self.client),
-            stripe::Price::list(&self.client, &stripe::ListPrices::default())
+            stripe::Price::list(
+                &self.client,
+                &stripe::ListPrices {
+                    limit: Some(100),
+                    ..Default::default()
+                }
+            )
         )?;
 
         for meter in meters.data {
@@ -396,9 +402,12 @@ impl StripeMeter {
 
     pub fn list(client: &stripe::Client) -> stripe::Response<stripe::List<Self>> {
         #[derive(Serialize)]
-        struct Params {}
+        struct Params {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            limit: Option<u64>,
+        }
 
-        client.get_query("/billing/meters", Params {})
+        client.get_query("/billing/meters", Params { limit: Some(100) })
     }
 }
 

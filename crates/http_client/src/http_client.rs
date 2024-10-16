@@ -317,6 +317,12 @@ pub fn read_proxy_from_env() -> Option<Uri> {
 
 pub struct BlockedHttpClient;
 
+impl BlockedHttpClient {
+    pub fn new() -> Self {
+        BlockedHttpClient
+    }
+}
+
 impl HttpClient for BlockedHttpClient {
     fn send(
         &self,

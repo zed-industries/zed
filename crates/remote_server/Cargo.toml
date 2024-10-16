@@ -22,6 +22,7 @@ debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
+async-watch.workspace = true
 anyhow.workspace = true
 backtrace = "0.3"
 clap.workspace = true
@@ -30,13 +31,16 @@ env_logger.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http_client.workspace = true
 language.workspace = true
 languages.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
+paths = { workspace = true }
 remote.workspace = true
+reqwest_client.workspace = true
 rpc.workspace = true
 rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
 serde.workspace = true
@@ -66,4 +70,4 @@ cargo_toml.workspace = true
 toml.workspace = true
 
 [package.metadata.cargo-machete]
-ignored = ["rust-embed"]
+ignored = ["rust-embed", "paths"]

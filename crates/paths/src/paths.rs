@@ -5,6 +5,11 @@ use std::sync::OnceLock;
 
 pub use util::paths::home_dir;
 
+/// Returns the relative path to the zed_server directory on the ssh host.
+pub fn remote_server_dir_relative() -> &'static Path {
+    Path::new(".zed_server")
+}
+
 /// Returns the path to the configuration directory used by Zed.
 pub fn config_dir() -> &'static PathBuf {
     static CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
@@ -94,6 +99,12 @@ pub fn logs_dir() -> &'static PathBuf {
             support_dir().join("logs")
         }
     })
+}
+
+/// Returns the path to the zed server directory on this ssh host.
+pub fn remote_server_state_dir() -> &'static PathBuf {
+    static REMOTE_SERVER_STATE: OnceLock<PathBuf> = OnceLock::new();
+    REMOTE_SERVER_STATE.get_or_init(|| return support_dir().join("server_state"))
 }
 
 /// Returns the path to the `Zed.log` file.

@@ -96,7 +96,9 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
+use language::{
+    point_to_lsp, BufferRow, CharClassifier, LanguageServerName, Runnable, RunnableRange,
+};
 use linked_editing_ranges::refresh_linked_ranges;
 pub use proposed_changes_editor::{
     ProposedChangesBuffer, ProposedChangesEditor, ProposedChangesEditorToolbar,
@@ -122,7 +124,7 @@ use multi_buffer::{
 use ordered_float::OrderedFloat;
 use parking_lot::{Mutex, RwLock};
 use project::{
-    lsp_store::FormatTrigger,
+    lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Item, Location,
     LocationLink, Project, ProjectPath, ProjectTransaction, TaskSourceKind,
@@ -9893,21 +9895,19 @@ impl Editor {
         &self,
         lsp_location: lsp::Location,
         server_id: LanguageServerId,
-        cx: &mut ViewContext<Editor>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<Option<Location>>> {
         let Some(project) = self.project.clone() else {
             return Task::Ready(Some(Ok(None)));
         };
 
         cx.spawn(move |editor, mut cx| async move {
-            let location_task = editor.update(&mut cx, |editor, cx| {
+            let location_task = editor.update(&mut cx, |_, cx| {
                 project.update(cx, |project, cx| {
-                    let language_server_name =
-                        editor.buffer.read(cx).as_singleton().and_then(|buffer| {
-                            project
-                                .language_server_for_buffer(buffer.read(cx), server_id, cx)
-                                .map(|(lsp_adapter, _)| lsp_adapter.name.clone())
-                        });
+                    let language_server_name = project
+                        .language_server_statuses(cx)
+                        .find(|(id, _)| server_id == *id)
+                        .map(|(_, status)| LanguageServerName::from(status.name.as_str()));
                     language_server_name.map(|language_server_name| {
                         project.open_local_buffer_via_lsp(
                             lsp_location.uri.clone(),
@@ -10386,13 +10386,39 @@ impl Editor {
             None => return None,
         };
 
-        Some(self.perform_format(project, FormatTrigger::Manual, cx))
+        Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx))
+    }
+
+    fn format_selections(
+        &mut self,
+        _: &FormatSelections,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let project = match &self.project {
+            Some(project) => project.clone(),
+            None => return None,
+        };
+
+        let selections = self
+            .selections
+            .all_adjusted(cx)
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect_vec();
+
+        Some(self.perform_format(
+            project,
+            FormatTrigger::Manual,
+            FormatTarget::Ranges(selections),
+            cx,
+        ))
     }
 
     fn perform_format(
         &mut self,
         project: Model<Project>,
         trigger: FormatTrigger,
+        target: FormatTarget,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self.buffer().clone();
@@ -10402,7 +10428,9 @@ impl Editor {
         }
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| project.format(buffers, true, trigger, cx));
+        let format = project.update(cx, |project, cx| {
+            project.format(buffers, true, trigger, target, cx)
+        });
 
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
