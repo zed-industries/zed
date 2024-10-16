@@ -1,5 +1,4 @@
 use std::cmp;
-use std::ops::Deref;
 use std::sync::OnceLock;
 use std::{
     ffi::OsStr,
@@ -46,9 +45,6 @@ pub trait PathExt {
                 .ok_or_else(|| anyhow!("Invalid WTF-8 sequence: {bytes:?}"))
         }
     }
-
-    fn sanitized_pathbuf(&self) -> anyhow::Result<SanitizedPathBuf>;
-    fn sanitized_pathbuf_string(&self) -> anyhow::Result<String>;
 }
 
 impl<T: AsRef<Path>> PathExt for T {
@@ -97,77 +93,73 @@ impl<T: AsRef<Path>> PathExt for T {
 
         self.as_ref().file_name()?.to_str()?.split('.').last()
     }
-
-    /// Returns a `SanitizedPathBuf` with a cleaned-up version of the current path,
-    /// or an error if the path is empty on Windows.
-    ///
-    /// On Windows, this method removes the `\\?\` prefix from the path. On non-Windows
-    /// platforms, it directly converts the path reference into a `PathBuf`.
-    ///
-    /// Generally, this method should be used when the path is to be displayed to the user,
-    /// and the path should be returned from `canonicalize`.
-    fn sanitized_pathbuf(&self) -> anyhow::Result<SanitizedPathBuf> {
-        #[cfg(target_os = "windows")]
-        return Ok(SanitizedPathBuf(PathBuf::from(
-            self.sanitized_pathbuf_string()?,
-        )));
-        #[cfg(not(target_os = "windows"))]
-        return Ok(SanitizedPathBuf(self.as_ref().to_path_buf()));
-    }
-
-    /// Returns a sanitized string representation of the current path, or an error
-    /// if the path is empty on Windows.
-    ///
-    /// On Windows, this method removes the `\\?\` prefix. On other platforms,
-    /// it simply converts the path to a string.
-    ///
-    /// Generally, this method should be used when the path is to be displayed to the user,
-    /// and the path should be returned from `canonicalize`.
-    fn sanitized_pathbuf_string(&self) -> anyhow::Result<String> {
-        let path_string = self.as_ref().to_string_lossy();
-        #[cfg(target_os = "windows")]
-        {
-            let trimmed_path_string = path_string.trim_start_matches("\\\\?\\");
-            if trimmed_path_string.is_empty() {
-                anyhow::bail!("File path is empty!");
-            }
-            return Ok(trimmed_path_string.to_string());
-        }
-        #[cfg(not(target_os = "windows"))]
-        return Ok(path_string.to_string());
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash)]
-pub struct SanitizedPathBuf(PathBuf);
-
-impl Deref for SanitizedPathBuf {
-    type Target = PathBuf;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl Into<PathBuf> for SanitizedPathBuf {
-    fn into(self) -> PathBuf {
-        self.0
-    }
-}
-
-impl Into<SanitizedPathBuf> for PathBuf {
+pub struct SanitizedPathBuf {
+    raw: PathBuf,
     #[cfg(target_os = "windows")]
-    fn into(self) -> SanitizedPathBuf {
-        use crate::ResultExt;
+    trimmed: PathBuf,
+}
 
-        self.sanitized_pathbuf()
-            .log_err()
-            .unwrap_or(SanitizedPathBuf(self))
+// impl Deref for SanitizedPathBuf {
+//     type Target = PathBuf;
+
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
+impl From<PathBuf> for SanitizedPathBuf {
+    fn from(path: PathBuf) -> Self {
+        #[cfg(target_os = "windows")]
+        {
+            let path_string = path.to_string_lossy();
+            let trimmed = PathBuf::from(path_string.trim_start_matches("\\\\?\\"));
+            SanitizedPathBuf { raw: path, trimmed }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            SanitizedPathBuf { raw: path }
+        }
     }
+}
 
-    #[cfg(not(target_os = "windows"))]
-    fn into(self) -> SanitizedPathBuf {
-        SanitizedPathBuf(self)
+impl From<SanitizedPathBuf> for PathBuf {
+    fn from(value: SanitizedPathBuf) -> Self {
+        value.raw
+    }
+}
+
+impl AsRef<Path> for SanitizedPathBuf {
+    fn as_ref(&self) -> &Path {
+        &self.raw
+    }
+}
+
+// impl std::fmt::Display for SanitizedPathBuf {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         #[cfg(target_os = "windows")]
+//         {
+//             self.trimmed.display().fmt(f)
+//         }
+//         #[cfg(not(target_os = "windows"))]
+//         {
+//             self.raw.display().fmt(f)
+//         }
+//     }
+// }
+
+impl SanitizedPathBuf {
+    pub fn to_trimmed_string(&self) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.to_string_lossy().to_string()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.raw.to_string_lossy().to_string()
+        }
     }
 }
 
