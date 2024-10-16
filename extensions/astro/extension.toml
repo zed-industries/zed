@@ -1,7 +1,7 @@
 id = "astro"
 name = "Astro"
 description = "Astro support."
-version = "0.1.0"
+version = "0.1.1"
 schema_version = 1
 authors = ["Alvaro Gaona <alvgaona@gmail.com>", "0xk1f0 <dev@k1f0.dev>"]
 repository = "https://github.com/zed-industries/zed"
