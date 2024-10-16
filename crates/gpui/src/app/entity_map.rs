@@ -441,15 +441,6 @@ impl<T> std::fmt::Debug for Model<T> {
     }
 }
 
-impl<T> std::fmt::Debug for WeakModel<T> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("WeakModel")
-            .field("entity_id", &self.any_model.entity_id)
-            .field("entity_type", &type_name::<T>())
-            .finish()
-    }
-}
-
 impl<T> Hash for Model<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.any_model.hash(state);
@@ -576,7 +567,10 @@ pub struct WeakModel<T> {
 
 impl<T> std::fmt::Debug for WeakModel<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(type_name::<WeakModel<T>>()).finish()
+        f.debug_struct(&type_name::<Self>())
+            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_type", &type_name::<T>())
+            .finish()
     }
 }
 
