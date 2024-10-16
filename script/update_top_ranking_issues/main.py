@@ -15,29 +15,30 @@ from typer import Typer
 app: Typer = typer.Typer()
 
 DATETIME_FORMAT: str = "%m/%d/%Y %I:%M %p"
+LABEL_DATA_FILE_PATH = pathlib.Path(__file__).parent.parent / "label_data.json"
+ISSUES_PER_LABEL: int = 20
+MISSING_LABEL_ERROR_MESSAGE: str = "missing core label"
 
-label_data_file_path = pathlib.Path(__file__).parent.parent / "label_data.json"
-
-with open(label_data_file_path, "r") as label_data_file:
+with open(LABEL_DATA_FILE_PATH, "r") as label_data_file:
     label_data = json.load(label_data_file)
     CORE_LABELS: set[str] = set(label_data["core_labels"])
     # A set of labels for adding in labels that we want present in the final
     # report, but that we don't want being defined as a core label, since issues
     # with without core labels are flagged as errors.
     ADDITIONAL_LABELS: set[str] = set(label_data["additional_labels"])
+    NEW_ISSUE_LABELS: set[str] = set(label_data["new_issue_labels"])
     IGNORED_LABEL: str = label_data["ignored_label"]
-
-
-ISSUES_PER_LABEL: int = 20
 
 
 class IssueData:
     def __init__(self, issue: Issue) -> None:
+        self.title = issue.title
         self.url: str = issue.html_url
         self.like_count: int = issue._rawData["reactions"]["+1"]  # type: ignore [attr-defined]
         self.creation_datetime: str = issue.created_at.strftime(DATETIME_FORMAT)
         # TODO: Change script to support storing labels here, rather than directly in the script
         self.labels: set[str] = {label["name"] for label in issue._rawData["labels"]}  # type: ignore [attr-defined]
+        self._issue = issue
 
 
 @app.command()
@@ -86,6 +87,13 @@ def main(
         top_ranking_issues_issue.edit(body=issue_text)
     else:
         print(issue_text)
+
+    for error_message, issue_data in error_message_to_erroneous_issue_data.items():
+        if error_message == MISSING_LABEL_ERROR_MESSAGE:
+            for issue in issue_data:
+                # Used as a dry-run flag
+                if issue_reference_number:
+                    issue._issue.add_to_labels(*NEW_ISSUE_LABELS)
 
     remaining_requests_after: int = github.rate_limiting[0]
     print(f"Remaining requests after: {remaining_requests_after}")
@@ -191,7 +199,7 @@ def get_error_message_to_erroneous_issues(
     query: str = f"repo:{repository.full_name} is:open is:issue {filter_labels_text}"
 
     for issue in github.search_issues(query):
-        error_message_to_erroneous_issues["missing core label"].append(issue)
+        error_message_to_erroneous_issues[MISSING_LABEL_ERROR_MESSAGE].append(issue)
 
     return error_message_to_erroneous_issues
 

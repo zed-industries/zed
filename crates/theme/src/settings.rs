@@ -636,7 +636,12 @@ impl settings::Settings for ThemeSettings {
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
 
-        for value in sources.user.into_iter().chain(sources.release_channel) {
+        for value in sources
+            .user
+            .into_iter()
+            .chain(sources.release_channel)
+            .chain(sources.server)
+        {
             if let Some(value) = value.ui_density {
                 this.ui_density = value;
             }

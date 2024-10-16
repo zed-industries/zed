@@ -137,7 +137,11 @@ pub trait SshClientDelegate: Send + Sync {
         prompt: String,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<String>>;
-    fn remote_server_binary_path(&self, cx: &mut AsyncAppContext) -> Result<PathBuf>;
+    fn remote_server_binary_path(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> Result<PathBuf>;
     fn get_server_binary(
         &self,
         platform: SshPlatform,
@@ -739,7 +743,11 @@ impl SshRemoteClient {
 
                 loop {
                     select_biased! {
-                        _ = connection_activity_rx.next().fuse() => {
+                        result = connection_activity_rx.next().fuse() => {
+                            if result.is_none() {
+                                log::warn!("ssh heartbeat: connection activity channel has been dropped. stopping.");
+                                return Ok(());
+                            }
                             keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
                         }
                         _ = keepalive_timer => {
@@ -972,7 +980,7 @@ impl SshRemoteClient {
 
         let platform = ssh_connection.query_platform().await?;
         let (local_binary_path, version) = delegate.get_server_binary(platform, cx).await??;
-        let remote_binary_path = delegate.remote_server_binary_path(cx)?;
+        let remote_binary_path = delegate.remote_server_binary_path(platform, cx)?;
         ssh_connection
             .ensure_server_binary(
                 &delegate,
@@ -1021,7 +1029,7 @@ impl SshRemoteClient {
             .map(|ssh_connection| ssh_connection.socket.ssh_args())
     }
 
-    pub fn to_proto_client(&self) -> AnyProtoClient {
+    pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
     }
 
@@ -1178,7 +1186,14 @@ impl SshRemoteConnection {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
-            .args(["-N", "-o", "ControlMaster=yes", "-o"])
+            .args([
+                "-N",
+                "-o",
+                "ControlPersist=no",
+                "-o",
+                "ControlMaster=yes",
+                "-o",
+            ])
             .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .spawn()?;

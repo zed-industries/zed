@@ -156,7 +156,6 @@ members = [
     "extensions/proto",
     "extensions/purescript",
     "extensions/ruff",
-    "extensions/ruby",
     "extensions/slash-commands-example",
     "extensions/snippets",
     "extensions/svelte",
@@ -450,6 +449,7 @@ tree-sitter-go = "0.23"
 tree-sitter-go-mod = { git = "https://github.com/zed-industries/tree-sitter-go-mod", rev = "a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
+tree-sitter-diff = "0.1.0"
 tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.23"

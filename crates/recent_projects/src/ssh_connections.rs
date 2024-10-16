@@ -10,6 +10,7 @@ use gpui::{
     Transformation, View,
 };
 use gpui::{AppContext, Model};
+
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
@@ -377,9 +378,18 @@ impl remote::SshClientDelegate for SshClientDelegate {
         rx
     }
 
-    fn remote_server_binary_path(&self, cx: &mut AsyncAppContext) -> Result<PathBuf> {
+    fn remote_server_binary_path(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> Result<PathBuf> {
         let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
-        Ok(format!(".local/zed-remote-server-{}", release_channel.dev_name()).into())
+        Ok(paths::remote_server_dir_relative().join(format!(
+            "zed-remote-server-{}-{}-{}",
+            release_channel.dev_name(),
+            platform.os,
+            platform.arch
+        )))
     }
 }
 
@@ -468,6 +478,8 @@ impl SshClientDelegate {
                 "build",
                 "--package",
                 "remote_server",
+                "--features",
+                "debug-embed",
                 "--target-dir",
                 "target/remote_server",
             ]))
@@ -485,7 +497,7 @@ impl SshClientDelegate {
             let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
             return Ok(Some((path, version)));
         } else if let Some(triple) = platform.triple() {
-            smol::fs::create_dir_all("target/remote-server").await?;
+            smol::fs::create_dir_all("target/remote_server").await?;
 
             self.update_status(Some("Installing cross.rs for cross-compilation"), cx);
             log::info!("installing cross");

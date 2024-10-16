@@ -376,6 +376,13 @@ impl EditorElement {
                 cx.propagate();
             }
         });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.format_selections(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
         register_action(view, cx, Editor::restart_language_server);
         register_action(view, cx, Editor::cancel_language_server_work);
         register_action(view, cx, Editor::show_character_palette);
@@ -437,7 +444,8 @@ impl EditorElement {
         register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
         register_action(view, cx, Editor::apply_selected_diff_hunks);
-        register_action(view, cx, Editor::open_active_item_in_terminal)
+        register_action(view, cx, Editor::open_active_item_in_terminal);
+        register_action(view, cx, Editor::reload_file)
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {
