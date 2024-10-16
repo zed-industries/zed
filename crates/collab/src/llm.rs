@@ -23,7 +23,7 @@ use collections::HashMap;
 use db::TokenUsage;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-use isahc_http_client::IsahcHttpClient;
+use reqwest_client::ReqwestClient;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
@@ -44,7 +44,7 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: IsahcHttpClient,
+    pub http_client: ReqwestClient,
     pub clickhouse_client: Option<clickhouse::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
@@ -70,11 +70,8 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client = IsahcHttpClient::builder()
-            .default_header("User-Agent", user_agent)
-            .build()
-            .map(IsahcHttpClient::from)
-            .context("failed to construct http client")?;
+        let http_client =
+            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
 
         let this = Self {
             executor,
@@ -438,7 +435,7 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
 
 /// The maximum monthly spending an individual user can reach on the free tier
 /// before they have to pay.
-pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(5);
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(10);
 
 /// The default value to use for maximum spend per month if the user did not
 /// explicitly set a maximum spend.
@@ -639,6 +636,7 @@ where
 impl<S> Drop for TokenCountingStream<S> {
     fn drop(&mut self) {
         let state = self.state.clone();
+        let is_llm_billing_enabled = state.config.is_llm_billing_enabled();
         let claims = self.claims.clone();
         let provider = self.provider;
         let model = std::mem::take(&mut self.model);
@@ -652,7 +650,14 @@ impl<S> Drop for TokenCountingStream<S> {
                     provider,
                     &model,
                     tokens,
-                    claims.has_llm_subscription,
+                    // We're passing `false` here if LLM billing is not enabled
+                    // so that we don't write any records to the
+                    // `billing_events` table until we're ready to bill users.
+                    if is_llm_billing_enabled {
+                        claims.has_llm_subscription
+                    } else {
+                        false
+                    },
                     Cents(claims.max_monthly_spend_in_cents),
                     Utc::now(),
                 )

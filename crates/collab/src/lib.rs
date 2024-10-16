@@ -31,6 +31,8 @@ use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
 
+use crate::stripe_billing::StripeBilling;
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub enum Error {
@@ -274,6 +276,7 @@ pub struct AppState {
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub stripe_client: Option<Arc<stripe::Client>>,
+    pub stripe_billing: Option<Arc<StripeBilling>>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
     pub clickhouse_client: Option<::clickhouse::Client>,
@@ -317,12 +320,16 @@ impl AppState {
         };
 
         let db = Arc::new(db);
+        let stripe_client = build_stripe_client(&config).map(Arc::new).log_err();
         let this = Self {
             db: db.clone(),
             llm_db,
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            stripe_client: build_stripe_client(&config).map(Arc::new).log_err(),
+            stripe_billing: stripe_client
+                .clone()
+                .map(|stripe_client| Arc::new(StripeBilling::new(stripe_client))),
+            stripe_client,
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             clickhouse_client: config

@@ -610,11 +610,13 @@ impl PrettierStore {
     ) {
         let mut prettier_plugins_by_worktree = HashMap::default();
         for (worktree, language_settings) in language_formatters_to_check {
-            if let Some(plugins) = prettier_plugins_for_language(&language_settings) {
-                prettier_plugins_by_worktree
-                    .entry(worktree)
-                    .or_insert_with(HashSet::default)
-                    .extend(plugins.iter().cloned());
+            if language_settings.prettier.allowed {
+                if let Some(plugins) = prettier_plugins_for_language(&language_settings) {
+                    prettier_plugins_by_worktree
+                        .entry(worktree)
+                        .or_insert_with(HashSet::default)
+                        .extend(plugins.iter().cloned());
+                }
             }
         }
         for (worktree, prettier_plugins) in prettier_plugins_by_worktree {

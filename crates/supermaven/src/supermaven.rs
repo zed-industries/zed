@@ -217,11 +217,11 @@ fn find_relevant_completion<'a>(
         };
 
         let current_cursor_offset = cursor_position.to_offset(buffer);
-        let original_cursor_offset = state.prefix_offset;
-        if current_cursor_offset < original_cursor_offset {
+        if current_cursor_offset < state.prefix_offset {
             continue;
         }
 
+        let original_cursor_offset = buffer.clip_offset(state.prefix_offset, text::Bias::Left);
         let text_inserted_since_completion_request =
             buffer.text_for_range(original_cursor_offset..current_cursor_offset);
         let mut trimmed_completion = state_completion;

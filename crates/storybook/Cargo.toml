@@ -20,9 +20,8 @@ ctrlc = "3.4"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 editor.workspace = true
 fuzzy.workspace = true
-gpui.workspace = true
+gpui = { workspace = true, default-features = true }
 indoc.workspace = true
-isahc_http_client.workspace = true
 language.workspace = true
 log.workspace = true
 menu.workspace = true
@@ -36,6 +35,7 @@ strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
 title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
+reqwest_client.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

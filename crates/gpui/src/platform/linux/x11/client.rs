@@ -675,11 +675,12 @@ impl X11Client {
                         }
                     }
                 } else if event.type_ == state.atoms.XdndLeave {
-                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Pending {
-                        position: state.xdnd_state.position,
-                    }));
+                    let position = state.xdnd_state.position;
+                    drop(state);
+                    window
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
                     window.handle_input(PlatformInput::FileDrop(FileDropEvent::Exited {}));
-                    state.xdnd_state = Xdnd::default();
+                    self.0.borrow_mut().xdnd_state = Xdnd::default();
                 } else if event.type_ == state.atoms.XdndPosition {
                     if let Ok(pos) = state
                         .xcb_connection
@@ -709,9 +710,10 @@ impl X11Client {
                         state.xdnd_state.other_window,
                         arg4,
                     );
-                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Pending {
-                        position: state.xdnd_state.position,
-                    }));
+                    let position = state.xdnd_state.position;
+                    drop(state);
+                    window
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Pending { position }));
                 } else if event.type_ == state.atoms.XdndDrop {
                     xdnd_send_finished(
                         &state.xcb_connection,
@@ -719,10 +721,11 @@ impl X11Client {
                         event.window,
                         state.xdnd_state.other_window,
                     );
-                    window.handle_input(PlatformInput::FileDrop(FileDropEvent::Submit {
-                        position: state.xdnd_state.position,
-                    }));
-                    state.xdnd_state = Xdnd::default();
+                    let position = state.xdnd_state.position;
+                    drop(state);
+                    window
+                        .handle_input(PlatformInput::FileDrop(FileDropEvent::Submit { position }));
+                    self.0.borrow_mut().xdnd_state = Xdnd::default();
                 }
             }
             Event::SelectionNotify(event) => {
@@ -751,8 +754,9 @@ impl X11Client {
                                 position: state.xdnd_state.position,
                                 paths: crate::ExternalPaths(paths),
                             });
+                            drop(state);
                             window.handle_input(input);
-                            state.xdnd_state.retrieved = true;
+                            self.0.borrow_mut().xdnd_state.retrieved = true;
                         }
                         Err(_) => {}
                     }
@@ -1421,10 +1425,12 @@ impl LinuxClient for X11Client {
     }
 
     fn open_uri(&self, uri: &str) {
+        #[cfg(any(feature = "wayland", feature = "x11"))]
         open_uri_internal(self.background_executor(), uri, None);
     }
 
     fn reveal_path(&self, path: PathBuf) {
+        #[cfg(any(feature = "x11", feature = "wayland"))]
         reveal_path_internal(self.background_executor(), path, None);
     }
 

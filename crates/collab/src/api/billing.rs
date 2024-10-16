@@ -20,7 +20,7 @@ use stripe::{
 use util::ResultExt;
 
 use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
-use crate::rpc::ResultExt as _;
+use crate::rpc::{ResultExt as _, Server};
 use crate::{
     db::{
         billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
@@ -210,6 +210,13 @@ async fn create_billing_subscription(
             "not supported".into(),
         ))?
     };
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::error!("failed to retrieve Stripe billing object");
+        Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "not supported".into(),
+        ))?
+    };
     let Some(llm_db) = app.llm_db.clone() else {
         log::error!("failed to retrieve LLM database");
         Err(Error::http(
@@ -236,7 +243,6 @@ async fn create_billing_subscription(
         };
 
     let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-5-sonnet")?;
-    let mut stripe_billing = StripeBilling::new(stripe_client.clone()).await?;
     let stripe_model = stripe_billing.register_model(default_model).await?;
     let success_url = format!("{}/account", app.config.zed_dot_dev_url());
     let checkout_session_url = stripe_billing
@@ -398,7 +404,7 @@ const NUMBER_OF_ALREADY_PROCESSED_PAGES_BEFORE_WE_STOP: usize = 4;
 
 /// Polls the Stripe events API periodically to reconcile the records in our
 /// database with the data in Stripe.
-pub fn poll_stripe_events_periodically(app: Arc<AppState>) {
+pub fn poll_stripe_events_periodically(app: Arc<AppState>, rpc_server: Arc<Server>) {
     let Some(stripe_client) = app.stripe_client.clone() else {
         log::warn!("failed to retrieve Stripe client");
         return;
@@ -409,7 +415,9 @@ pub fn poll_stripe_events_periodically(app: Arc<AppState>) {
         let executor = executor.clone();
         async move {
             loop {
-                poll_stripe_events(&app, &stripe_client).await.log_err();
+                poll_stripe_events(&app, &rpc_server, &stripe_client)
+                    .await
+                    .log_err();
 
                 executor.sleep(POLL_EVENTS_INTERVAL).await;
             }
@@ -419,6 +427,7 @@ pub fn poll_stripe_events_periodically(app: Arc<AppState>) {
 
 async fn poll_stripe_events(
     app: &Arc<AppState>,
+    rpc_server: &Arc<Server>,
     stripe_client: &stripe::Client,
 ) -> anyhow::Result<()> {
     fn event_type_to_string(event_type: EventType) -> String {
@@ -535,7 +544,7 @@ async fn poll_stripe_events(
             | EventType::CustomerSubscriptionPaused
             | EventType::CustomerSubscriptionResumed
             | EventType::CustomerSubscriptionDeleted => {
-                handle_customer_subscription_event(app, stripe_client, event).await
+                handle_customer_subscription_event(app, rpc_server, stripe_client, event).await
             }
             _ => Ok(()),
         };
@@ -603,6 +612,7 @@ async fn handle_customer_event(
 
 async fn handle_customer_subscription_event(
     app: &Arc<AppState>,
+    rpc_server: &Arc<Server>,
     stripe_client: &stripe::Client,
     event: stripe::Event,
 ) -> anyhow::Result<()> {
@@ -647,6 +657,12 @@ async fn handle_customer_subscription_event(
             })
             .await?;
     }
+
+    // When the user's subscription changes, we want to refresh their LLM tokens
+    // to either grant/revoke access.
+    rpc_server
+        .refresh_llm_tokens_for_user(billing_customer.user_id)
+        .await;
 
     Ok(())
 }
@@ -716,8 +732,8 @@ async fn find_or_create_billing_customer(
 const SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL: Duration = Duration::from_secs(60);
 
 pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
-    let Some(stripe_client) = app.stripe_client.clone() else {
-        log::warn!("failed to retrieve Stripe client");
+    let Some(stripe_billing) = app.stripe_billing.clone() else {
+        log::warn!("failed to retrieve Stripe billing object");
         return;
     };
     let Some(llm_db) = app.llm_db.clone() else {
@@ -730,7 +746,7 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
         let executor = executor.clone();
         async move {
             loop {
-                sync_with_stripe(&app, &llm_db, &stripe_client)
+                sync_with_stripe(&app, &llm_db, &stripe_billing)
                     .await
                     .trace_err();
                 executor.sleep(SYNC_LLM_USAGE_WITH_STRIPE_INTERVAL).await;
@@ -742,10 +758,8 @@ pub fn sync_llm_usage_with_stripe_periodically(app: Arc<AppState>) {
 async fn sync_with_stripe(
     app: &Arc<AppState>,
     llm_db: &Arc<LlmDatabase>,
-    stripe_client: &Arc<stripe::Client>,
+    stripe_billing: &Arc<StripeBilling>,
 ) -> anyhow::Result<()> {
-    let mut stripe_billing = StripeBilling::new(stripe_client.clone()).await?;
-
     let events = llm_db.get_billing_events().await?;
     let user_ids = events
         .iter()

@@ -10,15 +10,16 @@ use gpui::{
     Transformation, View,
 };
 use gpui::{AppContext, Model};
+
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
-    div, h_flex, prelude::*, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, Icon, IconButton,
-    IconName, IconSize, InteractiveElement, IntoElement, Label, LabelCommon, Styled, Tooltip,
-    ViewContext, VisualContext, WindowContext,
+    div, h_flex, prelude::*, v_flex, ActiveTheme, Color, Icon, IconName, IconSize,
+    InteractiveElement, IntoElement, Label, LabelCommon, Styled, ViewContext, VisualContext,
+    WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -35,17 +36,20 @@ impl SshSettings {
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct SshConnection {
-    pub host: String,
+    pub host: SharedString,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
     pub projects: Vec<SshProject>,
+    /// Name to use for this server in UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<SharedString>,
 }
 impl From<SshConnection> for SshConnectionOptions {
     fn from(val: SshConnection) -> Self {
         SshConnectionOptions {
-            host: val.host,
+            host: val.host.into(),
             username: val.username,
             port: val.port,
             password: None,
@@ -87,7 +91,10 @@ pub struct SshConnectionModal {
 }
 
 impl SshPrompt {
-    pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
+    pub(crate) fn new(
+        connection_options: &SshConnectionOptions,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         let connection_string = connection_options.connection_string().into();
         Self {
             connection_string,
@@ -231,12 +238,57 @@ impl SshConnectionModal {
     }
 }
 
+pub(crate) struct SshConnectionHeader {
+    pub(crate) connection_string: SharedString,
+    pub(crate) nickname: Option<SharedString>,
+}
+
+impl RenderOnce for SshConnectionHeader {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let theme = cx.theme();
+
+        let mut header_color = theme.colors().text;
+        header_color.fade_out(0.96);
+
+        let (main_label, meta_label) = if let Some(nickname) = self.nickname {
+            (nickname, Some(format!("({})", self.connection_string)))
+        } else {
+            (self.connection_string, None)
+        };
+
+        h_flex()
+            .p_1()
+            .rounded_t_md()
+            .w_full()
+            .gap_2()
+            .justify_center()
+            .border_b_1()
+            .border_color(theme.colors().border_variant)
+            .bg(header_color)
+            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
+            .child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Label::new(main_label)
+                            .size(ui::LabelSize::Small)
+                            .single_line(),
+                    )
+                    .children(meta_label.map(|label| {
+                        Label::new(label)
+                            .size(ui::LabelSize::Small)
+                            .single_line()
+                            .color(Color::Muted)
+                    })),
+            )
+    }
+}
+
 impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
         let connection_string = self.prompt.read(cx).connection_string.clone();
         let theme = cx.theme();
-        let mut header_color = cx.theme().colors().text;
-        header_color.fade_out(0.96);
+
         let body_color = theme.colors().editor_background;
 
         v_flex()
@@ -248,36 +300,11 @@ impl Render for SshConnectionModal {
             .border_1()
             .border_color(theme.colors().border)
             .child(
-                h_flex()
-                    .relative()
-                    .p_1()
-                    .rounded_t_md()
-                    .border_b_1()
-                    .border_color(theme.colors().border)
-                    .bg(header_color)
-                    .justify_between()
-                    .child(
-                        div().absolute().left_0p5().top_0p5().child(
-                            IconButton::new("ssh-connection-cancel", IconName::ArrowLeft)
-                                .icon_size(IconSize::XSmall)
-                                .on_click(cx.listener(move |this, _, cx| {
-                                    this.dismiss(&Default::default(), cx);
-                                }))
-                                .tooltip(|cx| Tooltip::for_action("Back", &menu::Cancel, cx)),
-                        ),
-                    )
-                    .child(
-                        h_flex()
-                            .w_full()
-                            .gap_2()
-                            .justify_center()
-                            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
-                            .child(
-                                Label::new(connection_string)
-                                    .size(ui::LabelSize::Small)
-                                    .single_line(),
-                            ),
-                    ),
+                SshConnectionHeader {
+                    connection_string,
+                    nickname: None,
+                }
+                .render(cx),
             )
             .child(
                 h_flex()
@@ -351,9 +378,18 @@ impl remote::SshClientDelegate for SshClientDelegate {
         rx
     }
 
-    fn remote_server_binary_path(&self, cx: &mut AsyncAppContext) -> Result<PathBuf> {
+    fn remote_server_binary_path(
+        &self,
+        platform: SshPlatform,
+        cx: &mut AsyncAppContext,
+    ) -> Result<PathBuf> {
         let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
-        Ok(format!(".local/zed-remote-server-{}", release_channel.dev_name()).into())
+        Ok(paths::remote_server_dir_relative().join(format!(
+            "zed-remote-server-{}-{}-{}",
+            release_channel.dev_name(),
+            platform.os,
+            platform.arch
+        )))
     }
 }
 
@@ -390,40 +426,11 @@ impl SshClientDelegate {
 
         // In dev mode, build the remote server binary from source
         #[cfg(debug_assertions)]
-        if release_channel == ReleaseChannel::Dev
-            && platform.arch == std::env::consts::ARCH
-            && platform.os == std::env::consts::OS
-        {
-            use smol::process::{Command, Stdio};
-
-            self.update_status(Some("building remote server binary from source"), cx);
-            log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
-                "build",
-                "--package",
-                "remote_server",
-                "--target-dir",
-                "target/remote_server",
-            ]))
-            .await?;
-            // run_cmd(Command::new("strip").args(["target/remote_server/debug/remote_server"]))
-            // .await?;
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                "target/remote_server/debug/remote_server",
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            return Ok((path, version));
-
-            async fn run_cmd(command: &mut Command) -> Result<()> {
-                let output = command.stderr(Stdio::inherit()).output().await?;
-                if !output.status.success() {
-                    Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
-                }
-                Ok(())
+        if release_channel == ReleaseChannel::Dev {
+            let result = self.build_local(cx, platform, version).await?;
+            // Fall through to a remote binary if we're not able to compile a local binary
+            if let Some(result) = result {
+                return Ok(result);
             }
         }
 
@@ -445,6 +452,109 @@ impl SshClientDelegate {
         })?;
 
         Ok((binary_path, version))
+    }
+
+    #[cfg(debug_assertions)]
+    async fn build_local(
+        &self,
+        cx: &mut AsyncAppContext,
+        platform: SshPlatform,
+        version: SemanticVersion,
+    ) -> Result<Option<(PathBuf, SemanticVersion)>> {
+        use smol::process::{Command, Stdio};
+
+        async fn run_cmd(command: &mut Command) -> Result<()> {
+            let output = command.stderr(Stdio::inherit()).output().await?;
+            if !output.status.success() {
+                Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
+            }
+            Ok(())
+        }
+
+        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+            self.update_status(Some("Building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+
+            self.update_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
+            return Ok(Some((path, version)));
+        } else if let Some(triple) = platform.triple() {
+            smol::fs::create_dir_all("target/remote_server").await?;
+
+            self.update_status(Some("Installing cross.rs for cross-compilation"), cx);
+            log::info!("installing cross");
+            run_cmd(Command::new("cargo").args([
+                "install",
+                "cross",
+                "--git",
+                "https://github.com/cross-rs/cross",
+            ]))
+            .await?;
+
+            self.update_status(
+                Some(&format!(
+                    "Building remote server binary from source for {}",
+                    &triple
+                )),
+                cx,
+            );
+            log::info!("building remote server binary from source for {}", &triple);
+            run_cmd(
+                Command::new("cross")
+                    .args([
+                        "build",
+                        "--package",
+                        "remote_server",
+                        "--features",
+                        "debug-embed",
+                        "--target-dir",
+                        "target/remote_server",
+                        "--target",
+                        &triple,
+                    ])
+                    .env(
+                        "CROSS_CONTAINER_OPTS",
+                        "--mount type=bind,src=./target,dst=/app/target",
+                    ),
+            )
+            .await?;
+
+            self.update_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                &format!("target/remote_server/{}/debug/remote_server", triple),
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join(format!(
+                "target/remote_server/{}/debug/remote_server.gz",
+                triple
+            ));
+
+            return Ok(Some((path, version)));
+        } else {
+            return Ok(None);
+        }
     }
 }
 
@@ -515,9 +625,24 @@ pub async fn open_ssh_project(
 
     let did_open_ssh_project = cx
         .update(|cx| {
-            workspace::open_ssh_project(window, connection_options, delegate, app_state, paths, cx)
+            workspace::open_ssh_project(
+                window,
+                connection_options,
+                delegate.clone(),
+                app_state,
+                paths,
+                cx,
+            )
         })?
         .await;
+
+    let did_open_ssh_project = match did_open_ssh_project {
+        Ok(ok) => Ok(ok),
+        Err(e) => {
+            delegate.update_error(e.to_string(), cx);
+            Err(e)
+        }
+    };
 
     did_open_ssh_project
 }

@@ -65,7 +65,7 @@ use release_channel::ReleaseChannel;
 use remote::{SshClientDelegate, SshConnectionOptions};
 use serde::Deserialize;
 use session::AppSession;
-use settings::{InvalidSettingsError, Settings};
+use settings::Settings;
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -839,31 +839,17 @@ impl Workspace {
                     }
                 }
 
-                project::Event::LocalSettingsUpdated(result) => {
-                    struct LocalSettingsUpdated;
-                    let id = NotificationId::unique::<LocalSettingsUpdated>();
+                project::Event::Toast {
+                    notification_id,
+                    message,
+                } => this.show_notification(
+                    NotificationId::named(notification_id.clone()),
+                    cx,
+                    |cx| cx.new_view(|_| MessageNotification::new(message.clone())),
+                ),
 
-                    match result {
-                        Err(InvalidSettingsError::LocalSettings { message, path }) => {
-                            let full_message =
-                                format!("Failed to set local settings in {:?}:\n{}", path, message);
-                            this.show_notification(id, cx, |cx| {
-                                cx.new_view(|_| MessageNotification::new(full_message.clone()))
-                            })
-                        }
-                        Err(_) => {}
-                        Ok(_) => this.dismiss_notification(&id, cx),
-                    }
-                }
-
-                project::Event::Notification(message) => {
-                    struct ProjectNotification;
-
-                    this.show_notification(
-                        NotificationId::unique::<ProjectNotification>(),
-                        cx,
-                        |cx| cx.new_view(|_| MessageNotification::new(message.clone())),
-                    )
+                project::Event::HideToast { notification_id } => {
+                    this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
                 }
 
                 project::Event::LanguageServerPrompt(request) => {
@@ -874,7 +860,7 @@ impl Workspace {
                     let id = hasher.finish();
 
                     this.show_notification(
-                        NotificationId::identified::<LanguageServerPrompt>(id as usize),
+                        NotificationId::composite::<LanguageServerPrompt>(id as usize),
                         cx,
                         |cx| {
                             cx.new_view(|_| {
@@ -1808,6 +1794,7 @@ impl Workspace {
             .flat_map(|pane| {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
+                        item.tab_description(0, cx);
                         Some((pane.downgrade(), item.boxed_clone()))
                     } else {
                         None
@@ -5046,14 +5033,14 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
+pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<LocalPaths>> {
+) -> Option<Vec<SerializedWorkspaceLocation>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }

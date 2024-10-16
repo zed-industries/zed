@@ -26,7 +26,7 @@ const JSON_RPC_VERSION: &str = "2.0";
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
-type NotificationHandler = Box<dyn Send + FnMut(RequestId, Value, AsyncAppContext)>;
+type NotificationHandler = Box<dyn Send + FnMut(Value, AsyncAppContext)>;
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -94,7 +94,6 @@ enum CspResult<T> {
 #[derive(Serialize, Deserialize)]
 struct Notification<'a, T> {
     jsonrpc: &'static str,
-    id: RequestId,
     #[serde(borrow)]
     method: &'a str,
     params: T,
@@ -103,7 +102,6 @@ struct Notification<'a, T> {
 #[derive(Debug, Clone, Deserialize)]
 struct AnyNotification<'a> {
     jsonrpc: &'a str,
-    id: RequestId,
     method: String,
     #[serde(default)]
     params: Option<Value>,
@@ -246,11 +244,7 @@ impl Client {
                     if let Some(handler) =
                         notification_handlers.get_mut(notification.method.as_str())
                     {
-                        handler(
-                            notification.id,
-                            notification.params.unwrap_or(Value::Null),
-                            cx.clone(),
-                        );
+                        handler(notification.params.unwrap_or(Value::Null), cx.clone());
                     }
                 }
             }
@@ -378,10 +372,8 @@ impl Client {
     /// Sends a notification to the context server without expecting a response.
     /// This function serializes the notification and sends it through the outbound channel.
     pub fn notify(&self, method: &str, params: impl Serialize) -> Result<()> {
-        let id = self.next_id.fetch_add(1, SeqCst);
         let notification = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
-            id: RequestId::Int(id),
             method,
             params,
         })
@@ -390,13 +382,13 @@ impl Client {
         Ok(())
     }
 
-    pub fn on_notification<F>(&self, method: &'static str, mut f: F)
+    pub fn on_notification<F>(&self, method: &'static str, f: F)
     where
         F: 'static + Send + FnMut(Value, AsyncAppContext),
     {
         self.notification_handlers
             .lock()
-            .insert(method, Box::new(move |_, params, cx| f(params, cx)));
+            .insert(method, Box::new(f));
     }
 
     pub fn name(&self) -> &str {

@@ -366,6 +366,10 @@ messages!(
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
     (RemoveWorktree, Foreground),
+    (LanguageServerLog, Foreground),
+    (Toast, Background),
+    (HideToast, Background),
+    (OpenServerSettings, Foreground),
 );
 
 request_messages!(
@@ -489,7 +493,8 @@ request_messages!(
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
     (ShutdownRemoteServer, Ack),
-    (RemoveWorktree, Ack)
+    (RemoveWorktree, Ack),
+    (OpenServerSettings, OpenBufferResponse)
 );
 
 entity_messages!(
@@ -562,6 +567,11 @@ entity_messages!(
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
     CheckFileExists,
+    LanguageServerLog,
+    Toast,
+    HideToast,
+    OpenServerSettings,
+
 );
 
 entity_messages!(

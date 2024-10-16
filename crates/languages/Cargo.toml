@@ -10,25 +10,26 @@ workspace = true
 
 [features]
 test-support = [
-  "tree-sitter"
+    "tree-sitter"
 ]
 load-grammars = [
-  "tree-sitter-bash",
-  "tree-sitter-c",
-  "tree-sitter-cpp",
-  "tree-sitter-css",
-  "tree-sitter-go",
-  "tree-sitter-go-mod",
-  "tree-sitter-gowork",
-  "tree-sitter-jsdoc",
-  "tree-sitter-json",
-  "tree-sitter-md",
-  "tree-sitter-python",
-  "tree-sitter-regex",
-  "tree-sitter-rust",
-  "tree-sitter-typescript",
-  "tree-sitter-yaml",
-  "tree-sitter"
+    "tree-sitter-bash",
+    "tree-sitter-c",
+    "tree-sitter-cpp",
+    "tree-sitter-css",
+    "tree-sitter-diff",
+    "tree-sitter-go",
+    "tree-sitter-go-mod",
+    "tree-sitter-gowork",
+    "tree-sitter-jsdoc",
+    "tree-sitter-json",
+    "tree-sitter-md",
+    "tree-sitter-python",
+    "tree-sitter-regex",
+    "tree-sitter-rust",
+    "tree-sitter-typescript",
+    "tree-sitter-yaml",
+    "tree-sitter"
 ]
 
 [dependencies]
@@ -61,6 +62,7 @@ tree-sitter-bash = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-diff = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-go-mod = { workspace = true, optional = true }
 tree-sitter-gowork = { workspace = true, optional = true }

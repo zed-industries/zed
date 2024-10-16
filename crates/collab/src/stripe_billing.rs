@@ -5,11 +5,17 @@ use anyhow::Context;
 use chrono::Utc;
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
+use tokio::sync::RwLock;
 
 pub struct StripeBilling {
+    state: RwLock<StripeBillingState>,
+    client: Arc<stripe::Client>,
+}
+
+#[derive(Default)]
+struct StripeBillingState {
     meters_by_event_name: HashMap<String, StripeMeter>,
     price_ids_by_meter_id: HashMap<String, stripe::PriceId>,
-    client: Arc<stripe::Client>,
 }
 
 pub struct StripeModel {
@@ -25,32 +31,49 @@ struct StripeBillingPrice {
 }
 
 impl StripeBilling {
-    pub async fn new(client: Arc<stripe::Client>) -> Result<Self> {
-        let mut meters_by_event_name = HashMap::default();
-        for meter in StripeMeter::list(&client).await?.data {
-            meters_by_event_name.insert(meter.event_name.clone(), meter);
+    pub fn new(client: Arc<stripe::Client>) -> Self {
+        Self {
+            client,
+            state: RwLock::default(),
+        }
+    }
+
+    pub async fn initialize(&self) -> Result<()> {
+        log::info!("StripeBilling: initializing");
+
+        let mut state = self.state.write().await;
+
+        let (meters, prices) = futures::try_join!(
+            StripeMeter::list(&self.client),
+            stripe::Price::list(
+                &self.client,
+                &stripe::ListPrices {
+                    limit: Some(100),
+                    ..Default::default()
+                }
+            )
+        )?;
+
+        for meter in meters.data {
+            state
+                .meters_by_event_name
+                .insert(meter.event_name.clone(), meter);
         }
 
-        let mut price_ids_by_meter_id = HashMap::default();
-        for price in stripe::Price::list(&client, &stripe::ListPrices::default())
-            .await?
-            .data
-        {
+        for price in prices.data {
             if let Some(recurring) = price.recurring {
                 if let Some(meter) = recurring.meter {
-                    price_ids_by_meter_id.insert(meter, price.id);
+                    state.price_ids_by_meter_id.insert(meter, price.id);
                 }
             }
         }
 
-        Ok(Self {
-            meters_by_event_name,
-            price_ids_by_meter_id,
-            client,
-        })
+        log::info!("StripeBilling: initialized");
+
+        Ok(())
     }
 
-    pub async fn register_model(&mut self, model: &llm::db::model::Model) -> Result<StripeModel> {
+    pub async fn register_model(&self, model: &llm::db::model::Model) -> Result<StripeModel> {
         let input_tokens_price = self
             .get_or_insert_price(
                 &format!("model_{}/input_tokens", model.id),
@@ -88,12 +111,26 @@ impl StripeBilling {
     }
 
     async fn get_or_insert_price(
-        &mut self,
+        &self,
         meter_event_name: &str,
         price_description: &str,
         price_per_million_tokens: Cents,
     ) -> Result<StripeBillingPrice> {
-        let meter = if let Some(meter) = self.meters_by_event_name.get(meter_event_name) {
+        // Fast code path when the meter and the price already exist.
+        {
+            let state = self.state.read().await;
+            if let Some(meter) = state.meters_by_event_name.get(meter_event_name) {
+                if let Some(price_id) = state.price_ids_by_meter_id.get(&meter.id) {
+                    return Ok(StripeBillingPrice {
+                        id: price_id.clone(),
+                        meter_event_name: meter_event_name.to_string(),
+                    });
+                }
+            }
+        }
+
+        let mut state = self.state.write().await;
+        let meter = if let Some(meter) = state.meters_by_event_name.get(meter_event_name) {
             meter.clone()
         } else {
             let meter = StripeMeter::create(
@@ -105,12 +142,13 @@ impl StripeBilling {
                 },
             )
             .await?;
-            self.meters_by_event_name
+            state
+                .meters_by_event_name
                 .insert(meter_event_name.to_string(), meter.clone());
             meter
         };
 
-        let price_id = if let Some(price_id) = self.price_ids_by_meter_id.get(&meter.id) {
+        let price_id = if let Some(price_id) = state.price_ids_by_meter_id.get(&meter.id) {
             price_id.clone()
         } else {
             let price = stripe::Price::create(
@@ -156,7 +194,8 @@ impl StripeBilling {
                 },
             )
             .await?;
-            self.price_ids_by_meter_id
+            state
+                .price_ids_by_meter_id
                 .insert(meter.id, price.id.clone());
             price.id
         };
@@ -363,9 +402,12 @@ impl StripeMeter {
 
     pub fn list(client: &stripe::Client) -> stripe::Response<stripe::List<Self>> {
         #[derive(Serialize)]
-        struct Params {}
+        struct Params {
+            #[serde(skip_serializing_if = "Option::is_none")]
+            limit: Option<u64>,
+        }
 
-        client.get_query("/billing/meters", Params {})
+        client.get_query("/billing/meters", Params { limit: Some(100) })
     }
 }
 

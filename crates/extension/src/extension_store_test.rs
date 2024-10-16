@@ -13,12 +13,12 @@ use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use indexed_docs::IndexedDocsRegistry;
-use isahc_http_client::IsahcHttpClient;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::{Project, DEFAULT_COMPLETION_CONTEXT};
 use release_channel::AppVersion;
+use reqwest_client::ReqwestClient;
 use serde_json::json;
 use settings::{Settings as _, SettingsStore};
 use snippet_provider::SnippetRegistry;
@@ -576,7 +576,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             std::env::consts::ARCH
         )
     });
-    let builder_client = IsahcHttpClient::new(None, Some(user_agent));
+    let builder_client =
+        Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
     let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(

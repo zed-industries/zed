@@ -15,7 +15,7 @@ TBD: Add settings documentation about how settings are merged as overlays. E.g. 
 
 Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenLocalSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
@@ -539,7 +539,8 @@ List of `string` values
 "tabs": {
   "close_position": "right",
   "file_icons": false,
-  "git_status": false
+  "git_status": false,
+  "activate_on_close": "history"
 },
 ```
 
@@ -578,6 +579,30 @@ List of `string` values
 - Description: Whether or not to show Git file status in tab.
 - Setting: `git_status`
 - Default: `false`
+
+### Activate on close
+
+- Description: What to do after closing the current tab.
+- Setting: `activate_on_close`
+- Default: `history`
+
+**Options**
+
+1.  Activate the tab that was open previously:
+
+```json
+{
+  "activate_on_close": "history"
+}
+```
+
+2. Activate the neighbour tab (prefers the right one, if present):
+
+```json
+{
+  "activate_on_close": "neighbour"
+}
+```
 
 ## Editor Toolbar
 
@@ -714,7 +739,18 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-3. Or to use code actions provided by the connected language servers, use `"code_actions"`:
+3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
+
+```json
+  "formatter": {
+    "external": {
+      "command": "prettier",
+      "arguments": ["--stdin-filepath", "{buffer_path}"]
+    }
+  }
+```
+
+4. Or to use code actions provided by the connected language servers, use `"code_actions"`:
 
 ```json
 {
@@ -729,7 +765,7 @@ While other options may be changed at a runtime and should be placed under `sett
 }
 ```
 
-4. Or to use multiple formatters consecutively, use an array of formatters:
+5. Or to use multiple formatters consecutively, use an array of formatters:
 
 ```json
 {
@@ -1763,7 +1799,7 @@ See Buffer Font Features
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": {
       "on": {
         // Default directories to search for virtual environments, relative
@@ -1782,7 +1818,7 @@ Disable with:
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": "off"
   }
 }

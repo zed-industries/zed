@@ -16,8 +16,10 @@
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
-<!-- - [Fonts](./fonts.md) -->
 - [Vim Mode](./vim.md)
+
+<!-- - [Globs](./globs.md) -->
+<!-- - [Fonts](./fonts.md) -->
 
 # Using Zed
 
@@ -29,6 +31,7 @@
 - [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
+- [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
 # Assistant
@@ -76,6 +79,7 @@
 - [Go](./languages/go.md)
 - [Groovy](./languages/groovy.md)
 - [Haskell](./languages/haskell.md)
+- [Helm](./languages/helm.md)
 - [HTML](./languages/html.md)
 - [Java](./languages/java.md)
 - [JavaScript](./languages/javascript.md)
