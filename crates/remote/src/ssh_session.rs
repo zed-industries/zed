@@ -743,7 +743,11 @@ impl SshRemoteClient {
 
                 loop {
                     select_biased! {
-                        _ = connection_activity_rx.next().fuse() => {
+                        result = connection_activity_rx.next().fuse() => {
+                            if result.is_none() {
+                                log::warn!("ssh heartbeat: connection activity channel has been dropped. stopping.");
+                                return Ok(());
+                            }
                             keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
                         }
                         _ = keepalive_timer => {
