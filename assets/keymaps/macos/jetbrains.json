@@ -59,6 +59,12 @@
     }
   },
   {
+    "context": "BufferSearchBar > Editor",
+    "bindings": {
+      "shift-enter": "search::SelectPrevMatch"
+    }
+  },
+  {
     "context": "Workspace",
     "bindings": {
       "cmd-shift-o": "file_finder::Toggle",
