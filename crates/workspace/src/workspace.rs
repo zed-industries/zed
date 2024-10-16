@@ -5568,6 +5568,12 @@ pub fn open_ssh_project(
             };
         }
 
+        if project_paths_to_open.is_empty() {
+            return Err(project_path_errors
+                .pop()
+                .unwrap_or_else(|| anyhow!("no paths given")));
+        }
+
         cx.update_window(window.into(), |_, cx| {
             cx.replace_root_view(|cx| {
                 let mut workspace =
