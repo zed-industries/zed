@@ -112,8 +112,18 @@ impl ProjectEnvironment {
         let worktree = worktree_id.zip(worktree_abs_path);
 
         let cli_environment = self.get_cli_environment();
-        if cli_environment.is_some() {
-            Task::ready(cli_environment)
+        if let Some(environment) = cli_environment {
+            cx.spawn(|_, _| async move {
+                let path = environment
+                    .get("PATH")
+                    .map(|path| path.as_str())
+                    .unwrap_or_default();
+                log::info!(
+                    "using project environment variables from CLI. PATH={:?}",
+                    path
+                );
+                Some(environment)
+            })
         } else if let Some((worktree_id, worktree_abs_path)) = worktree {
             self.get_worktree_env(worktree_id, worktree_abs_path, cx)
         } else {
@@ -143,6 +153,15 @@ impl ProjectEnvironment {
                     .await;
 
                 if let Some(shell_env) = shell_env.as_mut() {
+                    let path = shell_env
+                        .get("PATH")
+                        .map(|path| path.as_str())
+                        .unwrap_or_default();
+                    log::info!(
+                        "using project environment variables shell launched in {:?}. PATH={:?}",
+                        worktree_abs_path,
+                        path
+                    );
                     this.update(&mut cx, |this, _| {
                         this.cached_shell_environments
                             .insert(worktree_id, shell_env.clone());
