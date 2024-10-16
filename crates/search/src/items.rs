@@ -3,7 +3,8 @@ use gpui::{IntoElement, Render, ViewContext, WeakView};
 use ui::{prelude::*, Color, IconName, Tooltip};
 use workspace::{item::ItemHandle, DeploySearch, StatusItemView, Workspace};
 
-use crate::ProjectSearchView;
+use crate::{ProjectSearchSettings, ProjectSearchView};
+use settings::Settings;
 
 pub struct ProjectSearchIndicator {
     active_editor: Option<WeakView<Editor>>,
@@ -12,17 +13,35 @@ pub struct ProjectSearchIndicator {
 
 impl Render for ProjectSearchIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        IconButton::new("project-search-indicator", IconName::MagnifyingGlass)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Default)
-            .tooltip(|cx| Tooltip::for_action("Project Search", &DeploySearch::default(), cx))
-            .on_click(cx.listener(|this, _, cx| {
-                if let Some(workspace) = this.workspace.upgrade() {
-                    workspace.update(cx, |workspace, cx| {
-                        ProjectSearchView::deploy_search(workspace, &DeploySearch::default(), cx)
+        let project_search_indicator = if ProjectSearchSettings::get_global(cx).button {
+            Some(
+                IconButton::new("project-search-indicator", IconName::MagnifyingGlass)
+                    .icon_size(IconSize::Small)
+                    .icon_color(Color::Default)
+                    .tooltip(|cx| {
+                        Tooltip::for_action("Project Search", &DeploySearch::default(), cx)
                     })
-                }
-            }))
+                    .on_click(cx.listener(|this, _, cx| {
+                        if let Some(workspace) = this.workspace.upgrade() {
+                            workspace.update(cx, |workspace, cx| {
+                                ProjectSearchView::deploy_search(
+                                    workspace,
+                                    &DeploySearch::default(),
+                                    cx,
+                                )
+                            })
+                        }
+                    })),
+            )
+        } else {
+            None
+        };
+
+        if let Some(search_indicator) = project_search_indicator {
+            h_flex().h(rems(1.375)).gap_2().child(search_indicator)
+        } else {
+            div().w(rems(0.0))
+        }
     }
 }
 

@@ -1,5 +1,6 @@
 use crate::{
-    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
+    FocusSearch, NextHistoryQuery, PreviousHistoryQuery,
+    ProjectSearchSettings as GlobalProjectSearchSettings, ReplaceAll, ReplaceNext, SearchOptions,
     SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
     ToggleReplace, ToggleWholeWord,
 };
@@ -58,7 +59,12 @@ struct ActiveSettings(HashMap<WeakModel<Project>, ProjectSearchSettings>);
 
 impl Global for ActiveSettings {}
 
+pub fn init_settings(cx: &mut AppContext) {
+    GlobalProjectSearchSettings::register(cx);
+}
+
 pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.set_global(ActiveSettings::default());
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         register_workspace_action(workspace, move |search_bar, _: &FocusSearch, cx| {
@@ -3575,9 +3581,8 @@ pub mod tests {
         cx.update(|cx| {
             let settings = SettingsStore::test(cx);
             cx.set_global(settings);
-
+            init_settings(cx);
             theme::init(theme::LoadThemes::JustBase, cx);
-
             language::init(cx);
             client::init_settings(cx);
             editor::init(cx);
