@@ -15,7 +15,7 @@ use crate::{
     hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
-    scroll::{scroll_amount::ScrollAmount, Axis},
+    scroll::{axis_pair, scroll_amount::ScrollAmount, Axis, AxisPair},
     BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
@@ -1136,11 +1136,11 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         bounds: Bounds<Pixels>,
         scroll_position: gpui::Point<f32>,
-        text_units_per_page: (f32, f32),
+        text_units_per_page: AxisPair<f32>,
         non_visible_cursors: bool,
         cx: &mut WindowContext,
-    ) -> (Option<ScrollbarLayout>, Option<ScrollbarLayout>) {
-        let em_width = (1.0 / text_units_per_page.0) * bounds.size.width;
+    ) -> AxisPair<Option<ScrollbarLayout>> {
+        let em_width = (1.0 / text_units_per_page.horizontal) * bounds.size.width;
 
         let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
         let show_scrollbars = match scrollbar_settings.show {
@@ -1170,12 +1170,12 @@ impl EditorElement {
             ShowScrollbar::Never => false,
         };
         if snapshot.mode != EditorMode::Full {
-            return (None, None);
+            return axis_pair(None, None);
         }
 
-        let visible_range = point(
-            scroll_position.x..scroll_position.x + text_units_per_page.0,
-            scroll_position.y..scroll_position.y + text_units_per_page.1,
+        let visible_range = axis_pair(
+            scroll_position.x..scroll_position.x + text_units_per_page.horizontal,
+            scroll_position.y..scroll_position.y + text_units_per_page.vertical,
         );
 
         // If a drag took place after we started dragging the scrollbar,
@@ -1192,7 +1192,7 @@ impl EditorElement {
         }
 
         // Using point for this is really dumb but it'll work for now
-        let track_bounds = point(
+        let track_bounds = axis_pair(
             Bounds::from_corners(
                 point(
                     bounds.lower_left().x,
@@ -1210,68 +1210,71 @@ impl EditorElement {
         );
 
         let settings = EditorSettings::get_global(cx);
-        let scroll_beyond_last_line: (f32, f32) = match settings.scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => text_units_per_page,
-            ScrollBeyondLastLine::Off => (1.0, 1.0),
-            ScrollBeyondLastLine::VerticalScrollMargin => (
-                1.0 + settings.vertical_scroll_margin,
+        let scroll_beyond_last_line: AxisPair<f32> = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
+            ScrollBeyondLastLine::Off => axis_pair(1.0, 1.0),
+            ScrollBeyondLastLine::VerticalScrollMargin => axis_pair(
                 1.0 + settings.horizontal_scroll_margin,
+                1.0 + settings.vertical_scroll_margin,
             ),
         };
 
         let total_text_units = {
             let total_text_units_x: f32 = {
-                let ems_in_bounds = (track_bounds.x.right() - track_bounds.x.left()) / em_width;
+                let ems_in_bounds = track_bounds.horizontal.size.width / em_width;
 
                 let longest_line: f32 =
                     (snapshot.line_len(snapshot.longest_row()) as f32 - ems_in_bounds).max(0.0);
 
-                (longest_line + scroll_beyond_last_line.0).max(text_units_per_page.0)
+                (longest_line + scroll_beyond_last_line.horizontal)
+                    .max(text_units_per_page.horizontal)
             };
 
             let total_text_units_y: f32 = (snapshot.max_point().row().as_f32()
-                + scroll_beyond_last_line.1)
-                .max(text_units_per_page.1);
+                + scroll_beyond_last_line.vertical)
+                .max(text_units_per_page.vertical);
 
-            point(total_text_units_x, total_text_units_y)
+            axis_pair(total_text_units_x, total_text_units_y)
         };
 
-        let px_per_text_unit = point(
-            track_bounds.x.size.width / total_text_units.x,
-            bounds.size.height / total_text_units.y,
+        let px_per_text_unit = axis_pair(
+            track_bounds.horizontal.size.width / total_text_units.horizontal,
+            track_bounds.vertical.size.height / total_text_units.vertical,
         );
 
-        let thumb_size = point(
-            (text_units_per_page.0 * px_per_text_unit.x).max(ScrollbarLayout::MIN_THUMB_HEIGHT),
-            (text_units_per_page.1 * px_per_text_unit.y).max(ScrollbarLayout::MIN_THUMB_HEIGHT),
+        let thumb_size: AxisPair<Pixels> = axis_pair(
+            (text_units_per_page.horizontal * px_per_text_unit.horizontal)
+                .max(ScrollbarLayout::MIN_THUMB_HEIGHT),
+            (text_units_per_page.vertical * px_per_text_unit.vertical)
+                .max(ScrollbarLayout::MIN_THUMB_HEIGHT),
         );
 
-        let text_unit_size = point(
-            (track_bounds.x.size.width - thumb_size.x)
-                / (total_text_units.x - text_units_per_page.0).max(0.),
-            (bounds.size.height - thumb_size.y)
-                / (total_text_units.y - text_units_per_page.1).max(0.),
+        let text_unit_size = axis_pair(
+            (track_bounds.horizontal.size.width - thumb_size.horizontal)
+                / (total_text_units.horizontal - text_units_per_page.horizontal).max(0.),
+            (track_bounds.vertical.size.height - thumb_size.vertical)
+                / (total_text_units.vertical - text_units_per_page.vertical).max(0.),
         );
 
         let horizontal_scrollbar = Some(ScrollbarLayout {
-            hitbox: cx.insert_hitbox(track_bounds.x, false),
-            visible_range: visible_range.x,
-            text_unit_size: text_unit_size.x,
+            hitbox: cx.insert_hitbox(track_bounds.horizontal, false),
+            visible_range: visible_range.horizontal,
+            text_unit_size: text_unit_size.horizontal,
             visible: show_scrollbars,
-            thumb_size: thumb_size.x,
+            thumb_size: thumb_size.horizontal,
             axis: Axis::Horizontal,
         });
 
         let vertical_scrollbar = Some(ScrollbarLayout {
-            hitbox: cx.insert_hitbox(track_bounds.y, false),
-            visible_range: visible_range.y,
-            text_unit_size: text_unit_size.y,
+            hitbox: cx.insert_hitbox(track_bounds.vertical, false),
+            visible_range: visible_range.vertical,
+            text_unit_size: text_unit_size.vertical,
             visible: show_scrollbars,
-            thumb_size: thumb_size.y,
+            thumb_size: thumb_size.vertical,
             axis: Axis::Vertical,
         });
 
-        (horizontal_scrollbar, vertical_scrollbar)
+        axis_pair(horizontal_scrollbar, vertical_scrollbar)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3190,7 +3193,7 @@ impl EditorElement {
                         - scroll_left;
 
                     let show_scrollbars = {
-                        let (scrollbar_x, scrollbar_y) = &layout.scrollbars_layout;
+                        let (scrollbar_x, scrollbar_y) = &layout.scrollbars_layout.as_xy();
 
                         scrollbar_x.as_ref().map_or(false, |sx| sx.visible)
                             || scrollbar_y.as_ref().map_or(false, |sy| sy.visible)
@@ -3677,7 +3680,7 @@ impl EditorElement {
     }
 
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
-        let (scrollbar_x, scrollbar_y) = layout.scrollbars_layout.clone();
+        let (scrollbar_x, scrollbar_y) = layout.scrollbars_layout.as_xy();
 
         // TODO: These mutable variables are an atrocity, fix this
         let mut scrollbar_hitboxes: (Option<Hitbox>, Option<Hitbox>) = (None, None);
@@ -3992,8 +3995,6 @@ impl EditorElement {
                 };
 
                 move |event: &MouseDownEvent, phase, cx| {
-                    let text_unit_ranges = text_unit_ranges.clone();
-
                     if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
                         return;
                     }
@@ -5706,7 +5707,7 @@ impl Element for EditorElement {
                         &snapshot,
                         scrollbar_bounds,
                         scroll_position,
-                        (width_in_chars, height_in_lines),
+                        axis_pair(width_in_chars, height_in_lines),
                         non_visible_cursors,
                         cx,
                     );
@@ -6054,7 +6055,7 @@ pub struct EditorLayout {
     gutter_hitbox: Hitbox,
     gutter_dimensions: GutterDimensions,
     content_origin: gpui::Point<Pixels>,
-    scrollbars_layout: (Option<ScrollbarLayout>, Option<ScrollbarLayout>),
+    scrollbars_layout: AxisPair<Option<ScrollbarLayout>>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
     indent_guides: Option<Vec<IndentGuideLayout>>,

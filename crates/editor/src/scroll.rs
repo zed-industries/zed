@@ -11,6 +11,7 @@ use crate::{
     InlayHintRefreshReason, MultiBufferSnapshot, RowExt, ToPoint,
 };
 pub use autoscroll::{Autoscroll, AutoscrollStrategy};
+use core::fmt::Debug;
 use gpui::{point, px, AppContext, Entity, Global, Pixels, Task, ViewContext, WindowContext};
 use language::{Bias, Point};
 pub use scroll_amount::ScrollAmount;
@@ -64,6 +65,28 @@ impl ScrollAnchor {
 pub enum Axis {
     Vertical,
     Horizontal,
+}
+
+// I highly doubt this is what Zed would want in their
+// repository, but for organization purposes, we'll use it.
+// There's probably an alternative, maybe `Point`?
+#[derive(Debug, Clone)]
+pub struct AxisPair<T: Clone> {
+    pub vertical: T,
+    pub horizontal: T,
+}
+
+pub fn axis_pair<T: Clone>(horizontal: T, vertical: T) -> AxisPair<T> {
+    AxisPair {
+        vertical,
+        horizontal,
+    }
+}
+
+impl<T: Clone> AxisPair<T> {
+    pub fn as_xy(&self) -> (&T, &T) {
+        (&self.horizontal, &self.vertical)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
