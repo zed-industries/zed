@@ -72,7 +72,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::{Anchor, BufferId, LineEnding};
+use text::{Anchor, BufferId, LineEnding, Point, Selection};
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _,
 };
@@ -94,6 +94,20 @@ pub const SERVER_PROGRESS_THROTTLE_TIMEOUT: Duration = Duration::from_millis(100
 pub enum FormatTrigger {
     Save,
     Manual,
+}
+
+pub enum FormatTarget {
+    Buffer,
+    Ranges(Vec<Selection<Point>>),
+}
+
+impl FormatTarget {
+    pub fn as_selections(&self) -> Option<&[Selection<Point>]> {
+        match self {
+            FormatTarget::Buffer => None,
+            FormatTarget::Ranges(selections) => Some(selections.as_slice()),
+        }
+    }
 }
 
 // Currently, formatting operations are represented differently depending on
@@ -161,6 +175,7 @@ impl LocalLspStore {
         mut buffers: Vec<FormattableBuffer>,
         push_to_history: bool,
         trigger: FormatTrigger,
+        target: FormatTarget,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<ProjectTransaction> {
         // Do not allow multiple concurrent formatting requests for the
@@ -286,6 +301,7 @@ impl LocalLspStore {
                                             if prettier_settings.allowed {
                                                 Self::perform_format(
                                                     &Formatter::Prettier,
+                                                    &target,
                                                     server_and_buffer,
                                                     lsp_store.clone(),
                                                     buffer,
@@ -299,6 +315,7 @@ impl LocalLspStore {
                                             } else {
                                                 Self::perform_format(
                                                     &Formatter::LanguageServer { name: None },
+                                                    &target,
                                                     server_and_buffer,
                                                     lsp_store.clone(),
                                                     buffer,
@@ -310,9 +327,8 @@ impl LocalLspStore {
                                                 )
                                                 .await
                                             }
-                                        }
-                                        .log_err()
-                                        .flatten();
+                                        }?;
+
                                         if let Some(op) = diff {
                                             format_operations.push(op);
                                         }
@@ -321,6 +337,7 @@ impl LocalLspStore {
                                         for formatter in formatters.as_ref() {
                                             let diff = Self::perform_format(
                                                 formatter,
+                                                &target,
                                                 server_and_buffer,
                                                 lsp_store.clone(),
                                                 buffer,
@@ -330,9 +347,7 @@ impl LocalLspStore {
                                                 &mut project_transaction,
                                                 &mut cx,
                                             )
-                                            .await
-                                            .log_err()
-                                            .flatten();
+                                            .await?;
                                             if let Some(op) = diff {
                                                 format_operations.push(op);
                                             }
@@ -346,6 +361,7 @@ impl LocalLspStore {
                                 for formatter in formatters.as_ref() {
                                     let diff = Self::perform_format(
                                         formatter,
+                                        &target,
                                         server_and_buffer,
                                         lsp_store.clone(),
                                         buffer,
@@ -355,9 +371,7 @@ impl LocalLspStore {
                                         &mut project_transaction,
                                         &mut cx,
                                     )
-                                    .await
-                                    .log_err()
-                                    .flatten();
+                                    .await?;
                                     if let Some(op) = diff {
                                         format_operations.push(op);
                                     }
@@ -373,6 +387,7 @@ impl LocalLspStore {
                                     if prettier_settings.allowed {
                                         Self::perform_format(
                                             &Formatter::Prettier,
+                                            &target,
                                             server_and_buffer,
                                             lsp_store.clone(),
                                             buffer,
@@ -384,8 +399,14 @@ impl LocalLspStore {
                                         )
                                         .await
                                     } else {
+                                        let formatter = Formatter::LanguageServer {
+                                            name: primary_language_server
+                                                .as_ref()
+                                                .map(|server| server.name().to_string()),
+                                        };
                                         Self::perform_format(
-                                            &Formatter::LanguageServer { name: None },
+                                            &formatter,
+                                            &target,
                                             server_and_buffer,
                                             lsp_store.clone(),
                                             buffer,
@@ -397,9 +418,7 @@ impl LocalLspStore {
                                         )
                                         .await
                                     }
-                                }
-                                .log_err()
-                                .flatten();
+                                }?;
 
                                 if let Some(op) = diff {
                                     format_operations.push(op)
@@ -410,6 +429,7 @@ impl LocalLspStore {
                                     // format with formatter
                                     let diff = Self::perform_format(
                                         formatter,
+                                        &target,
                                         server_and_buffer,
                                         lsp_store.clone(),
                                         buffer,
@@ -419,9 +439,7 @@ impl LocalLspStore {
                                         &mut project_transaction,
                                         &mut cx,
                                     )
-                                    .await
-                                    .log_err()
-                                    .flatten();
+                                    .await?;
                                     if let Some(op) = diff {
                                         format_operations.push(op);
                                     }
@@ -483,6 +501,7 @@ impl LocalLspStore {
     #[allow(clippy::too_many_arguments)]
     async fn perform_format(
         formatter: &Formatter,
+        format_target: &FormatTarget,
         primary_server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
         lsp_store: WeakModel<LspStore>,
         buffer: &FormattableBuffer,
@@ -506,18 +525,33 @@ impl LocalLspStore {
                         language_server
                     };
 
-                    Some(FormatOperation::Lsp(
-                        LspStore::format_via_lsp(
-                            &lsp_store,
-                            &buffer.handle,
-                            buffer_abs_path,
-                            language_server,
-                            settings,
-                            cx,
-                        )
-                        .await
-                        .context("failed to format via language server")?,
-                    ))
+                    match format_target {
+                        FormatTarget::Buffer => Some(FormatOperation::Lsp(
+                            LspStore::format_via_lsp(
+                                &lsp_store,
+                                &buffer.handle,
+                                buffer_abs_path,
+                                language_server,
+                                settings,
+                                cx,
+                            )
+                            .await
+                            .context("failed to format via language server")?,
+                        )),
+                        FormatTarget::Ranges(selections) => Some(FormatOperation::Lsp(
+                            LspStore::format_range_via_lsp(
+                                &lsp_store,
+                                &buffer.handle,
+                                selections.as_slice(),
+                                buffer_abs_path,
+                                language_server,
+                                settings,
+                                cx,
+                            )
+                            .await
+                            .context("failed to format ranges via language server")?,
+                        )),
+                    }
                 } else {
                     None
                 }
@@ -1859,10 +1893,9 @@ impl LspStore {
         } else if matches!(range_formatting_provider, Some(p) if *p != OneOf::Left(false)) {
             let buffer_start = lsp::Position::new(0, 0);
             let buffer_end = buffer.update(cx, |b, _| point_to_lsp(b.max_point_utf16()))?;
-
             language_server
                 .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
-                    text_document,
+                    text_document: text_document.clone(),
                     range: lsp::Range::new(buffer_start, buffer_end),
                     options: lsp_command::lsp_formatting_options(settings),
                     work_done_progress_params: Default::default(),
@@ -1878,7 +1911,62 @@ impl LspStore {
             })?
             .await
         } else {
-            Ok(Vec::new())
+            Ok(Vec::with_capacity(0))
+        }
+    }
+    pub async fn format_range_via_lsp(
+        this: &WeakModel<Self>,
+        buffer: &Model<Buffer>,
+        selections: &[Selection<Point>],
+        abs_path: &Path,
+        language_server: &Arc<LanguageServer>,
+        settings: &LanguageSettings,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let capabilities = &language_server.capabilities();
+        let range_formatting_provider = capabilities.document_range_formatting_provider.as_ref();
+        if range_formatting_provider.map_or(false, |provider| provider == &OneOf::Left(false)) {
+            return Err(anyhow!(
+                "{} language server does not support range formatting",
+                language_server.name()
+            ));
+        }
+
+        let uri = lsp::Url::from_file_path(abs_path)
+            .map_err(|_| anyhow!("failed to convert abs path to uri"))?;
+        let text_document = lsp::TextDocumentIdentifier::new(uri);
+
+        let lsp_edits = {
+            let ranges = selections.into_iter().map(|s| {
+                let start = lsp::Position::new(s.start.row, s.start.column);
+                let end = lsp::Position::new(s.end.row, s.end.column);
+                lsp::Range::new(start, end)
+            });
+
+            let mut edits = None;
+            for range in ranges {
+                if let Some(mut edit) = language_server
+                    .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
+                        text_document: text_document.clone(),
+                        range,
+                        options: lsp_command::lsp_formatting_options(settings),
+                        work_done_progress_params: Default::default(),
+                    })
+                    .await?
+                {
+                    edits.get_or_insert_with(Vec::new).append(&mut edit);
+                }
+            }
+            edits
+        };
+
+        if let Some(lsp_edits) = lsp_edits {
+            this.update(cx, |this, cx| {
+                this.edits_from_lsp(buffer, lsp_edits, language_server.server_id(), None, cx)
+            })?
+            .await
+        } else {
+            Ok(Vec::with_capacity(0))
         }
     }
 
@@ -2648,44 +2736,44 @@ impl LspStore {
                     };
 
                 requests.push(
-                    server
-                        .request::<lsp::request::WorkspaceSymbolRequest>(
-                            lsp::WorkspaceSymbolParams {
-                                query: query.to_string(),
-                                ..Default::default()
-                            },
-                        )
-                        .log_err()
-                        .map(move |response| {
-                            let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
-                                lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
-                                    flat_responses.into_iter().map(|lsp_symbol| {
-                                        (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
-                                    }).collect::<Vec<_>>()
-                                }
-                                lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
-                                    nested_responses.into_iter().filter_map(|lsp_symbol| {
-                                        let location = match lsp_symbol.location {
-                                            OneOf::Left(location) => location,
-                                            OneOf::Right(_) => {
-                                                log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
-                                                return None
-                                            }
-                                        };
-                                        Some((lsp_symbol.name, lsp_symbol.kind, location))
-                                    }).collect::<Vec<_>>()
-                                }
-                            }).unwrap_or_default();
+                        server
+                            .request::<lsp::request::WorkspaceSymbolRequest>(
+                                lsp::WorkspaceSymbolParams {
+                                    query: query.to_string(),
+                                    ..Default::default()
+                                },
+                            )
+                            .log_err()
+                            .map(move |response| {
+                                let lsp_symbols = response.flatten().map(|symbol_response| match symbol_response {
+                                    lsp::WorkspaceSymbolResponse::Flat(flat_responses) => {
+                                        flat_responses.into_iter().map(|lsp_symbol| {
+                                            (lsp_symbol.name, lsp_symbol.kind, lsp_symbol.location)
+                                        }).collect::<Vec<_>>()
+                                    }
+                                    lsp::WorkspaceSymbolResponse::Nested(nested_responses) => {
+                                        nested_responses.into_iter().filter_map(|lsp_symbol| {
+                                            let location = match lsp_symbol.location {
+                                                OneOf::Left(location) => location,
+                                                OneOf::Right(_) => {
+                                                    log::error!("Unexpected: client capabilities forbid symbol resolutions in workspace.symbol.resolveSupport");
+                                                    return None
+                                                }
+                                            };
+                                            Some((lsp_symbol.name, lsp_symbol.kind, location))
+                                        }).collect::<Vec<_>>()
+                                    }
+                                }).unwrap_or_default();
 
-                            WorkspaceSymbolsResult {
-                                lsp_adapter,
-                                language,
-                                worktree: worktree_handle.downgrade(),
-                                worktree_abs_path,
-                                lsp_symbols,
-                            }
-                        }),
-                );
+                                WorkspaceSymbolsResult {
+                                    lsp_adapter,
+                                    language,
+                                    worktree: worktree_handle.downgrade(),
+                                    worktree_abs_path,
+                                    lsp_symbols,
+                                }
+                            }),
+                    );
             }
 
             cx.spawn(move |this, mut cx| async move {
@@ -4579,16 +4667,16 @@ impl LspStore {
 
             if registrations.remove(registration_id).is_some() {
                 log::info!(
-                "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
-                language_server_id,
-                registration_id
-            );
+                    "language server {}: unregistered workspace/DidChangeWatchedFiles capability with id {}",
+                    language_server_id,
+                    registration_id
+                );
             } else {
                 log::warn!(
-                "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
-                language_server_id,
-                registration_id
-            );
+                    "language server {}: failed to unregister workspace/DidChangeWatchedFiles capability with id {}. not registered.",
+                    language_server_id,
+                    registration_id
+                );
             }
 
             self.rebuild_watched_paths(language_server_id, cx);
@@ -5078,6 +5166,7 @@ impl LspStore {
         buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         trigger: FormatTrigger,
+        target: FormatTarget,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         if let Some(_) = self.as_local() {
@@ -5114,6 +5203,7 @@ impl LspStore {
                     formattable_buffers,
                     push_to_history,
                     trigger,
+                    target,
                     cx.clone(),
                 )
                 .await;
@@ -5172,7 +5262,7 @@ impl LspStore {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
-            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, cx))
+            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, FormatTarget::Buffer, cx))
         })??;
 
         let project_transaction = format.await?;
@@ -6485,11 +6575,11 @@ impl LspStore {
                 })?;
 
             let found_snapshot = snapshots
-                .binary_search_by_key(&version, |e| e.version)
-                .map(|ix| snapshots[ix].snapshot.clone())
-                .map_err(|_| {
-                    anyhow!("snapshot not found for buffer {buffer_id} server {server_id} at version {version}")
-                })?;
+                    .binary_search_by_key(&version, |e| e.version)
+                    .map(|ix| snapshots[ix].snapshot.clone())
+                    .map_err(|_| {
+                        anyhow!("snapshot not found for buffer {buffer_id} server {server_id} at version {version}")
+                    })?;
 
             snapshots.retain(|snapshot| snapshot.version + OLD_VERSIONS_TO_RETAIN >= version);
             Ok(found_snapshot)
@@ -7203,74 +7293,74 @@ impl LanguageServerWatchedPathsBuilder {
         let project = cx.weak_model();
 
         cx.new_model(|cx| {
-            let this_id = cx.entity_id();
-            const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
-            let abs_paths = self
-                .abs_paths
-                .into_iter()
-                .map(|(abs_path, globset)| {
-                    let task = cx.spawn({
-                        let abs_path = abs_path.clone();
-                        let fs = fs.clone();
+                let this_id = cx.entity_id();
+                const LSP_ABS_PATH_OBSERVE: Duration = Duration::from_millis(100);
+                let abs_paths = self
+                    .abs_paths
+                    .into_iter()
+                    .map(|(abs_path, globset)| {
+                        let task = cx.spawn({
+                            let abs_path = abs_path.clone();
+                            let fs = fs.clone();
 
-                        let lsp_store = project.clone();
-                        |_, mut cx| async move {
-                            maybe!(async move {
-                                let mut push_updates =
-                                    fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
-                                while let Some(update) = push_updates.0.next().await {
-                                    let action = lsp_store
-                                        .update(&mut cx, |this, cx| {
-                                            let Some(local) = this.as_local() else {
-                                                return ControlFlow::Break(());
-                                            };
-                                            let Some(watcher) = local
-                                                .language_server_watched_paths
-                                                .get(&language_server_id)
-                                            else {
-                                                return ControlFlow::Break(());
-                                            };
-                                            if watcher.entity_id() != this_id {
-                                                // This watcher is no longer registered on the project, which means that we should
-                                                // cease operations.
-                                                return ControlFlow::Break(());
-                                            }
-                                            let (globs, _) = watcher
-                                                .read(cx)
-                                                .abs_paths
-                                                .get(&abs_path)
-                                                .expect(
-                                                "Watched abs path is not registered with a watcher",
-                                            );
-                                            let matching_entries = update
-                                                .into_iter()
-                                                .filter(|event| globs.is_match(&event.path))
-                                                .collect::<Vec<_>>();
-                                            this.lsp_notify_abs_paths_changed(
-                                                language_server_id,
-                                                matching_entries,
-                                            );
-                                            ControlFlow::Continue(())
-                                        })
-                                        .ok()?;
+                            let lsp_store = project.clone();
+                            |_, mut cx| async move {
+                                maybe!(async move {
+                                    let mut push_updates =
+                                        fs.watch(&abs_path, LSP_ABS_PATH_OBSERVE).await;
+                                    while let Some(update) = push_updates.0.next().await {
+                                        let action = lsp_store
+                                            .update(&mut cx, |this, cx| {
+                                                let Some(local) = this.as_local() else {
+                                                    return ControlFlow::Break(());
+                                                };
+                                                let Some(watcher) = local
+                                                    .language_server_watched_paths
+                                                    .get(&language_server_id)
+                                                else {
+                                                    return ControlFlow::Break(());
+                                                };
+                                                if watcher.entity_id() != this_id {
+                                                    // This watcher is no longer registered on the project, which means that we should
+                                                    // cease operations.
+                                                    return ControlFlow::Break(());
+                                                }
+                                                let (globs, _) = watcher
+                                                    .read(cx)
+                                                    .abs_paths
+                                                    .get(&abs_path)
+                                                    .expect(
+                                                    "Watched abs path is not registered with a watcher",
+                                                );
+                                                let matching_entries = update
+                                                    .into_iter()
+                                                    .filter(|event| globs.is_match(&event.path))
+                                                    .collect::<Vec<_>>();
+                                                this.lsp_notify_abs_paths_changed(
+                                                    language_server_id,
+                                                    matching_entries,
+                                                );
+                                                ControlFlow::Continue(())
+                                            })
+                                            .ok()?;
 
-                                    if action.is_break() {
-                                        break;
+                                        if action.is_break() {
+                                            break;
+                                        }
                                     }
-                                }
-                                Some(())
-                            })
-                            .await;
-                        }
-                    });
-                    (abs_path, (globset, task))
-                })
-                .collect();
-            LanguageServerWatchedPaths {
-                worktree_paths: self.worktree_paths,
-                abs_paths,
-            }
-        })
+                                    Some(())
+                                })
+                                    .await;
+                            }
+                        });
+                        (abs_path, (globset, task))
+                    })
+                    .collect();
+                LanguageServerWatchedPaths {
+                    worktree_paths: self.worktree_paths,
+                    abs_paths,
+                }
+            })
     }
 }
 
