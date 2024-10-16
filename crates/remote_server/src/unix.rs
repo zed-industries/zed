@@ -1,3 +1,4 @@
+use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
 use client::ProxySettings;
@@ -6,6 +7,7 @@ use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use gpui::{AppContext, Context as _, ModelContext, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
+use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
@@ -345,7 +347,20 @@ pub fn execute_run(
 
             let node_runtime = NodeRuntime::new(http_client.clone(), node_settings_rx);
 
-            HeadlessProject::new(session, fs, http_client, node_runtime, cx)
+            let mut languages = LanguageRegistry::new(cx.background_executor().clone());
+            languages.set_language_server_download_dir(paths::languages_dir().clone());
+            let languages = Arc::new(languages);
+
+            HeadlessProject::new(
+                HeadlessAppState {
+                    session,
+                    fs,
+                    http_client,
+                    node_runtime,
+                    languages,
+                },
+                cx,
+            )
         });
 
         mem::forget(project);

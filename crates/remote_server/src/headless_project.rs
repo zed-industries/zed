@@ -39,6 +39,14 @@ pub struct HeadlessProject {
     pub languages: Arc<LanguageRegistry>,
 }
 
+pub struct HeadlessAppState {
+    pub session: Arc<ChannelClient>,
+    pub fs: Arc<dyn Fs>,
+    pub http_client: Arc<dyn HttpClient>,
+    pub node_runtime: NodeRuntime,
+    pub languages: Arc<LanguageRegistry>,
+}
+
 impl HeadlessProject {
     pub fn init(cx: &mut AppContext) {
         settings::init(cx);
@@ -47,16 +55,15 @@ impl HeadlessProject {
     }
 
     pub fn new(
-        session: Arc<ChannelClient>,
-        fs: Arc<dyn Fs>,
-        http_client: Arc<dyn HttpClient>,
-        node_runtime: NodeRuntime,
+        HeadlessAppState {
+            session,
+            fs,
+            http_client,
+            node_runtime,
+            languages,
+        }: HeadlessAppState,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let mut languages = LanguageRegistry::new(cx.background_executor().clone());
-        languages.set_language_server_download_dir(paths::languages_dir().clone());
-        let languages = Arc::new(languages);
-
         languages::init(languages.clone(), node_runtime.clone(), cx);
 
         let worktree_store = cx.new_model(|cx| {

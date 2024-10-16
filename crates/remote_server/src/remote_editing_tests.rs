@@ -664,11 +664,20 @@ async fn init_test(
     server_cx.update(HeadlessProject::init);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
-
+    let languages = Arc::new(LanguageRegistry::new(cx.executor()));
     let headless = server_cx.new_model(|cx| {
         client::init_settings(cx);
 
-        HeadlessProject::new(ssh_server_client, fs.clone(), http_client, node_runtime, cx)
+        HeadlessProject::new(
+            crate::HeadlessAppState {
+                session: ssh_server_client,
+                fs: fs.clone(),
+                http_client,
+                node_runtime,
+                languages,
+            },
+            cx,
+        )
     });
     let project = build_project(ssh_remote_client, cx);
 

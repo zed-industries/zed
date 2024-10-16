@@ -3,11 +3,11 @@ use call::ActiveCall;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
 use http_client::BlockedHttpClient;
-use language::language_settings::all_language_settings;
+use language::{language_settings::all_language_settings, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::ProjectPath;
 use remote::SshRemoteClient;
-use remote_server::HeadlessProject;
+use remote_server::{HeadlessAppState, HeadlessProject};
 use serde_json::json;
 use std::{path::Path, sync::Arc};
 
@@ -52,9 +52,19 @@ async fn test_sharing_an_ssh_remote_project(
     server_cx.update(HeadlessProject::init);
     let remote_http_client = Arc::new(BlockedHttpClient);
     let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
     let _headless_project = server_cx.new_model(|cx| {
         client::init_settings(cx);
-        HeadlessProject::new(server_ssh, remote_fs.clone(), remote_http_client, node, cx)
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages,
+            },
+            cx,
+        )
     });
 
     let (project_a, worktree_id) = client_a
