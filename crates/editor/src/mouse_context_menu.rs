@@ -169,7 +169,7 @@ pub fn deploy_context_menu(
             .selections
             .all::<PointUtf16>(cx)
             .into_iter()
-            .any(|s| s.start != s.end);
+            .any(|s| !s.is_empty());
 
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
