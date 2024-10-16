@@ -1237,16 +1237,19 @@ impl LspStore {
             None
         };
 
-        if let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings) {
-            let prettier_store = self.as_local().map(|s| s.prettier_store.clone());
-            if let Some(prettier_store) = prettier_store {
-                prettier_store.update(cx, |prettier_store, cx| {
-                    prettier_store.install_default_prettier(
-                        worktree_id,
-                        prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
-                        cx,
-                    )
-                })
+        if settings.prettier.allowed {
+            if let Some(prettier_plugins) = prettier_store::prettier_plugins_for_language(&settings)
+            {
+                let prettier_store = self.as_local().map(|s| s.prettier_store.clone());
+                if let Some(prettier_store) = prettier_store {
+                    prettier_store.update(cx, |prettier_store, cx| {
+                        prettier_store.install_default_prettier(
+                            worktree_id,
+                            prettier_plugins.iter().map(|s| Arc::from(s.as_str())),
+                            cx,
+                        )
+                    })
+                }
             }
         }
 
