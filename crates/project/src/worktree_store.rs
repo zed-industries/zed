@@ -280,7 +280,7 @@ impl WorktreeStore {
                         id: response.worktree_id,
                         root_name,
                         visible,
-                        abs_path,
+                        abs_path: response.canonicalized_path,
                     },
                     client,
                     cx,

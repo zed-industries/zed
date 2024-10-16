@@ -275,7 +275,7 @@ impl HeadlessProject {
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Arc::from(canonicalized),
+                    Arc::from(canonicalized.as_path()),
                     message.payload.visible,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
@@ -287,6 +287,7 @@ impl HeadlessProject {
         let response = this.update(&mut cx, |_, cx| {
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
+                canonicalized_path: canonicalized.to_string_lossy().to_string(),
             })
         })?;
 

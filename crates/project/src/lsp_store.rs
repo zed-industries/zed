@@ -3503,7 +3503,7 @@ impl LspStore {
         language_server_name: LanguageServerName,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        cx.spawn(move |this, mut cx| async move {
+        cx.spawn(move |lsp_store, mut cx| async move {
             // Escape percent-encoded string.
             let current_scheme = abs_path.scheme().to_owned();
             let _ = abs_path.set_scheme("file");
@@ -3512,9 +3512,9 @@ impl LspStore {
                 .to_file_path()
                 .map_err(|_| anyhow!("can't convert URI to path"))?;
             let p = abs_path.clone();
-            let yarn_worktree = this
-                .update(&mut cx, move |this, cx| {
-                    this.as_local().unwrap().yarn.update(cx, |_, cx| {
+            let yarn_worktree = lsp_store
+                .update(&mut cx, move |lsp_store, cx| match lsp_store.as_local() {
+                    Some(local_lsp_store) => local_lsp_store.yarn.update(cx, |_, cx| {
                         cx.spawn(|this, mut cx| async move {
                             let t = this
                                 .update(&mut cx, |this, cx| {
@@ -3523,7 +3523,8 @@ impl LspStore {
                                 .ok()?;
                             t.await
                         })
-                    })
+                    }),
+                    None => Task::ready(None),
                 })?
                 .await;
             let (worktree_root_target, known_relative_path) =
@@ -3533,8 +3534,8 @@ impl LspStore {
                     (Arc::<Path>::from(abs_path.as_path()), None)
                 };
             let (worktree, relative_path) = if let Some(result) =
-                this.update(&mut cx, |this, cx| {
-                    this.worktree_store.update(cx, |worktree_store, cx| {
+                lsp_store.update(&mut cx, |lsp_store, cx| {
+                    lsp_store.worktree_store.update(cx, |worktree_store, cx| {
                         worktree_store.find_worktree(&worktree_root_target, cx)
                     })
                 })? {
@@ -3542,22 +3543,25 @@ impl LspStore {
                     known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
                 (result.0, relative_path)
             } else {
-                let worktree = this
-                    .update(&mut cx, |this, cx| {
-                        this.worktree_store.update(cx, |worktree_store, cx| {
+                let worktree = lsp_store
+                    .update(&mut cx, |lsp_store, cx| {
+                        lsp_store.worktree_store.update(cx, |worktree_store, cx| {
                             worktree_store.create_worktree(&worktree_root_target, false, cx)
                         })
                     })?
                     .await?;
-                this.update(&mut cx, |this, cx| {
-                    this.register_language_server(
-                        worktree.read(cx).id(),
-                        language_server_name,
-                        language_server_id,
-                    )
-                })
-                .ok();
-                let worktree_root = worktree.update(&mut cx, |this, _| this.abs_path())?;
+                if worktree.update(&mut cx, |worktree, _| worktree.is_local())? {
+                    lsp_store
+                        .update(&mut cx, |lsp_store, cx| {
+                            lsp_store.register_language_server(
+                                worktree.read(cx).id(),
+                                language_server_name,
+                                language_server_id,
+                            )
+                        })
+                        .ok();
+                }
+                let worktree_root = worktree.update(&mut cx, |worktree, _| worktree.abs_path())?;
                 let relative_path = if let Some(known_path) = known_relative_path {
                     known_path
                 } else {
@@ -3569,12 +3573,13 @@ impl LspStore {
                 worktree_id: worktree.update(&mut cx, |worktree, _| worktree.id())?,
                 path: relative_path,
             };
-            this.update(&mut cx, |this, cx| {
-                this.buffer_store().update(cx, |buffer_store, cx| {
-                    buffer_store.open_buffer(project_path, cx)
-                })
-            })?
-            .await
+            lsp_store
+                .update(&mut cx, |lsp_store, cx| {
+                    lsp_store.buffer_store().update(cx, |buffer_store, cx| {
+                        buffer_store.open_buffer(project_path, cx)
+                    })
+                })?
+                .await
         })
     }
 
