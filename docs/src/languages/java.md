@@ -7,33 +7,125 @@ Java language support in Zed is provided the [zed Java extension](https://github
 - Tree Sitter: [tree-sitter/tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java)
 - Language Server: [eclipse-jdtls/eclipse.jdt.ls](https://github.com/eclipse-jdtls/eclipse.jdt.ls)
 
-Report issues to: [https://github.com/zed-extensions/java/issues](https://github.com/zed-extensions/java/issues).
+Report issues to: <https://github.com/zed-extensions/java/issues>.
 
 ### Configuration
 
-You can optionally configure the Java home that JDTLS (the language server) uses
-in your Zed settings like so:
+To enable the functionality of LSP, you have to install JDTLS yourself.
+
+#### Settings
+
+You can optionally configure the class path that [JDTLS] (the language server) uses in your Zed
+settings like so:
 
 ```json
 {
   "lsp": {
     "jdtls": {
       "settings": {
-        "java_home": "/path/to/jdk"
+        "classpath": "/path/to/classes.jar:/path/to/more/classes/"
       }
     }
   }
 }
 ```
 
-For any updates, please refer to the [README.md](https://github.com/zed-extensions/java).
+#### Initialization Options
+
+There are also many more options you can pass directly to the language server, for example:
+
+```json
+{
+  "lsp": {
+    "jdtls": {
+      "initialization_options": {
+        "bundles": [],
+        "workspaceFolders": ["file:///home/snjeza/Project"],
+        "settings": {
+          "java": {
+            "home": "/usr/local/jdk-9.0.1",
+            "errors": {
+              "incompleteClasspath": {
+                "severity": "warning"
+              }
+            },
+            "configuration": {
+              "updateBuildConfiguration": "interactive",
+              "maven": {
+                "userSettings": null
+              }
+            },
+            "trace": {
+              "server": "verbose"
+            },
+            "import": {
+              "gradle": {
+                "enabled": true
+              },
+              "maven": {
+                "enabled": true
+              },
+              "exclusions": [
+                "**/node_modules/**",
+                "**/.metadata/**",
+                "**/archetype-resources/**",
+                "**/META-INF/maven/**",
+                "/**/test/**"
+              ]
+            },
+            "referencesCodeLens": {
+              "enabled": false
+            },
+            "signatureHelp": {
+              "enabled": false
+            },
+            "implementationsCodeLens": {
+              "enabled": false
+            },
+            "format": {
+              "enabled": true
+            },
+            "saveActions": {
+              "organizeImports": false
+            },
+            "contentProvider": {
+              "preferred": null
+            },
+            "autobuild": {
+              "enabled": false
+            },
+            "completion": {
+              "favoriteStaticMembers": [
+                "org.junit.Assert.*",
+                "org.junit.Assume.*",
+                "org.junit.jupiter.api.Assertions.*",
+                "org.junit.jupiter.api.Assumptions.*",
+                "org.junit.jupiter.api.DynamicContainer.*",
+                "org.junit.jupiter.api.DynamicTest.*"
+              ],
+              "importOrder": ["java", "javax", "com", "org"]
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+*Example taken from JDTLS's [initialization options wiki page].*
+
+You can see all the options JDTLS accepts [here][initialization options wiki page].
+
+[JDTLS]: https://github.com/eclipse-jdtls/eclipse.jdt.ls
+[initialization options wiki page]: https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
 
 ## zed-java-eclipse-jdtls
 
 - Tree Sitter: [tree-sitter/tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java)
 - Language Server: [Eclipse JDTLS](https://github.com/eclipse-jdtls/eclipse.jdt.ls)
 
-Report issues to: [https://github.com/ABckh/zed-java-eclipse-jdtls/issues](https://github.com/ABckh/zed-java-eclipse-jdtls/issues).
+Report issues to: <https://github.com/ABckh/zed-java-eclipse-jdtls/issues>.
 
 ### Configuration
 
