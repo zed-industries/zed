@@ -100,7 +100,6 @@ impl SlashCommand for PromptSlashCommand {
                     icon: IconName::Library,
                     label: title,
                     metadata: None,
-                    ensure_newline: false,
                 },
                 SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text: prompt,

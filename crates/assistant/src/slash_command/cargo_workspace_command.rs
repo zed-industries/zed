@@ -144,7 +144,6 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
                         icon: IconName::FileTree,
                         label: "Project".into(),
                         metadata: None,
-                        ensure_newline: false,
                     },
                     SlashCommandEvent::Content(SlashCommandContentType::Text {
                         text,

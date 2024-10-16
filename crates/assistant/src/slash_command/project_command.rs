@@ -130,7 +130,6 @@ impl SlashCommand for ProjectSlashCommand {
                         icon: IconName::Book,
                         label: "Project context".into(),
                         metadata: None,
-                        ensure_newline: false,
                     });
 
                     let output = "Project context:\n".to_string();
@@ -145,7 +144,6 @@ impl SlashCommand for ProjectSlashCommand {
                             icon: IconName::MagnifyingGlass,
                             label: query.clone().into(),
                             metadata: None,
-                            ensure_newline: false,
                         });
 
                         let mut section_text = format!("Results for {query}:\n");

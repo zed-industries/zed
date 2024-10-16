@@ -76,7 +76,6 @@ impl SlashCommand for DefaultSlashCommand {
                     icon: IconName::Library,
                     label: "Default".into(),
                     metadata: None,
-                    ensure_newline: false,
                 },
                 SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text,

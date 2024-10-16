@@ -503,7 +503,6 @@ pub fn buffer_to_output(
         icon: IconName::File,
         label: label.into(),
         metadata,
-        ensure_newline: true,
     });
 
     let mut code_content = String::new();

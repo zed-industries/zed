@@ -351,7 +351,6 @@ impl SlashCommand for DocsSlashCommand {
                     icon: IconName::FileDoc,
                     label: format!("docs ({provider})").into(),
                     metadata: None,
-                    ensure_newline: false,
                 },
                 SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text,

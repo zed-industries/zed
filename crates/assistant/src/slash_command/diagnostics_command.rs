@@ -302,7 +302,6 @@ fn collect_diagnostics(
                     icon: IconName::File,
                     label: file_path.clone().into(),
                     metadata: None,
-                    ensure_newline: false,
                 });
                 events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text: format!("{}\n", file_path),
@@ -356,7 +355,6 @@ fn collect_diagnostics(
                 icon: IconName::Warning,
                 label: label.into(),
                 metadata: None,
-                ensure_newline: false,
             },
         );
 
@@ -440,7 +438,6 @@ fn collect_diagnostic(
             icon,
             label: entry.diagnostic.message.clone().into(),
             metadata: None,
-            ensure_newline: false,
         },
         SlashCommandEvent::Content(SlashCommandContentType::Text {
             text,

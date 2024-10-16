@@ -161,7 +161,6 @@ impl SlashCommand for ContextServerSlashCommand {
                         icon: IconName::Ai,
                         label: "".into(),
                         metadata: None,
-                        ensure_newline: false,
                     });
 
                     match message.content {

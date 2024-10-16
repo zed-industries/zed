@@ -1,5 +1,4 @@
 // todo!()
-// - fix file tests
 // - fix extension
 // - When slash command wants to insert a message, but it wants to insert it after a message that has the same Role and it emits a `StartMessage { merge_same_roles: bool (name TBD) }`, we should ignore it
 // - When a section ends, we should run the following code:
@@ -1841,7 +1840,6 @@ impl Context {
                     icon: IconName,
                     label: SharedString,
                     metadata: Option<serde_json::Value>,
-                    ensure_newline: bool,
                 }
 
                 let position = this.update(&mut cx, |this, cx| {
@@ -1856,7 +1854,7 @@ impl Context {
                     Vec::new();
                 let mut pending_section_stack: Vec<PendingSection> = Vec::new();
                 let mut run_commands_in_ranges: Vec<Range<language::Anchor>> = Vec::new();
-                let mut has_newline = false;
+                let mut text_ends_with_newline = false;
                 let mut last_role: Option<Role> = None;
 
                 while let Some(event) = stream.next().await {
@@ -1885,7 +1883,6 @@ impl Context {
                             icon,
                             label,
                             metadata,
-                            ensure_newline,
                         } => {
                             this.read_with(&cx, |this, cx| {
                                 let buffer = this.buffer.read(cx);
@@ -1895,7 +1892,6 @@ impl Context {
                                     icon,
                                     label,
                                     metadata,
-                                    ensure_newline,
                                 });
                             })?;
                         }
@@ -1928,16 +1924,7 @@ impl Context {
                                     let start = this.buffer.read(cx).anchor_before(position);
 
                                     let result = this.buffer.update(cx, |buffer, cx| {
-                                        let ensure_newline = pending_section_stack
-                                            .last()
-                                            .map(|ps| ps.ensure_newline)
-                                            .unwrap_or(false);
-                                        let text = if ensure_newline && !text.ends_with('\n') {
-                                            text + "\n"
-                                        } else {
-                                            text
-                                        };
-                                        has_newline = text.ends_with("\n");
+                                        text_ends_with_newline = text.ends_with("\n");
                                         buffer.edit([(position..position, text)], None, cx)
                                     });
 
@@ -1963,7 +1950,7 @@ impl Context {
                                         let start = pending_section.start;
                                         let end = buffer.anchor_before(position);
 
-                                        if !has_newline && ensure_trailing_newline {
+                                        if !text_ends_with_newline && ensure_trailing_newline {
                                             buffer.edit([(position..position, "\n")], None, cx);
                                         }
 

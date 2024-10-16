@@ -109,6 +109,7 @@ pub enum SlashCommandContentType {
         image: Image,
     },
 }
+
 pub enum SlashCommandEvent {
     StartMessage {
         role: Role,
@@ -118,7 +119,6 @@ pub enum SlashCommandEvent {
         icon: IconName,
         label: SharedString,
         metadata: Option<serde_json::Value>,
-        ensure_newline: bool,
     },
     Content(SlashCommandContentType),
     Progress {

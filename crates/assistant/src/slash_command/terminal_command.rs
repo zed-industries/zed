@@ -93,7 +93,6 @@ impl SlashCommand for TerminalSlashCommand {
                 icon: IconName::Terminal,
                 label: "Terminal".into(),
                 metadata: None,
-                ensure_newline: false,
             },
             SlashCommandEvent::Content(SlashCommandContentType::Text {
                 text,

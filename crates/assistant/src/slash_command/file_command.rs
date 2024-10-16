@@ -290,7 +290,6 @@ fn collect_files(
                         icon: IconName::Folder,
                         label: dirname.clone().into(),
                         metadata: None,
-                        ensure_newline: true,
                     });
                     events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
                         text: dirname,

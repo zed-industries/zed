@@ -70,7 +70,6 @@ impl SlashCommand for WorkflowSlashCommand {
                     icon: IconName::Route,
                     label: "Workflow".into(),
                     metadata: None,
-                    ensure_newline: false,
                 },
                 SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text,

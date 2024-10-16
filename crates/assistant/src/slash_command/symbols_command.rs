@@ -82,7 +82,6 @@ impl SlashCommand for OutlineSlashCommand {
                         icon: IconName::ListTree,
                         label: path.to_string_lossy().to_string().into(),
                         metadata: None,
-                        ensure_newline: false,
                     },
                     SlashCommandEvent::Content(SlashCommandContentType::Text {
                         text: outline_text,

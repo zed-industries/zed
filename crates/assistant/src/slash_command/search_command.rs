@@ -114,7 +114,6 @@ impl SlashCommand for SearchSlashCommand {
                         icon: IconName::MagnifyingGlass,
                         label: SharedString::from(format!("Search results for {query}:")),
                         metadata: None,
-                        ensure_newline: false,
                     });
 
                     for loaded_result in loaded_results {
@@ -152,7 +151,6 @@ pub fn add_search_result_section(
         icon: IconName::File,
         label: path_str.into(),
         metadata: None,
-        ensure_newline: false,
     });
     events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
         text,

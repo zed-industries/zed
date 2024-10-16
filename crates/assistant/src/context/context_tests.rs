@@ -1090,7 +1090,6 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             icon: IconName::Ai,
                             label: "section".into(),
                             metadata: None,
-                            ensure_newline: false,
                         });
                         events.push(SlashCommandEvent::Content {
                             text: output_text[section_start..section_end].to_string(),
@@ -1443,7 +1442,6 @@ impl SlashCommand for FakeSlashCommand {
                 icon: IconName::Ai,
                 label: "Fake Command".into(),
                 metadata: None,
-                ensure_newline: false,
             },
             SlashCommandEvent::Content {
                 text: format!("Executed fake command: {}", self.0),

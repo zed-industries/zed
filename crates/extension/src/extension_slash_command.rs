@@ -120,7 +120,6 @@ impl SlashCommand for ExtensionSlashCommand {
                     icon: IconName::Code,
                     label: "Code Output".into(),
                     metadata: None,
-                    ensure_newline: true,
                 },
                 SlashCommandEvent::Content(SlashCommandContentType::Text {
                     text: "let x = 42;\nprintln!(\"The answer is {}\", x);".to_string(),
