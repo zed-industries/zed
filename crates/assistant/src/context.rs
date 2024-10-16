@@ -351,8 +351,19 @@ pub struct MessageMetadata {
     pub role: Role,
     pub status: MessageStatus,
     pub(crate) timestamp: clock::Lamport,
+    pub kind: MessageKind,
     #[serde(skip)]
     pub cache: Option<MessageCacheMetadata>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum MessageKind {
+    /// No preamble
+    Legacy,
+    /// Preamble along the lines of "This is a chat message:"
+    Chat,
+    /// Preamble along the lines of "This is an edit message:"
+    Edit,
 }
 
 impl From<&Message> for MessageMetadata {
@@ -361,6 +372,7 @@ impl From<&Message> for MessageMetadata {
             role: message.role,
             status: message.status.clone(),
             timestamp: message.id.0,
+            kind: message.kind,
             cache: message.cache.clone(),
         }
     }
@@ -390,6 +402,7 @@ pub struct Message {
     pub id: MessageId,
     pub role: Role,
     pub status: MessageStatus,
+    pub kind: MessageKind,
     pub cache: Option<MessageCacheMetadata>,
 }
 
@@ -1865,7 +1878,11 @@ impl Context {
         })
     }
 
-    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+    pub fn assist(
+        &mut self,
+        message_kind: MessageKind,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let provider = model_registry.active_provider()?;
         let model = model_registry.active_model()?;
@@ -1875,6 +1892,12 @@ impl Context {
             log::info!("completion provider has no credentials");
             return None;
         }
+
+        // Mutate this so that future completion requests include past preambles too.
+        if let Some(metadata) = self.messages_metadata.get_mut(&last_message_id) {
+            metadata.kind = message_kind;
+        }
+
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 

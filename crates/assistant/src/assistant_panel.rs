@@ -1620,8 +1620,11 @@ impl ContextEditor {
         false
     }
 
-    fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
+    fn send_to_model(&mut self, message_kind: MessageKind, cx: &mut ViewContext<Self>) {
+        if let Some(user_message) = self
+            .context
+            .update(cx, |context, cx| context.assist(message_kind, cx))
+        {
             let new_selection = {
                 let cursor = user_message
                     .start
@@ -3596,6 +3599,79 @@ impl ContextEditor {
         }
     }
 
+    fn render_chat_or_edit(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx).clone();
+
+        let (style, tooltip) = match token_state(&self.context, cx) {
+            Some(TokenState::NoTokensLeft { .. }) => (
+                ButtonStyle::Tinted(TintColor::Negative),
+                Some(Tooltip::text("Token limit reached", cx)),
+            ),
+            Some(TokenState::HasMoreTokens {
+                over_warn_threshold,
+                ..
+            }) => {
+                let (style, tooltip) = if over_warn_threshold {
+                    (
+                        ButtonStyle::Tinted(TintColor::Warning),
+                        Some(Tooltip::text("Token limit is close to exhaustion", cx)),
+                    )
+                } else {
+                    (ButtonStyle::Filled, None)
+                };
+                (style, tooltip)
+            }
+            None => (ButtonStyle::Filled, None),
+        };
+
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+
+        let has_configuration_error = configuration_error(cx).is_some();
+        let needs_to_accept_terms = self.show_accept_terms
+            && provider
+                .as_ref()
+                .map_or(false, |provider| provider.must_accept_terms(cx));
+        let disabled = has_configuration_error || needs_to_accept_terms;
+
+        h_flex()
+            .w_full()
+            .justify_between()
+            .child(
+                ButtonLike::new("edit_button")
+                    .disabled(disabled)
+                    .style(style)
+                    .when_some(tooltip, |button, tooltip| {
+                        button.tooltip(move |_| tooltip.clone())
+                    })
+                    .layer(ElevationIndex::ModalSurface)
+                    .child(Label::new("Edit"))
+                    .children(
+                        KeyBinding::for_action_in(&Assist, &focus_handle, cx)
+                            .map(|binding| binding.into_any_element()),
+                    )
+                    .on_click(move |_event, cx| {
+                        focus_handle.dispatch_action(&Assist, cx);
+                    }),
+            )
+            .child(
+                ButtonLike::new("chat_button")
+                    .disabled(disabled)
+                    .style(style)
+                    .when_some(tooltip, |button, tooltip| {
+                        button.tooltip(move |_| tooltip.clone())
+                    })
+                    .layer(ElevationIndex::ModalSurface)
+                    .child(Label::new("Chat"))
+                    .children(
+                        KeyBinding::for_action_in(&Assist, &focus_handle, cx)
+                            .map(|binding| binding.into_any_element()),
+                    )
+                    .on_click(move |_event, cx| {
+                        focus_handle.dispatch_action(&Assist, cx);
+                    }),
+            )
+    }
+
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
 
@@ -3881,6 +3957,8 @@ impl EventEmitter<SearchEvent> for ContextEditor {}
 
 impl Render for ContextEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let settings = AssistantSettings::get_global(cx);
+        let render_live_diffs = settings.are_live_diffs_enabled(cx);
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         let accept_terms = if self.show_accept_terms {
             provider
@@ -3965,12 +4043,13 @@ impl Render for ContextEditor {
                                         }),
                                 ),
                         )
-                        .child(
-                            h_flex()
-                                .w_full()
-                                .justify_end()
-                                .child(div().child(self.render_send_button(cx))),
-                        ),
+                        .child(h_flex().w_full().justify_end().child(div().child(
+                            if render_live_diffs {
+                                self.render_chat_or_edit(cx)
+                            } else {
+                                self.render_send_button(cx)
+                            },
+                        ))),
                 ),
             )
     }
