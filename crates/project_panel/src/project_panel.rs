@@ -17,13 +17,13 @@ use collections::{hash_map, BTreeSet, HashMap};
 use core::f32;
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, px, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, ClipboardItem, DismissEvent, Div, DragMoveEvent,
-    Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView, InteractiveElement,
-    KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled,
-    Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView,
-    WindowContext,
+    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
+    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
+    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
+    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
+    WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -44,7 +44,9 @@ use std::{
     time::Duration,
 };
 use theme::ThemeSettings;
-use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
+use ui::{
+    prelude::*, v_flex, ContextMenu, Icon, IndentGuideLayout, KeyBinding, Label, ListItem, Tooltip,
+};
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -2124,6 +2126,29 @@ impl ProjectPanel {
         }
     }
 
+    fn index_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        worktree_id: WorktreeId,
+    ) -> Option<(usize, usize, usize)> {
+        let mut worktree_ix = 0;
+        let mut total_ix = 0;
+        for (current_worktree_id, visible_worktree_entries, _) in &self.visible_entries {
+            if worktree_id != *current_worktree_id {
+                total_ix += visible_worktree_entries.len();
+                worktree_ix += 1;
+                continue;
+            }
+
+            return visible_worktree_entries
+                .iter()
+                .enumerate()
+                .find(|(_, entry)| entry.id == entry_id)
+                .map(|(ix, _)| (worktree_ix, ix, total_ix + ix));
+        }
+        None
+    }
+
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
@@ -2850,6 +2875,69 @@ impl ProjectPanel {
             cx.notify();
         }
     }
+
+    fn find_active_indent_guide(
+        &self,
+        indent_guides: &[IndentGuideLayout],
+        cx: &AppContext,
+    ) -> Option<usize> {
+        let (worktree, entry) = self.selected_entry(cx)?;
+
+        let mut entry = entry;
+        loop {
+            let is_expanded_dir = entry.is_dir()
+                && self
+                    .expanded_dir_ids
+                    .get(&worktree.id())
+                    .map(|ids| ids.binary_search(&entry.id).is_ok())
+                    .unwrap_or(false);
+            let has_files = worktree.files_in_folder(&entry.path).next().is_some();
+
+            if is_expanded_dir && has_files {
+                break;
+            }
+            entry = worktree.entry_for_path(&entry.path.parent()?)?;
+        }
+
+        let (active_indent_range, depth) = {
+            let (worktree_ix, child_offset, ix) = self.index_for_entry(entry.id, worktree.id())?;
+            let child_paths = &self.visible_entries[worktree_ix].1;
+            let mut child_count = 0;
+            let depth = entry.path.ancestors().count();
+            while let Some(entry) = child_paths.get(child_offset + child_count + 1) {
+                if entry.path.ancestors().count() <= depth {
+                    break;
+                }
+                child_count += 1;
+            }
+
+            let start = ix + 1;
+            let end = start + child_count;
+
+            let (_, entries, paths) = &self.visible_entries[worktree_ix];
+            let visible_worktree_entries =
+                paths.get_or_init(|| entries.iter().map(|e| (e.path.clone())).collect());
+
+            // Calculate the actual depth of the entry, taking into account that directories can be auto-folded.
+            let (depth, _) = Self::calculate_depth_and_difference(entry, visible_worktree_entries);
+            (start..end, depth)
+        };
+
+        let candidates = indent_guides
+            .iter()
+            .enumerate()
+            .filter(|(_, indent_guide)| indent_guide.offset.x == depth);
+
+        for (i, indent) in candidates {
+            // Find matches that are either an exact match, partially on screen, or inside the enclosing indent
+            if active_indent_range.start <= indent.offset.y + indent.length
+                && indent.offset.y <= active_indent_range.end
+            {
+                return Some(i);
+            }
+        }
+        None
+    }
 }
 
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
@@ -2865,6 +2953,8 @@ impl Render for ProjectPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
+        let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
+        let indent_guides = ProjectPanelSettings::get_global(cx).indent_guides;
 
         if has_worktree {
             let item_count = self
@@ -2966,6 +3056,75 @@ impl Render for ProjectPanel {
                             });
                             items
                         }
+                    })
+                    .when(indent_guides, |this| {
+                        let line_color = cx.theme().colors().editor_indent_guide;
+                        let active_line_color = cx.theme().colors().editor_indent_guide_active;
+                        this.with_decoration(
+                            ui::indent_guides(
+                                cx.view().clone(),
+                                px(indent_size),
+                                |this, range, cx| {
+                                    use smallvec::SmallVec;
+                                    let mut items =
+                                        SmallVec::with_capacity(range.end - range.start);
+                                    this.for_each_visible_entry(range, cx, |_, details, _| {
+                                        // TODO: only fetch depth instead of all details
+                                        items.push(details.depth);
+                                    });
+                                    items
+                                },
+                                cx,
+                            )
+                            .with_render_fn(
+                                cx.view().clone(),
+                                move |this, params, cx| {
+                                    const LEFT_OFFSET: f32 = 14.;
+                                    const PADDING_Y: f32 = 4.;
+
+                                    let active_indent_guide_index =
+                                        this.find_active_indent_guide(&params.indent_guides, cx);
+
+                                    let indent_size = params.indent_size;
+                                    let item_height = params.item_height;
+
+                                    params
+                                        .indent_guides
+                                        .into_iter()
+                                        .enumerate()
+                                        .map(|(idx, layout)| {
+                                            let offset = if layout.continues_offscreen {
+                                                px(0.)
+                                            } else {
+                                                px(PADDING_Y)
+                                            };
+                                            ui::RenderedIndentGuide {
+                                                bounds: Bounds::new(
+                                                    point(
+                                                        px(layout.offset.x as f32) * indent_size
+                                                            + px(LEFT_OFFSET),
+                                                        px(layout.offset.y as f32) * item_height
+                                                            + offset,
+                                                    ),
+                                                    size(
+                                                        px(1.),
+                                                        px(layout.length as f32) * item_height
+                                                            - px(offset.0 * 2.),
+                                                    ),
+                                                ),
+                                                color: Color::Custom(
+                                                    if Some(idx) == active_indent_guide_index {
+                                                        active_line_color
+                                                    } else {
+                                                        line_color
+                                                    },
+                                                ),
+                                            }
+                                        })
+                                        .collect()
+                                },
+                            ),
+                        )
                     })
                     .size_full()
                     .with_sizing_behavior(ListSizingBehavior::Infer)

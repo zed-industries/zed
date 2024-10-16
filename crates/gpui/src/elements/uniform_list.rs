@@ -5,13 +5,20 @@
 //! elements with uniform height.
 
 use crate::{
-    point, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
+    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
     ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
     ViewContext, WindowContext,
 };
+use collections::HashMap;
 use smallvec::SmallVec;
-use std::{cell::RefCell, cmp, ops::Range, rc::Rc};
+use std::{
+    any::{Any, TypeId},
+    cell::RefCell,
+    cmp,
+    ops::Range,
+    rc::Rc,
+};
 use taffy::style::Overflow;
 
 use super::ListHorizontalSizingBehavior;
@@ -48,6 +55,7 @@ where
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
+        decorations: SmallVec::new(),
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
@@ -73,11 +81,13 @@ pub struct UniformList {
     scroll_handle: Option<UniformListScrollHandle>,
     sizing_behavior: ListSizingBehavior,
     horizontal_sizing_behavior: ListHorizontalSizingBehavior,
+    decorations: SmallVec<[AnyUniformListDecoration; 1]>,
 }
 
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
+    decorations: HashMap<TypeId, Box<dyn Any>>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -102,6 +112,25 @@ pub struct ItemSize {
     /// The size of the item's contents, which may be larger than the item itself,
     /// if the item was bounded by a parent element.
     pub contents: Size<Pixels>,
+}
+
+/// A struct representing a decoration for a uniform list.
+/// This can be used for various things, such as rendering a checkered background, adding indent guides, etc.
+pub struct UniformListDecoration<T> {
+    /// A function that prepares the decoration data for painting.
+    /// Takes the range of items that are currently visible, the bounds of the list, and the height of a single item.
+    /// Returns the data that will be passed to the paint function.
+    pub prepaint_fn: Box<dyn Fn(Range<usize>, Bounds<Pixels>, Pixels, &mut WindowContext) -> T>,
+
+    /// A function that paints the decoration using the prepared data.
+    pub paint_fn: Box<dyn Fn(&T, &mut WindowContext)>,
+}
+
+struct AnyUniformListDecoration {
+    type_id: TypeId,
+    prepaint_fn:
+        Box<dyn Fn(Range<usize>, Bounds<Pixels>, Pixels, &mut WindowContext) -> Box<dyn Any>>,
+    paint_fn: Box<dyn Fn(&Box<dyn Any>, &mut WindowContext)>,
 }
 
 impl UniformListScrollHandle {
@@ -185,6 +214,7 @@ impl Element for UniformList {
             layout_id,
             UniformListFrameState {
                 items: SmallVec::new(),
+                decorations: HashMap::default(),
             },
         )
     }
@@ -292,6 +322,17 @@ impl Element for UniformList {
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
                     let mut items = (self.render_items)(visible_range.clone(), cx);
+
+                    for decoration in &self.decorations {
+                        let prepaint_fn = decoration.prepaint_fn.as_ref();
+                        let bounds = Bounds::new(
+                            padded_bounds.origin + point(px(0.), scroll_offset.y + padding.top),
+                            padded_bounds.size,
+                        );
+                        let state = prepaint_fn(visible_range.clone(), bounds, item_height, cx);
+                        frame_state.decorations.insert(decoration.type_id, state);
+                    }
+
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
                         for (mut item, ix) in items.into_iter().zip(visible_range) {
@@ -338,6 +379,12 @@ impl Element for UniformList {
                 for item in &mut request_layout.items {
                     item.paint(cx);
                 }
+                for decoration in &self.decorations {
+                    let Some(state) = request_layout.decorations.get(&decoration.type_id) else {
+                        continue;
+                    };
+                    (&decoration.paint_fn)(&state, cx);
+                }
             })
     }
 }
@@ -379,6 +426,28 @@ impl UniformList {
                 self.interactivity.base_style.overflow.x = Some(Overflow::Scroll);
             }
         }
+        self
+    }
+
+    /// Adds a decoration to the list.
+    pub fn with_decoration<T: 'static>(
+        mut self,
+        decoration: impl Into<UniformListDecoration<T>>,
+    ) -> Self {
+        let decoration = decoration.into();
+        self.decorations.push(AnyUniformListDecoration {
+            type_id: TypeId::of::<T>(),
+            prepaint_fn: Box::new(move |visible_range, item_height, bounds, cx| {
+                let decoration_fn = &decoration.prepaint_fn;
+                let state = (decoration_fn)(visible_range, item_height, bounds, cx);
+                Box::new(state) as Box<dyn Any>
+            }),
+            paint_fn: Box::new(move |data, cx| {
+                let decoration_fn = &decoration.paint_fn;
+                let state = data.downcast_ref::<T>().expect("Invalid state type");
+                (decoration_fn)(state, cx)
+            }),
+        });
         self
     }
 
