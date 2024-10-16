@@ -345,14 +345,14 @@ impl Fs for RealFs {
 
     #[cfg(target_os = "windows")]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::PathExt;
+        use util::paths::SanitizedPathBuf;
         use windows::{
             core::HSTRING,
             Storage::{StorageDeleteOption, StorageFile},
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path_string = path.canonicalize()?.sanitized_pathbuf_string()?;
+        let path_string = Into::<SanitizedPathBuf>::into(path.canonicalize()?).to_trimmed_string();
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
         Ok(())
@@ -370,14 +370,14 @@ impl Fs for RealFs {
 
     #[cfg(target_os = "windows")]
     async fn trash_dir(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        use util::paths::PathExt;
+        use util::paths::SanitizedPathBuf;
         use windows::{
             core::HSTRING,
             Storage::{StorageDeleteOption, StorageFolder},
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path_string = path.canonicalize()?.sanitized_pathbuf_string()?;
+        let path_string = Into::<SanitizedPathBuf>::into(path.canonicalize()?).to_trimmed_string();
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
         Ok(())

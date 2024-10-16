@@ -6,7 +6,7 @@ use std::{
     sync::Arc,
 };
 
-use ::util::{paths::PathExt, ResultExt};
+use ::util::{paths::SanitizedPathBuf, ResultExt};
 use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
@@ -636,12 +636,15 @@ fn file_open_dialog(options: PathPromptOptions) -> Result<Option<Vec<PathBuf>>> 
 fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
     let dialog: IFileSaveDialog = unsafe { CoCreateInstance(&FileSaveDialog, None, CLSCTX_ALL)? };
     if !directory.to_string_lossy().is_empty() {
-        if let Some(full_path) = directory.canonicalize().log_err() {
-            if let Some(full_path_string) = full_path.sanitized_pathbuf_string().log_err() {
-                let path_item: IShellItem =
-                    unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
-                unsafe { dialog.SetFolder(&path_item).log_err() };
-            }
+        if let Some(full_path) = directory
+            .canonicalize()
+            .log_err()
+            .map(SanitizedPathBuf::from)
+        {
+            let full_path_string = full_path.to_trimmed_string();
+            let path_item: IShellItem =
+                unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
+            unsafe { dialog.SetFolder(&path_item).log_err() };
         }
     }
     unsafe {
