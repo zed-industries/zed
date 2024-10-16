@@ -817,6 +817,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-astro"]
