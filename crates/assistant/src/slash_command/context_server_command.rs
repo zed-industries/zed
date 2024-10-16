@@ -1,28 +1,29 @@
+use super::create_label_for_command;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
-    SlashCommandOutputSection,
+    as_stream_vec, AfterCompletion, ArgumentCompletion, Role, SlashCommand,
+    SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
-    protocol::PromptInfo,
+    types::{Prompt, SamplingContent, SamplingRole},
 };
-use gpui::{Task, WeakView, WindowContext};
+use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use text::LineEnding;
-use ui::{IconName, SharedString};
+use ui::IconName;
 use workspace::Workspace;
 
 pub struct ContextServerSlashCommand {
     server_id: String,
-    prompt: PromptInfo,
+    prompt: Prompt,
 }
 
 impl ContextServerSlashCommand {
-    pub fn new(server: &Arc<ContextServer>, prompt: PromptInfo) -> Self {
+    pub fn new(server: &Arc<ContextServer>, prompt: Prompt) -> Self {
         Self {
             server_id: server.id.clone(),
             prompt,
@@ -35,12 +36,28 @@ impl SlashCommand for ContextServerSlashCommand {
         self.prompt.name.clone()
     }
 
+    fn label(&self, cx: &AppContext) -> language::CodeLabel {
+        let mut parts = vec![self.prompt.name.as_str()];
+        if let Some(args) = &self.prompt.arguments {
+            if let Some(arg) = args.first() {
+                parts.push(arg.name.as_str());
+            }
+        }
+        create_label_for_command(&parts[0], &parts[1..], cx)
+    }
+
     fn description(&self) -> String {
-        format!("Run context server command: {}", self.prompt.name)
+        match &self.prompt.description {
+            Some(desc) => desc.clone(),
+            None => format!("Run '{}' from {}", self.prompt.name, self.server_id),
+        }
     }
 
     fn menu_text(&self) -> String {
-        format!("Run '{}' from {}", self.prompt.name, self.server_id)
+        match &self.prompt.description {
+            Some(desc) => desc.clone(),
+            None => format!("Run '{}' from {}", self.prompt.name, self.server_id),
+        }
     }
 
     fn requires_argument(&self) -> bool {
@@ -111,7 +128,7 @@ impl SlashCommand for ContextServerSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
 
@@ -128,25 +145,47 @@ impl SlashCommand for ContextServerSlashCommand {
                     return Err(anyhow!("Context server not initialized"));
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
-                let mut prompt = result.prompt;
 
-                // We must normalize the line endings here, since servers might return CR characters.
-                LineEnding::normalize(&mut prompt);
+                let mut events = Vec::new();
 
-                Ok(SlashCommandOutput {
-                    sections: vec![SlashCommandOutputSection {
-                        range: 0..(prompt.len()),
-                        icon: IconName::ZedAssistant,
-                        label: SharedString::from(
-                            result
-                                .description
-                                .unwrap_or(format!("Result from {}", prompt_name)),
-                        ),
+                for message in result.messages {
+                    events.push(SlashCommandEvent::StartMessage {
+                        role: match message.role {
+                            SamplingRole::User => Role::User,
+                            SamplingRole::Assistant => Role::Assistant,
+                        },
+                        merge_same_roles: true,
+                    });
+
+                    events.push(SlashCommandEvent::StartSection {
+                        icon: IconName::Ai,
+                        label: "".into(),
                         metadata: None,
-                    }],
-                    text: prompt,
-                    run_commands_in_text: false,
-                })
+                    });
+
+                    match message.content {
+                        SamplingContent::Text { text } => {
+                            let mut normalized_text = text;
+                            LineEnding::normalize(&mut normalized_text);
+                            events.push(SlashCommandEvent::Content(
+                                SlashCommandContentType::Text {
+                                    text: normalized_text,
+                                    run_commands_in_text: false,
+                                },
+                            ));
+                        }
+                        SamplingContent::Image {
+                            data: _data,
+                            mime_type: _mime_type,
+                        } => {
+                            todo!("unsupported")
+                        }
+                    }
+
+                    events.push(SlashCommandEvent::EndSection { metadata: None });
+                }
+
+                Ok(as_stream_vec(events))
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))
@@ -154,7 +193,7 @@ impl SlashCommand for ContextServerSlashCommand {
     }
 }
 
-fn completion_argument(prompt: &PromptInfo, arguments: &[String]) -> Result<(String, String)> {
+fn completion_argument(prompt: &Prompt, arguments: &[String]) -> Result<(String, String)> {
     if arguments.is_empty() {
         return Err(anyhow!("No arguments given"));
     }
@@ -170,7 +209,7 @@ fn completion_argument(prompt: &PromptInfo, arguments: &[String]) -> Result<(Str
     }
 }
 
-fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap<String, String>> {
+fn prompt_arguments(prompt: &Prompt, arguments: &[String]) -> Result<HashMap<String, String>> {
     match &prompt.arguments {
         Some(args) if args.len() > 1 => Err(anyhow!(
             "Prompt has more than one argument, which is not supported"
@@ -199,7 +238,7 @@ fn prompt_arguments(prompt: &PromptInfo, arguments: &[String]) -> Result<HashMap
 /// MCP servers can return prompts with multiple arguments. Since we only
 /// support one argument, we ignore all others. This is the necessary predicate
 /// for this.
-pub fn acceptable_prompt(prompt: &PromptInfo) -> bool {
+pub fn acceptable_prompt(prompt: &Prompt) -> bool {
     match &prompt.arguments {
         None => true,
         Some(args) if args.len() <= 1 => true,

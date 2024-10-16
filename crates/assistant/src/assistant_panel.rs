@@ -4,10 +4,10 @@ use crate::{
     prompt_library::open_prompt_library,
     prompts::PromptBuilder,
     slash_command::{
+        codeblock_fence_for_path,
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command::{self, codeblock_fence_for_path},
-        SlashCommandCompletionProvider, SlashCommandRegistry,
+        file_command, SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
@@ -2202,9 +2202,9 @@ impl ContextEditor {
                 })
             }
             ContextEvent::SlashCommandFinished {
-                output_range,
+                output_range: _output_range,
                 sections,
-                run_commands_in_output,
+                run_commands_in_ranges,
                 expand_result,
             } => {
                 self.insert_slash_command_output_sections(
@@ -2213,11 +2213,11 @@ impl ContextEditor {
                     cx,
                 );
 
-                if *run_commands_in_output {
+                for range in run_commands_in_ranges {
                     let commands = self.context.update(cx, |context, cx| {
                         context.reparse(cx);
                         context
-                            .pending_commands_for_range(output_range.clone(), cx)
+                            .pending_commands_for_range(range.clone(), cx)
                             .to_vec()
                     });
 

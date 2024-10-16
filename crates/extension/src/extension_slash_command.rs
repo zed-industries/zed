@@ -1,12 +1,12 @@
-use std::sync::{atomic::AtomicBool, Arc};
-
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    as_stream_vec, ArgumentCompletion, SlashCommand, SlashCommandOutputSection, SlashCommandResult,
 };
+use assistant_slash_command::{SlashCommandContentType, SlashCommandEvent};
 use futures::FutureExt;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
+use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
@@ -87,7 +87,7 @@ impl SlashCommand for ExtensionSlashCommand {
         _workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let arguments = arguments.to_owned();
         let output = cx.background_executor().spawn(async move {
             self.extension
@@ -113,21 +113,22 @@ impl SlashCommand for ExtensionSlashCommand {
                 .await
         });
         cx.foreground_executor().spawn(async move {
-            let output = output.await?;
-            Ok(SlashCommandOutput {
-                text: output.text,
-                sections: output
-                    .sections
-                    .into_iter()
-                    .map(|section| SlashCommandOutputSection {
-                        range: section.range.into(),
-                        icon: IconName::Code,
-                        label: section.label.into(),
-                        metadata: None,
-                    })
-                    .collect(),
-                run_commands_in_text: false,
-            })
+            let _output = output.await?;
+
+            let events = vec![
+                SlashCommandEvent::StartSection {
+                    icon: IconName::Code,
+                    label: "Code Output".into(),
+                    metadata: None,
+                },
+                SlashCommandEvent::Content(SlashCommandContentType::Text {
+                    text: "let x = 42;\nprintln!(\"The answer is {}\", x);".to_string(),
+                    run_commands_in_text: false,
+                }),
+                SlashCommandEvent::EndSection { metadata: None },
+            ];
+
+            return Ok(as_stream_vec(events));
         })
     }
 }
