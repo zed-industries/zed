@@ -8,7 +8,7 @@
 //! of several smaller structures that form a hierarchy (starting at the bottom):
 //! - [`InlayMap`] that decides where the [`Inlay`]s should be displayed.
 //! - [`FoldMap`] that decides where the fold indicators should be; it also tracks parts of a source file that are currently folded.
-//! - [`TabMap`] that keeps track of hard tabs in a buffer and invisible characters.
+//! - [`InvisibleMap`] that keeps track of hard tabs in a buffer and invisible characters.
 //! - [`WrapMap`] that handles soft wrapping.
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
@@ -21,8 +21,8 @@ mod block_map;
 mod crease_map;
 mod fold_map;
 mod inlay_map;
+mod invisible_map;
 mod invisibles;
-mod tab_map;
 mod wrap_map;
 
 use crate::{
@@ -43,6 +43,7 @@ use gpui::{
 pub(crate) use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
+use invisible_map::{InvisibleMap, InvisibleSnapshot};
 pub use invisibles::is_invisible;
 use language::{
     language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
@@ -63,7 +64,6 @@ use std::{
     sync::Arc,
 };
 use sum_tree::{Bias, TreeMap};
-use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
 use ui::WindowContext;
 use unicode_segmentation::UnicodeSegmentation;
@@ -97,7 +97,7 @@ pub struct DisplayMap {
     /// Decides where the fold indicators should be and tracks parts of a source file that are currently folded.
     fold_map: FoldMap,
     /// Keeps track of hard tabs in a buffer.
-    tab_map: TabMap,
+    tab_map: InvisibleMap,
     /// Handles soft wrapping.
     wrap_map: Model<WrapMap>,
     /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
@@ -134,7 +134,7 @@ impl DisplayMap {
         let crease_map = CreaseMap::new(&buffer_snapshot);
         let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
-        let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
+        let (tab_map, snapshot) = InvisibleMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(
             snapshot,
@@ -469,7 +469,7 @@ pub struct DisplaySnapshot {
     pub fold_snapshot: FoldSnapshot,
     pub crease_snapshot: CreaseSnapshot,
     inlay_snapshot: InlaySnapshot,
-    tab_snapshot: TabSnapshot,
+    tab_snapshot: InvisibleSnapshot,
     wrap_snapshot: WrapSnapshot,
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
@@ -569,7 +569,7 @@ impl DisplaySnapshot {
     fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
+        let tab_point = self.tab_snapshot.to_invisible_point(fold_point);
         let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
@@ -598,7 +598,7 @@ impl DisplaySnapshot {
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
-        let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
+        let tab_point = self.wrap_snapshot.to_invisible_point(wrap_point);
         let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
         fold_point.to_inlay_point(&self.fold_snapshot)
     }
@@ -606,12 +606,12 @@ impl DisplaySnapshot {
     pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
-        let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
+        let tab_point = self.wrap_snapshot.to_invisible_point(wrap_point);
         self.tab_snapshot.to_fold_point(tab_point, bias).0
     }
 
     pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
-        let tab_point = self.tab_snapshot.to_tab_point(fold_point);
+        let tab_point = self.tab_snapshot.to_invisible_point(fold_point);
         let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
@@ -1139,7 +1139,7 @@ impl DisplayPoint {
 
     pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0);
-        let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
+        let tab_point = map.wrap_snapshot.to_invisible_point(wrap_point);
         let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
         map.inlay_snapshot

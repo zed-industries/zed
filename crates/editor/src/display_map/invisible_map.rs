@@ -10,14 +10,14 @@ use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
-/// Keeps track of hard tabs in a text buffer.
+/// Keeps track of hard tabs invisible chars in a text buffer
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
-pub struct TabMap(TabSnapshot);
+pub struct InvisibleMap(InvisibleSnapshot);
 
-impl TabMap {
-    pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
-        let snapshot = TabSnapshot {
+impl InvisibleMap {
+    pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, InvisibleSnapshot) {
+        let snapshot = InvisibleSnapshot {
             fold_snapshot,
             tab_size,
             max_expansion_column: MAX_EXPANSION_COLUMN,
@@ -27,7 +27,7 @@ impl TabMap {
     }
 
     #[cfg(test)]
-    pub fn set_max_expansion_column(&mut self, column: u32) -> TabSnapshot {
+    pub fn set_max_expansion_column(&mut self, column: u32) -> InvisibleSnapshot {
         self.0.max_expansion_column = column;
         self.0.clone()
     }
@@ -37,9 +37,9 @@ impl TabMap {
         fold_snapshot: FoldSnapshot,
         mut fold_edits: Vec<FoldEdit>,
         tab_size: NonZeroU32,
-    ) -> (TabSnapshot, Vec<TabEdit>) {
+    ) -> (InvisibleSnapshot, Vec<InvisibleEdit>) {
         let old_snapshot = &mut self.0;
-        let mut new_snapshot = TabSnapshot {
+        let mut new_snapshot = InvisibleSnapshot {
             fold_snapshot,
             tab_size,
             max_expansion_column: old_snapshot.max_expansion_column,
@@ -137,16 +137,18 @@ impl TabMap {
                 let old_end = fold_edit.old.end.to_point(&old_snapshot.fold_snapshot);
                 let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
                 let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
-                tab_edits.push(TabEdit {
-                    old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
-                    new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
+                tab_edits.push(InvisibleEdit {
+                    old: old_snapshot.to_invisible_point(old_start)
+                        ..old_snapshot.to_invisible_point(old_end),
+                    new: new_snapshot.to_invisible_point(new_start)
+                        ..new_snapshot.to_invisible_point(new_end),
                 });
             }
         } else {
             new_snapshot.version += 1;
-            tab_edits.push(TabEdit {
-                old: TabPoint::zero()..old_snapshot.max_point(),
-                new: TabPoint::zero()..new_snapshot.max_point(),
+            tab_edits.push(InvisibleEdit {
+                old: InvisiblePoint::zero()..old_snapshot.max_point(),
+                new: InvisiblePoint::zero()..new_snapshot.max_point(),
             });
         }
 
@@ -156,14 +158,14 @@ impl TabMap {
 }
 
 #[derive(Clone)]
-pub struct TabSnapshot {
+pub struct InvisibleSnapshot {
     pub fold_snapshot: FoldSnapshot,
     pub tab_size: NonZeroU32,
     pub max_expansion_column: u32,
     pub version: usize,
 }
 
-impl TabSnapshot {
+impl InvisibleSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
     }
@@ -171,7 +173,7 @@ impl TabSnapshot {
     pub fn line_len(&self, row: u32) -> u32 {
         let max_point = self.max_point();
         if row < max_point.row() {
-            self.to_tab_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
+            self.to_invisible_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
                 .0
                 .column
         } else {
@@ -180,10 +182,10 @@ impl TabSnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.text_summary_for_range(TabPoint::zero()..self.max_point())
+        self.text_summary_for_range(InvisiblePoint::zero()..self.max_point())
     }
 
-    pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<InvisiblePoint>) -> TextSummary {
         let input_start = self.to_fold_point(range.start, Bias::Left).0;
         let input_end = self.to_fold_point(range.end, Bias::Right).0;
         let input_summary = self
@@ -212,7 +214,7 @@ impl TabSnapshot {
         } else {
             for _ in self
                 .chunks(
-                    TabPoint::new(range.end.row(), 0)..range.end,
+                    InvisiblePoint::new(range.end.row(), 0)..range.end,
                     false,
                     Highlights::default(),
                 )
@@ -233,10 +235,10 @@ impl TabSnapshot {
 
     pub fn chunks<'a>(
         &'a self,
-        range: Range<TabPoint>,
+        range: Range<InvisiblePoint>,
         language_aware: bool,
         highlights: Highlights<'a>,
-    ) -> TabChunks<'a> {
+    ) -> InvisibleChunks<'a> {
         let (input_start, expanded_char_column, to_next_stop) =
             self.to_fold_point(range.start, Bias::Left);
         let input_column = input_start.column();
@@ -251,7 +253,7 @@ impl TabSnapshot {
             to_next_stop
         };
 
-        TabChunks {
+        InvisibleChunks {
             fold_chunks: self.fold_snapshot.chunks(
                 input_start..input_end,
                 language_aware,
@@ -279,7 +281,7 @@ impl TabSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(
-            TabPoint::zero()..self.max_point(),
+            InvisiblePoint::zero()..self.max_point(),
             false,
             Highlights::default(),
         )
@@ -287,28 +289,28 @@ impl TabSnapshot {
         .collect()
     }
 
-    pub fn max_point(&self) -> TabPoint {
-        self.to_tab_point(self.fold_snapshot.max_point())
+    pub fn max_point(&self) -> InvisiblePoint {
+        self.to_invisible_point(self.fold_snapshot.max_point())
     }
 
-    pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
-        self.to_tab_point(
+    pub fn clip_point(&self, point: InvisiblePoint, bias: Bias) -> InvisiblePoint {
+        self.to_invisible_point(
             self.fold_snapshot
                 .clip_point(self.to_fold_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
+    pub fn to_invisible_point(&self, input: FoldPoint) -> InvisiblePoint {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
-        let expanded = self.expand_tabs(chars, input.column());
-        TabPoint::new(input.row(), expanded)
+        let expanded = self.expand_invisibles(chars, input.column());
+        InvisiblePoint::new(input.row(), expanded)
     }
 
-    pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
+    pub fn to_fold_point(&self, output: InvisiblePoint, bias: Bias) -> (FoldPoint, u32, u32) {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
         let expanded = output.column();
         let (collapsed, expanded_char_column, to_next_stop) =
-            self.collapse_tabs(chars, expanded, bias);
+            self.collapse_invisibles(chars, expanded, bias);
         (
             FoldPoint::new(output.row(), collapsed),
             expanded_char_column,
@@ -316,13 +318,13 @@ impl TabSnapshot {
         )
     }
 
-    pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
+    pub fn make_tab_point(&self, point: Point, bias: Bias) -> InvisiblePoint {
         let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        self.to_tab_point(fold_point)
+        self.to_invisible_point(fold_point)
     }
 
-    pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
+    pub fn to_point(&self, point: InvisiblePoint, bias: Bias) -> Point {
         let fold_point = self.to_fold_point(point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
         self.fold_snapshot
@@ -330,7 +332,7 @@ impl TabSnapshot {
             .to_buffer_point(inlay_point)
     }
 
-    fn expand_tabs(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
+    fn expand_invisibles(&self, chars: impl Iterator<Item = char>, column: u32) -> u32 {
         let tab_size = self.tab_size.get();
 
         let mut expanded_chars = 0;
@@ -357,7 +359,7 @@ impl TabSnapshot {
         expanded_bytes + column.saturating_sub(collapsed_bytes)
     }
 
-    fn collapse_tabs(
+    fn collapse_invisibles(
         &self,
         chars: impl Iterator<Item = char>,
         column: u32,
@@ -411,9 +413,9 @@ impl TabSnapshot {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct TabPoint(pub Point);
+pub struct InvisiblePoint(pub Point);
 
-impl TabPoint {
+impl InvisiblePoint {
     pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
@@ -431,13 +433,13 @@ impl TabPoint {
     }
 }
 
-impl From<Point> for TabPoint {
+impl From<Point> for InvisiblePoint {
     fn from(point: Point) -> Self {
         Self(point)
     }
 }
 
-pub type TabEdit = text::Edit<TabPoint>;
+pub type InvisibleEdit = text::Edit<InvisiblePoint>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
@@ -491,7 +493,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 // Handles a tab width <= 16
 const SPACES: &str = "                ";
 
-pub struct TabChunks<'a> {
+pub struct InvisibleChunks<'a> {
     fold_chunks: FoldChunks<'a>,
     chunk: Chunk<'a>,
     column: u32,
@@ -503,7 +505,7 @@ pub struct TabChunks<'a> {
     inside_leading_tab: bool,
 }
 
-impl<'a> Iterator for TabChunks<'a> {
+impl<'a> Iterator for InvisibleChunks<'a> {
     type Item = Chunk<'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -613,16 +615,16 @@ mod tests {
     use rand::{prelude::StdRng, Rng};
 
     #[gpui::test]
-    fn test_expand_tabs(cx: &mut gpui::AppContext) {
+    fn test_expand_invisibles(cx: &mut gpui::AppContext) {
         let buffer = MultiBuffer::build_simple("", cx);
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, invisible_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
-        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 1), 4);
-        assert_eq!(tab_snapshot.expand_tabs("\ta".chars(), 2), 5);
+        assert_eq!(invisible_snapshot.expand_invisibles("\t".chars(), 0), 0);
+        assert_eq!(invisible_snapshot.expand_invisibles("\t".chars(), 1), 4);
+        assert_eq!(invisible_snapshot.expand_invisibles("\ta".chars(), 2), 5);
     }
 
     #[gpui::test]
@@ -635,16 +637,16 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, mut invisible_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        tab_snapshot.max_expansion_column = max_expansion_column;
-        assert_eq!(tab_snapshot.text(), output);
+        invisible_snapshot.max_expansion_column = max_expansion_column;
+        assert_eq!(invisible_snapshot.text(), output);
 
         for (ix, c) in input.char_indices() {
             assert_eq!(
-                tab_snapshot
+                invisible_snapshot
                     .chunks(
-                        TabPoint::new(0, ix as u32)..tab_snapshot.max_point(),
+                        InvisiblePoint::new(0, ix as u32)..invisible_snapshot.max_point(),
                         false,
                         Highlights::default(),
                     )
@@ -658,13 +660,13 @@ mod tests {
                 let input_point = Point::new(0, ix as u32);
                 let output_point = Point::new(0, output.find(c).unwrap() as u32);
                 assert_eq!(
-                    tab_snapshot.to_tab_point(FoldPoint(input_point)),
-                    TabPoint(output_point),
-                    "to_tab_point({input_point:?})"
+                    invisible_snapshot.to_invisible_point(FoldPoint(input_point)),
+                    InvisiblePoint(output_point),
+                    "to_invisible_point({input_point:?})"
                 );
                 assert_eq!(
-                    tab_snapshot
-                        .to_fold_point(TabPoint(output_point), Bias::Left)
+                    invisible_snapshot
+                        .to_fold_point(InvisiblePoint(output_point), Bias::Left)
                         .0,
                     FoldPoint(input_point),
                     "to_fold_point({output_point:?})"
@@ -682,10 +684,10 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, mut invisible_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        tab_snapshot.max_expansion_column = max_expansion_column;
-        assert_eq!(tab_snapshot.text(), input);
+        invisible_snapshot.max_expansion_column = max_expansion_column;
+        assert_eq!(invisible_snapshot.text(), input);
     }
 
     #[gpui::test]
@@ -696,10 +698,10 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, invisible_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
 
         assert_eq!(
-            chunks(&tab_snapshot, TabPoint::zero()),
+            chunks(&invisible_snapshot, InvisiblePoint::zero()),
             vec![
                 ("    ".to_string(), true),
                 (" ".to_string(), false),
@@ -708,7 +710,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            chunks(&tab_snapshot, TabPoint::new(0, 2)),
+            chunks(&invisible_snapshot, InvisiblePoint::new(0, 2)),
             vec![
                 ("  ".to_string(), true),
                 (" ".to_string(), false),
@@ -717,7 +719,7 @@ mod tests {
             ]
         );
 
-        fn chunks(snapshot: &TabSnapshot, start: TabPoint) -> Vec<(String, bool)> {
+        fn chunks(snapshot: &InvisibleSnapshot, start: InvisiblePoint) -> Vec<(String, bool)> {
             let mut chunks = Vec::new();
             let mut was_tab = false;
             let mut text = String::new();
@@ -763,24 +765,25 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
-        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        let (mut invisible_map, _) = InvisibleMap::new(fold_snapshot.clone(), tab_size);
+        let invisibles_snapshot = invisible_map.set_max_expansion_column(32);
 
-        let text = text::Rope::from(tabs_snapshot.text().as_str());
+        let text = text::Rope::from(invisibles_snapshot.text().as_str());
         log::info!(
-            "TabMap text (tab size: {}): {:?}",
+            "InvisibleMap text (tab size: {}): {:?}",
             tab_size,
-            tabs_snapshot.text(),
+            invisibles_snapshot.text(),
         );
 
         for _ in 0..5 {
             let end_row = rng.gen_range(0..=text.max_point().row);
             let end_column = rng.gen_range(0..=text.line_len(end_row));
-            let mut end = TabPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
+            let mut end =
+                InvisiblePoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
             let start_row = rng.gen_range(0..=text.max_point().row);
             let start_column = rng.gen_range(0..=text.line_len(start_row));
             let mut start =
-                TabPoint(text.clip_point(Point::new(start_row, start_column), Bias::Left));
+                InvisiblePoint(text.clip_point(Point::new(start_row, start_column), Bias::Left));
             if start > end {
                 mem::swap(&mut start, &mut end);
             }
@@ -790,7 +793,7 @@ mod tests {
                 .collect::<String>();
             let expected_summary = TextSummary::from(expected_text.as_str());
             assert_eq!(
-                tabs_snapshot
+                invisibles_snapshot
                     .chunks(start..end, false, Highlights::default())
                     .map(|c| c.text)
                     .collect::<String>(),
@@ -800,7 +803,7 @@ mod tests {
                 end
             );
 
-            let mut actual_summary = tabs_snapshot.text_summary_for_range(start..end);
+            let mut actual_summary = invisibles_snapshot.text_summary_for_range(start..end);
             if tab_size.get() > 1 && inlay_snapshot.text().contains('\t') {
                 actual_summary.longest_row = expected_summary.longest_row;
                 actual_summary.longest_row_chars = expected_summary.longest_row_chars;
@@ -810,7 +813,7 @@ mod tests {
 
         for row in 0..=text.max_point().row {
             assert_eq!(
-                tabs_snapshot.line_len(row),
+                invisibles_snapshot.line_len(row),
                 text.line_len(row),
                 "line_len({row})"
             );
