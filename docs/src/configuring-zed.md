@@ -15,7 +15,7 @@ TBD: Add settings documentation about how settings are merged as overlays. E.g. 
 
 Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenLocalSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
@@ -1498,13 +1498,13 @@ List of `integer` column numbers
         "directories": [".env", "env", ".venv", "venv"],
         "activate_script": "default"
       }
-    }
+    },
     "env": {},
     "font_family": null,
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
-    "option_as_meta": true,
+    "option_as_meta": false,
     "button": false,
     "shell": {},
     "toolbar": {
@@ -1732,7 +1732,7 @@ See Buffer Font Features
 
 - Description: Re-interprets the option keys to act like a 'meta' key, like in Emacs.
 - Setting: `option_as_meta`
-- Default: `true`
+- Default: `false`
 
 **Options**
 

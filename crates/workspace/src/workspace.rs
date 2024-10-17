@@ -46,7 +46,9 @@ use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-use notifications::{simple_message_notification::MessageNotification, NotificationHandle};
+use notifications::{
+    simple_message_notification::MessageNotification, DetachAndPromptErr, NotificationHandle,
+};
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
@@ -65,7 +67,7 @@ use release_channel::ReleaseChannel;
 use remote::{SshClientDelegate, SshConnectionOptions};
 use serde::Deserialize;
 use session::AppSession;
-use settings::{InvalidSettingsError, Settings};
+use settings::Settings;
 use shared_screen::SharedScreen;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -839,31 +841,17 @@ impl Workspace {
                     }
                 }
 
-                project::Event::LocalSettingsUpdated(result) => {
-                    struct LocalSettingsUpdated;
-                    let id = NotificationId::unique::<LocalSettingsUpdated>();
+                project::Event::Toast {
+                    notification_id,
+                    message,
+                } => this.show_notification(
+                    NotificationId::named(notification_id.clone()),
+                    cx,
+                    |cx| cx.new_view(|_| MessageNotification::new(message.clone())),
+                ),
 
-                    match result {
-                        Err(InvalidSettingsError::LocalSettings { message, path }) => {
-                            let full_message =
-                                format!("Failed to set local settings in {:?}:\n{}", path, message);
-                            this.show_notification(id, cx, |cx| {
-                                cx.new_view(|_| MessageNotification::new(full_message.clone()))
-                            })
-                        }
-                        Err(_) => {}
-                        Ok(_) => this.dismiss_notification(&id, cx),
-                    }
-                }
-
-                project::Event::Notification(message) => {
-                    struct ProjectNotification;
-
-                    this.show_notification(
-                        NotificationId::unique::<ProjectNotification>(),
-                        cx,
-                        |cx| cx.new_view(|_| MessageNotification::new(message.clone())),
-                    )
+                project::Event::HideToast { notification_id } => {
+                    this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
                 }
 
                 project::Event::LanguageServerPrompt(request) => {
@@ -874,7 +862,7 @@ impl Workspace {
                     let id = hasher.finish();
 
                     this.show_notification(
-                        NotificationId::identified::<LanguageServerPrompt>(id as usize),
+                        NotificationId::composite::<LanguageServerPrompt>(id as usize),
                         cx,
                         |cx| {
                             cx.new_view(|_| {
@@ -1115,20 +1103,28 @@ impl Workspace {
 
             let mut paths_to_open = abs_paths;
 
-            let paths_order = serialized_workspace
+            let workspace_location = serialized_workspace
                 .as_ref()
                 .map(|ws| &ws.location)
                 .and_then(|loc| match loc {
-                    SerializedWorkspaceLocation::Local(_, order) => Some(order.order()),
+                    SerializedWorkspaceLocation::Local(paths, order) => {
+                        Some((paths.paths(), order.order()))
+                    }
                     _ => None,
                 });
 
-            if let Some(paths_order) = paths_order {
-                paths_to_open = paths_order
+            if let Some((paths, order)) = workspace_location {
+                // todo: should probably move this logic to a method on the SerializedWorkspaceLocation
+                // it's only valid for Local and would be more clear there and be able to be tested
+                // and reused elsewhere
+                paths_to_open = order
                     .iter()
-                    .filter_map(|i| paths_to_open.get(*i).cloned())
-                    .collect::<Vec<_>>();
-                if paths_order.iter().enumerate().any(|(i, &j)| i != j) {
+                    .zip(paths.iter())
+                    .sorted_by_key(|(i, _)| *i)
+                    .map(|(_, path)| path.clone())
+                    .collect();
+
+                if order.iter().enumerate().any(|(i, &j)| i != j) {
                     project_handle
                         .update(&mut cx, |project, cx| {
                             project.set_worktrees_reordered(true, cx);
@@ -1808,6 +1804,7 @@ impl Workspace {
             .flat_map(|pane| {
                 pane.read(cx).items().filter_map(|item| {
                     if item.is_dirty(cx) {
+                        item.tab_description(0, cx);
                         Some((pane.downgrade(), item.boxed_clone()))
                     } else {
                         None
@@ -1900,11 +1897,7 @@ impl Workspace {
                 directories: true,
                 multiple: true,
             },
-            if self.project.read(cx).is_via_ssh() {
-                DirectoryLister::Project(self.project.clone())
-            } else {
-                DirectoryLister::Local(self.app_state.fs.clone())
-            },
+            DirectoryLister::Local(self.app_state.fs.clone()),
             cx,
         );
 
@@ -4372,17 +4365,17 @@ impl Workspace {
             .on_action(cx.listener(|workspace, action: &Save, cx| {
                 workspace
                     .save_active_item(action.save_intent.unwrap_or(SaveIntent::Save), cx)
-                    .detach_and_log_err(cx);
+                    .detach_and_prompt_err("Failed to save", cx, |_, _| None);
             }))
             .on_action(cx.listener(|workspace, _: &SaveWithoutFormat, cx| {
                 workspace
                     .save_active_item(SaveIntent::SaveWithoutFormat, cx)
-                    .detach_and_log_err(cx);
+                    .detach_and_prompt_err("Failed to save", cx, |_, _| None);
             }))
             .on_action(cx.listener(|workspace, _: &SaveAs, cx| {
                 workspace
                     .save_active_item(SaveIntent::SaveAs, cx)
-                    .detach_and_log_err(cx);
+                    .detach_and_prompt_err("Failed to save", cx, |_, _| None);
             }))
             .on_action(cx.listener(|workspace, _: &ActivatePreviousPane, cx| {
                 workspace.activate_previous_pane(cx)
@@ -5046,14 +5039,14 @@ pub fn activate_workspace_for_project(
     None
 }
 
-pub async fn last_opened_workspace_paths() -> Option<LocalPaths> {
+pub async fn last_opened_workspace_location() -> Option<SerializedWorkspaceLocation> {
     DB.last_workspace().await.log_err().flatten()
 }
 
 pub fn last_session_workspace_locations(
     last_session_id: &str,
     last_session_window_stack: Option<Vec<WindowId>>,
-) -> Option<Vec<LocalPaths>> {
+) -> Option<Vec<SerializedWorkspaceLocation>> {
     DB.last_session_workspace_locations(last_session_id, last_session_window_stack)
         .log_err()
 }
@@ -5577,6 +5570,12 @@ pub fn open_ssh_project(
                     project_path_errors.push(error);
                 }
             };
+        }
+
+        if project_paths_to_open.is_empty() {
+            return Err(project_path_errors
+                .pop()
+                .unwrap_or_else(|| anyhow!("no paths given")));
         }
 
         cx.update_window(window.into(), |_, cx| {

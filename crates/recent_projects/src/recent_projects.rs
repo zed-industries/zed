@@ -13,6 +13,7 @@ use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Subscription, Task, View, ViewContext, WeakView,
 };
+use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
@@ -21,7 +22,7 @@ use picker::{
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use settings::Settings;
-use ssh_connections::SshSettings;
+pub use ssh_connections::SshSettings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -247,8 +248,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::Local(paths, order) => order
                         .order()
                         .iter()
-                        .filter_map(|i| paths.paths().get(*i))
-                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .zip(paths.paths().iter())
+                        .sorted_by_key(|(i, _)| *i)
+                        .map(|(_, path)| path.compact().to_string_lossy().into_owned())
                         .collect::<Vec<_>>()
                         .join(""),
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
@@ -384,11 +386,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 ..Default::default()
                             };
 
+                            let args = SshSettings::get_global(cx).args_for(&ssh_project.host, ssh_project.port, &ssh_project.user);
                             let connection_options = SshConnectionOptions {
                                 host: ssh_project.host.clone(),
                                 username: ssh_project.user.clone(),
                                 port: ssh_project.port,
                                 password: None,
+                                args,
                             };
 
                             let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
@@ -445,8 +449,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 order
                     .order()
                     .iter()
-                    .filter_map(|i| paths.paths().get(*i).cloned())
-                    .map(|path| path.compact())
+                    .zip(paths.paths().iter())
+                    .sorted_by_key(|(i, _)| **i)
+                    .map(|(_, path)| path.compact())
                     .collect(),
             ),
             SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),

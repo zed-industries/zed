@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::anyhow;
@@ -7,39 +8,47 @@ use anyhow::Context;
 use anyhow::Result;
 use dev_server_projects::{DevServer, DevServerId, DevServerProjectId};
 use editor::Editor;
-use gpui::pulsating_between;
+use file_finder::OpenPathDelegate;
+use futures::channel::oneshot;
+use futures::future::Shared;
+use futures::FutureExt;
+use gpui::canvas;
 use gpui::AsyncWindowContext;
 use gpui::ClipboardItem;
-use gpui::PathPromptOptions;
-use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
-    Action, Animation, AnimationExt, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, Model, ScrollHandle, View, ViewContext,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    Model, PromptLevel, ScrollHandle, View, ViewContext,
 };
+use picker::Picker;
 use project::terminals::wrap_for_ssh;
 use project::terminals::SshCommand;
-use rpc::{proto::DevServerStatus, ErrorCode, ErrorExt};
+use project::Project;
+use remote::SshConnectionOptions;
+use rpc::proto::DevServerStatus;
 use settings::update_settings_file;
 use settings::Settings;
 use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
-use ui::ElevationIndex;
+use ui::Scrollbar;
+use ui::ScrollbarState;
 use ui::Section;
-use ui::{prelude::*, IconButtonShape, List, ListItem, Modal, ModalFooter, ModalHeader, Tooltip};
-use ui_input::{FieldLabelLayout, TextField};
+use ui::{prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
 use util::ResultExt;
+use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
-use workspace::{notifications::DetachAndPromptErr, AppState, ModalView, Workspace};
+use workspace::Toast;
+use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
 
 use crate::open_dev_server_project;
 use crate::ssh_connections::connect_over_ssh;
 use crate::ssh_connections::open_ssh_project;
 use crate::ssh_connections::RemoteSettingsContent;
 use crate::ssh_connections::SshConnection;
+use crate::ssh_connections::SshConnectionHeader;
 use crate::ssh_connections::SshConnectionModal;
 use crate::ssh_connections::SshProject;
 use crate::ssh_connections::SshPrompt;
@@ -50,29 +59,262 @@ pub struct DevServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
-    dev_server_store: Model<dev_server_projects::Store>,
     workspace: WeakView<Workspace>,
-    project_path_input: View<Editor>,
-    dev_server_name_input: View<TextField>,
-    _dev_server_subscription: Subscription,
+    selectable_items: SelectableItemList,
 }
 
-#[derive(Default)]
 struct CreateDevServer {
-    creating: Option<Task<Option<()>>>,
+    address_editor: View<Editor>,
+    address_error: Option<SharedString>,
     ssh_prompt: Option<View<SshPrompt>>,
+    _creating: Option<Task<Option<()>>>,
 }
 
-struct CreateDevServerProject {
-    dev_server_id: DevServerId,
-    _opening: Option<Subscription>,
+impl CreateDevServer {
+    fn new(cx: &mut WindowContext<'_>) -> Self {
+        let address_editor = cx.new_view(Editor::single_line);
+        address_editor.update(cx, |this, cx| {
+            this.focus_handle(cx).focus(cx);
+        });
+        Self {
+            address_editor,
+            address_error: None,
+            ssh_prompt: None,
+            _creating: None,
+        }
+    }
 }
 
+struct ProjectPicker {
+    connection_string: SharedString,
+    picker: View<Picker<OpenPathDelegate>>,
+    _path_task: Shared<Task<Option<()>>>,
+}
+
+type SelectedItemCallback =
+    Box<dyn Fn(&mut DevServerProjects, &mut ViewContext<DevServerProjects>) + 'static>;
+
+/// Used to implement keyboard navigation for SSH modal.
+#[derive(Default)]
+struct SelectableItemList {
+    items: Vec<SelectedItemCallback>,
+    active_item: Option<usize>,
+}
+
+struct EditNicknameState {
+    index: usize,
+    editor: View<Editor>,
+}
+
+impl EditNicknameState {
+    fn new(index: usize, cx: &mut WindowContext<'_>) -> Self {
+        let this = Self {
+            index,
+            editor: cx.new_view(Editor::single_line),
+        };
+        let starting_text = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(index)
+            .and_then(|state| state.nickname.clone())
+            .filter(|text| !text.is_empty());
+        this.editor.update(cx, |this, cx| {
+            this.set_placeholder_text("Add a nickname for this server", cx);
+            if let Some(starting_text) = starting_text {
+                this.set_text(starting_text, cx);
+            }
+        });
+        this.editor.focus_handle(cx).focus(cx);
+        this
+    }
+}
+
+impl SelectableItemList {
+    fn reset(&mut self) {
+        self.items.clear();
+    }
+
+    fn reset_selection(&mut self) {
+        self.active_item.take();
+    }
+
+    fn prev(&mut self, _: &mut WindowContext<'_>) {
+        match self.active_item.as_mut() {
+            Some(active_index) => {
+                *active_index = active_index.checked_sub(1).unwrap_or(self.items.len() - 1)
+            }
+            None => {
+                self.active_item = Some(self.items.len() - 1);
+            }
+        }
+    }
+
+    fn next(&mut self, _: &mut WindowContext<'_>) {
+        match self.active_item.as_mut() {
+            Some(active_index) => {
+                if *active_index + 1 < self.items.len() {
+                    *active_index += 1;
+                } else {
+                    *active_index = 0;
+                }
+            }
+            None => {
+                self.active_item = Some(0);
+            }
+        }
+    }
+
+    fn add_item(&mut self, callback: SelectedItemCallback) {
+        self.items.push(callback)
+    }
+
+    fn is_selected(&self) -> bool {
+        self.active_item == self.items.len().checked_sub(1)
+    }
+
+    fn confirm(&self, dev_modal: &mut DevServerProjects, cx: &mut ViewContext<DevServerProjects>) {
+        if let Some(active_item) = self.active_item.and_then(|ix| self.items.get(ix)) {
+            active_item(dev_modal, cx);
+        }
+    }
+}
+
+impl ProjectPicker {
+    fn new(
+        ix: usize,
+        connection_string: SharedString,
+        project: Model<Project>,
+        workspace: WeakView<Workspace>,
+        cx: &mut ViewContext<DevServerProjects>,
+    ) -> View<Self> {
+        let (tx, rx) = oneshot::channel();
+        let lister = project::DirectoryLister::Project(project.clone());
+        let query = lister.default_query(cx);
+        let delegate = file_finder::OpenPathDelegate::new(tx, lister);
+
+        let picker = cx.new_view(|cx| {
+            let picker = Picker::uniform_list(delegate, cx)
+                .width(rems(34.))
+                .modal(false);
+            picker.set_query(query, cx);
+            picker
+        });
+        cx.new_view(|cx| {
+            let _path_task = cx
+                .spawn({
+                    let workspace = workspace.clone();
+                    move |_, mut cx| async move {
+                        let Ok(Some(paths)) = rx.await else {
+                            workspace
+                                .update(&mut cx, |workspace, cx| {
+                                    let weak = cx.view().downgrade();
+                                    workspace
+                                        .toggle_modal(cx, |cx| DevServerProjects::new(cx, weak));
+                                })
+                                .log_err()?;
+                            return None;
+                        };
+
+                        let app_state = workspace
+                            .update(&mut cx, |workspace, _| workspace.app_state().clone())
+                            .ok()?;
+                        let options = cx
+                            .update(|cx| (app_state.build_window_options)(None, cx))
+                            .log_err()?;
+
+                        cx.open_window(options, |cx| {
+                            cx.activate_window();
+
+                            let fs = app_state.fs.clone();
+                            update_settings_file::<SshSettings>(fs, cx, {
+                                let paths = paths
+                                    .iter()
+                                    .map(|path| path.to_string_lossy().to_string())
+                                    .collect();
+                                move |setting, _| {
+                                    if let Some(server) = setting
+                                        .ssh_connections
+                                        .as_mut()
+                                        .and_then(|connections| connections.get_mut(ix))
+                                    {
+                                        server.projects.push(SshProject { paths })
+                                    }
+                                }
+                            });
+
+                            let tasks = paths
+                                .into_iter()
+                                .map(|path| {
+                                    project.update(cx, |project, cx| {
+                                        project.find_or_create_worktree(&path, true, cx)
+                                    })
+                                })
+                                .collect::<Vec<_>>();
+                            cx.spawn(|_| async move {
+                                for task in tasks {
+                                    task.await?;
+                                }
+                                Ok(())
+                            })
+                            .detach_and_prompt_err(
+                                "Failed to open path",
+                                cx,
+                                |_, _| None,
+                            );
+
+                            cx.new_view(|cx| {
+                                let workspace =
+                                    Workspace::new(None, project.clone(), app_state.clone(), cx);
+
+                                workspace
+                                    .client()
+                                    .telemetry()
+                                    .report_app_event("create ssh project".to_string());
+
+                                workspace
+                            })
+                        })
+                        .log_err();
+                        Some(())
+                    }
+                })
+                .shared();
+
+            Self {
+                _path_task,
+                picker,
+                connection_string,
+            }
+        })
+    }
+}
+
+impl gpui::Render for ProjectPicker {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .child(
+                SshConnectionHeader {
+                    connection_string: self.connection_string.clone(),
+                    nickname: None,
+                }
+                .render(cx),
+            )
+            .child(self.picker.clone())
+    }
+}
 enum Mode {
-    Default(Option<CreateDevServerProject>),
+    Default(ScrollbarState),
+    ViewServerOptions(usize, SshConnection),
+    EditNickname(EditNicknameState),
+    ProjectPicker(View<ProjectPicker>),
     CreateDevServer(CreateDevServer),
 }
 
+impl Mode {
+    fn default_mode() -> Self {
+        let handle = ScrollHandle::new();
+        Self::Default(ScrollbarState::new(handle))
+    }
+}
 impl DevServerProjects {
     pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
@@ -89,21 +331,7 @@ impl DevServerProjects {
     }
 
     pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
-        let project_path_input = cx.new_view(|cx| {
-            let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Project path (~/work/zed, /workspace/zed, …)", cx);
-            editor
-        });
-        let dev_server_name_input = cx.new_view(|cx| {
-            TextField::new(cx, "Name", "192.168.0.1").with_label(FieldLabelLayout::Hidden)
-        });
-
         let focus_handle = cx.focus_handle();
-        let dev_server_store = dev_server_projects::Store::global(cx);
-
-        let subscription = cx.observe(&dev_server_store, |_, _, cx| {
-            cx.notify();
-        });
 
         let mut base_style = cx.text_style();
         base_style.refine(&gpui::TextStyleRefinement {
@@ -112,158 +340,62 @@ impl DevServerProjects {
         });
 
         Self {
-            mode: Mode::Default(None),
+            mode: Mode::default_mode(),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
-            dev_server_store,
-            project_path_input,
-            dev_server_name_input,
             workspace,
-            _dev_server_subscription: subscription,
+            selectable_items: Default::default(),
         }
     }
 
-    pub fn create_dev_server_project(
-        &mut self,
-        dev_server_id: DevServerId,
+    fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
+            return;
+        }
+        self.selectable_items.next(cx);
+    }
+    fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
+            return;
+        }
+        self.selectable_items.prev(cx);
+    }
+    pub fn project_picker(
+        ix: usize,
+        connection_options: remote::SshConnectionOptions,
+        project: Model<Project>,
         cx: &mut ViewContext<Self>,
-    ) {
-        let mut path = self.project_path_input.read(cx).text(cx).trim().to_string();
+        workspace: WeakView<Workspace>,
+    ) -> Self {
+        let mut this = Self::new(cx, workspace.clone());
+        this.mode = Mode::ProjectPicker(ProjectPicker::new(
+            ix,
+            connection_options.connection_string().into(),
+            project,
+            workspace,
+            cx,
+        ));
 
-        if path.is_empty() {
-            return;
-        }
-
-        if !path.starts_with('/') && !path.starts_with('~') {
-            path = format!("~/{}", path);
-        }
-
-        if self
-            .dev_server_store
-            .read(cx)
-            .projects_for_server(dev_server_id)
-            .iter()
-            .any(|p| p.paths.iter().any(|p| p == &path))
-        {
-            cx.spawn(|_, mut cx| async move {
-                cx.prompt(
-                    gpui::PromptLevel::Critical,
-                    "Failed to create project",
-                    Some(&format!("{} is already open on this dev server.", path)),
-                    &["Ok"],
-                )
-                .await
-            })
-            .detach_and_log_err(cx);
-            return;
-        }
-
-        let create = {
-            let path = path.clone();
-            self.dev_server_store.update(cx, |store, cx| {
-                store.create_dev_server_project(dev_server_id, path, cx)
-            })
-        };
-
-        cx.spawn(|this, mut cx| async move {
-            let result = create.await;
-            this.update(&mut cx, |this, cx| {
-                if let Ok(result) = &result {
-                    if let Some(dev_server_project_id) =
-                        result.dev_server_project.as_ref().map(|p| p.id)
-                    {
-                        let subscription =
-                            cx.observe(&this.dev_server_store, move |this, store, cx| {
-                                if let Some(project_id) = store
-                                    .read(cx)
-                                    .dev_server_project(DevServerProjectId(dev_server_project_id))
-                                    .and_then(|p| p.project_id)
-                                {
-                                    this.project_path_input.update(cx, |editor, cx| {
-                                        editor.set_text("", cx);
-                                    });
-                                    this.mode = Mode::Default(None);
-                                    if let Some(app_state) = AppState::global(cx).upgrade() {
-                                        workspace::join_dev_server_project(
-                                            DevServerProjectId(dev_server_project_id),
-                                            project_id,
-                                            app_state,
-                                            None,
-                                            cx,
-                                        )
-                                        .detach_and_prompt_err(
-                                            "Could not join project",
-                                            cx,
-                                            |_, _| None,
-                                        )
-                                    }
-                                }
-                            });
-
-                        this.mode = Mode::Default(Some(CreateDevServerProject {
-                            dev_server_id,
-                            _opening: Some(subscription),
-                        }));
-                    }
-                } else {
-                    this.mode = Mode::Default(Some(CreateDevServerProject {
-                        dev_server_id,
-                        _opening: None,
-                    }));
-                }
-            })
-            .log_err();
-            result
-        })
-        .detach_and_prompt_err("Failed to create project", cx, move |e, _| {
-            match e.error_code() {
-                ErrorCode::DevServerOffline => Some(
-                    "The dev server is offline. Please log in and check it is connected."
-                        .to_string(),
-                ),
-                ErrorCode::DevServerProjectPathDoesNotExist => {
-                    Some(format!("The path `{}` does not exist on the server.", path))
-                }
-                _ => None,
-            }
-        });
-
-        self.mode = Mode::Default(Some(CreateDevServerProject {
-            dev_server_id,
-
-            _opening: None,
-        }));
+        this
     }
 
-    fn create_ssh_server(&mut self, cx: &mut ViewContext<Self>) {
-        let host = get_text(&self.dev_server_name_input, cx);
-        if host.is_empty() {
+    fn create_ssh_server(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+        let input = get_text(&editor, cx);
+        if input.is_empty() {
             return;
         }
 
-        let mut host = host.trim_start_matches("ssh ");
-        let mut username: Option<String> = None;
-        let mut port: Option<u16> = None;
-
-        if let Some((u, rest)) = host.split_once('@') {
-            host = rest;
-            username = Some(u.to_string());
-        }
-        if let Some((rest, p)) = host.split_once(':') {
-            host = rest;
-            port = p.parse().ok()
-        }
-
-        if let Some((rest, p)) = host.split_once(" -p") {
-            host = rest;
-            port = p.trim().parse().ok()
-        }
-
-        let connection_options = remote::SshConnectionOptions {
-            host: host.to_string(),
-            username: username.clone(),
-            port,
-            password: None,
+        let connection_options = match SshConnectionOptions::parse_command_line(&input) {
+            Ok(c) => c,
+            Err(e) => {
+                self.mode = Mode::CreateDevServer(CreateDevServer {
+                    address_editor: editor,
+                    address_error: Some(format!("could not parse: {:?}", e).into()),
+                    ssh_prompt: None,
+                    _creating: None,
+                });
+                return;
+            }
         };
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
@@ -275,6 +407,7 @@ impl DevServerProjects {
         )
         .prompt_err("Failed to connect", cx, |_, _| None);
 
+        let address_editor = editor.clone();
         let creating = cx.spawn(move |this, mut cx| async move {
             match connection.await {
                 Some(_) => this
@@ -287,23 +420,48 @@ impl DevServerProjects {
                         });
 
                         this.add_ssh_server(connection_options, cx);
-                        this.mode = Mode::Default(None);
+                        this.mode = Mode::default_mode();
+                        this.selectable_items.reset_selection();
                         cx.notify()
                     })
                     .log_err(),
                 None => this
                     .update(&mut cx, |this, cx| {
-                        this.mode = Mode::CreateDevServer(CreateDevServer::default());
+                        address_editor.update(cx, |this, _| {
+                            this.set_read_only(false);
+                        });
+                        this.mode = Mode::CreateDevServer(CreateDevServer {
+                            address_editor,
+                            address_error: None,
+                            ssh_prompt: None,
+                            _creating: None,
+                        });
                         cx.notify()
                     })
                     .log_err(),
             };
             None
         });
-        self.mode = Mode::CreateDevServer(CreateDevServer {
-            ssh_prompt: Some(ssh_prompt.clone()),
-            creating: Some(creating),
+
+        editor.update(cx, |this, _| {
+            this.set_read_only(true);
         });
+        self.mode = Mode::CreateDevServer(CreateDevServer {
+            address_editor: editor,
+            address_error: None,
+            ssh_prompt: Some(ssh_prompt.clone()),
+            _creating: Some(creating),
+        });
+    }
+
+    fn view_server_options(
+        &mut self,
+        (index, connection): (usize, SshConnection),
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.selectable_items.reset_selection();
+        self.mode = Mode::ViewServerOptions(index, connection);
+        cx.notify();
     }
 
     fn create_ssh_project(
@@ -331,12 +489,12 @@ impl DevServerProjects {
 
                 let connect = connect_over_ssh(
                     connection_options.dev_server_identifier(),
-                    connection_options,
+                    connection_options.clone(),
                     prompt,
                     cx,
                 )
                 .prompt_err("Failed to connect", cx, |_, _| None);
-                cx.spawn(|workspace, mut cx| async move {
+                cx.spawn(move |workspace, mut cx| async move {
                     let Some(session) = connect.await else {
                         workspace
                             .update(&mut cx, |workspace, cx| {
@@ -346,9 +504,11 @@ impl DevServerProjects {
                             .log_err();
                         return;
                     };
-                    let Ok((app_state, project, paths)) =
-                        workspace.update(&mut cx, |workspace, cx| {
+
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
                             let app_state = workspace.app_state().clone();
+                            let weak = cx.view().downgrade();
                             let project = project::Project::ssh(
                                 session,
                                 app_state.client.clone(),
@@ -358,91 +518,17 @@ impl DevServerProjects {
                                 app_state.fs.clone(),
                                 cx,
                             );
-                            let paths = workspace.prompt_for_open_path(
-                                PathPromptOptions {
-                                    files: true,
-                                    directories: true,
-                                    multiple: true,
-                                },
-                                project::DirectoryLister::Project(project.clone()),
-                                cx,
-                            );
-                            (app_state, project, paths)
+                            workspace.toggle_modal(cx, |cx| {
+                                DevServerProjects::project_picker(
+                                    ix,
+                                    connection_options,
+                                    project,
+                                    cx,
+                                    weak,
+                                )
+                            });
                         })
-                    else {
-                        return;
-                    };
-
-                    let Ok(Some(paths)) = paths.await else {
-                        workspace
-                            .update(&mut cx, |workspace, cx| {
-                                let weak = cx.view().downgrade();
-                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, weak));
-                            })
-                            .log_err();
-                        return;
-                    };
-
-                    let Some(options) = cx
-                        .update(|cx| (app_state.build_window_options)(None, cx))
-                        .log_err()
-                    else {
-                        return;
-                    };
-
-                    cx.open_window(options, |cx| {
-                        cx.activate_window();
-
-                        let fs = app_state.fs.clone();
-                        update_settings_file::<SshSettings>(fs, cx, {
-                            let paths = paths
-                                .iter()
-                                .map(|path| path.to_string_lossy().to_string())
-                                .collect();
-                            move |setting, _| {
-                                if let Some(server) = setting
-                                    .ssh_connections
-                                    .as_mut()
-                                    .and_then(|connections| connections.get_mut(ix))
-                                {
-                                    server.projects.push(SshProject { paths })
-                                }
-                            }
-                        });
-
-                        let tasks = paths
-                            .into_iter()
-                            .map(|path| {
-                                project.update(cx, |project, cx| {
-                                    project.find_or_create_worktree(&path, true, cx)
-                                })
-                            })
-                            .collect::<Vec<_>>();
-                        cx.spawn(|_| async move {
-                            for task in tasks {
-                                task.await?;
-                            }
-                            Ok(())
-                        })
-                        .detach_and_prompt_err(
-                            "Failed to open path",
-                            cx,
-                            |_, _| None,
-                        );
-
-                        cx.new_view(|cx| {
-                            let workspace =
-                                Workspace::new(None, project.clone(), app_state.clone(), cx);
-
-                            workspace
-                                .client()
-                                .telemetry()
-                                .report_app_event("create ssh project".to_string());
-
-                            workspace
-                        })
-                    })
-                    .log_err();
+                        .ok();
                 })
                 .detach()
             })
@@ -451,10 +537,12 @@ impl DevServerProjects {
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default(None) => {}
-            Mode::Default(Some(create_project)) => {
-                self.create_dev_server_project(create_project.dev_server_id, cx);
+            Mode::Default(_) | Mode::ViewServerOptions(_, _) => {
+                let items = std::mem::take(&mut self.selectable_items);
+                items.confirm(self, cx);
+                self.selectable_items = items;
             }
+            Mode::ProjectPicker(_) => {}
             Mode::CreateDevServer(state) => {
                 if let Some(prompt) = state.ssh_prompt.as_ref() {
                     prompt.update(cx, |prompt, cx| {
@@ -463,22 +551,38 @@ impl DevServerProjects {
                     return;
                 }
 
-                self.create_ssh_server(cx);
+                self.create_ssh_server(state.address_editor.clone(), cx);
+            }
+            Mode::EditNickname(state) => {
+                let text = Some(state.editor.read(cx).text(cx))
+                    .filter(|text| !text.is_empty())
+                    .map(SharedString::from);
+                let index = state.index;
+                self.update_settings_file(cx, move |setting, _| {
+                    if let Some(connections) = setting.ssh_connections.as_mut() {
+                        if let Some(connection) = connections.get_mut(index) {
+                            connection.nickname = text;
+                        }
+                    }
+                });
+                self.mode = Mode::default_mode();
+                self.selectable_items.reset_selection();
+                self.focus_handle.focus(cx);
             }
         }
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         match &self.mode {
-            Mode::Default(None) => cx.emit(DismissEvent),
+            Mode::Default(_) => cx.emit(DismissEvent),
             Mode::CreateDevServer(state) if state.ssh_prompt.is_some() => {
-                self.mode = Mode::CreateDevServer(CreateDevServer {
-                    ..Default::default()
-                });
+                self.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
+                self.selectable_items.reset_selection();
                 cx.notify();
             }
             _ => {
-                self.mode = Mode::Default(None);
+                self.mode = Mode::default_mode();
+                self.selectable_items.reset_selection();
                 self.focus_handle(cx).focus(cx);
                 cx.notify();
             }
@@ -491,126 +595,111 @@ impl DevServerProjects {
         ssh_connection: SshConnection,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let (main_label, aux_label) = if let Some(nickname) = ssh_connection.nickname.clone() {
+            let aux_label = SharedString::from(format!("({})", ssh_connection.host));
+            (nickname, Some(aux_label))
+        } else {
+            (ssh_connection.host.clone(), None)
+        };
         v_flex()
             .w_full()
-            .px(Spacing::Small.rems(cx) + Spacing::Small.rems(cx))
+            .child(ListSeparator)
             .child(
                 h_flex()
-                    .w_full()
                     .group("ssh-server")
-                    .justify_between()
+                    .w_full()
+                    .pt_0p5()
+                    .px_3()
+                    .gap_1()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
                     .child(
-                        h_flex()
-                            .gap_2()
-                            .w_full()
-                            .child(
-                                div()
-                                    .id(("status", ix))
-                                    .relative()
-                                    .child(Icon::new(IconName::Server).size(IconSize::Small)),
-                            )
-                            .child(
-                                h_flex()
-                                    .max_w(rems(26.))
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
-                                    .child(Label::new(ssh_connection.host.clone())),
-                            ),
+                        Label::new(main_label)
+                            .size(LabelSize::Small)
+                            .weight(FontWeight::SEMIBOLD)
+                            .color(Color::Muted),
                     )
-                    .child(
-                        h_flex()
-                            .visible_on_hover("ssh-server")
-                            .gap_1()
-                            .child({
-                                IconButton::new("copy-dev-server-address", IconName::Copy)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.update_settings_file(cx, move |servers, cx| {
-                                            if let Some(content) = servers
-                                                .ssh_connections
-                                                .as_ref()
-                                                .and_then(|connections| {
-                                                    connections
-                                                        .get(ix)
-                                                        .map(|connection| connection.host.clone())
-                                                })
-                                            {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    content,
-                                                ));
-                                            }
-                                        });
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Copy Server Address", cx))
-                            })
-                            .child({
-                                IconButton::new("remove-dev-server", IconName::TrashAlt)
-                                    .icon_size(IconSize::Small)
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.delete_ssh_server(ix, cx)
-                                    }))
-                                    .tooltip(|cx| Tooltip::text("Remove Dev Server", cx))
-                            }),
+                    .children(
+                        aux_label.map(|label| {
+                            Label::new(label).size(LabelSize::Small).color(Color::Muted)
+                        }),
                     ),
             )
             .child(
-                v_flex()
-                    .w_full()
-                    .border_l_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .mb_1()
-                    .mx_1p5()
-                    .pl_2()
-                    .child(
-                        List::new()
-                            .empty_message("No projects.")
-                            .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
-                                v_flex().gap_0p5().child(self.render_ssh_project(
-                                    ix,
-                                    &ssh_connection,
-                                    pix,
-                                    p,
-                                    cx,
-                                ))
-                            }))
-                            .child(
-                                h_flex().mt_1().pl_1().child(
-                                    Button::new(("new-remote_project", ix), "Open Folder…")
-                                        .size(ButtonSize::Default)
-                                        .layer(ElevationIndex::ModalSurface)
-                                        .icon(IconName::Plus)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(cx.listener(move |this, _, cx| {
-                                            this.create_ssh_project(ix, ssh_connection.clone(), cx);
-                                        })),
-                                ),
-                            ),
-                    ),
+                List::new()
+                    .empty_message("No projects.")
+                    .children(ssh_connection.projects.iter().enumerate().map(|(pix, p)| {
+                        v_flex().gap_0p5().child(self.render_ssh_project(
+                            ix,
+                            &ssh_connection,
+                            pix,
+                            p,
+                            cx,
+                        ))
+                    }))
+                    .child(h_flex().map(|this| {
+                        self.selectable_items.add_item(Box::new({
+                            let ssh_connection = ssh_connection.clone();
+                            move |this, cx| {
+                                this.create_ssh_project(ix, ssh_connection.clone(), cx);
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        this.child(
+                            ListItem::new(("new-remote-project", ix))
+                                .selected(is_selected)
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+                                .child(Label::new("Open Folder"))
+                                .on_click(cx.listener({
+                                    let ssh_connection = ssh_connection.clone();
+                                    move |this, _, cx| {
+                                        this.create_ssh_project(ix, ssh_connection.clone(), cx);
+                                    }
+                                })),
+                        )
+                    }))
+                    .child(h_flex().map(|this| {
+                        self.selectable_items.add_item(Box::new({
+                            let ssh_connection = ssh_connection.clone();
+                            move |this, cx| {
+                                this.view_server_options((ix, ssh_connection.clone()), cx);
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        this.child(
+                            ListItem::new(("server-options", ix))
+                                .selected(is_selected)
+                                .inset(true)
+                                .spacing(ui::ListItemSpacing::Sparse)
+                                .start_slot(Icon::new(IconName::Settings).color(Color::Muted))
+                                .child(Label::new("View Server Options"))
+                                .on_click(cx.listener({
+                                    let ssh_connection = ssh_connection.clone();
+                                    move |this, _, cx| {
+                                        this.view_server_options((ix, ssh_connection.clone()), cx);
+                                    }
+                                })),
+                        )
+                    })),
             )
     }
 
     fn render_ssh_project(
-        &self,
+        &mut self,
         server_ix: usize,
         server: &SshConnection,
         ix: usize,
         project: &SshProject,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let project = project.clone();
         let server = server.clone();
 
-        ListItem::new(("remote-project", ix))
-            .inset(true)
-            .spacing(ui::ListItemSpacing::Sparse)
-            .start_slot(
-                Icon::new(IconName::Folder)
-                    .color(Color::Muted)
-                    .size(IconSize::Small),
-            )
-            .child(Label::new(project.paths.join(", ")))
-            .on_click(cx.listener(move |this, _, cx| {
+        let element_id_base = SharedString::from(format!("remote-project-{server_ix}"));
+        let callback = Arc::new({
+            let project = project.clone();
+            move |this: &mut Self, cx: &mut ViewContext<Self>| {
                 let Some(app_state) = this
                     .workspace
                     .update(cx, |workspace, _| workspace.app_state().clone())
@@ -642,12 +731,33 @@ impl DevServerProjects {
                     }
                 })
                 .detach();
-            }))
+            }
+        });
+        self.selectable_items.add_item(Box::new({
+            let callback = callback.clone();
+            move |this, cx| callback(this, cx)
+        }));
+        let is_selected = self.selectable_items.is_selected();
+
+        ListItem::new((element_id_base, ix))
+            .inset(true)
+            .selected(is_selected)
+            .spacing(ui::ListItemSpacing::Sparse)
+            .start_slot(
+                Icon::new(IconName::Folder)
+                    .color(Color::Muted)
+                    .size(IconSize::Small),
+            )
+            .child(Label::new(project.paths.join(", ")))
+            .on_click(cx.listener(move |this, _, cx| callback(this, cx)))
             .end_hover_slot::<AnyElement>(Some(
                 IconButton::new("remove-remote-project", IconName::TrashAlt)
+                    .icon_size(IconSize::Small)
+                    .shape(IconButtonShape::Square)
                     .on_click(
                         cx.listener(move |this, _, cx| this.delete_ssh_project(server_ix, ix, cx)),
                     )
+                    .size(ButtonSize::Large)
                     .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
                     .into_any_element(),
             ))
@@ -698,10 +808,12 @@ impl DevServerProjects {
                 .ssh_connections
                 .get_or_insert(Default::default())
                 .push(SshConnection {
-                    host: connection_options.host,
+                    host: SharedString::from(connection_options.host),
                     username: connection_options.username,
                     port: connection_options.port,
                     projects: vec![],
+                    nickname: None,
+                    args: connection_options.args.unwrap_or_default(),
                 })
         });
     }
@@ -711,16 +823,14 @@ impl DevServerProjects {
         state: &CreateDevServer,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
-        let creating = state.creating.is_some();
         let ssh_prompt = state.ssh_prompt.clone();
 
-        self.dev_server_name_input.update(cx, |input, cx| {
-            input.editor().update(cx, |editor, cx| {
-                if editor.text(cx).is_empty() {
-                    editor.set_placeholder_text("ssh me@my.server / ssh@secret-box:2222", cx);
-                }
-            })
+        state.address_editor.update(cx, |editor, cx| {
+            if editor.text(cx).is_empty() {
+                editor.set_placeholder_text("ssh user@example -p 2222", cx);
+            }
         });
+
         let theme = cx.theme();
 
         v_flex()
@@ -729,50 +839,11 @@ impl DevServerProjects {
             .size_full()
             .flex_1()
             .child(
-                h_flex()
+                div()
                     .p_2()
-                    .gap_2()
-                    .items_center()
                     .border_b_1()
                     .border_color(theme.colors().border_variant)
-                    .child(
-                        IconButton::new("cancel-dev-server-creation", IconName::ArrowLeft)
-                            .shape(IconButtonShape::Square)
-                            .on_click(|_, cx| {
-                                cx.dispatch_action(menu::Cancel.boxed_clone());
-                            }),
-                    )
-                    .child(Label::new("Connect New Dev Server")),
-            )
-            .child(
-                v_flex()
-                    .p_3()
-                    .border_b_1()
-                    .border_color(theme.colors().border_variant)
-                    .child(Label::new("SSH Arguments"))
-                    .child(
-                        Label::new("Enter the command you use to SSH into this server.")
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        h_flex()
-                            .mt_2()
-                            .w_full()
-                            .gap_2()
-                            .child(self.dev_server_name_input.clone())
-                            .child(
-                                Button::new("create-dev-server", "Connect Server")
-                                    .style(ButtonStyle::Filled)
-                                    .layer(ElevationIndex::ModalSurface)
-                                    .disabled(creating)
-                                    .on_click(cx.listener({
-                                        move |this, _, cx| {
-                                            this.create_ssh_server(cx);
-                                        }
-                                    })),
-                            ),
-                    ),
+                    .child(state.address_editor.clone()),
             )
             .child(
                 h_flex()
@@ -782,26 +853,38 @@ impl DevServerProjects {
                     .map(|this| {
                         if let Some(ssh_prompt) = ssh_prompt {
                             this.child(h_flex().w_full().child(ssh_prompt))
+                        } else if let Some(address_error) = &state.address_error {
+                            this.child(
+                                h_flex().p_2().w_full().gap_2().child(
+                                    Label::new(address_error.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Error),
+                                ),
+                            )
                         } else {
-                            let color = Color::Muted.color(cx);
                             this.child(
                                 h_flex()
                                     .p_2()
                                     .w_full()
-                                    .justify_center()
-                                    .gap_1p5()
+                                    .gap_1()
                                     .child(
-                                        div().p_1().rounded_lg().bg(color).with_animation(
-                                            "pulse-ssh-waiting-for-connection",
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.2, 0.5)),
-                                            move |this, progress| this.bg(color.opacity(progress)),
-                                        ),
+                                        Label::new(
+                                            "Enter the command you use to SSH into this server.",
+                                        )
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
                                     )
                                     .child(
-                                        Label::new("Waiting for connection…")
-                                            .size(LabelSize::Small),
+                                        Button::new("learn-more", "Learn more…")
+                                            .label_size(LabelSize::Small)
+                                            .size(ButtonSize::None)
+                                            .color(Color::Accent)
+                                            .style(ButtonStyle::Transparent)
+                                            .on_click(|_, cx| {
+                                                cx.open_url(
+                                                    "https://zed.dev/docs/remote-development",
+                                                );
+                                            }),
                                     ),
                             )
                         }
@@ -809,75 +892,321 @@ impl DevServerProjects {
             )
     }
 
-    fn render_default(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let dev_servers = self.dev_server_store.read(cx).dev_servers();
+    fn render_view_options(
+        &mut self,
+        index: usize,
+        connection: SshConnection,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let connection_string = connection.host.clone();
+
+        div()
+            .size_full()
+            .child(
+                SshConnectionHeader {
+                    connection_string: connection_string.clone(),
+                    nickname: connection.nickname.clone(),
+                }
+                .render(cx),
+            )
+            .child(
+                v_flex()
+                    .py_1()
+                    .child({
+                        self.selectable_items.add_item(Box::new({
+                            move |this, cx| {
+                                this.mode = Mode::EditNickname(EditNicknameState::new(index, cx));
+                                cx.notify();
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        let label = if connection.nickname.is_some() {
+                            "Edit Nickname"
+                        } else {
+                            "Add Nickname to Server"
+                        };
+                        ListItem::new("add-nickname")
+                            .selected(is_selected)
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
+                            .child(Label::new(label))
+                            .on_click(cx.listener(move |this, _, cx| {
+                                this.mode = Mode::EditNickname(EditNicknameState::new(index, cx));
+                                cx.notify();
+                            }))
+                    })
+                    .child({
+                        let workspace = self.workspace.clone();
+                        fn callback(
+                            workspace: WeakView<Workspace>,
+                            connection_string: SharedString,
+                            cx: &mut WindowContext<'_>,
+                        ) {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                connection_string.to_string(),
+                            ));
+                            workspace
+                                .update(cx, |this, cx| {
+                                    struct SshServerAddressCopiedToClipboard;
+                                    let notification = format!(
+                                        "Copied server address ({}) to clipboard",
+                                        connection_string
+                                    );
+
+                                    this.show_toast(
+                                        Toast::new(
+                                            NotificationId::composite::<
+                                                SshServerAddressCopiedToClipboard,
+                                            >(
+                                                connection_string.clone()
+                                            ),
+                                            notification,
+                                        )
+                                        .autohide(),
+                                        cx,
+                                    );
+                                })
+                                .ok();
+                        }
+                        self.selectable_items.add_item(Box::new({
+                            let workspace = workspace.clone();
+                            let connection_string = connection_string.clone();
+                            move |_, cx| {
+                                callback(workspace.clone(), connection_string.clone(), cx);
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        ListItem::new("copy-server-address")
+                            .selected(is_selected)
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
+                            .child(Label::new("Copy Server Address"))
+                            .end_hover_slot(
+                                Label::new(connection_string.clone()).color(Color::Muted),
+                            )
+                            .on_click({
+                                let connection_string = connection_string.clone();
+                                move |_, cx| {
+                                    callback(workspace.clone(), connection_string.clone(), cx);
+                                }
+                            })
+                    })
+                    .child({
+                        fn remove_ssh_server(
+                            dev_servers: View<DevServerProjects>,
+                            index: usize,
+                            connection_string: SharedString,
+                            cx: &mut WindowContext<'_>,
+                        ) {
+                            let prompt_message = format!("Remove server `{}`?", connection_string);
+
+                            let confirmation = cx.prompt(
+                                PromptLevel::Warning,
+                                &prompt_message,
+                                None,
+                                &["Yes, remove it", "No, keep it"],
+                            );
+
+                            cx.spawn(|mut cx| async move {
+                                if confirmation.await.ok() == Some(0) {
+                                    dev_servers
+                                        .update(&mut cx, |this, cx| {
+                                            this.delete_ssh_server(index, cx);
+                                            this.mode = Mode::default_mode();
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
+                        }
+                        self.selectable_items.add_item(Box::new({
+                            let connection_string = connection_string.clone();
+                            move |_, cx| {
+                                remove_ssh_server(
+                                    cx.view().clone(),
+                                    index,
+                                    connection_string.clone(),
+                                    cx,
+                                );
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        ListItem::new("remove-server")
+                            .selected(is_selected)
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::Trash).color(Color::Error))
+                            .child(Label::new("Remove Server").color(Color::Error))
+                            .on_click(cx.listener(move |_, _, cx| {
+                                remove_ssh_server(
+                                    cx.view().clone(),
+                                    index,
+                                    connection_string.clone(),
+                                    cx,
+                                );
+                            }))
+                    })
+                    .child(ListSeparator)
+                    .child({
+                        self.selectable_items.add_item(Box::new({
+                            move |this, cx| {
+                                this.mode = Mode::default_mode();
+                                cx.notify();
+                            }
+                        }));
+                        let is_selected = self.selectable_items.is_selected();
+                        ListItem::new("go-back")
+                            .selected(is_selected)
+                            .inset(true)
+                            .spacing(ui::ListItemSpacing::Sparse)
+                            .start_slot(Icon::new(IconName::ArrowLeft).color(Color::Muted))
+                            .child(Label::new("Go Back"))
+                            .on_click(cx.listener(|this, _, cx| {
+                                this.mode = Mode::default_mode();
+                                cx.notify()
+                            }))
+                    }),
+            )
+    }
+
+    fn render_edit_nickname(
+        &self,
+        state: &EditNicknameState,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let Some(connection) = SshSettings::get_global(cx)
+            .ssh_connections()
+            .nth(state.index)
+        else {
+            return v_flex();
+        };
+
+        let connection_string = connection.host.clone();
+
+        v_flex()
+            .child(
+                SshConnectionHeader {
+                    connection_string,
+                    nickname: connection.nickname.clone(),
+                }
+                .render(cx),
+            )
+            .child(h_flex().p_2().child(state.editor.clone()))
+    }
+
+    fn render_default(
+        &mut self,
+        scroll_state: ScrollbarState,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let scroll_state = scroll_state.parent_view(cx.view());
         let ssh_connections = SshSettings::get_global(cx)
             .ssh_connections()
             .collect::<Vec<_>>();
+        self.selectable_items.add_item(Box::new(|this, cx| {
+            this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
+            cx.notify();
+        }));
 
-        let footer = format!("Connections: {}", ssh_connections.len() + dev_servers.len());
+        let is_selected = self.selectable_items.is_selected();
+
+        let connect_button = ListItem::new("register-dev-server-button")
+            .selected(is_selected)
+            .inset(true)
+            .spacing(ui::ListItemSpacing::Sparse)
+            .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
+            .child(Label::new("Connect New Server"))
+            .on_click(cx.listener(|this, _, cx| {
+                let state = CreateDevServer::new(cx);
+                this.mode = Mode::CreateDevServer(state);
+
+                cx.notify();
+            }));
+
+        let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() else {
+            unreachable!()
+        };
+
+        let mut modal_section = v_flex()
+            .id("ssh-server-list")
+            .overflow_y_scroll()
+            .track_scroll(&scroll_handle)
+            .size_full()
+            .child(connect_button)
+            .child(
+                h_flex().child(
+                    List::new()
+                        .empty_message(
+                            v_flex()
+                                .child(ListSeparator)
+                                .child(
+                                    div().px_3().child(
+                                        Label::new("No dev servers registered yet.")
+                                            .color(Color::Muted),
+                                    ),
+                                )
+                                .into_any_element(),
+                        )
+                        .children(ssh_connections.iter().cloned().enumerate().map(
+                            |(ix, connection)| {
+                                self.render_ssh_connection(ix, connection, cx)
+                                    .into_any_element()
+                            },
+                        )),
+                ),
+            )
+            .into_any_element();
+
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
-                ModalHeader::new().child(
-                    h_flex()
-                        .justify_between()
-                        .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall))
-                        .child(
-                            Button::new("register-dev-server-button", "Connect New Server")
-                                .style(ButtonStyle::Filled)
-                                .layer(ElevationIndex::ModalSurface)
-                                .icon(IconName::Plus)
-                                .icon_position(IconPosition::Start)
-                                .icon_color(Color::Muted)
-                                .on_click(cx.listener(|this, _, cx| {
-                                    this.mode = Mode::CreateDevServer(CreateDevServer {
-                                        ..Default::default()
-                                    });
-                                    this.dev_server_name_input.update(cx, |text_field, cx| {
-                                        text_field.editor().update(cx, |editor, cx| {
-                                            editor.set_text("", cx);
-                                        });
-                                    });
-                                    cx.notify();
-                                })),
-                        ),
-                ),
+                ModalHeader::new()
+                    .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(
-                    div()
-                        .border_y_1()
-                        .border_color(cx.theme().colors().border_variant)
-                        .w_full()
+                    h_flex()
+                        .min_h(rems(20.))
+                        .size_full()
                         .child(
-                            div().p_2().child(
-                                List::new()
-                                    .empty_message("No dev servers registered yet.")
-                                    .children(ssh_connections.iter().cloned().enumerate().map(
-                                        |(ix, connection)| {
-                                            self.render_ssh_connection(ix, connection, cx)
-                                                .into_any_element()
-                                        },
-                                    )),
+                            v_flex().size_full().child(ListSeparator).child(
+                                canvas(
+                                    |bounds, cx| {
+                                        modal_section.prepaint_as_root(
+                                            bounds.origin,
+                                            bounds.size.into(),
+                                            cx,
+                                        );
+                                        modal_section
+                                    },
+                                    |_, mut modal_section, cx| {
+                                        modal_section.paint(cx);
+                                    },
+                                )
+                                .size_full(),
                             ),
+                        )
+                        .child(
+                            div()
+                                .occlude()
+                                .h_full()
+                                .absolute()
+                                .right_1()
+                                .top_1()
+                                .bottom_1()
+                                .w(px(12.))
+                                .children(Scrollbar::vertical(scroll_state)),
                         ),
                 ),
-            )
-            .footer(
-                ModalFooter::new()
-                    .start_slot(div().child(Label::new(footer).size(LabelSize::Small))),
             )
     }
 }
 
-fn get_text(element: &View<TextField>, cx: &mut WindowContext) -> String {
-    element
-        .read(cx)
-        .editor()
-        .read(cx)
-        .text(cx)
-        .trim()
-        .to_string()
+fn get_text(element: &View<Editor>, cx: &mut WindowContext) -> String {
+    element.read(cx).text(cx).trim().to_string()
 }
 
 impl ModalView for DevServerProjects {}
@@ -892,26 +1221,35 @@ impl EventEmitter<DismissEvent> for DevServerProjects {}
 
 impl Render for DevServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        self.selectable_items.reset();
         div()
             .track_focus(&self.focus_handle)
             .elevation_3(cx)
             .key_context("DevServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::prev_item))
+            .on_action(cx.listener(Self::next_item))
             .capture_any_mouse_down(cx.listener(|this, _, cx| {
                 this.focus_handle(cx).focus(cx);
             }))
             .on_mouse_down_out(cx.listener(|this, _, cx| {
-                if matches!(this.mode, Mode::Default(None)) {
+                if matches!(this.mode, Mode::Default(_)) {
                     cx.emit(DismissEvent)
                 }
             }))
             .w(rems(34.))
-            .max_h(rems(40.))
             .child(match &self.mode {
-                Mode::Default(_) => self.render_default(cx).into_any_element(),
+                Mode::Default(state) => self.render_default(state.clone(), cx).into_any_element(),
+                Mode::ViewServerOptions(index, connection) => self
+                    .render_view_options(*index, connection.clone(), cx)
+                    .into_any_element(),
+                Mode::ProjectPicker(element) => element.clone().into_any_element(),
                 Mode::CreateDevServer(state) => {
                     self.render_create_dev_server(state, cx).into_any_element()
+                }
+                Mode::EditNickname(state) => {
+                    self.render_edit_nickname(state, cx).into_any_element()
                 }
             })
     }

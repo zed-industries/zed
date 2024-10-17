@@ -6,6 +6,7 @@ use itertools::Itertools;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
+    borrow::Cow,
     env::{self},
     iter,
     path::{Path, PathBuf},
@@ -341,10 +342,9 @@ pub fn wrap_for_ssh(
     venv_directory: Option<PathBuf>,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
-        iter::once(command)
-            .chain(args)
-            .filter_map(|arg| shlex::try_quote(arg).ok())
-            .join(" ")
+        let command = Cow::Borrowed(command.as_str());
+        let args = args.iter().filter_map(|arg| shlex::try_quote(arg).ok());
+        iter::once(command).chain(args).join(" ")
     } else {
         "exec ${SHELL:-sh} -l".to_string()
     };
@@ -367,7 +367,11 @@ pub fn wrap_for_ssh(
         // replace ith with something that works
         let tilde_prefix = "~/";
         if path.starts_with(tilde_prefix) {
-            let trimmed_path = &path_string[tilde_prefix.len()..];
+            let trimmed_path = path_string
+                .trim_start_matches("/")
+                .trim_start_matches("~")
+                .trim_start_matches("/");
+
             format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
         } else {
             format!("cd {path:?}; {env_changes} {to_run}")
@@ -386,9 +390,7 @@ pub fn wrap_for_ssh(
         SshCommand::Direct(ssh_args) => ("ssh".to_string(), ssh_args.clone()),
     };
 
-    if command.is_none() {
-        args.push("-t".to_string())
-    }
+    args.push("-t".to_string());
     args.push(shell_invocation);
     (program, args)
 }

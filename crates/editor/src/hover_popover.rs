@@ -525,7 +525,7 @@ async fn parse_blocks(
                     font_family: Some(buffer_font_family),
                     ..Default::default()
                 },
-                rule_color: Color::Muted.color(cx),
+                rule_color: cx.theme().colors().border,
                 block_quote_border_color: Color::Muted.color(cx),
                 block_quote: TextStyleRefinement {
                     color: Some(Color::Muted.color(cx)),
