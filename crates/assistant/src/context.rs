@@ -113,6 +113,10 @@ impl ContextOperation {
                             message.status.context("invalid status")?,
                         ),
                         timestamp: id.0,
+                        // kind: {
+                        //     let todo = (); // TODO: Should these go in the protocol?
+                        //     MessageKind::Legacy
+                        // },
                         cache: None,
                     },
                     version: language::proto::deserialize_version(&insert.version),
@@ -128,6 +132,10 @@ impl ContextOperation {
                     timestamp: language::proto::deserialize_timestamp(
                         update.timestamp.context("invalid timestamp")?,
                     ),
+                    // kind: {
+                    //     let todo = (); // TODO: Should these go in the protocol?
+                    //     MessageKind::Legacy
+                    // },
                     cache: None,
                 },
                 version: language::proto::deserialize_version(&update.version),
@@ -351,7 +359,7 @@ pub struct MessageMetadata {
     pub role: Role,
     pub status: MessageStatus,
     pub(crate) timestamp: clock::Lamport,
-    pub kind: MessageKind,
+    // pub kind: MessageKind,
     #[serde(skip)]
     pub cache: Option<MessageCacheMetadata>,
 }
@@ -372,7 +380,7 @@ impl From<&Message> for MessageMetadata {
             role: message.role,
             status: message.status.clone(),
             timestamp: message.id.0,
-            kind: message.kind,
+            // kind: message.kind,
             cache: message.cache.clone(),
         }
     }
@@ -1893,10 +1901,12 @@ impl Context {
             return None;
         }
 
+        let last_message = self
+            .messages(cx)
+            .find(|message| message.id == last_message_id);
+
         // Mutate this so that future completion requests include past preambles too.
-        if let Some(metadata) = self.messages_metadata.get_mut(&last_message_id) {
-            metadata.kind = message_kind;
-        }
+        last_message.kind = message_kind;
 
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);

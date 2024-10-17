@@ -58,7 +58,9 @@ use crate::slash_command_settings::SlashCommandSettings;
 actions!(
     assistant,
     [
-        Assist,
+        AssistLegacy,
+        AssistChat,
+        AssistEdit,
         Split,
         CopyCode,
         CycleMessageRole,

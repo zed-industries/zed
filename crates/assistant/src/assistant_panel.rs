@@ -11,12 +11,13 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
-    ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
-    Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
-    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    AssistChat, AssistEdit, AssistLegacy, AssistantPatch, AssistantPatchStatus, CacheStatus,
+    ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore, ContextStoreEvent,
+    CopyCode, CycleMessageRole, DeployHistory, DeployPromptLibrary, InlineAssistant,
+    InsertDraggedFiles, InsertIntoEditor, Message, MessageId, MessageKind, MessageMetadata,
+    MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, PendingSlashCommand,
+    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, SavedContextMetadata, Split,
+    ToggleFocus, ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -1585,7 +1586,19 @@ impl ContextEditor {
         );
     }
 
-    fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
+    fn assist_legacy(&mut self, _: &AssistLegacy, cx: &mut ViewContext<Self>) {
+        self.assist(MessageKind::Legacy, cx)
+    }
+
+    fn assist_chat(&mut self, _: &AssistChat, cx: &mut ViewContext<Self>) {
+        self.assist(MessageKind::Chat, cx)
+    }
+
+    fn assist_edit(&mut self, _: &AssistEdit, cx: &mut ViewContext<Self>) {
+        self.assist(MessageKind::Edit, cx)
+    }
+
+    fn assist(&mut self, message_kind: MessageKind, cx: &mut ViewContext<Self>) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
@@ -1601,7 +1614,7 @@ impl ContextEditor {
         }
 
         self.last_error = None;
-        self.send_to_model(cx);
+        self.send_to_model(message_kind, cx);
         cx.notify();
     }
 
@@ -3600,76 +3613,77 @@ impl ContextEditor {
     }
 
     fn render_chat_or_edit(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx).clone();
+        todo!()
+        // let focus_handle = self.focus_handle(cx).clone();
 
-        let (style, tooltip) = match token_state(&self.context, cx) {
-            Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Negative),
-                Some(Tooltip::text("Token limit reached", cx)),
-            ),
-            Some(TokenState::HasMoreTokens {
-                over_warn_threshold,
-                ..
-            }) => {
-                let (style, tooltip) = if over_warn_threshold {
-                    (
-                        ButtonStyle::Tinted(TintColor::Warning),
-                        Some(Tooltip::text("Token limit is close to exhaustion", cx)),
-                    )
-                } else {
-                    (ButtonStyle::Filled, None)
-                };
-                (style, tooltip)
-            }
-            None => (ButtonStyle::Filled, None),
-        };
+        // let (style, tooltip) = match token_state(&self.context, cx) {
+        //     Some(TokenState::NoTokensLeft { .. }) => (
+        //         ButtonStyle::Tinted(TintColor::Negative),
+        //         Some(Tooltip::text("Token limit reached", cx)),
+        //     ),
+        //     Some(TokenState::HasMoreTokens {
+        //         over_warn_threshold,
+        //         ..
+        //     }) => {
+        //         let (style, tooltip) = if over_warn_threshold {
+        //             (
+        //                 ButtonStyle::Tinted(TintColor::Warning),
+        //                 Some(Tooltip::text("Token limit is close to exhaustion", cx)),
+        //             )
+        //         } else {
+        //             (ButtonStyle::Filled, None)
+        //         };
+        //         (style, tooltip)
+        //     }
+        //     None => (ButtonStyle::Filled, None),
+        // };
 
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        // let provider = LanguageModelRegistry::read_global(cx).active_provider();
 
-        let has_configuration_error = configuration_error(cx).is_some();
-        let needs_to_accept_terms = self.show_accept_terms
-            && provider
-                .as_ref()
-                .map_or(false, |provider| provider.must_accept_terms(cx));
-        let disabled = has_configuration_error || needs_to_accept_terms;
+        // let has_configuration_error = configuration_error(cx).is_some();
+        // let needs_to_accept_terms = self.show_accept_terms
+        //     && provider
+        //         .as_ref()
+        //         .map_or(false, |provider| provider.must_accept_terms(cx));
+        // let disabled = has_configuration_error || needs_to_accept_terms;
 
-        h_flex()
-            .w_full()
-            .justify_between()
-            .child(
-                ButtonLike::new("edit_button")
-                    .disabled(disabled)
-                    .style(style)
-                    .when_some(tooltip, |button, tooltip| {
-                        button.tooltip(move |_| tooltip.clone())
-                    })
-                    .layer(ElevationIndex::ModalSurface)
-                    .child(Label::new("Edit"))
-                    .children(
-                        KeyBinding::for_action_in(&Assist, &focus_handle, cx)
-                            .map(|binding| binding.into_any_element()),
-                    )
-                    .on_click(move |_event, cx| {
-                        focus_handle.dispatch_action(&Assist, cx);
-                    }),
-            )
-            .child(
-                ButtonLike::new("chat_button")
-                    .disabled(disabled)
-                    .style(style)
-                    .when_some(tooltip, |button, tooltip| {
-                        button.tooltip(move |_| tooltip.clone())
-                    })
-                    .layer(ElevationIndex::ModalSurface)
-                    .child(Label::new("Chat"))
-                    .children(
-                        KeyBinding::for_action_in(&Assist, &focus_handle, cx)
-                            .map(|binding| binding.into_any_element()),
-                    )
-                    .on_click(move |_event, cx| {
-                        focus_handle.dispatch_action(&Assist, cx);
-                    }),
-            )
+        // h_flex()
+        //     .w_full()
+        //     .justify_between()
+        //     .child(
+        //         ButtonLike::new("edit_button")
+        //             .disabled(disabled)
+        //             .style(style)
+        //             .when_some(tooltip, |button, tooltip| {
+        //                 button.tooltip(move |_| tooltip.clone())
+        //             })
+        //             .layer(ElevationIndex::ModalSurface)
+        //             .child(Label::new("Edit"))
+        //             .children(
+        //                 KeyBinding::for_action_in(&AssistLegacy, &focus_handle, cx)
+        //                     .map(|binding| binding.into_any_element()),
+        //             )
+        //             .on_click(move |_event, cx| {
+        //                 focus_handle.dispatch_action(&AssistLegacy, cx);
+        //             }),
+        //     )
+        //     .child(
+        //         ButtonLike::new("chat_button")
+        //             .disabled(disabled)
+        //             .style(style)
+        //             .when_some(tooltip, |button, tooltip| {
+        //                 button.tooltip(move |_| tooltip.clone())
+        //             })
+        //             .layer(ElevationIndex::ModalSurface)
+        //             .child(Label::new("Chat"))
+        //             .children(
+        //                 KeyBinding::for_action_in(&AssistLegacy, &focus_handle, cx)
+        //                     .map(|binding| binding.into_any_element()),
+        //             )
+        //             .on_click(move |_event, cx| {
+        //                 focus_handle.dispatch_action(&AssistLegacy, cx);
+        //             }),
+        //     )
     }
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
@@ -3715,11 +3729,11 @@ impl ContextEditor {
             .layer(ElevationIndex::ModalSurface)
             .child(Label::new("Send"))
             .children(
-                KeyBinding::for_action_in(&Assist, &focus_handle, cx)
+                KeyBinding::for_action_in(&AssistLegacy, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, cx| {
-                focus_handle.dispatch_action(&Assist, cx);
+                focus_handle.dispatch_action(&AssistLegacy, cx);
             })
     }
 
@@ -3983,7 +3997,9 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
-            .on_action(cx.listener(ContextEditor::assist))
+            .on_action(cx.listener(ContextEditor::assist_legacy))
+            .on_action(cx.listener(ContextEditor::assist_chat))
+            .on_action(cx.listener(ContextEditor::assist_edit))
             .on_action(cx.listener(ContextEditor::split))
             .size_full()
             .children(self.render_notice(cx))
