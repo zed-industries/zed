@@ -1299,6 +1299,50 @@ impl EditorElement {
             .collect()
     }
 
+    fn layout_coverage(
+        &self,
+        line_height: Pixels,
+        gutter_hitbox: &Hitbox,
+        display_rows: Range<DisplayRow>,
+        anchor_range: Range<Anchor>,
+        snapshot: &EditorSnapshot,
+        cx: &mut WindowContext,
+    ) -> Vec<DisplayRow> {
+        // let buffer_snapshot = &snapshot.buffer_snapshot;
+
+        let buffer_start_row = MultiBufferRow(
+            DisplayPoint::new(display_rows.start, 0)
+                .to_point(snapshot)
+                .row,
+        );
+        let buffer_end_row = MultiBufferRow(
+            DisplayPoint::new(display_rows.end, 0)
+                .to_point(snapshot)
+                .row,
+        );
+
+        // todo: get coverage display setting
+
+        self.editor.update(cx, |editor, cx| {
+            // todo: get coverage and use it instead of this static data
+
+            // let coverage = editor.coverage.as_ref().unwrap();
+            let mut rows = Vec::new();
+            for row in buffer_start_row.0..buffer_end_row.0 {
+                // let point = DisplayPoint::new(row, 0).to_point(snapshot);
+                // let coverage = coverage.get(&point).unwrap_or(&Coverage::None);
+                // if coverage != &Coverage::None {
+                //     rows.push(DisplayRow(row));
+                // }
+
+                if (0..5).contains(&(row % 10)) {
+                    rows.push(DisplayRow(row));
+                }
+            }
+            rows
+        })
+    }
+
     // Folds contained in a hunk are ignored apart from shrinking visual size
     // If a fold contains any hunks then that fold line is marked as modified
     fn layout_gutter_git_hunks(
@@ -3269,6 +3313,57 @@ impl EditorElement {
         }
     }
 
+    fn paint_coverage(layout: &mut EditorLayout, cx: &mut WindowContext) {
+        if layout.coverage.is_empty() {
+            return;
+        }
+
+        let line_height = layout.position_map.line_height;
+        cx.paint_layer(layout.gutter_hitbox.bounds, |cx| {
+            for coverage in &layout.coverage {
+                let coverage_bounds = Self::coverage_bounds(
+                    &layout.position_map.snapshot,
+                    line_height,
+                    layout.gutter_hitbox.bounds,
+                    coverage,
+                );
+
+                cx.paint_quad(quad(
+                    coverage_bounds,
+                    Corners::all(px(0.)),
+                    cx.theme().colors().terminal_ansi_red,
+                    Edges::default(),
+                    transparent_black(),
+                ));
+            }
+        });
+    }
+
+    fn coverage_bounds(
+        snapshot: &EditorSnapshot,
+        line_height: Pixels,
+        gutter_bounds: Bounds<Pixels>,
+        display_row: &DisplayRow,
+    ) -> Bounds<Pixels> {
+        let scroll_position = snapshot.scroll_position();
+        let scroll_top = scroll_position.y * line_height;
+
+        let start_y = display_row.as_f32() * line_height - scroll_top;
+        let end_y = start_y + line_height;
+
+        // todo: update origin to end of line number
+        let width = Self::coverage_strip_width(line_height);
+        let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
+        let highlight_size = size(width, end_y - start_y);
+        Bounds::new(highlight_origin, highlight_size)
+    }
+
+    /// Returns the width of the coverage strip that will be displayed in the gutter.
+    pub(super) fn coverage_strip_width(line_height: Pixels) -> Pixels {
+        // We floor the value to prevent pixel rounding.
+        (0.18 * line_height).floor()
+    }
+
     fn paint_diff_hunks(layout: &mut EditorLayout, cx: &mut WindowContext) {
         if layout.display_hunks.is_empty() {
             return;
@@ -3443,6 +3538,9 @@ impl EditorElement {
         if show_git_gutter {
             Self::paint_diff_hunks(layout, cx)
         }
+
+        // todo: add setting for coverage
+        Self::paint_coverage(layout, cx);
 
         let highlight_width = 0.275 * layout.position_map.line_height;
         let highlight_corner_radii = Corners::all(0.05 * layout.position_map.line_height);
@@ -5216,6 +5314,15 @@ impl Element for EditorElement {
                         self.layout_crease_trailers(buffer_rows.iter().copied(), &snapshot, cx)
                     });
 
+                    let coverage = self.layout_coverage(
+                        line_height,
+                        &gutter_hitbox,
+                        start_row..end_row,
+                        start_anchor..end_anchor,
+                        &snapshot,
+                        cx,
+                    );
+
                     let display_hunks = self.layout_gutter_git_hunks(
                         line_height,
                         &gutter_hitbox,
@@ -5643,6 +5750,7 @@ impl Element for EditorElement {
                         text_hitbox,
                         gutter_hitbox,
                         gutter_dimensions,
+                        coverage,
                         display_hunks,
                         content_origin,
                         scrollbar_layout,
@@ -5790,6 +5898,7 @@ pub struct EditorLayout {
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Vec<Option<ShapedLine>>,
+    coverage: Vec<DisplayRow>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
