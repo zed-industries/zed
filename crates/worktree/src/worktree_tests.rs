@@ -359,7 +359,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![Path::new(""), Path::new(OLD_NAME)]
         );
@@ -381,7 +381,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![Path::new(""), Path::new(NEW_NAME)]
         );

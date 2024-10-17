@@ -3351,16 +3351,16 @@ impl LspStore {
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
-        abs_path: SanitizedPathBuf,
+        abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<(), anyhow::Error> {
-        let (worktree, relative_path) =
-            self.worktree_store
-                .read(cx)
-                .find_worktree(&abs_path, cx)
-                .ok_or_else(|| anyhow!("no worktree found for diagnostics path {abs_path:?}"))?;
+        let (worktree, relative_path) = self
+            .worktree_store
+            .read(cx)
+            .find_worktree(&abs_path.clone().into(), cx)
+            .ok_or_else(|| anyhow!("no worktree found for diagnostics path {abs_path:?}"))?;
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -6435,7 +6435,7 @@ impl LspStore {
 
         self.update_diagnostic_entries(
             language_server_id,
-            abs_path.into(),
+            abs_path,
             params.version,
             diagnostics,
             cx,
