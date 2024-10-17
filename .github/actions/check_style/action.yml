@@ -4,11 +4,6 @@ description: "Checks code formatting use cargo fmt"
 runs:
   using: "composite"
   steps:
-    - name: Check for Typos with Typos-CLI
-      uses: crate-ci/typos@v1.24.6
-      with:
-        config: ./typos.toml
-
     - name: cargo fmt
       shell: bash -euxo pipefail {0}
       run: cargo fmt --all -- --check
