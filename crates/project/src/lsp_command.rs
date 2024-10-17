@@ -3733,14 +3733,13 @@ impl LspCommand for GetDocumentDiagnostics {
             project_id,
             buffer_id: buffer.remote_id().into(),
             language_server_id: self.language_server_id.to_proto(),
-            version: serialize_version(&buffer.version()),
         }
     }
 
     async fn from_proto(
         message: proto::GetDocumentDiagnostics,
         lsp_store: Model<LspStore>,
-        buffer: Model<Buffer>,
+        _: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
         let language_server_id = LanguageServerId::from_proto(message.language_server_id);
@@ -3758,12 +3757,6 @@ impl LspCommand for GetDocumentDiagnostics {
                 }
             })
             .expect("Failed to retrieve previous_result_id");
-
-        buffer
-            .update(&mut cx, |buffer, _| {
-                buffer.wait_for_version(deserialize_version(&message.version))
-            })?
-            .await?;
 
         Ok(Self {
             language_server_id,
