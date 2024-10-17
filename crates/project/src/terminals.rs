@@ -384,7 +384,7 @@ pub fn wrap_for_ssh(
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
         // replace ith with something that works
         let tilde_prefix = "~/";
-        if path.starts_with(tilde_prefix) {
+        if path.as_trimmed_path_buf().starts_with(tilde_prefix) {
             let trimmed_path = path_string
                 .trim_start_matches("/")
                 .trim_start_matches("~")

@@ -3141,7 +3141,7 @@ impl Project {
         abs_path: &SanitizedPathBuf,
         visible: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
+    ) -> Task<Result<(Model<Worktree>, SanitizedPathBuf)>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
             worktree_store.find_or_create_worktree(abs_path, visible, cx)
         })

@@ -163,17 +163,16 @@ impl WorktreeStore {
 
     pub fn find_or_create_worktree(
         &mut self,
-        abs_path: impl AsRef<Path>,
+        abs_path: &SanitizedPathBuf,
         visible: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
-        let abs_path = abs_path.as_ref();
+    ) -> Task<Result<(Model<Worktree>, SanitizedPathBuf)>> {
         if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
             cx.background_executor()
-                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
+                .spawn(async move { Ok((worktree.await?, SanitizedPathBuf::new())) })
         }
     }
 
