@@ -19,7 +19,7 @@ use stripe::{
 };
 use util::ResultExt;
 
-use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{
     db::{
@@ -702,7 +702,8 @@ async fn get_monthly_spend(
 
     let monthly_spend = llm_db
         .get_user_spending_for_month(user.id, Utc::now())
-        .await?;
+        .await?
+        .saturating_sub(FREE_TIER_MONTHLY_SPENDING_LIMIT);
 
     Ok(Json(GetMonthlySpendResponse {
         monthly_spend_in_cents: monthly_spend.0 as i32,
