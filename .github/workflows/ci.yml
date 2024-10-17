@@ -28,6 +28,7 @@ env:
 jobs:
   migration_checks:
     name: Check Postgres and Protobuf migrations, mergability
+    if: github.repository_owner == 'zed-industries'
     timeout-minutes: 60
     runs-on:
       - self-hosted
@@ -71,6 +72,7 @@ jobs:
   style:
     timeout-minutes: 60
     name: Check formatting and spelling
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-8vcpu-ubuntu-2204
     steps:
