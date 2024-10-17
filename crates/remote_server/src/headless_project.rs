@@ -6,6 +6,7 @@ use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    dap_store::DapStore,
     project_settings::SettingsObserver,
     search::SearchQuery,
     task_store::TaskStore,
@@ -71,8 +72,11 @@ impl HeadlessProject {
             store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             store
         });
+
+        let dap_store = cx.new_model(|cx| DapStore::new(None, None, fs.clone(), cx));
         let buffer_store = cx.new_model(|cx| {
-            let mut buffer_store = BufferStore::local(worktree_store.clone(), cx);
+            let mut buffer_store =
+                BufferStore::local(worktree_store.clone(), dap_store.clone(), cx);
             buffer_store.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             buffer_store
         });
@@ -112,6 +116,7 @@ impl HeadlessProject {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
+                dap_store.clone(),
                 prettier_store.clone(),
                 environment,
                 languages.clone(),
