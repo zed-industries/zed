@@ -567,6 +567,12 @@ pub struct WeakModel<T> {
     entity_type: PhantomData<T>,
 }
 
+impl<T> std::fmt::Debug for WeakModel<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(type_name::<WeakModel<T>>()).finish()
+    }
+}
+
 unsafe impl<T> Send for WeakModel<T> {}
 unsafe impl<T> Sync for WeakModel<T> {}
 

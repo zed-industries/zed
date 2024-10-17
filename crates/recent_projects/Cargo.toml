@@ -39,6 +39,7 @@ terminal_view.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
+paths.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

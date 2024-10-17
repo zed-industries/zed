@@ -141,6 +141,7 @@ impl Settings for ProxySettings {
         Ok(Self {
             proxy: sources
                 .user
+                .or(sources.server)
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
@@ -472,15 +473,21 @@ impl settings::Settings for TelemetrySettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self {
-            diagnostics: sources.user.as_ref().and_then(|v| v.diagnostics).unwrap_or(
-                sources
-                    .default
-                    .diagnostics
-                    .ok_or_else(Self::missing_default)?,
-            ),
+            diagnostics: sources
+                .user
+                .as_ref()
+                .or(sources.server.as_ref())
+                .and_then(|v| v.diagnostics)
+                .unwrap_or(
+                    sources
+                        .default
+                        .diagnostics
+                        .ok_or_else(Self::missing_default)?,
+                ),
             metrics: sources
                 .user
                 .as_ref()
+                .or(sources.server.as_ref())
                 .and_then(|v| v.metrics)
                 .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })

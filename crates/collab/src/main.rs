@@ -132,6 +132,8 @@ async fn main() -> Result<()> {
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
 
+                    poll_stripe_events_periodically(state.clone(), rpc_server.clone());
+
                     app = app
                         .merge(collab::api::routes(rpc_server.clone()))
                         .merge(collab::rpc::routes(rpc_server.clone()));
@@ -140,7 +142,6 @@ async fn main() -> Result<()> {
                 }
 
                 if mode.is_api() {
-                    poll_stripe_events_periodically(state.clone());
                     fetch_extensions_from_blob_store_periodically(state.clone());
                     spawn_user_backfiller(state.clone());
 
