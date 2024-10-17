@@ -1,3 +1,4 @@
+pub mod bookmark_store;
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
@@ -23,6 +24,7 @@ pub mod search_history;
 mod yarn;
 
 use anyhow::{anyhow, Result};
+use bookmark_store::BookmarkStore;
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
@@ -159,6 +161,7 @@ pub struct Project {
     snippets: Model<SnippetProvider>,
     environment: Model<ProjectEnvironment>,
     settings_observer: Model<SettingsObserver>,
+    bookmark_store: Model<BookmarkStore>,
 }
 
 #[derive(Default)]
@@ -631,6 +634,8 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
+            let bookmark_store = cx.new_model(|cx| BookmarkStore::new(worktree_store.clone(), cx));
+
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
@@ -678,6 +683,7 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+                bookmark_store,
             }
         })
     }
@@ -735,6 +741,7 @@ impl Project {
                     cx,
                 )
             });
+            let bookmark_store = cx.new_model(|cx| BookmarkStore::new(worktree_store.clone(), cx));
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
@@ -802,6 +809,7 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+                bookmark_store,
             };
 
             let ssh = ssh.read(cx);
@@ -924,6 +932,7 @@ impl Project {
             lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
             lsp_store
         })?;
+        let bookmark_store = cx.new_model(|cx| BookmarkStore::new(worktree_store.clone(), cx))?;
 
         let task_store = cx.new_model(|cx| {
             if run_tasks {
@@ -1009,6 +1018,7 @@ impl Project {
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
                 environment: ProjectEnvironment::new(&worktree_store, None, cx),
+                bookmark_store,
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
             };
             this.set_role(role, cx);
@@ -1366,6 +1376,26 @@ impl Project {
 
     pub fn snippets(&self) -> &Model<SnippetProvider> {
         &self.snippets
+    }
+
+    pub fn bookmark_store(&self) -> &Model<BookmarkStore> {
+        &self.bookmark_store
+    }
+
+    pub fn toggle_bookmark(
+        &mut self,
+        buffer_id: BufferId,
+        anchor: Anchor,
+        content: String,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let Some(buffer) = self.buffer_for_id(buffer_id, cx) else {
+            return;
+        };
+
+        self.bookmark_store.update(cx, |store, _cx| {
+            store.toggle_bookmark(buffer, anchor, Some(content))
+        });
     }
 
     pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {
