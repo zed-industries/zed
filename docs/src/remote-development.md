@@ -38,12 +38,13 @@ Under the hood, Zed shells out to the `ssh` binary to connect to the remote serv
 When typing in the "New Server" dialogue, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
 
 Supported options:
-* `-p` / `-l` - these are equivalent to passing the port and the username in the host string.
-* `-L` / `-R` for port forwarding
-* `-i` - to use a specific key file
-* `-o` - to set custom options
-* `-J` / `-w` - to proxy the SSH connection
-* And also... `-4`, `-6`, `-A`, `-a`, `-C`, `-K`, `-k`, `-X`, `-x`, `-Y`, `-y`, `-B`, `-b`, `-c`, `-D`, `-I`, `-i`, `-J`, `-l`, `-m`, `-o`, `-P`, `-p`, `-w`
+
+- `-p` / `-l` - these are equivalent to passing the port and the username in the host string.
+- `-L` / `-R` for port forwarding
+- `-i` - to use a specific key file
+- `-o` - to set custom options
+- `-J` / `-w` - to proxy the SSH connection
+- And also... `-4`, `-6`, `-A`, `-a`, `-C`, `-K`, `-k`, `-X`, `-x`, `-Y`, `-y`, `-B`, `-b`, `-c`, `-D`, `-I`, `-i`, `-J`, `-l`, `-m`, `-o`, `-P`, `-p`, `-w`
 
 Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
 
@@ -52,8 +53,9 @@ Note that we deliberately disallow some options (for example `-t` or `-T`) that 
 When you first connect to a remote project, the Zed running on your local machine will SSH in, and upload the latest version of the Zed server. If this fails you should see an error message.
 
 Once the remote server is uploaded, we run two copies of it:
-* The first is the "proxy" process. This is attached to the SSH tty and so is killed when your SSH connection closes.
-* The second is the "server" process. This process is backgrounded so it will continue running for about 10 minutes after the connection is closed. This allows us to recover quickly if your connection is lost.
+
+- The first is the "proxy" process. This is attached to the SSH tty and so is killed when your SSH connection closes.
+- The second is the "server" process. This process is backgrounded so it will continue running for about 10 minutes after the connection is closed. This allows us to recover quickly if your connection is lost.
 
 Your local Zed will continually ping the remote server and expect it to reply. If it hasn't replied for a few seconds, it will start a reconnect process. You can tell this is happening because the server icon in the top left will change color.
 
