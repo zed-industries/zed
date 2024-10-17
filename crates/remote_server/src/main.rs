@@ -1,6 +1,5 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
