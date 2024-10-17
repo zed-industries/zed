@@ -9303,6 +9303,7 @@ dependencies = [
  "system-configuration 0.6.1",
  "tokio",
  "tokio-rustls 0.26.0",
+ "tokio-socks",
  "tokio-util",
  "tower-service",
  "url",
@@ -12001,6 +12002,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
