@@ -442,6 +442,8 @@ impl Vim {
                         return;
                     }
                 }
+
+                Mode::HelixNormal | Mode::HelixVisual => {}
             }
         }
 
@@ -470,6 +472,14 @@ impl Vim {
             }
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
                 self.visual_motion(motion.clone(), count, cx)
+            }
+
+            Mode::HelixNormal => {
+                self.helix_normal_motion(motion.clone(), count, cx)
+            }
+
+            Mode::HelixVisual => {
+                self.helix_visual_motion(motion.clone(), count, cx)
             }
         }
         self.clear_operator(cx);

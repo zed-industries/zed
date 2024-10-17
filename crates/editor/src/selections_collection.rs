@@ -708,6 +708,22 @@ impl<'a> MutableSelectionsCollection<'a> {
         });
     }
 
+    pub fn move_heads_update_tails_with(
+        &mut self,
+        mut update_head: impl FnMut(
+            &DisplaySnapshot,
+            DisplayPoint,
+            SelectionGoal,
+        ) -> (DisplayPoint, SelectionGoal),
+    ) {
+        self.move_with(|map, selection| {
+            selection.collapse_to(selection.head(), selection.goal);
+            let (new_head, new_goal) = update_head(map, selection.head(), selection.goal);
+            selection.set_head(new_head, new_goal);
+        });
+    }
+
+
     pub fn move_cursors_with(
         &mut self,
         mut update_cursor_position: impl FnMut(
