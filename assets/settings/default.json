@@ -712,10 +712,10 @@
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
     //     this means generating certain unicode characters
-    //         "option_to_meta": false,
+    //         "option_as_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
-    //         "option_to_meta": true,
-    "option_as_meta": true,
+    //         "option_as_meta": true,
+    "option_as_meta": false,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
