@@ -12,7 +12,7 @@ if [[ -n $(git status --short --untracked-files=no) ]]; then
   exit 1
 fi
 
-which cargo-set-version > /dev/null || cargo install cargo-edit --features vendored-openssl
+which cargo-set-version > /dev/null || cargo install cargo-edit
 which jq > /dev/null || brew install jq
 cargo set-version --package $package --bump $version_increment
 cargo check --quiet

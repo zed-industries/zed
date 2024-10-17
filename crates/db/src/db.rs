@@ -188,7 +188,7 @@ macro_rules! define_connection {
     };
 }
 
-pub fn write_and_log<F>(cx: &mut AppContext, db_write: impl FnOnce() -> F + Send + 'static)
+pub fn write_and_log<F>(cx: &AppContext, db_write: impl FnOnce() -> F + Send + 'static)
 where
     F: Future<Output = anyhow::Result<()>> + Send,
 {

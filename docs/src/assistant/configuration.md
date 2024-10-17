@@ -124,7 +124,7 @@ Download and install Ollama from [ollama.com/download](https://ollama.com/downlo
 
 3. In the assistant panel, select one of the Ollama models using the model dropdown.
 
-4. (Optional) Specify a [custom api_url](#custom-endpoint) or [custom `low_speed_timeout_in_seconds`](#provider-timeout) if required.
+4. (Optional) Specify an [`api_url`](#custom-endpoint) or [`low_speed_timeout_in_seconds`](#provider-timeout) if required.
 
 #### Ollama Context Length {#ollama-context}
 
@@ -138,11 +138,12 @@ Depending on your hardware or use-case you may wish to limit or increase the con
 {
   "language_models": {
     "ollama": {
+      "api_url": "http://localhost:11434",
       "low_speed_timeout_in_seconds": 120,
       "available_models": [
         {
-          "provider": "ollama",
-          "name": "mistral:latest",
+          "name": "qwen2.5-coder",
+          "display_name": "qwen 2.5 coder 32K",
           "max_tokens": 32768
         }
       ]

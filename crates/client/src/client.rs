@@ -141,6 +141,7 @@ impl Settings for ProxySettings {
         Ok(Self {
             proxy: sources
                 .user
+                .or(sources.server)
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
@@ -394,7 +395,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Model<T>, cx: &mut AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Model<T>, cx: &AsyncAppContext) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -472,15 +473,21 @@ impl settings::Settings for TelemetrySettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self {
-            diagnostics: sources.user.as_ref().and_then(|v| v.diagnostics).unwrap_or(
-                sources
-                    .default
-                    .diagnostics
-                    .ok_or_else(Self::missing_default)?,
-            ),
+            diagnostics: sources
+                .user
+                .as_ref()
+                .or(sources.server.as_ref())
+                .and_then(|v| v.diagnostics)
+                .unwrap_or(
+                    sources
+                        .default
+                        .diagnostics
+                        .ok_or_else(Self::missing_default)?,
+                ),
             metrics: sources
                 .user
                 .as_ref()
+                .or(sources.server.as_ref())
                 .and_then(|v| v.metrics)
                 .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })
@@ -1023,7 +1030,7 @@ impl Client {
         &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> impl Future<Output = Result<Url>> {
+    ) -> impl Future<Output = Result<url::Url>> {
         #[cfg(any(test, feature = "test-support"))]
         let url_override = self.rpc_url.read().clone();
 
@@ -1117,7 +1124,7 @@ impl Client {
             // for us from the RPC URL.
             //
             // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
-            let mut request = rpc_url.into_client_request()?;
+            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
 
             // We then modify the request to add our desired headers.
             let request_headers = request.headers_mut();
@@ -1156,6 +1163,7 @@ impl Client {
                             .with_root_certificates(root_store)
                             .with_no_client_auth()
                     };
+
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
@@ -1752,7 +1760,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 }
 
 /// prefix for the zed:// url scheme
-pub static ZED_URL_SCHEME: &str = "zed";
+pub const ZED_URL_SCHEME: &str = "zed";
 
 /// Parses the given link into a Zed link.
 ///

@@ -213,8 +213,6 @@ fn find_number(
                 begin = Some(offset);
             }
             num.push(ch);
-            println!("pushing {}", ch);
-            println!();
         } else if begin.is_some() {
             end = Some(offset);
             break;

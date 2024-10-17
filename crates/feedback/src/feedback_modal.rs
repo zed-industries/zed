@@ -11,7 +11,6 @@ use gpui::{
     PromptLevel, Render, Task, View, ViewContext,
 };
 use http_client::HttpClient;
-use isahc::Request;
 use language::Buffer;
 use project::Project;
 use regex::Regex;
@@ -299,7 +298,7 @@ impl FeedbackModal {
             is_staff: is_staff.unwrap_or(false),
         };
         let json_bytes = serde_json::to_vec(&request)?;
-        let request = Request::post(feedback_endpoint)
+        let request = http_client::http::Request::post(feedback_endpoint)
             .header("content-type", "application/json")
             .body(json_bytes.into())?;
         let mut response = http_client.send(request).await?;

@@ -1,7 +1,6 @@
 mod dev_servers;
 pub mod disconnected_overlay;
 mod ssh_connections;
-mod ssh_remotes;
 use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
@@ -22,7 +21,7 @@ use picker::{
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use settings::Settings;
-use ssh_connections::SshSettings;
+pub use ssh_connections::SshSettings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -385,11 +384,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 ..Default::default()
                             };
 
+                            let args = SshSettings::get_global(cx).args_for(&ssh_project.host, ssh_project.port, &ssh_project.user);
                             let connection_options = SshConnectionOptions {
                                 host: ssh_project.host.clone(),
                                 username: ssh_project.user.clone(),
                                 port: ssh_project.port,
                                 password: None,
+                                args,
                             };
 
                             let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
@@ -566,7 +567,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                 .border_t_1()
                 .py_2()
                 .pr_2()
-                .border_color(cx.theme().colors().border)
+                .border_color(cx.theme().colors().border_variant)
                 .justify_end()
                 .gap_4()
                 .child(
@@ -574,7 +575,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                         .when_some(KeyBinding::for_action(&OpenRemote, cx), |button, key| {
                             button.child(key)
                         })
-                        .child(Label::new("Open remote folder…").color(Color::Muted))
+                        .child(Label::new("Open Remote Folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(OpenRemote.boxed_clone())),
                 )
                 .child(
@@ -583,7 +584,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             KeyBinding::for_action(&workspace::Open, cx),
                             |button, key| button.child(key),
                         )
-                        .child(Label::new("Open local folder…").color(Color::Muted))
+                        .child(Label::new("Open Local Folder…").color(Color::Muted))
                         .on_click(|_, cx| cx.dispatch_action(workspace::Open.boxed_clone())),
                 )
                 .into_any(),

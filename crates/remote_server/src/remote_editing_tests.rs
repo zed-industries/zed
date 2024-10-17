@@ -3,7 +3,7 @@ use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use fs::{FakeFs, Fs};
 use gpui::{Context, Model, TestAppContext};
-use http_client::FakeHttpClient;
+use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{all_language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
@@ -15,9 +15,9 @@ use project::{
     search::{SearchQuery, SearchResult},
     Project, ProjectPath,
 };
-use remote::SshSession;
+use remote::SshRemoteClient;
 use serde_json::json;
-use settings::{Settings, SettingsLocation, SettingsStore};
+use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
     path::{Path, PathBuf},
@@ -197,7 +197,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
     cx.update_global(|settings_store: &mut SettingsStore, cx| {
         settings_store.set_user_settings(
-            r#"{"languages":{"Rust":{"language_servers":["custom-rust-analyzer"]}}}"#,
+            r#"{"languages":{"Rust":{"language_servers":["from-local-settings"]}}}"#,
             cx,
         )
     })
@@ -210,7 +210,27 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(Some(&"Rust".into()))
                 .language_servers,
-            ["custom-rust-analyzer".to_string()]
+            ["from-local-settings".to_string()]
+        )
+    });
+
+    server_cx
+        .update_global(|settings_store: &mut SettingsStore, cx| {
+            settings_store.set_server_settings(
+                r#"{"languages":{"Rust":{"language_servers":["from-server-settings"]}}}"#,
+                cx,
+            )
+        })
+        .unwrap();
+
+    cx.run_until_parked();
+
+    server_cx.read(|cx| {
+        assert_eq!(
+            AllLanguageSettings::get_global(cx)
+                .language(Some(&"Rust".into()))
+                .language_servers,
+            ["from-server-settings".to_string()]
         )
     });
 
@@ -434,7 +454,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     project
         .update(cx, |project, cx| {
-            project.perform_rename(buffer.clone(), 3, "two".to_string(), true, cx)
+            project.perform_rename(buffer.clone(), 3, "two".to_string(), cx)
         })
         .await
         .unwrap();
@@ -564,6 +584,63 @@ async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut 
     });
 }
 
+#[gpui::test]
+async fn test_adding_then_removing_then_adding_worktrees(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let (_worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let (worktree_2, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project2", true, cx)
+        })
+        .await
+        .unwrap();
+    let worktree_id_2 = worktree_2.read_with(cx, |tree, _| tree.id());
+
+    project.update(cx, |project, cx| project.remove_worktree(worktree_id_2, cx));
+
+    let (worktree_2, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project2", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    worktree_2.update(cx, |worktree, _cx| {
+        assert!(worktree.is_visible());
+        let entries = worktree.entries(true, 0).collect::<Vec<_>>();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(
+            entries[1].path.to_string_lossy().to_string(),
+            "README.md".to_string()
+        )
+    })
+}
+
+#[gpui::test]
+async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let buffer = project.update(cx, |project, cx| project.open_server_settings(cx));
+    cx.executor().run_until_parked();
+    let buffer = buffer.await.unwrap();
+
+    cx.update(|cx| {
+        assert_eq!(
+            buffer.read(cx).text(),
+            initial_server_settings_content().to_string()
+        )
+    })
+}
+
 fn init_logger() {
     if std::env::var("RUST_LOG").is_ok() {
         env_logger::try_init().ok();
@@ -574,7 +651,7 @@ async fn init_test(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) -> (Model<Project>, Model<HeadlessProject>, Arc<FakeFs>) {
-    let (client_ssh, server_ssh) = SshSession::fake(cx, server_cx);
+    let (ssh_remote_client, ssh_server_client) = SshRemoteClient::fake(cx, server_cx);
     init_logger();
 
     let fs = FakeFs::new(server_cx.executor());
@@ -600,8 +677,24 @@ async fn init_test(
     );
 
     server_cx.update(HeadlessProject::init);
-    let headless = server_cx.new_model(|cx| HeadlessProject::new(server_ssh, fs.clone(), cx));
-    let project = build_project(client_ssh, cx);
+    let http_client = Arc::new(BlockedHttpClient);
+    let node_runtime = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    let headless = server_cx.new_model(|cx| {
+        client::init_settings(cx);
+
+        HeadlessProject::new(
+            crate::HeadlessAppState {
+                session: ssh_server_client,
+                fs: fs.clone(),
+                http_client,
+                node_runtime,
+                languages,
+            },
+            cx,
+        )
+    });
+    let project = build_project(ssh_remote_client, cx);
 
     project
         .update(cx, {
@@ -612,7 +705,7 @@ async fn init_test(
     (project, headless, fs)
 }
 
-fn build_project(ssh: Arc<SshSession>, cx: &mut TestAppContext) -> Model<Project> {
+fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
     cx.update(|cx| {
         let settings_store = SettingsStore::test(cx);
         cx.set_global(settings_store);

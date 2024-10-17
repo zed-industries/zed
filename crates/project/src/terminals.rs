@@ -6,6 +6,7 @@ use itertools::Itertools;
 use settings::{Settings, SettingsLocation};
 use smol::channel::bounded;
 use std::{
+    borrow::Cow,
     env::{self},
     iter,
     path::{Path, PathBuf},
@@ -67,8 +68,12 @@ impl Project {
     }
 
     fn ssh_command(&self, cx: &AppContext) -> Option<SshCommand> {
-        if let Some(ssh_session) = self.ssh_session.as_ref() {
-            return Some(SshCommand::Direct(ssh_session.ssh_args()));
+        if let Some(args) = self
+            .ssh_client
+            .as_ref()
+            .and_then(|session| session.read(cx).ssh_args())
+        {
+            return Some(SshCommand::Direct(args));
         }
 
         let dev_server_project_id = self.dev_server_project_id()?;
@@ -215,7 +220,7 @@ impl Project {
             spawn_task,
             shell,
             env,
-            Some(settings.blinking),
+            settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
             window,
@@ -337,10 +342,9 @@ pub fn wrap_for_ssh(
     venv_directory: Option<PathBuf>,
 ) -> (String, Vec<String>) {
     let to_run = if let Some((command, args)) = command {
-        iter::once(command)
-            .chain(args)
-            .filter_map(|arg| shlex::try_quote(arg).ok())
-            .join(" ")
+        let command = Cow::Borrowed(command.as_str());
+        let args = args.iter().filter_map(|arg| shlex::try_quote(arg).ok());
+        iter::once(command).chain(args).join(" ")
     } else {
         "exec ${SHELL:-sh} -l".to_string()
     };
@@ -358,7 +362,20 @@ pub fn wrap_for_ssh(
     }
 
     let commands = if let Some(path) = path {
-        format!("cd {:?}; {} {}", path, env_changes, to_run)
+        let path_string = path.to_string_lossy().to_string();
+        // shlex will wrap the command in single quotes (''), disabling ~ expansion,
+        // replace ith with something that works
+        let tilde_prefix = "~/";
+        if path.starts_with(tilde_prefix) {
+            let trimmed_path = path_string
+                .trim_start_matches("/")
+                .trim_start_matches("~")
+                .trim_start_matches("/");
+
+            format!("cd \"$HOME/{trimmed_path}\"; {env_changes} {to_run}")
+        } else {
+            format!("cd {path:?}; {env_changes} {to_run}")
+        }
     } else {
         format!("cd; {env_changes} {to_run}")
     };
@@ -373,9 +390,7 @@ pub fn wrap_for_ssh(
         SshCommand::Direct(ssh_args) => ("ssh".to_string(), ssh_args.clone()),
     };
 
-    if command.is_none() {
-        args.push("-t".to_string())
-    }
+    args.push("-t".to_string());
     args.push(shell_invocation);
     (program, args)
 }

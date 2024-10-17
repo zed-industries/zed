@@ -1,5 +1,6 @@
 use std::{env, fs};
 
+use zed::{CodeLabel, CodeLabelSpan};
 use zed_extension_api::settings::LspSettings;
 use zed_extension_api::{self as zed, serde_json, LanguageServerId, Result};
 
@@ -103,5 +104,106 @@ impl Intelephense {
         Ok(Some(serde_json::json!({
             "intelephense": settings
         })))
+    }
+
+    pub fn label_for_completion(&self, completion: zed::lsp::Completion) -> Option<CodeLabel> {
+        let label = &completion.label;
+
+        match completion.kind? {
+            zed::lsp::CompletionKind::Method => {
+                // __construct method doesn't have a detail
+                if let Some(ref detail) = completion.detail {
+                    if detail.is_empty() {
+                        return Some(CodeLabel {
+                            spans: vec![
+                                CodeLabelSpan::literal(label, Some("function.method".to_string())),
+                                CodeLabelSpan::literal("()", None),
+                            ],
+                            filter_range: (0..label.len()).into(),
+                            code: completion.label,
+                        });
+                    }
+                }
+
+                let mut parts = completion.detail.as_ref()?.split(":");
+                // E.g., `foo(string $var)`
+                let name_and_params = parts.next()?;
+                let return_type = parts.next()?.trim();
+
+                let (_, params) = name_and_params.split_once("(")?;
+                let params = params.trim_end_matches(")");
+
+                Some(CodeLabel {
+                    spans: vec![
+                        CodeLabelSpan::literal(label, Some("function.method".to_string())),
+                        CodeLabelSpan::literal("(", None),
+                        CodeLabelSpan::literal(params, Some("comment".to_string())),
+                        CodeLabelSpan::literal("): ", None),
+                        CodeLabelSpan::literal(return_type, Some("type".to_string())),
+                    ],
+                    filter_range: (0..label.len()).into(),
+                    code: completion.label,
+                })
+            }
+            zed::lsp::CompletionKind::Constant | zed::lsp::CompletionKind::EnumMember => {
+                if let Some(ref detail) = completion.detail {
+                    if !detail.is_empty() {
+                        return Some(CodeLabel {
+                            spans: vec![
+                                CodeLabelSpan::literal(label, Some("constant".to_string())),
+                                CodeLabelSpan::literal(" ", None),
+                                CodeLabelSpan::literal(detail, Some("comment".to_string())),
+                            ],
+                            filter_range: (0..label.len()).into(),
+                            code: completion.label,
+                        });
+                    }
+                }
+
+                Some(CodeLabel {
+                    spans: vec![CodeLabelSpan::literal(label, Some("constant".to_string()))],
+                    filter_range: (0..label.len()).into(),
+                    code: completion.label,
+                })
+            }
+            zed::lsp::CompletionKind::Property => {
+                let return_type = completion.detail?;
+                Some(CodeLabel {
+                    spans: vec![
+                        CodeLabelSpan::literal(label, Some("attribute".to_string())),
+                        CodeLabelSpan::literal(": ", None),
+                        CodeLabelSpan::literal(return_type, Some("type".to_string())),
+                    ],
+                    filter_range: (0..label.len()).into(),
+                    code: completion.label,
+                })
+            }
+            zed::lsp::CompletionKind::Variable => {
+                // See https://www.php.net/manual/en/reserved.variables.php
+                const SYSTEM_VAR_NAMES: &[&str] =
+                    &["argc", "argv", "php_errormsg", "http_response_header"];
+
+                let var_name = completion.label.trim_start_matches("$");
+                let is_uppercase = var_name
+                    .chars()
+                    .filter(|c| c.is_alphabetic())
+                    .all(|c| c.is_uppercase());
+                let is_system_constant = var_name.starts_with("_");
+                let is_reserved = SYSTEM_VAR_NAMES.contains(&var_name);
+
+                let highlight = if is_uppercase || is_system_constant || is_reserved {
+                    Some("comment".to_string())
+                } else {
+                    None
+                };
+
+                Some(CodeLabel {
+                    spans: vec![CodeLabelSpan::literal(label, highlight)],
+                    filter_range: (0..label.len()).into(),
+                    code: completion.label,
+                })
+            }
+            _ => None,
+        }
     }
 }

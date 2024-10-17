@@ -27,19 +27,18 @@ use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
-use project::TaskSourceKind;
+use project::Item;
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_local_settings_content, initial_tasks_content, watch_config_file, KeymapFile, Settings,
-    SettingsStore, DEFAULT_KEYMAP_PATH,
+    initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
+    DEFAULT_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
-use task::static_source::{StaticSource, TrackedFile};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
 use workspace::CloseIntent;
@@ -55,7 +54,9 @@ use workspace::{
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
 };
 use workspace::{notifications::DetachAndPromptErr, Pane};
-use zed_actions::{OpenAccountSettings, OpenBrowser, OpenSettings, OpenZedUrl, Quit};
+use zed_actions::{
+    OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
+};
 
 actions!(
     zed,
@@ -66,8 +67,8 @@ actions!(
         Minimize,
         OpenDefaultKeymap,
         OpenDefaultSettings,
-        OpenLocalSettings,
-        OpenLocalTasks,
+        OpenProjectSettings,
+        OpenProjectTasks,
         OpenTasks,
         ResetDatabase,
         ShowAll,
@@ -220,6 +221,7 @@ pub fn initialize_workspace(
 
         let handle = cx.view().downgrade();
         cx.on_window_should_close(move |cx| {
+
             handle
                 .update(cx, |workspace, cx| {
                     // We'll handle closing asynchronously
@@ -228,27 +230,6 @@ pub fn initialize_workspace(
                 })
                 .unwrap_or(true)
         });
-
-        let project = workspace.project().clone();
-        if project.update(cx, |project, cx| {
-            project.is_local() || project.is_via_ssh() || project.ssh_connection_string(cx).is_some()
-        }) {
-            project.update(cx, |project, cx| {
-                let fs = app_state.fs.clone();
-                project.task_inventory().update(cx, |inventory, cx| {
-                    let tasks_file_rx =
-                        watch_config_file(cx.background_executor(), fs, paths::tasks_file().clone());
-                    inventory.add_source(
-                        TaskSourceKind::AbsPath {
-                            id_base: "global_tasks".into(),
-                            abs_path: paths::tasks_file().clone(),
-                        },
-                        |tx, cx| StaticSource::new(TrackedFile::new(tasks_file_rx, tx, cx)),
-                        cx,
-                    );
-                })
-            });
-        }
 
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
@@ -451,8 +432,8 @@ pub fn initialize_workspace(
                     );
                 },
             )
-            .register_action(open_local_settings_file)
-            .register_action(open_local_tasks_file)
+            .register_action(open_project_settings_file)
+            .register_action(open_project_tasks_file)
             .register_action(
                 move |workspace: &mut Workspace,
                       _: &OpenDefaultKeymap,
@@ -544,6 +525,25 @@ pub fn initialize_workspace(
                     }
                 }
             });
+        if workspace.project().read(cx).is_via_ssh() {
+            workspace.register_action({
+                move |workspace, _: &OpenServerSettings, cx| {
+                    let open_server_settings = workspace.project().update(cx, |project, cx| {
+                        project.open_server_settings(cx)
+                    });
+
+                    cx.spawn(|workspace, mut cx| async move {
+                        let buffer = open_server_settings.await?;
+
+                        workspace.update(&mut cx, |workspace, cx| {
+                            workspace.open_path(buffer.read(cx).project_path(cx).expect("Settings file must have a location"), None, true, cx)
+                        })?.await?;
+
+                        anyhow::Ok(())
+                    }).detach_and_log_err(cx);
+                }
+            });
+        }
 
         workspace.focus_handle(cx).focus(cx);
     })
@@ -573,7 +573,7 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
     .detach();
 }
 
-fn initialize_pane(workspace: &mut Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
+fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContext<Workspace>) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
             let multibuffer_hint = cx.new_view(|_| MultibufferHint::new());
@@ -836,22 +836,22 @@ pub fn load_default_keymap(cx: &mut AppContext) {
     }
 }
 
-fn open_local_settings_file(
+fn open_project_settings_file(
     workspace: &mut Workspace,
-    _: &OpenLocalSettings,
+    _: &OpenProjectSettings,
     cx: &mut ViewContext<Workspace>,
 ) {
     open_local_file(
         workspace,
         local_settings_file_relative_path(),
-        initial_local_settings_content(),
+        initial_project_settings_content(),
         cx,
     )
 }
 
-fn open_local_tasks_file(
+fn open_project_tasks_file(
     workspace: &mut Workspace,
-    _: &OpenLocalTasks,
+    _: &OpenProjectTasks,
     cx: &mut ViewContext<Workspace>,
 ) {
     open_local_file(
@@ -981,7 +981,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
 }
 
 fn open_bundled_file(
-    workspace: &mut Workspace,
+    workspace: &Workspace,
     text: Cow<'static, str>,
     title: &'static str,
     language: &'static str,

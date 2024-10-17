@@ -20,11 +20,11 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.store_visual_marks(cx);
         vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let mut original_positions = vim.save_selection_starts(editor, cx);
+                let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
                     editor.indent(&Default::default(), cx);
                 }
-                vim.restore_selection_cursors(editor, cx, &mut original_positions);
+                vim.restore_selection_cursors(editor, cx, original_positions);
             });
         });
         if vim.mode.is_visual() {
@@ -38,11 +38,11 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.store_visual_marks(cx);
         vim.update_editor(cx, |vim, editor, cx| {
             editor.transact(cx, |editor, cx| {
-                let mut original_positions = vim.save_selection_starts(editor, cx);
+                let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
                     editor.outdent(&Default::default(), cx);
                 }
-                vim.restore_selection_cursors(editor, cx, &mut original_positions);
+                vim.restore_selection_cursors(editor, cx, original_positions);
             });
         });
         if vim.mode.is_visual() {

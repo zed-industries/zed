@@ -21,7 +21,7 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
     PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, MAX_LINE_LEN,
+    CURSORS_VISIBLE_FOR, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -64,7 +64,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::Bias;
-use theme::{ActiveTheme, PlayerColor};
+use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::RangeExt;
@@ -335,8 +335,14 @@ impl EditorElement {
         register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
+        register_action(view, cx, Editor::fold_all);
         register_action(view, cx, Editor::fold_at);
+        register_action(view, cx, Editor::fold_recursive);
+        register_action(view, cx, Editor::toggle_fold);
+        register_action(view, cx, Editor::toggle_fold_recursive);
         register_action(view, cx, Editor::unfold_lines);
+        register_action(view, cx, Editor::unfold_recursive);
+        register_action(view, cx, Editor::unfold_all);
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
         register_action(view, cx, Editor::show_completions);
@@ -365,6 +371,13 @@ impl EditorElement {
         register_action(view, cx, Editor::expand_all_hunk_diffs);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
+                task.detach_and_log_err(cx);
+            } else {
+                cx.propagate();
+            }
+        });
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.format_selections(action, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
@@ -430,7 +443,9 @@ impl EditorElement {
         register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
-        register_action(view, cx, Editor::open_active_item_in_terminal)
+        register_action(view, cx, Editor::apply_selected_diff_hunks);
+        register_action(view, cx, Editor::open_active_item_in_terminal);
+        register_action(view, cx, Editor::reload_file)
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {
@@ -630,11 +645,30 @@ impl EditorElement {
             cx.stop_propagation();
         } else if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
-        } else if cfg!(target_os = "linux")
-            && event.button == MouseButton::Middle
-            && (!text_hitbox.is_hovered(cx) || editor.read_only(cx))
-        {
-            return;
+        } else if cfg!(target_os = "linux") && event.button == MouseButton::Middle {
+            if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
+                return;
+            }
+
+            #[cfg(target_os = "linux")]
+            if EditorSettings::get_global(cx).middle_click_paste {
+                if let Some(text) = cx.read_from_primary().and_then(|item| item.text()) {
+                    let point_for_position =
+                        position_map.point_for_position(text_hitbox.bounds, event.position);
+                    let position = point_for_position.previous_valid;
+
+                    editor.select(
+                        SelectPhase::Begin {
+                            position,
+                            add: false,
+                            click_count: 1,
+                        },
+                        cx,
+                    );
+                    editor.insert(&text, cx);
+                }
+                cx.stop_propagation()
+            }
         }
     }
 
@@ -989,8 +1023,20 @@ impl EditorElement {
                         block_width = em_width;
                     }
                     let block_text = if let CursorShape::Block = selection.cursor_shape {
-                        snapshot.display_chars_at(cursor_position).next().and_then(
-                            |(character, _)| {
+                        snapshot
+                            .display_chars_at(cursor_position)
+                            .next()
+                            .or_else(|| {
+                                if cursor_column == 0 {
+                                    snapshot
+                                        .placeholder_text()
+                                        .and_then(|s| s.chars().next())
+                                        .map(|c| (c, cursor_position))
+                                } else {
+                                    None
+                                }
+                            })
+                            .and_then(|(character, _)| {
                                 let text = if character == '\n' {
                                     SharedString::from(" ")
                                 } else {
@@ -1005,6 +1051,22 @@ impl EditorElement {
                                     })
                                     .unwrap_or(self.style.text.font());
 
+                                // Invert the text color for the block cursor. Ensure that the text
+                                // color is opaque enough to be visible against the background color.
+                                //
+                                // 0.75 is an arbitrary threshold to determine if the background color is
+                                // opaque enough to use as a text color.
+                                //
+                                // TODO: In the future we should ensure themes have a `text_inverse` color.
+                                let color = if cx.theme().colors().editor_background.a < 0.75 {
+                                    match cx.theme().appearance {
+                                        Appearance::Dark => Hsla::black(),
+                                        Appearance::Light => Hsla::white(),
+                                    }
+                                } else {
+                                    cx.theme().colors().editor_background
+                                };
+
                                 cx.text_system()
                                     .shape_line(
                                         text,
@@ -1012,15 +1074,14 @@ impl EditorElement {
                                         &[TextRun {
                                             len,
                                             font,
-                                            color: self.style.background,
+                                            color,
                                             background_color: None,
                                             strikethrough: None,
                                             underline: None,
                                         }],
                                     )
                                     .log_err()
-                            },
-                        )
+                            })
                     } else {
                         None
                     };
@@ -1445,7 +1506,7 @@ impl EditorElement {
             AvailableSpace::MaxContent
         };
         let scroll_top = scroll_position.y * line_height;
-        let start_x = em_width * 1;
+        let start_x = em_width;
 
         let mut last_used_color: Option<(PlayerColor, Oid)> = None;
 
@@ -1640,7 +1701,16 @@ impl EditorElement {
                         return None;
                     }
                     if snapshot.is_line_folded(multibuffer_row) {
-                        return None;
+                        // Skip folded indicators, unless it's the starting line of a fold.
+                        if multibuffer_row
+                            .0
+                            .checked_sub(1)
+                            .map_or(false, |previous_row| {
+                                snapshot.is_line_folded(MultiBufferRow(previous_row))
+                            })
+                        {
+                            return None;
+                        }
                     }
                     let button = editor.render_run_indicator(
                         &self.style,
@@ -4228,7 +4298,7 @@ fn render_blame_entry(
     let short_commit_id = blame_entry.sha.display_short();
 
     let author_name = blame_entry.author.as_deref().unwrap_or("<no name>");
-    let name = util::truncate_and_trailoff(author_name, 20);
+    let name = util::truncate_and_trailoff(author_name, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED);
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
@@ -4240,22 +4310,21 @@ fn render_blame_entry(
 
     h_flex()
         .w_full()
+        .justify_between()
         .font_family(style.text.font().family)
         .line_height(style.text.line_height)
         .id(("blame", ix))
-        .children([
-            div()
-                .text_color(sha_color.cursor)
-                .child(short_commit_id)
-                .mr_2(),
-            div()
-                .w_full()
-                .h_flex()
-                .justify_between()
-                .text_color(cx.theme().status().hint)
-                .child(name)
-                .child(relative_timestamp),
-        ])
+        .text_color(cx.theme().status().hint)
+        .pr_2()
+        .gap_2()
+        .child(
+            h_flex()
+                .items_center()
+                .gap_2()
+                .child(div().text_color(sha_color.cursor).child(short_commit_id))
+                .child(name),
+        )
+        .child(relative_timestamp)
         .on_mouse_down(MouseButton::Right, {
             let blame_entry = blame_entry.clone();
             let details = details.clone();
@@ -4970,6 +5039,7 @@ impl Element for EditorElement {
                         font_id,
                         font_size,
                         em_width,
+                        em_advance,
                         self.max_line_number_width(&snapshot, cx),
                         cx,
                     );
@@ -4994,10 +5064,8 @@ impl Element for EditorElement {
                             snapshot
                         } else {
                             let wrap_width = match editor.soft_wrap_mode(cx) {
-                                SoftWrap::None => None,
-                                SoftWrap::PreferLine => {
-                                    Some((MAX_LINE_LEN / 2) as f32 * em_advance)
-                                }
+                                SoftWrap::GitDiff => None,
+                                SoftWrap::None => Some((MAX_LINE_LEN / 2) as f32 * em_advance),
                                 SoftWrap::EditorWidth => Some(editor_width),
                                 SoftWrap::Column(column) => Some(column as f32 * em_advance),
                                 SoftWrap::Bounded(column) => {
@@ -6027,7 +6095,7 @@ impl CursorLayout {
                 origin: self.origin + origin,
                 size: size(self.block_width, self.line_height),
             },
-            CursorShape::Underscore => Bounds {
+            CursorShape::Underline => Bounds {
                 origin: self.origin
                     + origin
                     + gpui::Point::new(Pixels::ZERO, self.line_height - px(2.0)),
@@ -6283,10 +6351,21 @@ fn compute_auto_height_layout(
         .unwrap()
         .size
         .width;
+    let em_advance = cx
+        .text_system()
+        .advance(font_id, font_size, 'm')
+        .unwrap()
+        .width;
 
     let mut snapshot = editor.snapshot(cx);
-    let gutter_dimensions =
-        snapshot.gutter_dimensions(font_id, font_size, em_width, max_line_number_width, cx);
+    let gutter_dimensions = snapshot.gutter_dimensions(
+        font_id,
+        font_size,
+        em_width,
+        em_advance,
+        max_line_number_width,
+        cx,
+    );
 
     editor.gutter_dimensions = gutter_dimensions;
     let text_width = width - gutter_dimensions.width;

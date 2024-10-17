@@ -15,17 +15,17 @@ use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, ViewContext, VisualContext, WeakView,
+    StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::RecentProjects;
+use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto::{self, DevServerStatus};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
-    Indicator, PopoverMenu, Tooltip,
+    IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -65,6 +65,7 @@ pub struct TitleBar {
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
     should_move: bool,
+    application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -75,7 +76,7 @@ impl Render for TitleBar {
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
         let titlebar_color = if cfg!(target_os = "linux") {
-            if cx.is_window_active() {
+            if cx.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
             } else {
                 cx.theme().colors().title_bar_inactive_background
@@ -131,12 +132,7 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .children(match self.platform_style {
-                                PlatformStyle::Mac => None,
-                                PlatformStyle::Linux | PlatformStyle::Windows => {
-                                    Some(ApplicationMenu::new())
-                                }
-                            })
+                            .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
                             .children(self.render_project_host(cx))
                             .child(self.render_project_name(cx))
                             .children(self.render_project_branch(cx))
@@ -215,6 +211,15 @@ impl TitleBar {
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
         let active_call = ActiveCall::global(cx);
+
+        let platform_style = PlatformStyle::platform();
+        let application_menu = match platform_style {
+            PlatformStyle::Mac => None,
+            PlatformStyle::Linux | PlatformStyle::Windows => {
+                Some(cx.new_view(ApplicationMenu::new))
+            }
+        };
+
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -227,9 +232,10 @@ impl TitleBar {
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         Self {
-            platform_style: PlatformStyle::platform(),
+            platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
+            application_menu,
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
@@ -254,6 +260,55 @@ impl TitleBar {
     pub fn platform_style(mut self, style: PlatformStyle) -> Self {
         self.platform_style = style;
         self
+    }
+
+    fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let host = self.project.read(cx).ssh_connection_string(cx)?;
+
+        let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
+            remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
+            remote::ConnectionState::HeartbeatMissed => (
+                Color::Warning,
+                format!("Connection attempt to {host} missed. Retrying..."),
+            ),
+            remote::ConnectionState::Reconnecting => (
+                Color::Warning,
+                format!("Lost connection to {host}. Reconnecting..."),
+            ),
+            remote::ConnectionState::Disconnected => {
+                (Color::Error, format!("Disconnected from {host}"))
+            }
+        };
+
+        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => Color::Info,
+            remote::ConnectionState::Connected => Color::Default,
+            remote::ConnectionState::HeartbeatMissed => Color::Warning,
+            remote::ConnectionState::Reconnecting => Color::Warning,
+            remote::ConnectionState::Disconnected => Color::Error,
+        };
+
+        let meta = SharedString::from(meta);
+
+        Some(
+            ButtonLike::new("ssh-server-icon")
+                .child(
+                    IconWithIndicator::new(
+                        Icon::new(IconName::Server).color(icon_color),
+                        Some(Indicator::dot().color(indicator_color)),
+                    )
+                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                    .into_any_element(),
+                )
+                .tooltip(move |cx| {
+                    Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
+                })
+                .on_click(|_, cx| {
+                    cx.dispatch_action(OpenRemote.boxed_clone());
+                })
+                .into_any_element(),
+        )
     }
 
     pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
@@ -290,8 +345,11 @@ impl TitleBar {
                     .into_any_element(),
             );
         }
+        if self.project.read(cx).is_via_ssh() {
+            return self.render_ssh_project_host(cx);
+        }
 
-        if self.project.read(cx).is_disconnected() {
+        if self.project.read(cx).is_disconnected(cx) {
             return Some(
                 Button::new("disconnected", "Disconnected")
                     .disabled(true)

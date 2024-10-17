@@ -17,11 +17,11 @@ impl SlashCommand for OutlineSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert symbols for active tab".into()
+        "Insert symbols for active tab".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Symbols for Active Tab".into()
+        self.description()
     }
 
     fn complete_argument(

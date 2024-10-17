@@ -29,11 +29,11 @@ impl SlashCommand for TerminalSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert terminal output".into()
+        "Insert terminal output".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Terminal Output".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {

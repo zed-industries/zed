@@ -253,6 +253,7 @@ messages!(
     (ProjectEntryResponse, Foreground),
     (CountLanguageModelTokens, Background),
     (CountLanguageModelTokensResponse, Background),
+    (RefreshLlmToken, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -279,8 +280,6 @@ messages!(
     (SaveBuffer, Foreground),
     (SetChannelMemberRole, Foreground),
     (SetChannelVisibility, Foreground),
-    (SearchProject, Background),
-    (SearchProjectResponse, Background),
     (SendChannelMessage, Background),
     (SendChannelMessageResponse, Background),
     (ShareProject, Foreground),
@@ -292,8 +291,6 @@ messages!(
     (SynchronizeBuffersResponse, Foreground),
     (TaskContextForLocation, Background),
     (TaskContext, Background),
-    (TaskTemplates, Background),
-    (TaskTemplatesResponse, Background),
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
@@ -366,7 +363,13 @@ messages!(
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
     (CheckFileExists, Background),
-    (CheckFileExistsResponse, Background)
+    (CheckFileExistsResponse, Background),
+    (ShutdownRemoteServer, Foreground),
+    (RemoveWorktree, Foreground),
+    (LanguageServerLog, Foreground),
+    (Toast, Background),
+    (HideToast, Background),
+    (OpenServerSettings, Foreground),
 );
 
 request_messages!(
@@ -454,7 +457,6 @@ request_messages!(
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
-    (SearchProject, SearchProjectResponse),
     (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
@@ -462,7 +464,6 @@ request_messages!(
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),
-    (TaskTemplates, TaskTemplatesResponse),
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
@@ -490,7 +491,10 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CheckFileExists, CheckFileExistsResponse)
+    (CheckFileExists, CheckFileExistsResponse),
+    (ShutdownRemoteServer, Ack),
+    (RemoveWorktree, Ack),
+    (OpenServerSettings, OpenBufferResponse)
 );
 
 entity_messages!(
@@ -541,11 +545,9 @@ entity_messages!(
     ResolveCompletionDocumentation,
     ResolveInlayHint,
     SaveBuffer,
-    SearchProject,
     StartLanguageServer,
     SynchronizeBuffers,
     TaskContextForLocation,
-    TaskTemplates,
     UnshareProject,
     UpdateBuffer,
     UpdateBufferFile,
@@ -565,6 +567,11 @@ entity_messages!(
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
     CheckFileExists,
+    LanguageServerLog,
+    Toast,
+    HideToast,
+    OpenServerSettings,
+
 );
 
 entity_messages!(

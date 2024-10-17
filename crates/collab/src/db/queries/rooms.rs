@@ -718,6 +718,7 @@ impl Database {
             .map(|language_server| proto::LanguageServer {
                 id: language_server.id as u64,
                 name: language_server.name,
+                worktree_id: None,
             })
             .collect::<Vec<_>>();
 
@@ -735,6 +736,7 @@ impl Database {
                     worktree.settings_files.push(WorktreeSettingsFile {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
+                        kind: db_settings_file.kind,
                     });
                 }
             }

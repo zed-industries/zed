@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::{svg, IntoElement, Rems, RenderOnce, Size, Styled, WindowContext};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
