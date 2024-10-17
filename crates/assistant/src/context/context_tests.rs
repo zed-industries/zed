@@ -14,6 +14,7 @@ use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use project::Project;
 use rand::prelude::*;
 use serde_json::json;
@@ -477,7 +478,15 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
-    let settings_store = cx.update(SettingsStore::test);
+    let mut settings_store = cx.update(SettingsStore::test);
+    cx.update(|cx| {
+        settings_store
+            .set_user_settings(
+                r#"{ "assistant": { "enable_experimental_live_diffs": true } }"#,
+                cx,
+            )
+            .unwrap()
+    });
     cx.set_global(settings_store);
     cx.update(language::init);
     cx.update(Project::init_settings);
@@ -619,8 +628,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         fn two() {}
         </new_text>
         </edit>
-        </patch>»
-
+        </patch>
+        »
         also,",
         &[&[AssistantEdit {
             path: "src/lib.rs".into(),
@@ -673,8 +682,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         fn two() {}
         </new_text>
         </edit>
-        </patch>»
-
+        </patch>
+        »
         also,",
         &[&[AssistantEdit {
             path: "src/lib.rs".into(),
@@ -737,8 +746,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         fn two() {}
         </new_text>
         </edit>
-        </patch>»
-
+        </patch>
+        »
         also,",
         &[&[AssistantEdit {
             path: "src/lib.rs".into(),
@@ -781,8 +790,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         fn two() {}
         </new_text>
         </edit>
-        </patch>»
-
+        </patch>
+        »
         also,",
         &[&[AssistantEdit {
             path: "src/lib.rs".into(),
