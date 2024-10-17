@@ -119,10 +119,19 @@ impl Keymap {
             }
         }
         bindings.sort_by(|a, b| a.1.cmp(&b.1).reverse());
+        let mut no_action_context = HashMap::default();
+        for (binding, depth) in bindings.iter() {
+            if binding.action.as_any().type_id() == (NoAction {}).type_id() {
+                no_action_context.insert(binding.context_predicate.clone(), *depth);
+            }
+        }
         let bindings = bindings
             .into_iter()
-            .map_while(|(binding, _)| {
-                if binding.action.as_any().type_id() == (NoAction {}).type_id() {
+            .filter_map(|(binding, depth)| {
+                if no_action_context
+                    .get(&binding.context_predicate)
+                    .is_some_and(|&v| v == depth)
+                {
                     None
                 } else {
                     Some(binding)
