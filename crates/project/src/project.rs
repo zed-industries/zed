@@ -3463,6 +3463,17 @@ impl Project {
         self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
+    pub fn get_permalink_to_line(
+        &self,
+        buffer: &Model<Buffer>,
+        selection: Range<u32>,
+        cx: &AppContext,
+    ) -> Task<Result<url::Url>> {
+        self.buffer_store
+            .read(cx)
+            .get_permalink_to_line(buffer, selection, cx)
+    }
+
     // RPC message handlers
 
     async fn handle_unshare_project(
