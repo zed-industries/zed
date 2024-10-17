@@ -61,9 +61,89 @@ pub struct SshConnectionOptions {
     pub username: Option<String>,
     pub port: Option<u16>,
     pub password: Option<String>,
+    pub args: Option<Vec<String>>,
 }
 
 impl SshConnectionOptions {
+    pub fn parse_command_line(input: &str) -> Result<Self> {
+        let input = input.trim_start_matches("ssh ");
+        let mut hostname: Option<String> = None;
+        let mut username: Option<String> = None;
+        let mut port: Option<u16> = None;
+        let mut args = Vec::new();
+
+        // disallowed: -E, -e, -F, -f, -G, -g, -M, -N, -n, -O, -q, -S, -s, -T, -t, -V, -v, -W
+        const ALLOWED_OPTS: &[&str] = &[
+            "-4", "-6", "-A", "-a", "-C", "-K", "-k", "-X", "-x", "-Y", "-y",
+        ];
+        const ALLOWED_ARGS: &[&str] = &[
+            "-B", "-b", "-c", "-D", "-I", "-i", "-J", "-L", "-l", "-m", "-o", "-P", "-p", "-R",
+            "-w",
+        ];
+
+        let mut tokens = shlex::split(input)
+            .ok_or_else(|| anyhow!("invalid input"))?
+            .into_iter();
+
+        'outer: while let Some(arg) = tokens.next() {
+            if ALLOWED_OPTS.contains(&(&arg as &str)) {
+                args.push(arg.to_string());
+                continue;
+            }
+            if arg == "-p" {
+                port = tokens.next().and_then(|arg| arg.parse().ok());
+                continue;
+            } else if let Some(p) = arg.strip_prefix("-p") {
+                port = p.parse().ok();
+                continue;
+            }
+            if arg == "-l" {
+                username = tokens.next();
+                continue;
+            } else if let Some(l) = arg.strip_prefix("-l") {
+                username = Some(l.to_string());
+                continue;
+            }
+            for a in ALLOWED_ARGS {
+                if arg == *a {
+                    args.push(arg);
+                    if let Some(next) = tokens.next() {
+                        args.push(next);
+                    }
+                    continue 'outer;
+                } else if arg.starts_with(a) {
+                    args.push(arg);
+                    continue 'outer;
+                }
+            }
+            if arg.starts_with("-") || hostname.is_some() {
+                anyhow::bail!("unsupported argument: {:?}", arg);
+            }
+            let mut input = &arg as &str;
+            if let Some((u, rest)) = input.split_once('@') {
+                input = rest;
+                username = Some(u.to_string());
+            }
+            if let Some((rest, p)) = input.split_once(':') {
+                input = rest;
+                port = p.parse().ok()
+            }
+            hostname = Some(input.to_string())
+        }
+
+        let Some(hostname) = hostname else {
+            anyhow::bail!("missing hostname");
+        };
+
+        Ok(Self {
+            host: hostname.to_string(),
+            username: username.clone(),
+            port,
+            password: None,
+            args: Some(args),
+        })
+    }
+
     pub fn ssh_url(&self) -> String {
         let mut result = String::from("ssh://");
         if let Some(username) = &self.username {
@@ -76,6 +156,10 @@ impl SshConnectionOptions {
             result.push_str(&port.to_string());
         }
         result
+    }
+
+    pub fn additional_args(&self) -> Option<&Vec<String>> {
+        self.args.as_ref()
     }
 
     fn scp_url(&self) -> String {
@@ -1179,6 +1263,7 @@ impl SshRemoteConnection {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
+            .args(connection_options.additional_args().unwrap_or(&Vec::new()))
             .args([
                 "-N",
                 "-o",
