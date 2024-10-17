@@ -33,7 +33,6 @@ rpc.workspace = true
 schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
-shlex.workspace = true
 smol.workspace = true
 task.workspace = true
 terminal_view.workspace = true

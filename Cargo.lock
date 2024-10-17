@@ -8987,7 +8987,6 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "shlex",
  "smol",
  "task",
  "terminal_view",
