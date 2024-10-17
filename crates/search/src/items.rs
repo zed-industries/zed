@@ -38,7 +38,11 @@ impl Render for ProjectSearchIndicator {
         };
 
         if let Some(search_indicator) = project_search_indicator {
-            h_flex().h(rems(1.375)).gap_2().child(search_indicator).into_any()
+            h_flex()
+                .h(rems(1.375))
+                .gap_2()
+                .child(search_indicator)
+                .into_any()
         } else {
             Empty.into_any()
         }
