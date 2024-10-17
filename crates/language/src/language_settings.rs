@@ -5,7 +5,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::AppContext;
+use gpui::{AppContext, SharedString};
 use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
@@ -124,6 +124,7 @@ pub struct LanguageSettings {
     pub linked_edits: bool,
     /// Task configuration for this language.
     pub tasks: LanguageTaskConfig,
+    pub toolchain: Option<ToolchainConfig>,
 }
 
 impl LanguageSettings {
@@ -355,6 +356,10 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: {}
     pub tasks: Option<LanguageTaskConfig>,
+    /// Toolchain configuration for this language
+    ///
+    /// Default: {}
+    pub toolchain: Option<ToolchainConfig>,
 }
 
 /// The contents of the inline completion settings.
@@ -790,6 +795,12 @@ pub struct LanguageTaskConfig {
     /// Extra task variables to set for a particular language.
     pub variables: HashMap<String, String>,
 }
+/// The toolchain settings for a particular language.
+#[derive(Debug, Clone, Deserialize, PartialEq, Serialize, JsonSchema)]
+pub struct ToolchainConfig {
+    pub name: SharedString,
+    pub path: SharedString,
+}
 
 impl InlayHintSettings {
     /// Returns the kinds of inlay hints that are enabled based on the settings.
@@ -1068,7 +1079,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.linked_edits, src.linked_edits);
     merge(&mut settings.tasks, src.tasks.clone());
-
+    settings.toolchain = src.toolchain.clone();
     merge(
         &mut settings.preferred_line_length,
         src.preferred_line_length,

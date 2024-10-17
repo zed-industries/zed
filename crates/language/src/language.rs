@@ -996,6 +996,7 @@ impl Language {
     }
 
     pub fn with_toolchain_lister(mut self, provider: Option<Arc<dyn ToolchainLister>>) -> Self {
+        dbg!(self.name(), provider.is_some());
         self.toolchain = provider;
         self
     }
@@ -1368,6 +1369,10 @@ impl Language {
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
+    }
+
+    pub fn toolchain_lister(&self) -> Option<Arc<dyn ToolchainLister>> {
+        self.toolchain.clone()
     }
 
     pub fn highlight_text<'a>(

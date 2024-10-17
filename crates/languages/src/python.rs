@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
+use language::LanguageName;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
@@ -325,8 +326,11 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
 
 pub(crate) struct PythonToolchainProvider;
 
-#[async_trait]
+#[async_trait(?Send)]
 impl ToolchainLister for PythonToolchainProvider {
+    fn language_name(&self) -> LanguageName {
+        LanguageName::new("Python")
+    }
     async fn list(&self) -> ToolchainList {
         ToolchainList::default()
     }

@@ -104,6 +104,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.grammar.clone(),
                 config.matcher.clone(),
                 move || {
+                    dbg!(&config.name);
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
@@ -120,11 +121,13 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
             for adapter in adapters {
                 languages.register_lsp_adapter(config.name.clone(), adapter);
             }
+            dbg!("Registering toolchain provider with xddd", &config.name);
             languages.register_language(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
                 move || {
+                    dbg!("Registering toolchain provider with some", &config.name);
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
@@ -172,14 +175,13 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
     );
     language!("markdown");
     language!("markdown-inline");
-    let python_toolchain = Arc::new(PythonToolchainProvider);
     language!(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
         ))],
         PythonContextProvider,
-        python_toolchain.clone() as Arc<dyn ToolchainLister>
+        Arc::new(PythonToolchainProvider) as Arc<dyn ToolchainLister>
     );
     language!(
         "rust",
