@@ -1,13 +1,12 @@
+use editor::Editor;
 use gpui::{
     prelude::*, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    Refineable, Render, ScrollHandle, ViewContext, WeakView,
+    Render, ScrollHandle, View, ViewContext, WeakView,
 };
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
 use settings::Settings;
 use ui::{
-    prelude::*, v_flex, ActiveTheme, Color, Divider, Icon, IconButton, IconName, IconSize,
-    IntoElement, Label, ListItem, SharedString, Tooltip,
+    prelude::*, v_flex, Button, Color, Divider, Icon, IconButton, IconName, IconSize, IntoElement,
+    Label, List, ListItem, Modal, ModalHeader, Section, SharedString, Tooltip,
 };
 use workspace::{ModalView, Workspace};
 
@@ -17,30 +16,54 @@ use crate::{
 };
 
 gpui::actions!(repl, [ConnectJupyterServer]);
-
 pub struct JupyterServers {
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
     workspace: WeakView<Workspace>,
     server_list: Vec<JupyterServer>,
-    new_server_url: String,
-    new_server_nickname: String,
+    new_server_url: View<Editor>,
+    new_server_nickname: View<Editor>,
+    mode: JupyterServerMode,
+    selectable_items: SelectableItemList,
+}
+
+enum JupyterServerMode {
+    Default,
+    CreateServer,
+    EditServer(usize),
+}
+
+struct SelectableItemList {
+    items: Vec<Box<dyn Fn(&mut JupyterServers, &mut ViewContext<JupyterServers>)>>,
+    active_item: Option<usize>,
 }
 
 impl JupyterServers {
     fn add_server(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.new_server_url.is_empty() {
+        let added_server = self.new_server_url.read(cx).text(cx);
+        if !added_server.is_empty() {
+            let nickname = self.new_server_nickname.read(cx).text(cx);
+
+            let nickname = if nickname.is_empty() {
+                None
+            } else {
+                Some(nickname.to_string())
+            };
+
             let new_server = JupyterServer {
-                url: self.new_server_url.clone(),
-                nickname: if self.new_server_nickname.is_empty() {
-                    None
-                } else {
-                    Some(self.new_server_nickname.clone())
-                },
+                url: added_server.clone(),
+                nickname,
             };
             self.server_list.push(new_server);
-            self.new_server_url.clear();
-            self.new_server_nickname.clear();
+
+            self.new_server_url.update(cx, |editor, cx| {
+                editor.clear(cx);
+            });
+
+            self.new_server_nickname.update(cx, |editor, cx| {
+                editor.clear(cx);
+            });
+
             self.update_settings(cx);
         }
     }
@@ -61,20 +84,36 @@ impl JupyterServers {
             workspace.toggle_modal(cx, |cx| Self::new(cx, handle));
         });
     }
-
     pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
         let focus_handle = cx.focus_handle();
 
         let settings = JupyterSettings::get_global(cx);
         let server_list = settings.jupyter_servers.clone();
 
+        let new_server_url = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Server URL", cx);
+            editor
+        });
+
+        let new_server_nickname = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Nickname (optional)", cx);
+            editor
+        });
+
         Self {
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             workspace,
             server_list,
-            new_server_url: String::new(),
-            new_server_nickname: String::new(),
+            new_server_url,
+            new_server_nickname,
+            mode: JupyterServerMode::Default,
+            selectable_items: SelectableItemList {
+                items: Vec::new(),
+                active_item: None,
+            },
         }
     }
 
@@ -92,17 +131,13 @@ impl FocusableView for JupyterServers {
         self.focus_handle.clone()
     }
 }
-
 impl Render for JupyterServers {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .gap_3()
-            .p_4()
-            .child(Label::new("Jupyter Servers"))
-            .child(
-                v_flex()
-                    .gap_2()
-                    .children(self.server_list.iter().enumerate().map(|(index, server)| {
+        Modal::new("jupyter-servers", Some(self.scroll_handle.clone()))
+            .header(ModalHeader::new().child(Label::new("Jupyter Servers")))
+            .child(Section::new().child(
+                List::new().empty_message("No servers added yet.").children(
+                    self.server_list.iter().enumerate().map(|(index, server)| {
                         let name = server
                             .nickname
                             .clone()
@@ -145,27 +180,20 @@ impl Render for JupyterServers {
                                     )
                                     .into_any_element(),
                             ))
-                    })),
-            )
-            .child(Divider::horizontal())
+                    }),
+                ),
+            ))
             .child(
-                v_flex()
-                    .gap_2()
-                    .child(Label::new("Add New Server"))
-                    // .child(
-                    //     TextInput::new("new-server-url")
-                    //         .placeholder("Server URL")
-                    //         .bind(cx, &mut self.new_server_url),
-                    // )
-                    // .child(
-                    //     TextInput::new("new-server-nickname")
-                    //         .placeholder("Nickname (optional)")
-                    //         .bind(cx, &mut self.new_server_nickname),
-                    // )
-                    .child(
-                        Button::new("add-server", "Add Server")
-                            .on_click(cx.listener(|this, _, cx| this.add_server(cx))),
-                    ),
+                Section::new().child(
+                    v_flex()
+                        .gap_2()
+                        .child(self.new_server_url.clone())
+                        .child(self.new_server_nickname.clone())
+                        .child(
+                            Button::new("add-server", "Add Server")
+                                .on_click(cx.listener(|this, _, cx| this.add_server(cx))),
+                        ),
+                ),
             )
     }
 }
