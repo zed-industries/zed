@@ -26,9 +26,7 @@ use std::{
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    dbg!("a");
     let (project, _headless, fs) = init_test(cx, server_cx).await;
-    dbg!("b");
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
@@ -641,6 +639,49 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
             initial_server_settings_content().to_string()
         )
     })
+}
+
+#[gpui::test(iterations = 10)]
+async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let (project, _headless, fs) = init_test(cx, server_cx).await;
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree_id = worktree.read_with(cx, |worktree, _| worktree.id());
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+        })
+        .await
+        .unwrap();
+
+    buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
+        let ix = buffer.text().find('1').unwrap();
+        buffer.edit([(ix..ix + 1, "100")], None, cx);
+    });
+    cx.run_until_parked();
+
+    let client = cx.read(|cx| project.read(cx).ssh_client().unwrap());
+    client.update(cx, |client, cx| client.simulate_disconnect(cx));
+
+    cx.run_until_parked();
+
+    project
+        .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
+        .await
+        .unwrap();
+    assert_eq!(
+        fs.load("/code/project1/src/lib.rs".as_ref()).await.unwrap(),
+        "fn one() -> usize { 100 }"
+    );
+
+    cx.run_until_parked();
 }
 
 fn init_logger() {
