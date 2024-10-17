@@ -18,8 +18,8 @@ use futures::{
     StreamExt as _,
 };
 use gpui::{
-    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
-    SemanticVersion, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SemanticVersion, Task,
+    WeakModel,
 };
 use parking_lot::Mutex;
 use rpc::{
@@ -1051,6 +1051,7 @@ impl SshRemoteClient {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn establish_connection(
         unique_identifier: String,
         reconnect: bool,
@@ -1062,8 +1063,8 @@ impl SshRemoteClient {
         cx: &mut AsyncAppContext,
     ) -> Result<(Box<dyn SshRemoteProcess>, Task<Result<Option<i32>>>)> {
         #[cfg(any(test, feature = "test-support"))]
-        if let Some(fake) = FakeSshRemoteConnection::new(&connection_options) {
-            let io_task = FakeSshRemoteConnection::multiplex(
+        if let Some(fake) = fake::SshRemoteConnection::new(&connection_options) {
+            let io_task = fake::SshRemoteConnection::multiplex(
                 fake.connection_options(),
                 proxy_incoming_tx,
                 proxy_outgoing_rx,
@@ -1143,7 +1144,6 @@ impl SshRemoteClient {
         self.connection_options.clone()
     }
 
-    #[cfg(not(any(test, feature = "test-support")))]
     pub fn connection_state(&self) -> ConnectionState {
         self.state
             .lock()
@@ -1152,25 +1152,22 @@ impl SshRemoteClient {
             .unwrap_or(ConnectionState::Disconnected)
     }
 
-    #[cfg(any(test, feature = "test-support"))]
-    pub fn connection_state(&self) -> ConnectionState {
-        ConnectionState::Connected
-    }
-
     pub fn is_disconnected(&self) -> bool {
         self.connection_state() == ConnectionState::Disconnected
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, cx: &mut AppContext) -> Task<()> {
+        use gpui::BorrowAppContext;
+
         let port = self.connection_options().port.unwrap();
 
         let disconnect =
-            cx.update_global(|c: &mut FakeConnections, _cx| c.take(port).into_channels());
+            cx.update_global(|c: &mut fake::GlobalConnections, _cx| c.take(port).into_channels());
         cx.spawn(|mut cx| async move {
             let (input_rx, output_tx) = disconnect.await;
             let (forwarder, _, _) = ChannelForwarder::new(input_rx, output_tx, &mut cx);
-            cx.update_global(|c: &mut FakeConnections, _cx| c.replace(port, forwarder))
+            cx.update_global(|c: &mut fake::GlobalConnections, _cx| c.replace(port, forwarder))
                 .unwrap()
         })
     }
@@ -1201,9 +1198,8 @@ impl SshRemoteClient {
         use gpui::BorrowAppContext;
         client_cx
             .update(|cx| {
-                let port = cx.update_default_global(|c: &mut FakeConnections, _cx| {
-                    c.0.push(Some(forwarder));
-                    c.0.len() as u16 - 1
+                let port = cx.update_default_global(|c: &mut fake::GlobalConnections, _cx| {
+                    c.push(forwarder)
                 });
 
                 Self::new(
@@ -1213,73 +1209,12 @@ impl SshRemoteClient {
                         port: Some(port),
                         ..Default::default()
                     },
-                    Arc::new(FakeDelegate),
+                    Arc::new(fake::Delegate),
                     cx,
                 )
             })
             .await
             .unwrap()
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Default)]
-struct FakeConnections(Vec<Option<ChannelForwarder>>);
-#[cfg(any(test, feature = "test-support"))]
-impl Global for FakeConnections {}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FakeConnections {
-    fn take(&mut self, port: u16) -> ChannelForwarder {
-        self.0
-            .get_mut(port as usize)
-            .expect("no fake server for port")
-            .take()
-            .expect("fake server is already borrowed")
-    }
-    fn replace(&mut self, port: u16, forwarder: ChannelForwarder) {
-        let ret = self
-            .0
-            .get_mut(port as usize)
-            .expect("no fake server for port")
-            .replace(forwarder);
-        if !ret.is_none() {
-            panic!("fake server is already replaced");
-        }
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-struct FakeDelegate;
-
-#[cfg(any(test, feature = "test-support"))]
-impl SshClientDelegate for FakeDelegate {
-    fn ask_password(
-        &self,
-        _: String,
-        _: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<String>> {
-        unreachable!()
-    }
-    fn remote_server_binary_path(
-        &self,
-        _: SshPlatform,
-        _: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        unreachable!()
-    }
-    fn get_server_binary(
-        &self,
-        _: SshPlatform,
-        _: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>> {
-        unreachable!()
-    }
-    fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {
-        unreachable!()
-    }
-    fn set_error(&self, _: String, _: &mut AsyncAppContext) {
-        unreachable!()
     }
 }
 
@@ -1603,87 +1538,6 @@ impl SshRemoteConnection {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-struct FakeSshRemoteConnection {
-    connection_options: SshConnectionOptions,
-}
-
-#[cfg(any(test, feature = "test-support"))]
-impl FakeSshRemoteConnection {
-    fn new(connection_options: &SshConnectionOptions) -> Option<Box<dyn SshRemoteProcess>> {
-        if connection_options.host == "<fake>" {
-            return Some(Box::new(Self {
-                connection_options: connection_options.clone(),
-            }));
-        }
-        return None;
-    }
-    async fn multiplex(
-        connection_options: SshConnectionOptions,
-        mut client_tx: mpsc::UnboundedSender<Envelope>,
-        mut client_rx: mpsc::UnboundedReceiver<Envelope>,
-        mut connection_activity_tx: Sender<()>,
-        cx: &mut AsyncAppContext,
-    ) -> Task<Result<Option<i32>>> {
-        let (server_tx, server_rx) = cx
-            .update(|cx| {
-                cx.update_global(|conns: &mut FakeConnections, _| {
-                    conns.take(connection_options.port.unwrap())
-                })
-            })
-            .unwrap()
-            .into_channels()
-            .await;
-
-        let (forwarder, mut proxy_tx, mut proxy_rx) =
-            ChannelForwarder::new(server_tx, server_rx, cx);
-
-        cx.update(|cx| {
-            cx.update_global(|conns: &mut FakeConnections, _| {
-                conns.replace(connection_options.port.unwrap(), forwarder)
-            })
-        })
-        .unwrap();
-
-        cx.background_executor().spawn(async move {
-            loop {
-                select_biased! {
-                    server_to_client = proxy_rx.next().fuse() => {
-                        let Some(server_to_client) = server_to_client else {
-                            return Ok(Some(1))
-                        };
-                        connection_activity_tx.try_send(()).ok();
-                        client_tx.send(server_to_client).await.ok();
-                    }
-                    client_to_server = client_rx.next().fuse() => {
-                        let Some(client_to_server) = client_to_server else {
-                            return Ok(None)
-                        };
-                        proxy_tx.send(client_to_server).await.ok();
-
-                    }
-                }
-            }
-        })
-    }
-}
-
-#[cfg(any(test, feature = "test-support"))]
-#[async_trait]
-impl SshRemoteProcess for FakeSshRemoteConnection {
-    async fn kill(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    fn ssh_args(&self) -> Vec<String> {
-        Vec::new()
-    }
-
-    fn connection_options(&self) -> SshConnectionOptions {
-        self.connection_options.clone()
-    }
-}
-
 type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, oneshot::Sender<()>)>>>;
 
 pub struct ChannelClient {
@@ -1924,5 +1778,167 @@ impl ProtoClient for ChannelClient {
 
     fn is_via_collab(&self) -> bool {
         false
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+mod fake {
+    use std::path::PathBuf;
+
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use futures::{
+        channel::{
+            mpsc::{self, Sender},
+            oneshot,
+        },
+        select_biased, FutureExt, SinkExt, StreamExt,
+    };
+    use gpui::{AsyncAppContext, BorrowAppContext, Global, SemanticVersion, Task};
+    use rpc::proto::Envelope;
+
+    use super::{
+        ChannelForwarder, SshClientDelegate, SshConnectionOptions, SshPlatform, SshRemoteProcess,
+    };
+
+    pub(super) struct SshRemoteConnection {
+        connection_options: SshConnectionOptions,
+    }
+
+    impl SshRemoteConnection {
+        pub(super) fn new(
+            connection_options: &SshConnectionOptions,
+        ) -> Option<Box<dyn SshRemoteProcess>> {
+            if connection_options.host == "<fake>" {
+                return Some(Box::new(Self {
+                    connection_options: connection_options.clone(),
+                }));
+            }
+            return None;
+        }
+        pub(super) async fn multiplex(
+            connection_options: SshConnectionOptions,
+            mut client_tx: mpsc::UnboundedSender<Envelope>,
+            mut client_rx: mpsc::UnboundedReceiver<Envelope>,
+            mut connection_activity_tx: Sender<()>,
+            cx: &mut AsyncAppContext,
+        ) -> Task<Result<Option<i32>>> {
+            let (server_tx, server_rx) = cx
+                .update(|cx| {
+                    cx.update_global(|conns: &mut GlobalConnections, _| {
+                        conns.take(connection_options.port.unwrap())
+                    })
+                })
+                .unwrap()
+                .into_channels()
+                .await;
+
+            let (forwarder, mut proxy_tx, mut proxy_rx) =
+                ChannelForwarder::new(server_tx, server_rx, cx);
+
+            cx.update(|cx| {
+                cx.update_global(|conns: &mut GlobalConnections, _| {
+                    conns.replace(connection_options.port.unwrap(), forwarder)
+                })
+            })
+            .unwrap();
+
+            cx.background_executor().spawn(async move {
+                loop {
+                    select_biased! {
+                        server_to_client = proxy_rx.next().fuse() => {
+                            let Some(server_to_client) = server_to_client else {
+                                return Ok(Some(1))
+                            };
+                            connection_activity_tx.try_send(()).ok();
+                            client_tx.send(server_to_client).await.ok();
+                        }
+                        client_to_server = client_rx.next().fuse() => {
+                            let Some(client_to_server) = client_to_server else {
+                                return Ok(None)
+                            };
+                            proxy_tx.send(client_to_server).await.ok();
+
+                        }
+                    }
+                }
+            })
+        }
+    }
+
+    #[async_trait]
+    impl SshRemoteProcess for SshRemoteConnection {
+        async fn kill(&mut self) -> Result<()> {
+            Ok(())
+        }
+
+        fn ssh_args(&self) -> Vec<String> {
+            Vec::new()
+        }
+
+        fn connection_options(&self) -> SshConnectionOptions {
+            self.connection_options.clone()
+        }
+    }
+
+    #[derive(Default)]
+    pub(super) struct GlobalConnections(Vec<Option<ChannelForwarder>>);
+    impl Global for GlobalConnections {}
+
+    impl GlobalConnections {
+        pub(super) fn push(&mut self, forwarder: ChannelForwarder) -> u16 {
+            self.0.push(Some(forwarder));
+            self.0.len() as u16 - 1
+        }
+
+        pub(super) fn take(&mut self, port: u16) -> ChannelForwarder {
+            self.0
+                .get_mut(port as usize)
+                .expect("no fake server for port")
+                .take()
+                .expect("fake server is already borrowed")
+        }
+        pub(super) fn replace(&mut self, port: u16, forwarder: ChannelForwarder) {
+            let ret = self
+                .0
+                .get_mut(port as usize)
+                .expect("no fake server for port")
+                .replace(forwarder);
+            if ret.is_some() {
+                panic!("fake server is already replaced");
+            }
+        }
+    }
+
+    pub(super) struct Delegate;
+
+    impl SshClientDelegate for Delegate {
+        fn ask_password(
+            &self,
+            _: String,
+            _: &mut AsyncAppContext,
+        ) -> oneshot::Receiver<Result<String>> {
+            unreachable!()
+        }
+        fn remote_server_binary_path(
+            &self,
+            _: SshPlatform,
+            _: &mut AsyncAppContext,
+        ) -> Result<PathBuf> {
+            unreachable!()
+        }
+        fn get_server_binary(
+            &self,
+            _: SshPlatform,
+            _: &mut AsyncAppContext,
+        ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>> {
+            unreachable!()
+        }
+        fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {
+            unreachable!()
+        }
+        fn set_error(&self, _: String, _: &mut AsyncAppContext) {
+            unreachable!()
+        }
     }
 }

@@ -675,12 +675,11 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         .update(cx, |project, cx| project.save_buffer(buffer.clone(), cx))
         .await
         .unwrap();
+
     assert_eq!(
         fs.load("/code/project1/src/lib.rs".as_ref()).await.unwrap(),
         "fn one() -> usize { 100 }"
     );
-
-    cx.run_until_parked();
 }
 
 fn init_logger() {
