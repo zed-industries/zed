@@ -384,13 +384,6 @@ impl PickerDelegate for TasksModalDelegate {
                 .start_slot::<Icon>(icon)
                 .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
-                // .map(|this| {
-                //     if Some(ix) <= self.divider_index {
-                //         this.start_slot(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
-                //     } else {
-                //         this.start_slot(v_flex().flex_none().size(IconSize::Small.rems()))
-                //     }
-                // })
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_| item_label.clone())
                 })

@@ -11,8 +11,6 @@ use collections::HashMap;
 use crate::client::Client;
 use crate::types;
 
-pub use types::PromptInfo;
-
 const PROTOCOL_VERSION: u32 = 1;
 
 pub struct ModelContextProtocol {
@@ -26,7 +24,7 @@ impl ModelContextProtocol {
 
     pub async fn initialize(
         self,
-        client_info: types::EntityInfo,
+        client_info: types::Implementation,
     ) -> Result<InitializedContextServerProtocol> {
         let params = types::InitializeParams {
             protocol_version: PROTOCOL_VERSION,
@@ -96,7 +94,7 @@ impl InitializedContextServerProtocol {
     }
 
     /// List the MCP prompts.
-    pub async fn list_prompts(&self) -> Result<Vec<types::PromptInfo>> {
+    pub async fn list_prompts(&self) -> Result<Vec<types::Prompt>> {
         self.check_capability(ServerCapability::Prompts)?;
 
         let response: types::PromptsListResponse = self
@@ -105,6 +103,18 @@ impl InitializedContextServerProtocol {
             .await?;
 
         Ok(response.prompts)
+    }
+
+    /// List the MCP resources.
+    pub async fn list_resources(&self) -> Result<types::ResourcesListResponse> {
+        self.check_capability(ServerCapability::Resources)?;
+
+        let response: types::ResourcesListResponse = self
+            .inner
+            .request(types::RequestType::ResourcesList.as_str(), ())
+            .await?;
+
+        Ok(response)
     }
 
     /// Executes a prompt with the given arguments and returns the result.
