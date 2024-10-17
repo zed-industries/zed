@@ -2163,6 +2163,20 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
+## Project Search
+
+- Description: Configuration for the Project Search Button
+- Setting: 'project_search'
+- Default:
+
+```json
+{
+	"project_search": {
+		"button": false
+	}
+},
+```
+
 ## Assistant Panel
 
 - Description: Customize assistant panel
