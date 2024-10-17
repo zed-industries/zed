@@ -91,8 +91,24 @@ impl JupyterServers {
         self.update_settings(cx);
     }
 
+    fn update_settings_file(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+        f: impl FnOnce(&mut JupyterSettingsContent, &AppContext) + Send + Sync + 'static,
+    ) {
+        // let Some(fs) = self
+        //     .workspace
+        //     .update(cx, |workspace, _| workspace.app_state().fs.clone())
+        //     .log_err()
+        // else {
+        //     return;
+        // };
+        // update_settings_file::<SshSettings>(fs, cx, move |setting, cx| f(setting, cx));
+    }
+
     fn update_settings(&self, cx: &mut ViewContext<Self>) {
-        todo!();
+        let settings = JupyterSettings::get_global(cx);
+        dbg!(&self.server_list);
     }
 
     pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
