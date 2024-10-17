@@ -82,6 +82,11 @@ jobs:
       - name: Run style checks
         uses: ./.github/actions/check_style
 
+      - name: Check for typos
+        uses: crate-ci/typos@v1.24.6
+        with:
+          config: ./typos.toml
+
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
