@@ -33,6 +33,7 @@ use std::{
 };
 use update_notification::UpdateNotification;
 use util::ResultExt;
+use which::which;
 use workspace::notifications::NotificationId;
 use workspace::Workspace;
 
@@ -560,6 +561,12 @@ impl AutoUpdater {
             "linux" => Ok("zed.tar.gz"),
             _ => Err(anyhow!("not supported: {:?}", OS)),
         }?;
+
+        anyhow::ensure!(
+            which("rsync").is_ok(),
+            "Aborting. Could not find rsync which is required for auto-updates."
+        );
+
         let downloaded_asset = temp_dir.path().join(filename);
         download_release(&downloaded_asset, release, client, &cx).await?;
 
