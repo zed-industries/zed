@@ -832,7 +832,15 @@ impl SshRemoteClient {
                                 log::warn!("ssh heartbeat: connection activity channel has been dropped. stopping.");
                                 return Ok(());
                             }
+
                             keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
+
+                            if missed_heartbeats != 0 {
+                                missed_heartbeats = 0;
+                                this.update(&mut cx, |this, mut cx| {
+                                    this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                                })?;
+                            }
                         }
                         _ = keepalive_timer => {
                             log::debug!("Sending heartbeat to server...");
@@ -845,6 +853,7 @@ impl SshRemoteClient {
                                     ping_result
                                 }
                             };
+
                             if result.is_err() {
                                 missed_heartbeats += 1;
                                 log::warn!(
