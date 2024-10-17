@@ -2091,7 +2091,6 @@ impl Workspace {
         );
         cx.spawn(|this, mut cx| async move {
             if let Some(paths) = paths.await.log_err().flatten() {
-                let paths = paths.into_iter().map(|p| p.into()).collect();
                 let results = this
                     .update(&mut cx, |this, cx| {
                         this.open_paths(paths, OpenVisible::All, None, cx)
