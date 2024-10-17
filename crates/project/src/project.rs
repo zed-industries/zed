@@ -23,8 +23,8 @@ pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
-use bookmark_store::BookmarkStore;
 use anyhow::{anyhow, Result};
+use bookmark_store::BookmarkStore;
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
@@ -634,7 +634,7 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
-            let bookmark_store = cx.new_model(|_| BookmarkStore::new());
+            let bookmark_store = cx.new_model(|cx| BookmarkStore::new(worktree_store.clone(), cx));
 
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
@@ -741,7 +741,7 @@ impl Project {
                     cx,
                 )
             });
-            let bookmark_store = cx.new_model(|_| BookmarkStore::new());
+            let bookmark_store = cx.new_model(|cx| BookmarkStore::new(worktree_store.clone(), cx));
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
 
@@ -932,7 +932,7 @@ impl Project {
             lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
             lsp_store
         })?;
-        let bookmark_store = cx.new_model(|_| BookmarkStore::new())?;
+        let bookmark_store = cx.new_model(|cx| BookmarkStore::new(worktree_store.clone(), cx))?;
 
         let task_store = cx.new_model(|cx| {
             if run_tasks {
@@ -1393,8 +1393,9 @@ impl Project {
             return;
         };
 
-        self.bookmark_store
-            .update(cx, |store, _cx| store.toggle_bookmark(buffer, anchor, Some(content)));
+        self.bookmark_store.update(cx, |store, _cx| {
+            store.toggle_bookmark(buffer, anchor, Some(content))
+        });
     }
 
     pub fn search_history(&self, kind: SearchInputKind) -> &SearchHistory {

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path, sync::Arc};
 
 use gpui::{Model, ModelContext};
 use itertools::Itertools;
@@ -6,7 +6,10 @@ use language::Buffer;
 use settings::WorktreeId;
 use text::{Anchor, BufferId};
 
-use crate::Item;
+use crate::{
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    Item,
+};
 
 #[derive(Debug, Clone)]
 pub struct Bookmark {
@@ -25,7 +28,9 @@ pub struct BookmarkStore {
 }
 
 impl BookmarkStore {
-    pub fn new() -> Self {
+    pub fn new(worktree_store: Model<WorktreeStore>, cx: &mut ModelContext<Self>) -> Self {
+        cx.subscribe(&worktree_store, Self::on_worktree_store_event)
+            .detach();
         Self {
             bookmark_ordered: vec![],
             current_id: 0,
@@ -37,6 +42,31 @@ impl BookmarkStore {
     pub fn update_current_id(&mut self, current_id: usize, _cx: &mut ModelContext<Self>) {
         if self.bookmark_ordered.contains(&current_id) {
             self.current_id = current_id;
+        }
+    }
+
+    fn on_worktree_store_event(
+        &mut self,
+        _: Model<WorktreeStore>,
+        event: &WorktreeStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            WorktreeStoreEvent::WorktreeAdded(worktree) => cx
+                .subscribe(worktree, |this, worktree, event, cx| match event {
+                    worktree::Event::DeletedEntry(id) => {
+                        // TODO, need better method
+                        let worktree_id = worktree.read(cx).id();
+                        if let Some(entry) = worktree.read(cx).entry_for_id(id.clone()) {
+                            let path = entry.path.clone();
+                            this.clear_by_project_entry_id(worktree_id, path, cx);
+                        }
+                    }
+                    _ => {}
+                })
+                .detach(),
+            WorktreeStoreEvent::WorktreeRemoved(_, id) => self.clear_by_worktree_id(*id, cx),
+            _ => {}
         }
     }
 
@@ -122,6 +152,34 @@ impl BookmarkStore {
             return self.bookmark_map.get(&id).cloned();
         }
         None
+    }
+
+    fn clear_by_project_entry_id(
+        &mut self,
+        worktree_id: WorktreeId,
+        path: Arc<Path>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let ids_will_remove = self
+            .bookmark_map
+            .iter()
+            .filter_map(|(id, bm)| {
+                let file = bm.buffer.read(cx).file()?;
+                if file.worktree_id(cx) == worktree_id && file.path() == &path {
+                    Some(*id)
+                } else {
+                    None
+                }
+            })
+            .collect_vec();
+
+        self.bookmark_ordered
+            .retain(|id| !ids_will_remove.contains(id));
+        self.bookmark_map
+            .retain(|id, _| !ids_will_remove.contains(id));
+        if ids_will_remove.contains(&self.current_id) {
+            self.current_id = self.find_nearest_id(self.current_id);
+        }
     }
 
     pub fn clear_by_buffer_id(&mut self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
