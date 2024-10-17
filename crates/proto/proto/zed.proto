@@ -296,7 +296,7 @@ message Envelope {
 
         GetPermalinkToLine get_permalink_to_line = 264;
         GetPermalinkToLineResponse get_permalink_to_line_response = 265;
-        
+
         GetDocumentDiagnostics get_document_diagnostics = 266;
         GetDocumentDiagnosticsResponse get_document_diagnostics_response = 267; // current max
     }
@@ -2529,7 +2529,6 @@ message GetDocumentDiagnostics {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
     uint64 language_server_id = 3;
-    repeated VectorClockEntry version = 4;
 }
 
 message GetDocumentDiagnosticsResponse {
