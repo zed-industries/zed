@@ -170,7 +170,7 @@ impl SanitizedPathBuf {
         }
     }
 
-    pub fn as_trimmed_string(&self) -> String {
+    pub fn to_trimmed_string(&self) -> String {
         #[cfg(target_os = "windows")]
         {
             self.trimmed.to_string_lossy().to_string()
