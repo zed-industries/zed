@@ -2,109 +2,75 @@
 
 Remote Development allows you to code at the speed of thought, even when your codebase is not on your local machine. You use Zed locally so the UI is immediately responsive, but offload heavy computation to the development server so that you can work effectively.
 
-> **Note:** Remoting is still "alpha". We have several changes we would like to make before it is fully released.
+> **Note:** Remoting is still "alpha". We are still refining the relaibility and performance.
 
 ## Overview
 
-Remote development requires running two instances of Zed. A headless instance on the remote machine, and the editor interface on your local computer. All configuration is done on your local computer.
+Remote development requires two computers, your local machine that runs the Zed UI and the remote server which runs a small Zed server. The two communicate over SSH, so you will need to be able to SSH from your local machine into the remote server to use this feature.
 
-Currently the two instances connect via Zed's servers, but we intend to build peer to peer communication before the feature is fully released.
+> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer configure new projects in this mode, and in Zed v0.159 support for these will be removed completely.
 
 ## Setup
 
-1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview).
+1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You ned at least Zed v0.158.
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
-1. Click "New Server".
-1. Choose whether to setup via SSH, or to follow the manual setup.
-   > **Note:** With both options your laptop and the remote machine will communicate
-   > via https://collab.zed.dev/, so you will need outbound internet access on the remote machine.
-1. On your laptop you can now open folders on the remote machine.
+1. Click "New Server" and enter the command you use to ssh into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
+1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, it will download the latest version of the Zed server and upload it to the remote over SSH.
+1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
-
-## Troubleshooting
-
-### UI is not showing up
-
-You need to be on a relatively recent Zed (v0.145.0 or later).
-
-### SSH connections
-
-If you chose to connect via SSH, the command you specify will be run in a Zed terminal given you an opportunity to type any passwords/keyphrases etc. that you need.
-Once a connection is established, Zed will be downloaded and installed to `~/.local/bin/zed` on the remote machine, and run.
-
-If you don't see any output from the Zed command, it is likely that Zed is crashing
-on startup. You can troubleshoot this by switching to manual mode and passing the `--foreground` flag. Please [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
-
-If you are trying to connect to a platform like GitHub Codespaces or Google Cloud, you may want to first make sure that your SSH configuration is set up correctly. Once you can `ssh X` to connect to the machine, then Zed will be able to connect.
-
-> **Note:** In an earlier version of remoting, we supported typing in `gh cs ssh` or `gcloud compute ssh` directly. This is no longer supported. Instead you should make sure your SSH configuration is up to date with `gcloud compute ssh --config` or `gh cs ssh --config`, or use Manual setup mode if you cannot ssh directly to the machine.
-
-### zed --dev-server-token isn't connecting
-
-There are a few likely causes of failure:
-
-- `zed --dev-server-token` runs but outputs nothing. This is probably because the Zed background process is crashing on startup. Try running `zed --dev-server-token XX --foreground` to see any output, and [file a bug](https://github.com/zed-industries/zed) so we can debug it together.
-- `zed --dev-server-token` outputs something like "Connection refused" or "Unauthorized" and immediately exits. This is likely due to issues making outbound HTTP requests to https://collab.zed.dev from your host. You can try to debug this with `curl https://collab.zed.dev`, but we have seen cases where curl is whitelisted, but other binaries are not allowed network access.
-- `zed --dev-server-token` outputs "Zed is already running". If you are editing an existing server, it is possible that clicking "Connect" a second time will work, but if not you will have to manually log into the server and kill the Zed process.
 
 ## Supported platforms
 
-The remote machine must be able to run Zed. The following platforms should work, though note that we have not exhaustively tested every Linux distribution:
+The remote machine must be able to run Zed's server. The following platforms should work, though note that we have not exhaustively tested every Linux distribution:
 
 - macOS Catalina or later (Intel or Apple Silicon)
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms). You must have `glibc` installed at version 2.29 (released in 2019) or greater and available globally.
 - Windows is not yet supported.
 
-## Settings and extensions
+## Settings
 
-> **Note:** This may change as the alpha program continues.
+The remote machine will by default inherit all your settings from your local machine's Zed configuration, additionally any project configuration from `.zed/settings.json` in the root of your project will be applied. If you want different settings (for example language server configuration) on a per-server basis you can use `cmd-shift-p Open Server Settings` while connected to a remote project to create a settings file for that server.
 
-<!--
-TBD: Remote user settings need a name. Perhaps `zed: remote user settings`?
--->
+## Supported SSH Options
 
-You can edit the settings file on the remote instance. To do so, add a new project to your server in the directory `~/.config/zed`. You can create a file called `settings.json` if it does not yet exist.
+Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and use then use that to multiplex ssh connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your ssh config file, but if you want to specify additional options to the ssh control master you can configure Zed to set them.
 
-Note that this is most useful for configuring language servers, as any UI related settings do not apply.
+When typing in the "New Server" dialogue, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
 
-If you'd like to install language-server extensions, you can add them to the list of `auto_installed_extensions`. Again you don't need to do this to get syntax highlighting (which is handled by the local zed).
+Supported options:
+* `-p` / `-l` - these are equivalent to passing the port and the username in the host string.
+* `-L` / `-R` for port forwarding
+* `-i` - to use a specific key file
+* `-o` - to set custom options
+* `-J` / `-w` - to proxy the SSH connection
+* And also... `-4`, `-6`, `-A`, `-a`, `-C`, `-K`, `-k`, `-X`, `-x`, `-Y`, `-y`, `-B`, `-b`, `-c`, `-D`, `-I`, `-i`, `-J`, `-l`, `-m`, `-o`, `-P`, `-p`, `-w`
 
-```json
-{
-  "auto_install_extensions": {
-    "java": true
-  }
-}
-```
+Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
+
+## Connecting & Reconnecting
+
+When you first connect to a remote project, the Zed running on your local machine will SSH in, and upload the latest version of the Zed server. If this fails you should see an error message.
+
+Once the remote server is uploaded, we run two copies of it:
+* The first is the "proxy" process. This is attached to the SSH tty and so is killed when your SSH connection closes.
+* The second is the "server" process. This process is backgrounded so it will continue running for about 10 minutes after the connection is closed. This allows us to recover quickly if your connection is lost.
+
+Your local Zed will continually ping the remote server and expect it to reply. If it hasn't replied for a few seconds, it will start a reconnect process. You can tell this is happening because the server icon in the top left will change color.
+
+If the reconnection is successful, and the "server" process is still running on the remote host, a new proxy process will be created and any pending edits uploaded. If reconnecting fails, Zed will show an error overlay, and give you the option to manually retry.
+
+If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
 
 ## Known Limitations
 
-- You can't use the Terminal or Tasks if you choose "Manual Connection"
-- You can't run `zed` in headless mode and in GUI mode at the same time on the same machine.
+- Zed extensions are not yet supported on remotes, so languages that need them for support do not work.
 - You can't open files from the remote Terminal by typing the `zed` command.
+- Zed does not yet support automatic port-forwarding. You can use `-R` and `-L` in your SSH arguments for now.
 
 ## Feedback
 
 Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
 
-# Direct SSH Connections
+## Troubleshooting
 
-The current alpha release of Zed always connects via our servers. This was to get experience building the feature on top of our existing collaboration support. We plan to move to direct SSH connections for any machine that can be SSH'd into.
-
-We are working on a direct SSH connection feature, which you can try out if you'd like.
-
-> **Note:** Direct SSH support does not support most features yet! You cannot use project search, language servers, or basically do anything except edit files...
-
-To try this out you can either from the command line run:
-
-```sh
-zed ssh://user@host:port/path/to/project
-```
-
-Or you can (in your settings file) add:
-
-```json
-"ssh_connections": []
-```
-
-And then from the command palette choose `projects: Open Remote` and configure an SSH connection from there.
+When you create a new
