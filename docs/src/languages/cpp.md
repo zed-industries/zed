@@ -38,6 +38,23 @@ If you want to disable Zed looking for a `clangd` binary, you can set `ignore_sy
 }
 ```
 
+## Arguments
+
+You can pass any number of arguments to clangd. To see a full set of available options, run `clangd --help` from the command line. For example with `--function-arg-placeholders=0` completions contain only parentheses for function calls, while the default (`--function-arg-placeholders=1`) completions also contain placeholders for method parameters.
+
+```json
+{
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "path": "/path/to/clangd",
+        "arguments": ["--function-arg-placeholders=0"]
+      }
+    }
+  }
+}
+```
+
 ## More server configuration
 
 In the root of your project, it is generally common to create a `.clangd` file to set extra configuration.

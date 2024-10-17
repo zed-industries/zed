@@ -1207,7 +1207,7 @@ message ResolveState {
     }
 
     message LspResolveState {
-        string value = 1;
+        optional string value = 1;
         uint64 server_id = 2;
     }
 }

@@ -32,6 +32,23 @@ impl SshSettings {
     pub fn ssh_connections(&self) -> impl Iterator<Item = SshConnection> {
         self.ssh_connections.clone().into_iter().flatten()
     }
+
+    pub fn args_for(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        user: &Option<String>,
+    ) -> Option<Vec<String>> {
+        self.ssh_connections()
+            .filter_map(|conn| {
+                if conn.host == host && &conn.username == user && conn.port == port {
+                    Some(conn.args)
+                } else {
+                    None
+                }
+            })
+            .next()
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -45,6 +62,9 @@ pub struct SshConnection {
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<SharedString>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub args: Vec<String>,
 }
 impl From<SshConnection> for SshConnectionOptions {
     fn from(val: SshConnection) -> Self {
@@ -53,6 +73,7 @@ impl From<SshConnection> for SshConnectionOptions {
             username: val.username,
             port: val.port,
             password: None,
+            args: Some(val.args),
         }
     }
 }
@@ -151,11 +172,9 @@ impl Render for SshPrompt {
         v_flex()
             .key_context("PasswordPrompt")
             .size_full()
-            .justify_center()
             .child(
                 h_flex()
                     .p_2()
-                    .justify_center()
                     .flex_wrap()
                     .child(if self.error_message.is_some() {
                         Icon::new(IconName::XCircle)
@@ -176,22 +195,17 @@ impl Render for SshPrompt {
                     })
                     .child(
                         div()
-                            .ml_1()
-                            .child(Label::new("SSH Connection").size(LabelSize::Small)),
-                    )
-                    .child(
-                        div()
                             .text_ellipsis()
                             .overflow_x_hidden()
                             .when_some(self.error_message.as_ref(), |el, error| {
-                                el.child(Label::new(format!("－{}", error)).size(LabelSize::Small))
+                                el.child(Label::new(format!("{}", error)).size(LabelSize::Small))
                             })
                             .when(
                                 self.error_message.is_none() && self.status_message.is_some(),
                                 |el| {
                                     el.child(
                                         Label::new(format!(
-                                            "－{}",
+                                            "－{}…",
                                             self.status_message.clone().unwrap()
                                         ))
                                         .size(LabelSize::Small),
