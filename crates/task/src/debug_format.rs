@@ -51,6 +51,18 @@ pub enum DebugAdapterKind {
     Lldb,
 }
 
+impl std::fmt::Display for DebugAdapterKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Custom(_) => "Custom",
+            Self::Python => "Python",
+            Self::PHP => "PHP",
+            Self::Javascript => "JavaScript",
+            Self::Lldb => "LLDB",
+        })
+    }
+}
+
 /// Custom arguments used to setup a custom debugger
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct CustomArgs {
