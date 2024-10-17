@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{IntoElement, Render, ViewContext, WeakView, Empty};
+use gpui::{Empty, IntoElement, Render, ViewContext, WeakView};
 use ui::{prelude::*, Color, IconName, Tooltip};
 use workspace::{item::ItemHandle, DeploySearch, StatusItemView, Workspace};
 
