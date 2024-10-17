@@ -41,7 +41,7 @@ impl KernelSpecification {
             self.name
         );
 
-        let mut cmd = Command::new(&argv[0]);
+        let mut cmd = util::command::new_smol_command(&argv[0]);
 
         for arg in &argv[1..] {
             if arg == "{connection_file}" {
@@ -53,12 +53,6 @@ impl KernelSpecification {
 
         if let Some(env) = &self.kernelspec.env {
             cmd.envs(env);
-        }
-
-        #[cfg(windows)]
-        {
-            use smol::process::windows::CommandExt;
-            cmd.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
         }
 
         Ok(cmd)
@@ -399,17 +393,11 @@ pub async fn kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<KernelSpecific
     }
 
     // Search for kernels inside the base python environment
-    let mut command = Command::new("python");
-    command.arg("-c");
-    command.arg("import sys; print(sys.prefix)");
-
-    #[cfg(windows)]
-    {
-        use smol::process::windows::CommandExt;
-        command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-    }
-
-    let command = command.output().await;
+    let command = util::command::new_smol_command("python")
+        .arg("-c")
+        .arg("import sys; print(sys.prefix)")
+        .output()
+        .await;
 
     if let Ok(command) = command {
         if command.status.success() {
