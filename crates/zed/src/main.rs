@@ -51,11 +51,7 @@ use std::{
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
-use util::{
-    maybe, parse_env_output,
-    paths::{PathExt, SanitizedPathBuf},
-    ResultExt, TryFutureExt,
-};
+use util::{maybe, parse_env_output, paths::SanitizedPathBuf, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
@@ -1242,7 +1238,7 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => Ok(format!(
             "file://{}",
-            SanitizedPathBuf::from(path).to_trimmed_string()?
+            SanitizedPathBuf::from(path).to_trimmed_string()
         )),
         Err(error) => {
             if arg.starts_with("file://")

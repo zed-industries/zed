@@ -95,6 +95,7 @@ impl<T: AsRef<Path>> PathExt for T {
     }
 }
 
+/// The path here should always be absolute path
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
 pub struct SanitizedPathBuf {
     raw: PathBuf,
@@ -112,6 +113,7 @@ pub struct SanitizedPathBuf {
 
 impl From<PathBuf> for SanitizedPathBuf {
     fn from(path: PathBuf) -> Self {
+        println!("path: {:?}, absolute: {}", path, path.is_absolute());
         #[cfg(target_os = "windows")]
         {
             let path_string = path.to_string_lossy();
@@ -137,19 +139,6 @@ impl AsRef<Path> for SanitizedPathBuf {
     }
 }
 
-// impl std::fmt::Display for SanitizedPathBuf {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         #[cfg(target_os = "windows")]
-//         {
-//             self.trimmed.display().fmt(f)
-//         }
-//         #[cfg(not(target_os = "windows"))]
-//         {
-//             self.raw.display().fmt(f)
-//         }
-//     }
-// }
-
 impl SanitizedPathBuf {
     pub fn new() -> Self {
         PathBuf::new().into()
@@ -170,6 +159,10 @@ impl SanitizedPathBuf {
         }
     }
 
+    pub fn to_string(&self) -> String {
+        self.raw.to_string_lossy().to_string()
+    }
+
     pub fn to_trimmed_string(&self) -> String {
         #[cfg(target_os = "windows")]
         {
@@ -179,6 +172,37 @@ impl SanitizedPathBuf {
         {
             self.raw.to_string_lossy().to_string()
         }
+    }
+
+    pub fn join(&self, relative_path: &Path) -> Self {
+        Self {
+            raw: self.raw.join(relative_path),
+            #[cfg(target_os = "windows")]
+            trimmed: self.trimmed.join(relative_path),
+        }
+    }
+
+    pub fn display(&self) -> impl std::fmt::Display + '_ {
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.display()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.raw.display()
+        }
+    }
+
+    pub fn pop(&mut self) {
+        self.raw.pop();
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.pop();
+        }
+    }
+
+    pub fn strip_prefix(&self, prefix: &Self) -> Result<&Path, std::path::StripPrefixError> {
+        self.trimmed.strip_prefix(prefix.as_trimmed_path_buf())
     }
 }
 

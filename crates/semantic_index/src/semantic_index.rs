@@ -127,10 +127,8 @@ impl SemanticDb {
                     let entry_abs_path = worktree.abs_path().join(&result.path);
                     let mut entry_full_path = PathBuf::from(worktree.root_name());
                     entry_full_path.push(&result.path);
-                    let file_content = async {
-                        let entry_abs_path = entry_abs_path;
-                        fs.load(&entry_abs_path).await
-                    };
+                    let file_content =
+                        async move { fs.load(entry_abs_path.as_raw_path_buf()).await };
                     (entry_full_path, file_content)
                 })?;
                 full_path = output.0;

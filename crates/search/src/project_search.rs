@@ -2736,7 +2736,7 @@ pub mod tests {
         assert!(a_dir_entry.is_dir());
         window
             .update(cx, |workspace, cx| {
-                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.path, cx)
+                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.relative_path, cx)
             })
             .unwrap();
 
@@ -2767,7 +2767,7 @@ pub mod tests {
                     search_view.included_files_editor.update(cx, |editor, cx| {
                         assert_eq!(
                             editor.display_text(cx),
-                            a_dir_entry.path.to_str().unwrap(),
+                            a_dir_entry.relative_path.to_str().unwrap(),
                             "New search in directory should have included dir entry path"
                         );
                     });

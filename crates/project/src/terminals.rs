@@ -16,7 +16,7 @@ use terminal::{
     terminal_settings::{self, TerminalSettings},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
-use util::ResultExt;
+use util::{paths::SanitizedPathBuf, ResultExt};
 
 // #[cfg(target_os = "macos")]
 // use std::os::unix::ffi::OsStrExt;
@@ -30,7 +30,7 @@ pub struct Terminals {
 #[derive(Debug)]
 pub enum TerminalKind {
     /// Run a shell at the given path (or $HOME if None)
-    Shell(Option<PathBuf>),
+    Shell(Option<SanitizedPathBuf>),
     /// Run a task.
     Task(SpawnInTerminal),
 }
@@ -45,7 +45,7 @@ pub enum SshCommand {
 }
 
 impl Project {
-    pub fn active_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
+    pub fn active_project_directory(&self, cx: &AppContext) -> Option<SanitizedPathBuf> {
         let worktree = self
             .active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
@@ -54,14 +54,14 @@ impl Project {
         if !worktree.root_entry()?.is_dir() {
             return None;
         }
-        Some(worktree.abs_path().to_path_buf())
+        Some(worktree.abs_path())
     }
 
-    pub fn first_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
+    pub fn first_project_directory(&self, cx: &AppContext) -> Option<SanitizedPathBuf> {
         let worktree = self.worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         if worktree.root_entry()?.is_dir() {
-            Some(worktree.abs_path().to_path_buf())
+            Some(worktree.abs_path())
         } else {
             None
         }
@@ -95,10 +95,10 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
         let path = match &kind {
-            TerminalKind::Shell(path) => path.as_ref().map(|path| path.to_path_buf()),
+            TerminalKind::Shell(path) => path.as_ref().map(|path| path.clone().into()),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
-                    Some(cwd.clone())
+                    Some(cwd.clone().into())
                 } else {
                     self.active_project_directory(cx)
                 }
@@ -111,7 +111,8 @@ impl Project {
             if let Some((worktree, _)) = self.find_worktree(path, cx) {
                 settings_location = Some(SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
-                    path,
+                    // TODO:
+                    path: path.as_trimmed_path_buf(),
                 });
             }
         }
@@ -157,8 +158,7 @@ impl Project {
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
 
-                        let (program, args) =
-                            wrap_for_ssh(ssh_command, None, path.as_deref(), env, None);
+                        let (program, args) = wrap_for_ssh(ssh_command, None, path, env, None);
                         env = HashMap::default();
                         (
                             None,
@@ -200,7 +200,7 @@ impl Project {
                         let (program, args) = wrap_for_ssh(
                             ssh_command,
                             Some((&spawn_task.command, &spawn_task.args)),
-                            path.as_deref(),
+                            path,
                             env,
                             python_venv_directory,
                         );
@@ -233,7 +233,7 @@ impl Project {
         };
 
         let terminal = TerminalBuilder::new(
-            local_path,
+            local_path.map(|p| p.as_trimmed_path_buf().clone()),
             spawn_task,
             shell,
             env,
@@ -276,27 +276,28 @@ impl Project {
 
     pub fn python_venv_directory(
         &self,
-        abs_path: &Path,
+        abs_path: &SanitizedPathBuf,
         settings: &TerminalSettings,
         cx: &AppContext,
     ) -> Option<PathBuf> {
         let venv_settings = settings.detect_venv.as_option()?;
-        let bin_dir_name = match std::env::consts::OS {
+        let bin_dir_name = PathBuf::from(match std::env::consts::OS {
             "windows" => "Scripts",
             _ => "bin",
-        };
+        });
         venv_settings
             .directories
             .iter()
             .map(|virtual_environment_name| abs_path.join(virtual_environment_name))
             .find(|venv_path| {
-                let bin_path = venv_path.join(bin_dir_name);
+                let bin_path = venv_path.join(&bin_dir_name);
                 self.find_worktree(&bin_path, cx)
                     .and_then(|(worktree, relative_path)| {
                         worktree.read(cx).entry_for_path(&relative_path)
                     })
                     .is_some_and(|entry| entry.is_dir())
             })
+            .map(|p| p.as_trimmed_path_buf().clone())
     }
 
     fn python_activate_command(
@@ -354,7 +355,7 @@ impl Project {
 pub fn wrap_for_ssh(
     ssh_command: &SshCommand,
     command: Option<(&String, &Vec<String>)>,
-    path: Option<&Path>,
+    path: Option<SanitizedPathBuf>,
     env: HashMap<String, String>,
     venv_directory: Option<PathBuf>,
 ) -> (String, Vec<String>) {
@@ -379,7 +380,7 @@ pub fn wrap_for_ssh(
     }
 
     let commands = if let Some(path) = path {
-        let path_string = path.to_string_lossy().to_string();
+        let path_string = path.to_trimmed_string();
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
         // replace ith with something that works
         let tilde_prefix = "~/";

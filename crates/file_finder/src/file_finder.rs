@@ -79,9 +79,19 @@ impl FileFinder {
             .active_item(cx)
             .and_then(|item| item.project_path(cx))
             .map(|project_path| {
-                let abs_path = project
-                    .worktree_for_id(project_path.worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
+                let abs_path =
+                    project
+                        .worktree_for_id(project_path.worktree_id, cx)
+                        .map(|worktree| {
+                            worktree
+                                .read(cx)
+                                .abs_path()
+                                .join(&project_path.path)
+                                .as_raw_path_buf()
+                                .clone()
+                        });
+                // TODO:
+                // abs_path should be trimmed path or not?
                 FoundPath::new(project_path, abs_path)
             });
 
@@ -89,10 +99,15 @@ impl FileFinder {
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
             .filter(|(_, history_abs_path)| match history_abs_path {
-                Some(abs_path) => history_file_exists(abs_path),
+                Some(abs_path) => history_file_exists(abs_path.as_raw_path_buf()),
                 None => true,
             })
-            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path))
+            .map(|(history_path, abs_path)| {
+                FoundPath::new(
+                    history_path,
+                    abs_path.map(|p| p.as_trimmed_path_buf().clone()),
+                )
+            })
             .collect::<Vec<_>>();
 
         let project = workspace.project().clone();
@@ -767,7 +782,7 @@ impl FileFinderDelegate {
                 return;
             };
 
-            let query_path = Path::new(query.path_query());
+            let query_path = PathBuf::from(query.path_query()).into();
             let mut path_matches = Vec::new();
 
             let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
@@ -782,13 +797,13 @@ impl FileFinderDelegate {
                 let update_result = project
                     .update(&mut cx, |project, cx| {
                         if let Some((worktree, relative_path)) =
-                            project.find_worktree(query_path, cx)
+                            project.find_worktree(&query_path, cx)
                         {
                             path_matches.push(ProjectPanelOrdMatch(PathMatch {
                                 score: 1.0,
                                 positions: Vec::new(),
                                 worktree_id: worktree.read(cx).id().to_usize(),
-                                path: Arc::from(relative_path),
+                                path: Arc::from(relative_path.as_trimmed_path_buf().as_path()),
                                 path_prefix: "".into(),
                                 is_dir: false, // File finder doesn't support directories
                                 distance_to_relative_ancestor: usize::MAX,

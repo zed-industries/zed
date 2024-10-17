@@ -1106,7 +1106,8 @@ fn open_settings_file(
                         // drag and drop from OS) still have their worktrees
                         // released on file close, causing LSP servers'
                         // restarts.
-                        project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
+                        let path = paths::config_dir().clone().into();
+                        project.find_or_create_worktree(&path, false, cx)
                     });
                     let settings_open_task =
                         create_and_open_local_file(abs_path, cx, default_content);
@@ -1916,7 +1917,7 @@ mod tests {
                 "Unexpected project panel selected worktree path"
             );
             assert_eq!(
-                selected_entry.path.as_ref(),
+                selected_entry.relative_path.as_ref(),
                 expected_entry_path,
                 "Unexpected project panel selected entry path"
             );

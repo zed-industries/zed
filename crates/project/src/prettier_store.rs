@@ -22,7 +22,7 @@ use node_runtime::NodeRuntime;
 use paths::default_prettier_dir;
 use prettier::Prettier;
 use smol::stream::StreamExt;
-use util::{ResultExt, TryFutureExt};
+use util::{paths::SanitizedPathBuf, ResultExt, TryFutureExt};
 
 use crate::{
     lsp_store::WorktreeId, worktree_store::WorktreeStore, File, PathChange, ProjectEntryId,
@@ -327,7 +327,7 @@ impl PrettierStore {
         new_server_id: LanguageServerId,
         cx: &mut AsyncAppContext,
     ) {
-        let prettier_dir = prettier.prettier_dir();
+        let prettier_dir: SanitizedPathBuf = prettier.prettier_dir().to_path_buf().into();
         let is_default = prettier.is_default();
         if is_default {
             log::info!("Started default prettier in {prettier_dir:?}");
@@ -350,17 +350,20 @@ impl PrettierStore {
                             .map(|worktree| worktree.update(cx, |worktree, _| worktree.abs_path()));
                         let name = match worktree_path {
                             Some(worktree_path) => {
-                                if prettier_dir == worktree_path.as_ref() {
+                                if prettier_dir == worktree_path {
                                     let name = prettier_dir
+                                        .as_trimmed_path_buf()
                                         .file_name()
                                         .and_then(|name| name.to_str())
                                         .unwrap_or_default();
                                     format!("prettier ({name})")
                                 } else {
                                     let dir_to_display = prettier_dir
-                                        .strip_prefix(worktree_path.as_ref())
+                                        .as_trimmed_path_buf()
+                                        .strip_prefix(worktree_path.as_trimmed_path_buf())
                                         .ok()
-                                        .unwrap_or(prettier_dir);
+                                        .map(|p| p.to_path_buf())
+                                        .unwrap_or(prettier_dir.as_trimmed_path_buf().clone());
                                     format!("prettier ({})", dir_to_display.display())
                                 }
                             }

@@ -6273,6 +6273,9 @@ impl Editor {
             .to_path_buf();
             Some(parent)
         }) {
+            // TODO:
+            // how is the terminal opened here?
+            // we should use non-trimmed path here, right?
             cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone());
         }
     }

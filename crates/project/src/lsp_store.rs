@@ -73,7 +73,8 @@ use std::{
 };
 use text::{Anchor, BufferId, LineEnding, Point, Selection};
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, paths::SanitizedPathBuf, post_inc, ResultExt,
+    TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -604,7 +605,7 @@ impl LocalLspStore {
         let working_dir_path = buffer.handle.update(cx, |buffer, cx| {
             let file = File::from_dyn(buffer.file())?;
             let worktree = file.worktree.read(cx);
-            let mut worktree_path = worktree.abs_path().to_path_buf();
+            let mut worktree_path = worktree.abs_path();
             if worktree.root_entry()?.is_file() {
                 worktree_path.pop();
             }
@@ -623,7 +624,7 @@ impl LocalLspStore {
         }
 
         if let Some(working_dir_path) = working_dir_path {
-            child.current_dir(working_dir_path);
+            child.current_dir(working_dir_path.as_raw_path_buf());
         }
 
         if let Some(arguments) = arguments {
@@ -2716,7 +2717,9 @@ impl LspStore {
                 lsp_adapter: Arc<CachedLspAdapter>,
                 language: LanguageName,
                 worktree: WeakModel<Worktree>,
-                worktree_abs_path: Arc<Path>,
+                // TODO:
+                // should it be SanitizedPathBuf?
+                worktree_abs_path: SanitizedPathBuf,
                 lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
             }
 
@@ -2802,7 +2805,8 @@ impl LspStore {
                             .lsp_symbols
                             .into_iter()
                             .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path = symbol_location.uri.to_file_path().ok()?;
+                                let abs_path: SanitizedPathBuf =
+                                    symbol_location.uri.to_file_path().ok()?.into();
                                 let source_worktree = result.worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
@@ -2812,16 +2816,21 @@ impl LspStore {
                                     this.worktree_store.read(cx).find_worktree(&abs_path, cx)
                                 {
                                     worktree = tree;
-                                    path = rel_path;
+                                    path = rel_path.as_trimmed_path_buf().clone();
                                 } else {
                                     worktree = source_worktree.clone();
-                                    path = relativize_path(&result.worktree_abs_path, &abs_path);
+                                    path = relativize_path(
+                                        result.worktree_abs_path.as_trimmed_path_buf(),
+                                        abs_path.as_trimmed_path_buf(),
+                                    );
                                 }
 
                                 let worktree_id = worktree.read(cx).id();
                                 let project_path = ProjectPath {
                                     worktree_id,
-                                    path: path.into(),
+                                    // TODO:
+                                    // path is Arc<Path>, should it be SanitizedPathBuf?
+                                    path: path.as_path().into(),
                                 };
                                 let signature = this.symbol_signature(&project_path);
                                 Some(CoreSymbol {
@@ -3351,7 +3360,7 @@ impl LspStore {
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
-        abs_path: PathBuf,
+        abs_path: SanitizedPathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Self>,
@@ -3365,7 +3374,7 @@ impl LspStore {
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
-            path: relative_path.into(),
+            path: relative_path.as_trimmed_path_buf().as_path().into(),
         };
 
         if let Some(buffer) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
@@ -3490,7 +3499,8 @@ impl LspStore {
                 return Task::ready(Err(anyhow!("worktree not found for symbol")));
             };
 
-            let symbol_abs_path = resolve_path(&worktree_abs_path, &symbol.path.path);
+            let symbol_abs_path =
+                resolve_path(worktree_abs_path.as_trimmed_path_buf(), &symbol.path.path);
             let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -3539,9 +3549,9 @@ impl LspStore {
                 .await;
             let (worktree_root_target, known_relative_path) =
                 if let Some((zip_root, relative_path)) = yarn_worktree {
-                    (zip_root, Some(relative_path))
+                    (zip_root.to_path_buf().into(), Some(relative_path))
                 } else {
-                    (Arc::<Path>::from(abs_path.as_path()), None)
+                    (abs_path.clone().into(), None)
                 };
             let (worktree, relative_path) = if let Some(result) =
                 lsp_store.update(&mut cx, |lsp_store, cx| {
@@ -3549,8 +3559,10 @@ impl LspStore {
                         worktree_store.find_worktree(&worktree_root_target, cx)
                     })
                 })? {
-                let relative_path =
-                    known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
+                // TODO:
+                // as_trimmed_path_buf() ?
+                let relative_path = known_relative_path
+                    .unwrap_or_else(|| Arc::<Path>::from(result.1.as_trimmed_path_buf().as_path()));
                 (result.0, relative_path)
             } else {
                 let worktree = lsp_store
@@ -3575,7 +3587,7 @@ impl LspStore {
                 let relative_path = if let Some(known_path) = known_relative_path {
                     known_path
                 } else {
-                    abs_path.strip_prefix(worktree_root)?.into()
+                    abs_path.strip_prefix(&worktree_root)?.into()
                 };
                 (worktree, relative_path)
             };
@@ -4286,7 +4298,10 @@ impl LspStore {
             let mut found_host = false;
             for worktree in &worktrees {
                 let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
-                    if let Some(worktree_root_path) = tree.abs_path().to_str() {
+                    // TODO:
+                    // to_string() or to_trimmed_string() ?
+                    if let Some(worktree_root_path) = tree.abs_path().as_trimmed_path_buf().to_str()
+                    {
                         let path_to_watch = match &watcher.glob_pattern {
                             lsp::GlobPattern::String(s) => {
                                 match s.strip_prefix(worktree_root_path) {
@@ -5167,7 +5182,7 @@ impl LspStore {
             self.worktree_store
                 .read(cx)
                 .worktree_for_id(worktree_id, cx)
-                .map(|entry| entry.read(cx).abs_path().clone())
+                .map(|entry| entry.read(cx).abs_path())
         });
 
         if let Some(environment) = &self.as_local().map(|local| local.environment.clone()) {
@@ -5463,7 +5478,9 @@ impl LspStore {
             as Arc<dyn LspAdapterDelegate>;
 
         let server_id = self.languages.next_language_server_id();
-        let root_path = worktree_path.clone();
+        // TODO:
+        // should lsp::LanguageServer use SanitizedPath instead of PathBuf?
+        let root_path = worktree_path.as_trimmed_path_buf().clone();
         log::info!(
             "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0
@@ -6431,7 +6448,7 @@ impl LspStore {
 
         self.update_diagnostic_entries(
             language_server_id,
-            abs_path,
+            abs_path.into(),
             params.version,
             diagnostics,
             cx,
@@ -7838,10 +7855,10 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
             .with_context(|| format!("no worktree entry for path {path:?}"))?;
         let abs_path = self
             .worktree
-            .absolutize(&entry.path)
+            .absolutize(&entry.relative_path)
             .with_context(|| format!("cannot absolutize path {path:?}"))?;
 
-        self.fs.load(&abs_path).await
+        self.fs.load(abs_path.as_raw_path_buf()).await
     }
 }
 

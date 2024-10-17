@@ -438,10 +438,10 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     .filter(|e| e.is_file())
                                     .choose(rng)
                                     .unwrap();
-                                if entry.path.as_ref() == Path::new("") {
+                                if entry.relative_path.as_ref() == Path::new("") {
                                     Path::new(worktree.root_name()).into()
                                 } else {
-                                    Path::new(worktree.root_name()).join(&entry.path)
+                                    Path::new(worktree.root_name()).join(&entry.relative_path)
                                 }
                             });
                             break ClientOperation::OpenBuffer {

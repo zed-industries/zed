@@ -62,7 +62,11 @@ impl ProjectIndexDebugView {
                             index.embedding_index().paths(cx),
                         )
                     })?;
-                rows.push(Row::Worktree(root_path));
+                // TODO:
+                // use timmed path or not?
+                rows.push(Row::Worktree(
+                    root_path.as_trimmed_path_buf().as_path().into(),
+                ));
                 rows.extend(
                     worktree_paths
                         .await?
@@ -95,7 +99,9 @@ impl ProjectIndexDebugView {
 
         cx.spawn(|this, mut cx| async move {
             let chunks = chunks.await?;
-            let content = fs.load(&root_path.join(&file_path)).await?;
+            let content = fs
+                .load(root_path.join(&file_path).as_raw_path_buf())
+                .await?;
             let chunks = chunks
                 .into_iter()
                 .map(|chunk| {

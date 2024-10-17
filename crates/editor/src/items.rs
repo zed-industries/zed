@@ -1017,11 +1017,12 @@ impl SerializableItem for Editor {
                 mtime,
                 ..
             } => {
+                let trimmed_path = path.clone().into();
                 let project_item = project.update(cx, |project, cx| {
-                    let (worktree, path) = project.find_worktree(&abs_path, cx)?;
+                    let (worktree, path) = project.find_worktree(&trimmed_path, cx)?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path.into(),
+                        path: path.as_trimmed_path_buf().as_path().into(),
                     };
                     Some(project.open_path(project_path, cx))
                 });
@@ -1111,18 +1112,22 @@ impl SerializableItem for Editor {
 
         let buffer = self.buffer().read(cx).as_singleton()?;
 
-        let abs_path = buffer.read(cx).file().and_then(|file| {
-            let worktree_id = file.worktree_id(cx);
-            project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .and_then(|worktree| worktree.read(cx).absolutize(&file.path()).ok())
-                .or_else(|| {
-                    let full_path = file.full_path(cx);
-                    let project_path = project.read(cx).find_project_path(&full_path, cx)?;
-                    project.read(cx).absolute_path(&project_path, cx)
-                })
-        });
+        let abs_path = buffer
+            .read(cx)
+            .file()
+            .and_then(|file| {
+                let worktree_id = file.worktree_id(cx);
+                project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .and_then(|worktree| worktree.read(cx).absolutize(&file.path()).ok())
+                    .or_else(|| {
+                        let full_path = file.full_path(cx);
+                        let project_path = project.read(cx).find_project_path(&full_path, cx)?;
+                        project.read(cx).absolute_path(&project_path, cx)
+                    })
+            })
+            .map(Into::into);
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();

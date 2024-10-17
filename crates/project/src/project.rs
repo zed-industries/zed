@@ -81,7 +81,10 @@ use std::{
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
-use util::{paths::compare_paths, ResultExt as _};
+use util::{
+    paths::{compare_paths, SanitizedPathBuf},
+    ResultExt as _,
+};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -274,6 +277,8 @@ pub enum Event {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
+    // TODO:
+    // use SanitizedPathBuf ?
     pub path: Arc<Path>,
 }
 
@@ -511,7 +516,9 @@ impl DirectoryLister {
     pub fn default_query(&self, cx: &mut AppContext) -> String {
         if let DirectoryLister::Project(project) = self {
             if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
-                return worktree.read(cx).abs_path().to_string_lossy().to_string();
+                // TODO:
+                // to_string() or to_trimmed_string() ?
+                return worktree.read(cx).abs_path().to_trimmed_string();
             }
         };
         "~/".to_string()
@@ -1839,10 +1846,10 @@ impl Project {
 
     pub fn open_local_buffer(
         &mut self,
-        abs_path: impl AsRef<Path>,
+        abs_path: &SanitizedPathBuf,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
+        if let Some((worktree, relative_path)) = self.find_worktree(abs_path, cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
         } else {
             Task::ready(Err(anyhow!("no such path")))
@@ -2272,7 +2279,9 @@ impl Project {
                     if worktree.read(cx).id() == id_to_remove {
                         None
                     } else {
-                        Some(worktree.read(cx).abs_path().to_string_lossy().to_string())
+                        // TODO:
+                        // to_string() or to_trimmed_string()?
+                        Some(worktree.read(cx).abs_path().to_trimmed_string())
                     }
                 })
                 .collect();
@@ -2492,7 +2501,7 @@ impl Project {
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
-        abs_path: PathBuf,
+        abs_path: SanitizedPathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Project>,
@@ -3129,7 +3138,7 @@ impl Project {
 
     pub fn find_or_create_worktree(
         &mut self,
-        abs_path: impl AsRef<Path>,
+        abs_path: &SanitizedPathBuf,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
@@ -3140,9 +3149,9 @@ impl Project {
 
     pub fn find_worktree(
         &self,
-        abs_path: &Path,
+        abs_path: &SanitizedPathBuf,
         cx: &AppContext,
-    ) -> Option<(Model<Worktree>, PathBuf)> {
+    ) -> Option<(Model<Worktree>, SanitizedPathBuf)> {
         self.worktree_store.read_with(cx, |worktree_store, cx| {
             worktree_store.find_worktree(abs_path, cx)
         })
@@ -3236,7 +3245,7 @@ impl Project {
                 for candidate in candidates.iter() {
                     let path = worktree
                         .update(&mut cx, |worktree, _| {
-                            let root_entry_path = &worktree.root_entry()?.path;
+                            let root_entry_path = &worktree.root_entry()?.relative_path;
 
                             let resolved = resolve_path(root_entry_path, candidate);
 
@@ -3246,7 +3255,7 @@ impl Project {
                             worktree.entry_for_path(stripped).map(|entry| {
                                 ResolvedPath::ProjectPath(ProjectPath {
                                     worktree_id: worktree.id(),
-                                    path: entry.path.clone(),
+                                    path: entry.relative_path.clone(),
                                 })
                             })
                         })
@@ -3300,7 +3309,7 @@ impl Project {
 
     pub fn create_worktree(
         &mut self,
-        abs_path: impl AsRef<Path>,
+        abs_path: &SanitizedPathBuf,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {
@@ -3376,11 +3385,15 @@ impl Project {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
-        let path = worktree.entry_for_id(entry_id)?.path.clone();
+        let path = worktree.entry_for_id(entry_id)?.relative_path.clone();
         Some(ProjectPath { worktree_id, path })
     }
 
-    pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
+    pub fn absolute_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<SanitizedPathBuf> {
         let workspace_root = self
             .worktree_for_id(project_path.worktree_id, cx)?
             .read(cx)
@@ -3388,7 +3401,7 @@ impl Project {
         let project_path = project_path.path.as_ref();
 
         Some(if project_path == Path::new("") {
-            workspace_root.to_path_buf()
+            workspace_root
         } else {
             workspace_root.join(project_path)
         })
@@ -3429,7 +3442,7 @@ impl Project {
             if let Some(entry) = worktree.entry_for_path(path) {
                 return Some(ProjectPath {
                     worktree_id: worktree.id(),
-                    path: entry.path.clone(),
+                    path: entry.relative_path.clone(),
                 });
             }
         }
@@ -3441,12 +3454,11 @@ impl Project {
         &self,
         project_path: &ProjectPath,
         cx: &AppContext,
-    ) -> Option<PathBuf> {
+    ) -> Option<SanitizedPathBuf> {
         Some(
             self.worktree_for_id(project_path.worktree_id, cx)?
                 .read(cx)
-                .abs_path()
-                .to_path_buf(),
+                .abs_path(),
         )
     }
 
@@ -4141,7 +4153,7 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
             .next()
             .map(|entry| fuzzy::PathMatchCandidate {
                 is_dir: entry.kind.is_dir(),
-                path: &entry.path,
+                path: &entry.relative_path,
                 char_bag: entry.char_bag,
             })
     }
@@ -4297,8 +4309,8 @@ impl std::error::Error for NoRepositoryError {}
 pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {
         compare_paths(
-            (&entry_a.path, entry_a.is_file()),
-            (&entry_b.path, entry_b.is_file()),
+            (&entry_a.relative_path, entry_a.is_file()),
+            (&entry_b.relative_path, entry_b.is_file()),
         )
     });
 }
