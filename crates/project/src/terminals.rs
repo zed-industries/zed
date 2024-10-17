@@ -95,7 +95,7 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
         let path = match &kind {
-            TerminalKind::Shell(path) => path.as_ref().map(Clone::clone),
+            TerminalKind::Shell(path) => path.clone(),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
                     Some(cwd.clone().into())
