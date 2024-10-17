@@ -292,7 +292,10 @@ message Envelope {
         Toast toast = 261;
         HideToast hide_toast = 262;
 
-        OpenServerSettings open_server_settings = 263; // current max
+        OpenServerSettings open_server_settings = 263;
+        
+        LspExtOpenDocs lsp_ext_open_docs = 264;
+        LspExtOpenDocsResponse lsp_ext_open_docs_response = 265; // current max
     }
 
     reserved 87 to 88;
@@ -2133,6 +2136,17 @@ message LspExtExpandMacro {
 message LspExtExpandMacroResponse {
     string name = 1;
     string expansion = 2;
+}
+
+message LspExtOpenDocs {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Anchor position = 3;
+}
+
+message LspExtOpenDocsResponse {
+    optional string web = 1;
+    optional string local = 2;
 }
 
 message LspExtSwitchSourceHeader {
