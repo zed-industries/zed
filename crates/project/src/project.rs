@@ -1173,7 +1173,8 @@ impl Project {
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
-                    project.find_or_create_worktree(path, true, cx)
+                    let path = path.to_path_buf().into();
+                    project.find_or_create_worktree(&path, true, cx)
                 })
                 .unwrap()
                 .await
@@ -1213,7 +1214,8 @@ impl Project {
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
-                    project.find_or_create_worktree(path, true, cx)
+                    let path = path.to_path_buf().into();
+                    project.find_or_create_worktree(&path, true, cx)
                 })
                 .await
                 .unwrap();
@@ -1846,10 +1848,12 @@ impl Project {
 
     pub fn open_local_buffer(
         &mut self,
-        abs_path: &SanitizedPathBuf,
+        // abs_path: &SanitizedPathBuf,
+        abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        if let Some((worktree, relative_path)) = self.find_worktree(abs_path, cx) {
+        let abs_path = abs_path.as_ref().to_path_buf().into();
+        if let Some((worktree, relative_path)) = self.find_worktree(&abs_path, cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
         } else {
             Task::ready(Err(anyhow!("no such path")))
@@ -3138,12 +3142,13 @@ impl Project {
 
     pub fn find_or_create_worktree(
         &mut self,
-        abs_path: &SanitizedPathBuf,
+        abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<(Model<Worktree>, SanitizedPathBuf)>> {
+        let abs_path = abs_path.as_ref().to_path_buf().into();
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.find_or_create_worktree(abs_path, visible, cx)
+            worktree_store.find_or_create_worktree(&abs_path, visible, cx)
         })
     }
 

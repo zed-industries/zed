@@ -202,7 +202,14 @@ impl SanitizedPathBuf {
     }
 
     pub fn strip_prefix(&self, prefix: &Self) -> Result<&Path, std::path::StripPrefixError> {
-        self.trimmed.strip_prefix(prefix.as_trimmed_path_buf())
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.strip_prefix(prefix.as_trimmed_path_buf())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.raw.strip_prefix(prefix.as_raw_path_buf())
+        }
     }
 }
 

@@ -418,11 +418,11 @@ impl HeadlessProject {
         _: TypedEnvelope<proto::OpenServerSettings>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::OpenBufferResponse> {
-        let settings_path = paths::settings_file();
+        let settings_path = paths::settings_file().clone().into();
         let (worktree, path) = this
             .update(&mut cx, |this, cx| {
                 this.worktree_store.update(cx, |worktree_store, cx| {
-                    worktree_store.find_or_create_worktree(settings_path, false, cx)
+                    worktree_store.find_or_create_worktree(&settings_path, false, cx)
                 })
             })?
             .await?;
@@ -432,7 +432,7 @@ impl HeadlessProject {
                 buffer_store.open_buffer(
                     ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path.as_trimmed_path_buf().into(),
+                        path: path.as_trimmed_path_buf().clone().as_path().into(),
                     },
                     cx,
                 )

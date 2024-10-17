@@ -697,8 +697,9 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     )
     .await;
 
+    let path = Path::new("/root/tree");
     let tree = Worktree::local(
-        "/root/tree".as_ref(),
+        path,
         true,
         fs.clone(),
         Default::default(),
@@ -778,8 +779,9 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     )
     .await;
 
+    let path = Path::new("/root");
     let tree = Worktree::local(
-        "/root".as_ref(),
+        path,
         true,
         fs.clone(),
         Default::default(),
@@ -1165,15 +1167,10 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     )
     .await;
 
-    let tree = Worktree::local(
-        "/root".as_ref(),
-        true,
-        fs,
-        Default::default(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let path = Path::new("/root");
+    let tree = Worktree::local(path, true, fs, Default::default(), &mut cx.to_async())
+        .await
+        .unwrap();
 
     let snapshot1 = tree.update(cx, |tree, cx| {
         let tree = tree.as_local_mut().unwrap();
@@ -1230,8 +1227,9 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     )
     .await;
 
+    let path = Path::new("/root");
     let tree = Worktree::local(
-        "/root".as_ref(),
+        path,
         true,
         fs.clone(),
         Default::default(),
@@ -1297,15 +1295,10 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         )
         .await;
 
-    let tree_fake = Worktree::local(
-        "/root".as_ref(),
-        true,
-        fs_fake,
-        Default::default(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let path = Path::new("/root");
+    let tree_fake = Worktree::local(path, true, fs_fake, Default::default(), &mut cx.to_async())
+        .await
+        .unwrap();
 
     let entry = tree_fake
         .update(cx, |tree, cx| {
