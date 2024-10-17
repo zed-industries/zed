@@ -288,6 +288,12 @@ impl ProjectPicker {
     }
 }
 
+impl FocusableView for ProjectPicker {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
 impl gpui::Render for ProjectPicker {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
@@ -368,13 +374,16 @@ impl DevServerProjects {
         workspace: WeakView<Workspace>,
     ) -> Self {
         let mut this = Self::new(cx, workspace.clone());
-        this.mode = Mode::ProjectPicker(ProjectPicker::new(
+        let picker = ProjectPicker::new(
             ix,
             connection_options.connection_string().into(),
             project,
             workspace,
             cx,
-        ));
+        );
+        let focus_handle = picker.focus_handle(cx);
+        this.mode = Mode::ProjectPicker(picker);
+        this.focus_handle = focus_handle;
 
         this
     }
