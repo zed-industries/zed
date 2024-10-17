@@ -1499,9 +1499,9 @@ mod tests {
         let subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, tab_snapshot) = InvisibleMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (mut invisible_map, invisible_snapshot) = InvisibleMap::new(fold_snapshot, 1.try_into().unwrap());
         let (wrap_map, wraps_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+            cx.update(|cx| WrapMap::new(invisible_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -1652,10 +1652,10 @@ mod tests {
         let (inlay_snapshot, inlay_edits) =
             inlay_map.sync(buffer_snapshot, subscription.consume().into_inner());
         let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-        let (tab_snapshot, tab_edits) =
-            tab_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
+        let (invisible_snapshot, invisible_edits) =
+            invisible_map.sync(fold_snapshot, fold_edits, 4.try_into().unwrap());
         let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-            wrap_map.sync(tab_snapshot, tab_edits, cx)
+            wrap_map.sync(invisible_snapshot, invisible_edits, cx)
         });
         let snapshot = block_map.read(wraps_snapshot, wrap_edits);
         assert_eq!(snapshot.text(), "aaa\n\nb!!!\n\n\nbb\nccc\nddd\n\n\n");
@@ -1715,8 +1715,8 @@ mod tests {
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, tab_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_, wraps_snapshot) = WrapMap::new(tab_snapshot, font, font_size, Some(wrap_width), cx);
+        let (_, invisible_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, wraps_snapshot) = WrapMap::new(invisible_snapshot, font, font_size, Some(wrap_width), cx);
 
         let block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
         let snapshot = block_map.read(wraps_snapshot, Default::default());
@@ -1755,9 +1755,9 @@ mod tests {
         let _subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
         let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_tab_map, tab_snapshot) = InvisibleMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (_invisible_map, invisible_snapshot) = InvisibleMap::new(fold_snapshot, 1.try_into().unwrap());
         let (_wrap_map, wraps_snapshot) =
-            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+            cx.update(|cx| WrapMap::new(invisible_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1, 0);
 
         let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
@@ -1860,9 +1860,9 @@ mod tests {
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, tab_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, invisible_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = cx.update(|cx| {
-            WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
+            WrapMap::new(invisible_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
         });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 0);
 
@@ -1930,9 +1930,9 @@ mod tests {
         let mut buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (mut tab_map, tab_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (mut invisible_map, invisible_snapshot) = InvisibleMap::new(fold_snapshot, 4.try_into().unwrap());
         let (wrap_map, wraps_snapshot) = cx
-            .update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), font_size, wrap_width, cx));
+            .update(|cx| WrapMap::new(invisible_snapshot, font("Helvetica"), font_size, wrap_width, cx));
         let mut block_map = BlockMap::new(
             wraps_snapshot,
             true,
@@ -1989,10 +1989,10 @@ mod tests {
                     let (inlay_snapshot, inlay_edits) =
                         inlay_map.sync(buffer_snapshot.clone(), vec![]);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-                    let (tab_snapshot, tab_edits) =
-                        tab_map.sync(fold_snapshot, fold_edits, tab_size);
+                    let (invisible_snapshot, invisible_edits) =
+                        invisible_map.sync(fold_snapshot, fold_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                        wrap_map.sync(tab_snapshot, tab_edits, cx)
+                        wrap_map.sync(invisible_snapshot, invisible_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
                     let block_ids =
@@ -2021,10 +2021,10 @@ mod tests {
                     let (inlay_snapshot, inlay_edits) =
                         inlay_map.sync(buffer_snapshot.clone(), vec![]);
                     let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-                    let (tab_snapshot, tab_edits) =
-                        tab_map.sync(fold_snapshot, fold_edits, tab_size);
+                    let (invisible_snapshot, invisible_edits) =
+                        invisible_map.sync(fold_snapshot, fold_edits, tab_size);
                     let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                        wrap_map.sync(tab_snapshot, tab_edits, cx)
+                        wrap_map.sync(invisible_snapshot, invisible_edits, cx)
                     });
                     let mut block_map = block_map.write(wraps_snapshot, wrap_edits);
                     block_map.remove(block_ids_to_remove);
@@ -2044,9 +2044,9 @@ mod tests {
             let (inlay_snapshot, inlay_edits) =
                 inlay_map.sync(buffer_snapshot.clone(), buffer_edits);
             let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
-            let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+            let (invisible_snapshot, invisible_edits) = invisible_map.sync(fold_snapshot, fold_edits, tab_size);
             let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
-                wrap_map.sync(tab_snapshot, tab_edits, cx)
+                wrap_map.sync(invisible_snapshot, invisible_edits, cx)
             });
             let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
             assert_eq!(

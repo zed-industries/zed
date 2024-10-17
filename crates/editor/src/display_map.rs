@@ -96,8 +96,8 @@ pub struct DisplayMap {
     inlay_map: InlayMap,
     /// Decides where the fold indicators should be and tracks parts of a source file that are currently folded.
     fold_map: FoldMap,
-    /// Keeps track of hard tabs in a buffer.
-    tab_map: InvisibleMap,
+    /// Keeps track of hard tabs and invisibles in a buffer.
+    invisible_map: InvisibleMap,
     /// Handles soft wrapping.
     wrap_map: Model<WrapMap>,
     /// Tracks custom blocks such as diagnostics that should be displayed within buffer.
@@ -134,7 +134,7 @@ impl DisplayMap {
         let crease_map = CreaseMap::new(&buffer_snapshot);
         let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
-        let (tab_map, snapshot) = InvisibleMap::new(snapshot, tab_size);
+        let (invisible_map, snapshot) = InvisibleMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
         let block_map = BlockMap::new(
             snapshot,
@@ -151,7 +151,7 @@ impl DisplayMap {
             buffer_subscription,
             fold_map,
             inlay_map,
-            tab_map,
+            invisible_map,
             wrap_map,
             block_map,
             crease_map,
@@ -169,17 +169,17 @@ impl DisplayMap {
         let (inlay_snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (fold_snapshot, edits) = self.fold_map.read(inlay_snapshot.clone(), edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (tab_snapshot, edits) = self.tab_map.sync(fold_snapshot.clone(), edits, tab_size);
+        let (invisible_snapshot, edits) = self.invisible_map.sync(fold_snapshot.clone(), edits, tab_size);
         let (wrap_snapshot, edits) = self
             .wrap_map
-            .update(cx, |map, cx| map.sync(tab_snapshot.clone(), edits, cx));
+            .update(cx, |map, cx| map.sync(invisible_snapshot.clone(), edits, cx));
         let block_snapshot = self.block_map.read(wrap_snapshot.clone(), edits).snapshot;
 
         DisplaySnapshot {
             buffer_snapshot: self.buffer.read(cx).snapshot(cx),
             fold_snapshot,
             inlay_snapshot,
-            tab_snapshot,
+            invisible_snapshot,
             wrap_snapshot,
             block_snapshot,
             crease_snapshot: self.crease_map.snapshot(),
@@ -215,13 +215,13 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.fold(ranges);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -239,13 +239,13 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
         let (snapshot, edits) = fold_map.unfold(ranges, inclusive);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -280,7 +280,7 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -298,7 +298,7 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -316,7 +316,7 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -334,7 +334,7 @@ impl DisplayMap {
         let tab_size = Self::tab_size(&self.buffer, cx);
         let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -410,7 +410,7 @@ impl DisplayMap {
         let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot, edits);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -418,7 +418,7 @@ impl DisplayMap {
 
         let (snapshot, edits) = self.inlay_map.splice(to_remove, to_insert);
         let (snapshot, edits) = self.fold_map.read(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self.invisible_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
@@ -469,7 +469,7 @@ pub struct DisplaySnapshot {
     pub fold_snapshot: FoldSnapshot,
     pub crease_snapshot: CreaseSnapshot,
     inlay_snapshot: InlaySnapshot,
-    tab_snapshot: InvisibleSnapshot,
+    invisible_snapshot: InvisibleSnapshot,
     wrap_snapshot: WrapSnapshot,
     block_snapshot: BlockSnapshot,
     text_highlights: TextHighlights,
@@ -569,8 +569,8 @@ impl DisplaySnapshot {
     fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        let tab_point = self.tab_snapshot.to_invisible_point(fold_point);
-        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let invisible_point = self.invisible_snapshot.to_invisible_point(fold_point);
+        let wrap_point = self.wrap_snapshot.invisible_point_to_wrap_point(invisible_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
@@ -598,21 +598,21 @@ impl DisplaySnapshot {
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
-        let tab_point = self.wrap_snapshot.to_invisible_point(wrap_point);
-        let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
+        let invisible_point = self.wrap_snapshot.to_invisible_point(wrap_point);
+        let fold_point = self.invisible_snapshot.to_fold_point(invisible_point, bias).0;
         fold_point.to_inlay_point(&self.fold_snapshot)
     }
 
     pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
         let block_point = point.0;
         let wrap_point = self.block_snapshot.to_wrap_point(block_point);
-        let tab_point = self.wrap_snapshot.to_invisible_point(wrap_point);
-        self.tab_snapshot.to_fold_point(tab_point, bias).0
+        let invisible_point = self.wrap_snapshot.to_invisible_point(wrap_point);
+        self.invisible_snapshot.to_fold_point(invisible_point, bias).0
     }
 
     pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
-        let tab_point = self.tab_snapshot.to_invisible_point(fold_point);
-        let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
+        let invisible_point = self.invisible_snapshot.to_invisible_point(fold_point);
+        let wrap_point = self.wrap_snapshot.invisible_point_to_wrap_point(invisible_point);
         let block_point = self.block_snapshot.to_block_point(wrap_point);
         DisplayPoint(block_point)
     }
@@ -1139,8 +1139,8 @@ impl DisplayPoint {
 
     pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
         let wrap_point = map.block_snapshot.to_wrap_point(self.0);
-        let tab_point = map.wrap_snapshot.to_invisible_point(wrap_point);
-        let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
+        let invisible_point = map.wrap_snapshot.to_invisible_point(wrap_point);
+        let fold_point = map.invisible_snapshot.to_fold_point(invisible_point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
         map.inlay_snapshot
             .to_buffer_offset(map.inlay_snapshot.to_offset(inlay_point))
@@ -1247,7 +1247,7 @@ pub mod tests {
         let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
         log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
         log::info!("fold text: {:?}", snapshot.fold_snapshot.text());
-        log::info!("tab text: {:?}", snapshot.tab_snapshot.text());
+        log::info!("invisible text: {:?}", snapshot.invisible_snapshot.text());
         log::info!("wrap text: {:?}", snapshot.wrap_snapshot.text());
         log::info!("block text: {:?}", snapshot.block_snapshot.text());
         log::info!("display text: {:?}", snapshot.text());
@@ -1364,7 +1364,7 @@ pub mod tests {
             fold_count = snapshot.fold_count();
             log::info!("buffer text: {:?}", snapshot.buffer_snapshot.text());
             log::info!("fold text: {:?}", snapshot.fold_snapshot.text());
-            log::info!("tab text: {:?}", snapshot.tab_snapshot.text());
+            log::info!("invisible text: {:?}", snapshot.invisible_snapshot.text());
             log::info!("wrap text: {:?}", snapshot.wrap_snapshot.text());
             log::info!("block text: {:?}", snapshot.block_snapshot.text());
             log::info!("display text: {:?}", snapshot.text());

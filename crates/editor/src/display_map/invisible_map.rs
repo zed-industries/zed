@@ -318,7 +318,7 @@ impl InvisibleSnapshot {
         )
     }
 
-    pub fn make_tab_point(&self, point: Point, bias: Bias) -> InvisiblePoint {
+    pub fn make_invisible_point(&self, point: Point, bias: Bias) -> InvisiblePoint {
         let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         self.to_invisible_point(fold_point)
