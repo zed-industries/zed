@@ -484,7 +484,10 @@ impl<'a> MarkdownParser<'a> {
         let (_, list_source_range) = self.previous().unwrap();
 
         let mut items = Vec::new();
-        let mut items_stack = vec![MarkdownListItem { content: Vec::new(), item_type: None }];
+        let mut items_stack = vec![MarkdownListItem {
+            content: Vec::new(),
+            item_type: None,
+        }];
         let mut depth = 1;
         let mut order = order;
         let mut order_stack = Vec::new();
@@ -525,7 +528,10 @@ impl<'a> MarkdownParser<'a> {
                     start_item_range = source_range.clone();
 
                     self.cursor += 1;
-                    items_stack.push(MarkdownListItem { content: Vec::new(), item_type: None });
+                    items_stack.push(MarkdownListItem {
+                        content: Vec::new(),
+                        item_type: None,
+                    });
 
                     let mut is_task_list = None;
                     // Check for task list marker (`- [ ]` or `- [x]`)
@@ -536,7 +542,8 @@ impl<'a> MarkdownParser<'a> {
                         }
 
                         if let Some((Event::TaskListMarker(checked), range)) = self.current() {
-                            is_task_list = Some(ParsedMarkdownListItemType::Task(*checked, range.clone()));
+                            is_task_list =
+                                Some(ParsedMarkdownListItemType::Task(*checked, range.clone()));
                             self.cursor += 1;
                         }
                     }
@@ -553,7 +560,8 @@ impl<'a> MarkdownParser<'a> {
                                     content.item_type = Some(task_list)
                                 } else if let Some(order) = order {
                                     content.content.push(block);
-                                    content.item_type = Some(ParsedMarkdownListItemType::Ordered(order))
+                                    content.item_type =
+                                        Some(ParsedMarkdownListItemType::Ordered(order))
                                 } else {
                                     content.content.push(block);
                                     content.item_type = Some(ParsedMarkdownListItemType::Unordered);
@@ -733,7 +741,6 @@ mod tests {
     use gpui::BackgroundExecutor;
     use language::{tree_sitter_rust, HighlightId, Language, LanguageConfig, LanguageMatcher};
     use pretty_assertions::assert_eq;
-    use gpui::KeyBindingContextPredicate::Or;
     use ParsedMarkdownListItemType::*;
 
     async fn parse(input: &str) -> ParsedMarkdown {
@@ -979,7 +986,7 @@ Some other content
 1. Number A
 ",
         )
-            .await;
+        .await;
 
         assert_eq!(
             parsed.children,
