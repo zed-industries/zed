@@ -541,7 +541,6 @@ impl SshRemoteClient {
             let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
 
-            dbg!("g");
             let (ssh_connection, io_task) = Self::establish_connection(
                 unique_identifier,
                 false,
@@ -553,17 +552,14 @@ impl SshRemoteClient {
                 &mut cx,
             )
             .await?;
-            dbg!("h");
 
             let multiplex_task = Self::monitor(this.downgrade(), io_task, &cx);
 
-            dbg!("i");
             if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                 log::error!("failed to establish connection: {}", error);
                 delegate.set_error(error.to_string(), &mut cx);
                 return Err(error);
             }
-            dbg!("j");
 
             let heartbeat_task = Self::heartbeat(this.downgrade(), connection_activity_rx, &mut cx);
 
@@ -1167,6 +1163,21 @@ impl SshRemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
+    pub fn simulate_disconnect(&self, cx: &mut AppContext) {
+        let port = self.connection_options().port.unwrap();
+
+        let disconnect =
+            cx.update_global(|c: &mut FakeConnections, _cx| c.take(port).into_channels());
+        cx.spawn(|mut cx| async move {
+            let (input_rx, output_tx) = disconnect.await;
+            let (forwarder, _, _) = ChannelForwarder::new(input_rx, output_tx, &mut cx);
+            cx.update_global(|c: &mut FakeConnections, _cx| c.replace(port, forwarder))
+                .unwrap()
+        })
+        .detach()
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
     pub fn fake_server(
         server_cx: &mut gpui::TestAppContext,
     ) -> (ChannelForwarder, Arc<ChannelClient>) {
@@ -1212,10 +1223,14 @@ impl SshRemoteClient {
             .unwrap()
     }
 }
+
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Default)]
 struct FakeConnections(Vec<Option<ChannelForwarder>>);
+#[cfg(any(test, feature = "test-support"))]
 impl Global for FakeConnections {}
 
+#[cfg(any(test, feature = "test-support"))]
 impl FakeConnections {
     fn take(&mut self, port: u16) -> ChannelForwarder {
         self.0
@@ -1236,7 +1251,9 @@ impl FakeConnections {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 struct FakeDelegate;
+
 impl SshClientDelegate for FakeDelegate {
     fn ask_password(
         &self,
@@ -1612,7 +1629,7 @@ impl FakeSshRemoteConnection {
         mut client_rx: mpsc::UnboundedReceiver<Envelope>,
         mut connection_activity_tx: Sender<()>,
         cx: &mut AsyncAppContext,
-    ) -> Task<Result<Option<i32>>> {
+    ) -> Task<Result<i32>> {
         let (server_tx, server_rx) = cx
             .update(|cx| {
                 cx.update_global(|conns: &mut FakeConnections, _| {
@@ -1638,14 +1655,14 @@ impl FakeSshRemoteConnection {
                 select_biased! {
                     server_to_client = proxy_rx.next().fuse() => {
                         let Some(server_to_client) = server_to_client else {
-                            return Ok(Some(1))
+                            return Ok(1)
                         };
                         connection_activity_tx.try_send(()).ok();
                         client_tx.send(server_to_client).await.ok();
                     }
                     client_to_server = client_rx.next().fuse() => {
                         let Some(client_to_server) = client_to_server else {
-                            return Ok(None)
+                            return Ok(1)
                         };
                         proxy_tx.send(client_to_server).await.ok();
 
@@ -1656,6 +1673,7 @@ impl FakeSshRemoteConnection {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl SshRemoteProcess for FakeSshRemoteConnection {
     async fn kill(&mut self) -> Result<()> {
