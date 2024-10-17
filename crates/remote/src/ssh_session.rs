@@ -18,8 +18,8 @@ use futures::{
     StreamExt as _,
 };
 use gpui::{
-    AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Global, Model,
-    ModelContext, SemanticVersion, Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
+    SemanticVersion, Task, WeakModel,
 };
 use parking_lot::Mutex;
 use rpc::{
@@ -32,6 +32,7 @@ use smol::{
 };
 use std::{
     any::TypeId,
+    collections::VecDeque,
     ffi::OsStr,
     fmt,
     ops::ControlFlow,
@@ -731,7 +732,7 @@ impl SshRemoteClient {
 
             let multiplex_task = Self::monitor(this.clone(), io_task, &cx);
 
-            if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
+            if let Err(error) = client.resync(HEARTBEAT_TIMEOUT).await {
                 failed!(error, attempts, ssh_connection, delegate, forwarder);
             };
 
@@ -1159,7 +1160,7 @@ impl SshRemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn simulate_disconnect(&self, cx: &mut AppContext) {
+    pub fn simulate_disconnect(&self, cx: &mut AppContext) -> Task<()> {
         let port = self.connection_options().port.unwrap();
 
         let disconnect =
@@ -1170,7 +1171,6 @@ impl SshRemoteClient {
             cx.update_global(|c: &mut FakeConnections, _cx| c.replace(port, forwarder))
                 .unwrap()
         })
-        .detach()
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -1250,6 +1250,7 @@ impl FakeConnections {
 #[cfg(any(test, feature = "test-support"))]
 struct FakeDelegate;
 
+#[cfg(any(test, feature = "test-support"))]
 impl SshClientDelegate for FakeDelegate {
     fn ask_password(
         &self,
@@ -1686,8 +1687,10 @@ type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, ones
 pub struct ChannelClient {
     next_message_id: AtomicU32,
     outgoing_tx: mpsc::UnboundedSender<Envelope>,
-    response_channels: ResponseChannels,             // Lock
-    message_handlers: Mutex<ProtoMessageHandlerSet>, // Lock
+    buffer: Mutex<VecDeque<Envelope>>,
+    response_channels: ResponseChannels,
+    message_handlers: Mutex<ProtoMessageHandlerSet>,
+    max_received: AtomicU32,
 }
 
 impl ChannelClient {
@@ -1699,8 +1702,10 @@ impl ChannelClient {
         let this = Arc::new(Self {
             outgoing_tx,
             next_message_id: AtomicU32::new(0),
+            max_received: AtomicU32::new(0),
             response_channels: ResponseChannels::default(),
             message_handlers: Default::default(),
+            buffer: Mutex::new(VecDeque::new()),
         });
 
         Self::start_handling_messages(this.clone(), incoming_rx, cx);
@@ -1721,6 +1726,25 @@ impl ChannelClient {
                     let Some(this) = this.upgrade() else {
                         return anyhow::Ok(());
                     };
+                    if let Some(ack_id) = incoming.ack_id {
+                        let mut buffer = this.buffer.lock();
+                        while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
+                            buffer.pop_front();
+                        }
+                    }
+                    if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload {
+                        {
+                            let buffer = this.buffer.lock();
+                            for envelope in buffer.iter() {
+                                this.outgoing_tx.unbounded_send(envelope.clone()).ok();
+                            }
+                        }
+                        let response = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
+                        this.send_dynamic(response).ok();
+                        continue;
+                    }
+
+                    this.max_received.store(incoming.id, SeqCst);
 
                     if let Some(request_id) = incoming.responding_to {
                         let request_id = MessageId(request_id);
@@ -1800,6 +1824,23 @@ impl ChannelClient {
         }
     }
 
+    pub async fn resync(&self, timeout: Duration) -> Result<()> {
+        smol::future::or(
+            async {
+                self.request(proto::FlushBufferedMessages {}).await?;
+                for envelope in self.buffer.lock().iter() {
+                    self.outgoing_tx.unbounded_send(envelope.clone()).ok();
+                }
+                Ok(())
+            },
+            async {
+                smol::Timer::after(timeout).await;
+                Err(anyhow!("Timeout detected"))
+            },
+        )
+        .await
+    }
+
     pub async fn ping(&self, timeout: Duration) -> Result<()> {
         smol::future::or(
             async {
@@ -1829,7 +1870,8 @@ impl ChannelClient {
         let mut response_channels_lock = self.response_channels.lock();
         response_channels_lock.insert(MessageId(envelope.id), tx);
         drop(response_channels_lock);
-        let result = self.outgoing_tx.unbounded_send(envelope);
+
+        let result = self.send_buffered(envelope);
         async move {
             if let Err(error) = &result {
                 log::error!("failed to send message: {}", error);
@@ -1846,6 +1888,12 @@ impl ChannelClient {
 
     pub fn send_dynamic(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
+        self.send_buffered(envelope)
+    }
+
+    pub fn send_buffered(&self, mut envelope: proto::Envelope) -> Result<()> {
+        envelope.ack_id = Some(self.max_received.load(SeqCst));
+        self.buffer.lock().push_back(envelope.clone());
         self.outgoing_tx.unbounded_send(envelope)?;
         Ok(())
     }
