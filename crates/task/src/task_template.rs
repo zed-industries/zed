@@ -94,7 +94,7 @@ mod deserialization_tests {
         let adapter_config = DebugAdapterConfig {
             kind: DebugAdapterKind::Python,
             request: crate::DebugRequestType::Launch,
-            program: "main".to_string(),
+            program: Some("main".to_string()),
             initialize_args: None,
         };
         let json = json!({
@@ -243,12 +243,18 @@ impl TaskTemplate {
 
         let program = match &self.task_type {
             TaskType::Script => None,
-            TaskType::Debug(adapter_config) => Some(substitute_all_template_variables_in_str(
-                &adapter_config.program,
-                &task_variables,
-                &variable_names,
-                &mut substituted_variables,
-            )?),
+            TaskType::Debug(adapter_config) => {
+                if let Some(program) = &adapter_config.program {
+                    Some(substitute_all_template_variables_in_str(
+                        program,
+                        &task_variables,
+                        &variable_names,
+                        &mut substituted_variables,
+                    )?)
+                } else {
+                    None
+                }
+            }
         };
 
         let task_hash = to_hex_hash(self)

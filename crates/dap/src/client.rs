@@ -159,18 +159,13 @@ impl DebugAdapterClient {
             arguments: Some(serialized_arguments),
         };
 
-        {
-            self.transport
-                .current_requests
-                .lock()
-                .await
-                .insert(sequence_id, callback_tx);
-        }
-
         self.transport
-            .server_tx
-            .send(Message::Request(request))
-            .await?;
+            .current_requests
+            .lock()
+            .await
+            .insert(sequence_id, callback_tx);
+
+        self.respond(Message::Request(request)).await?;
 
         let response = callback_rx.recv().await??;
 
@@ -178,6 +173,14 @@ impl DebugAdapterClient {
             true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
             false => Err(anyhow!("Request failed")),
         }
+    }
+
+    pub async fn respond(&self, message: Message) -> Result<()> {
+        self.transport
+            .server_tx
+            .send(message)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to send response back: {}", e))
     }
 
     pub fn id(&self) -> DebugAdapterClientId {

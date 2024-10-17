@@ -32,6 +32,13 @@ pub enum TerminalKind {
     Shell(Option<PathBuf>),
     /// Run a task.
     Task(SpawnInTerminal),
+    /// Run a debug terminal.
+    Debug {
+        command: Option<String>,
+        args: Vec<String>,
+        envs: HashMap<String, String>,
+        cwd: PathBuf,
+    },
 }
 
 /// SshCommand describes how to connect to a remote server
@@ -100,6 +107,7 @@ impl Project {
                     self.active_project_directory(cx)
                 }
             }
+            TerminalKind::Debug { cwd, .. } => Some(cwd.clone()),
         };
         let ssh_command = self.ssh_command(cx);
 
@@ -136,6 +144,8 @@ impl Project {
             .and_then(|path| self.python_venv_directory(path, settings, cx));
         let mut python_venv_activate_command = None;
 
+        let debug_terminal = matches!(kind, TerminalKind::Debug { .. });
+
         let (spawn_task, shell) = match kind {
             TerminalKind::Shell(_) => {
                 if let Some(python_venv_directory) = python_venv_directory {
@@ -161,6 +171,22 @@ impl Project {
                     }
                     None => (None, settings.shell.clone()),
                 }
+            }
+            TerminalKind::Debug {
+                command,
+                args,
+                envs,
+                ..
+            } => {
+                env.extend(envs);
+
+                let shell = if let Some(program) = command {
+                    Shell::WithArguments { program, args }
+                } else {
+                    settings.shell.clone()
+                };
+
+                (None, shell)
             }
             TerminalKind::Task(spawn_task) => {
                 let task_state = Some(TaskState {
@@ -224,6 +250,7 @@ impl Project {
             settings.max_scroll_history_lines,
             window,
             completion_tx,
+            debug_terminal,
             cx,
         )
         .map(|builder| {

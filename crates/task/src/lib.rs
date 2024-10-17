@@ -99,13 +99,12 @@ impl ResolvedTask {
         match self.original_task.task_type.clone() {
             TaskType::Script => None,
             TaskType::Debug(mut adapter_config) => {
-                adapter_config.program = match &self.resolved {
+                let program = match &self.resolved {
                     None => adapter_config.program,
-                    Some(spawn_in_terminal) => spawn_in_terminal
-                        .program
-                        .clone()
-                        .unwrap_or(adapter_config.program),
+                    Some(spawn_in_terminal) => spawn_in_terminal.program.clone(),
                 };
+
+                adapter_config.program = program;
                 Some(adapter_config)
             }
         }

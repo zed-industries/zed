@@ -1,24 +1,26 @@
 use crate::debugger_panel_item::DebugPanelItem;
 use anyhow::Result;
-use dap::client::DebugAdapterClient;
+use collections::{BTreeMap, HashMap};
 use dap::client::{DebugAdapterClientId, ThreadStatus};
 use dap::debugger_settings::DebuggerSettings;
 use dap::messages::{Events, Message};
-use dap::requests::{Request, StartDebugging};
+use dap::requests::{Request, RunInTerminal, StartDebugging};
 use dap::{
     Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent, LoadedSourceEvent, ModuleEvent,
-    OutputEvent, StoppedEvent, TerminatedEvent, ThreadEvent, ThreadEventReason,
+    OutputEvent, RunInTerminalRequestArguments, StoppedEvent, TerminatedEvent, ThreadEvent,
+    ThreadEventReason,
 };
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
     FontWeight, Model, Subscription, Task, View, ViewContext, WeakView,
 };
 use project::dap_store::DapStore;
+use project::terminals::TerminalKind;
 use serde_json::Value;
 use settings::Settings;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::path::PathBuf;
 use std::u64;
+use terminal_view::terminal_panel::TerminalPanel;
 use ui::prelude::*;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -92,28 +94,29 @@ impl DebugPanel {
                 cx.subscribe(&pane, Self::handle_pane_event),
                 cx.subscribe(&project, {
                     move |this: &mut Self, _, event, cx| match event {
-                        project::Event::DebugClientEvent { message, client_id } => {
-                            let Some(client) = this.debug_client_by_id(client_id, cx) else {
-                                return cx.emit(DebugPanelEvent::ClientStopped(*client_id));
-                            };
-
-                            match message {
-                                Message::Event(event) => {
-                                    this.handle_debug_client_events(client_id, event, cx);
-                                }
-                                Message::Request(request) => {
-                                    if StartDebugging::COMMAND == request.command {
-                                        Self::handle_start_debugging_request(
-                                            this,
-                                            client,
-                                            request.arguments.clone(),
-                                            cx,
-                                        );
-                                    }
-                                }
-                                _ => unreachable!(),
+                        project::Event::DebugClientEvent { message, client_id } => match message {
+                            Message::Event(event) => {
+                                this.handle_debug_client_events(client_id, event, cx);
                             }
-                        }
+                            Message::Request(request) => {
+                                if StartDebugging::COMMAND == request.command {
+                                    this.handle_start_debugging_request(
+                                        client_id,
+                                        request.seq,
+                                        request.arguments.clone(),
+                                        cx,
+                                    );
+                                } else if RunInTerminal::COMMAND == request.command {
+                                    this.handle_run_in_terminal_request(
+                                        client_id,
+                                        request.seq,
+                                        request.arguments.clone(),
+                                        cx,
+                                    );
+                                }
+                            }
+                            _ => unreachable!(),
+                        },
                         project::Event::DebugClientStopped(client_id) => {
                             cx.emit(DebugPanelEvent::ClientStopped(*client_id));
 
@@ -131,11 +134,11 @@ impl DebugPanel {
                 pane,
                 size: px(300.),
                 _subscriptions,
-                dap_store: project.read(cx).dap_store(),
                 focus_handle: cx.focus_handle(),
                 show_did_not_stop_warning: false,
                 thread_states: Default::default(),
                 workspace: workspace.weak_handle(),
+                dap_store: project.read(cx).dap_store(),
             }
         })
     }
@@ -157,23 +160,6 @@ impl DebugPanel {
             .read(cx)
             .active_item()
             .and_then(|panel| panel.downcast::<DebugPanelItem>())
-    }
-
-    fn debug_client_by_id(
-        &self,
-        client_id: &DebugAdapterClientId,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<Arc<DebugAdapterClient>> {
-        self.workspace
-            .update(cx, |this, cx| {
-                this.project()
-                    .read(cx)
-                    .dap_store()
-                    .read(cx)
-                    .client_by_id(client_id)
-            })
-            .ok()
-            .flatten()
     }
 
     fn handle_pane_event(
@@ -227,20 +213,133 @@ impl DebugPanel {
     }
 
     fn handle_start_debugging_request(
-        this: &mut Self,
-        client: Arc<DebugAdapterClient>,
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        seq: u64,
         request_args: Option<Value>,
         cx: &mut ViewContext<Self>,
     ) {
-        let start_args = if let Some(args) = request_args {
+        let args = if let Some(args) = request_args {
             serde_json::from_value(args.clone()).ok()
         } else {
             None
         };
 
-        this.dap_store.update(cx, |store, cx| {
-            store.start_client(client.config(), start_args, cx);
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .respond_to_start_debugging(client_id, seq, args, cx)
+                .detach_and_log_err(cx);
         });
+    }
+
+    fn handle_run_in_terminal_request(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        seq: u64,
+        request_args: Option<Value>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let Some(request_args) = request_args else {
+            self.dap_store.update(cx, |store, cx| {
+                store
+                    .respond_to_run_in_terminal(client_id, false, seq, None, cx)
+                    .detach_and_log_err(cx);
+            });
+
+            return;
+        };
+
+        let request_args: RunInTerminalRequestArguments =
+            serde_json::from_value(request_args).unwrap();
+
+        let mut envs: HashMap<String, String> = Default::default();
+
+        if let Some(Value::Object(env)) = request_args.env {
+            // Special handling for VSCODE_INSPECTOR_OPTIONS:
+            // The JavaScript debug adapter expects this value to be a valid JSON object.
+            // However, it's often passed as an escaped string, which the adapter can't parse.
+            // We need to unescape it and reformat it so the adapter can read it correctly.
+            for (key, value) in env {
+                let value_str = match (key.as_str(), value) {
+                    ("VSCODE_INSPECTOR_OPTIONS", Value::String(value)) => {
+                        serde_json::from_str::<Value>(&value[3..])
+                            .map(|json| format!(":::{}", json))
+                            .unwrap_or_else(|_| value)
+                    }
+                    (_, value) => value.to_string(),
+                };
+
+                envs.insert(key, value_str.trim_matches('"').to_string());
+            }
+        }
+
+        let terminal_task = self.workspace.update(cx, |workspace, cx| {
+            let terminal_panel = workspace.panel::<TerminalPanel>(cx).unwrap();
+
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                let mut args = request_args.args.clone();
+
+                // Handle special case for NodeJS debug adapter
+                // If only the Node binary path is provided, we set the command to None
+                // This prevents the NodeJS REPL from appearing, which is not the desired behavior
+                // The expected usage is for users to provide their own Node command, e.g., `node test.js`
+                // This allows the NodeJS debug client to attach correctly
+                let command = if args.len() > 1 {
+                    Some(args.remove(0))
+                } else {
+                    None
+                };
+
+                let terminal_task = terminal_panel.add_terminal(
+                    TerminalKind::Debug {
+                        command,
+                        args,
+                        envs,
+                        cwd: PathBuf::from(request_args.cwd),
+                    },
+                    task::RevealStrategy::Always,
+                    cx,
+                );
+
+                cx.spawn(|_, mut cx| async move {
+                    let pid_task = async move {
+                        let terminal = terminal_task.await?;
+
+                        terminal.read_with(&mut cx, |terminal, _| terminal.pty_info.pid())
+                    };
+
+                    pid_task.await
+                })
+            })
+        });
+
+        let client_id = *client_id;
+        cx.spawn(|this, mut cx| async move {
+            // Ensure a response is always sent, even in error cases,
+            // to maintain proper communication with the debug adapter
+            let (success, pid) = match terminal_task {
+                Ok(pid_task) => match pid_task.await {
+                    Ok(pid) => (true, pid),
+                    Err(_) => (false, None),
+                },
+                Err(_) => (false, None),
+            };
+
+            let respond_task = this.update(&mut cx, |this, cx| {
+                this.dap_store.update(cx, |store, cx| {
+                    store.respond_to_run_in_terminal(
+                        &client_id,
+                        success,
+                        seq,
+                        pid.map(|pid| pid.as_u32() as u64),
+                        cx,
+                    )
+                })
+            });
+
+            respond_task?.await
+        })
+        .detach_and_log_err(cx);
     }
 
     fn handle_debug_client_events(

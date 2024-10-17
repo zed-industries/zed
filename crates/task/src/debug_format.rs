@@ -78,7 +78,7 @@ pub struct DebugAdapterConfig {
     #[serde(default)]
     pub request: DebugRequestType,
     /// The program that you trying to debug
-    pub program: String,
+    pub program: Option<String>,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
 }
@@ -99,7 +99,7 @@ pub struct DebugTaskDefinition {
     /// Name of the debug tasks
     label: String,
     /// Program to run the debugger on
-    program: String,
+    program: Option<String>,
     /// Launch | Request depending on the session the adapter should be ran as
     #[serde(default)]
     session_type: DebugRequestType,

@@ -160,10 +160,6 @@ impl DebugAdapter for JsDebugAdapter {
         json!({
             "program": config.program,
             "type": "pwa-node",
-            "skipFiles": [
-                "<node_internals>/**",
-                "**/node_modules/**"
-            ]
         })
     }
 }

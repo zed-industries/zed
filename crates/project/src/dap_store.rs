@@ -2,18 +2,19 @@ use crate::ProjectPath;
 use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
-use dap::messages::Message;
+use dap::messages::{Message, Response};
 use dap::requests::{
     Attach, Completions, ConfigurationDone, Continue, Disconnect, Evaluate, Initialize, Launch,
-    LoadedSources, Modules, Next, Pause, Scopes, SetBreakpoints, SetExpression, SetVariable,
-    StackTrace, StepIn, StepOut, Terminate, TerminateThreads, Variables,
+    LoadedSources, Modules, Next, Pause, Request as _, RunInTerminal, Scopes, SetBreakpoints,
+    SetExpression, SetVariable, StackTrace, StartDebugging, StepIn, StepOut, Terminate,
+    TerminateThreads, Variables,
 };
 use dap::{
     AttachRequestArguments, Capabilities, CompletionItem, CompletionsArguments,
-    ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, EvaluateArguments,
-    EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
+    ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, ErrorResponse,
+    EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, LaunchRequestArguments, LoadedSourcesArguments, Module,
-    ModulesArguments, NextArguments, PauseArguments, Scope, ScopesArguments,
+    ModulesArguments, NextArguments, PauseArguments, RunInTerminalResponse, Scope, ScopesArguments,
     SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments, Source,
     SourceBreakpoint, StackFrame, StackTraceArguments, StartDebuggingRequestArguments,
     StepInArguments, StepOutArguments, SteppingGranularity, TerminateArguments,
@@ -334,14 +335,14 @@ impl DapStore {
                     path_format: Some(InitializeRequestArgumentsPathFormat::Path),
                     supports_variable_type: Some(true),
                     supports_variable_paging: Some(false),
-                    supports_run_in_terminal_request: Some(false),
+                    supports_run_in_terminal_request: Some(true),
                     supports_memory_references: Some(true),
                     supports_progress_reporting: Some(false),
                     supports_invalidated_event: Some(false),
                     lines_start_at1: Some(false),
                     columns_start_at1: Some(false),
                     supports_memory_event: Some(false),
-                    supports_args_can_be_interpreted_by_shell: Some(true),
+                    supports_args_can_be_interpreted_by_shell: Some(false),
                     supports_start_debugging_request: Some(true),
                 })
                 .await?;
@@ -491,6 +492,74 @@ impl DapStore {
                     .await
             } else {
                 Ok(())
+            }
+        })
+    }
+
+    pub fn respond_to_start_debugging(
+        &self,
+        client_id: &DebugAdapterClientId,
+        seq: u64,
+        args: Option<StartDebuggingRequestArguments>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Could not found client")));
+        };
+
+        cx.spawn(|this, mut cx| async move {
+            client
+                .respond(Message::Response(Response {
+                    seq,
+                    request_seq: seq,
+                    success: true,
+                    command: StartDebugging::COMMAND.to_string(),
+                    body: None,
+                }))
+                .await?;
+
+            this.update(&mut cx, |store, cx| {
+                store.start_client(client.config(), args, cx);
+            })
+        })
+    }
+
+    pub fn respond_to_run_in_terminal(
+        &self,
+        client_id: &DebugAdapterClientId,
+        success: bool,
+        seq: u64,
+        shell_pid: Option<u64>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let Some(client) = self.client_by_id(client_id) else {
+            return Task::ready(Err(anyhow!("Could not found client")));
+        };
+
+        cx.spawn(|_, _| async move {
+            if success {
+                client
+                    .respond(Message::Response(Response {
+                        seq,
+                        request_seq: seq,
+                        success: true,
+                        command: RunInTerminal::COMMAND.to_string(),
+                        body: Some(serde_json::to_value(RunInTerminalResponse {
+                            process_id: Some(std::process::id() as u64),
+                            shell_process_id: shell_pid,
+                        })?),
+                    }))
+                    .await
+            } else {
+                client
+                    .respond(Message::Response(Response {
+                        seq,
+                        request_seq: seq,
+                        success: false,
+                        command: RunInTerminal::COMMAND.to_string(),
+                        body: Some(serde_json::to_value(ErrorResponse { error: None })?),
+                    }))
+                    .await
             }
         })
     }

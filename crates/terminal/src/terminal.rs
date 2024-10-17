@@ -330,6 +330,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
+        debug_terminal: bool,
         cx: &AppContext,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -457,6 +458,7 @@ impl TerminalBuilder {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
+            debug_terminal,
         };
 
         Ok(TerminalBuilder {
@@ -613,6 +615,7 @@ pub struct Terminal {
     word_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
+    debug_terminal: bool,
 }
 
 pub struct TaskState {
@@ -1680,6 +1683,10 @@ impl Terminal {
 
     pub fn task(&self) -> Option<&TaskState> {
         self.task.as_ref()
+    }
+
+    pub fn debug_terminal(&self) -> bool {
+        self.debug_terminal
     }
 
     pub fn wait_for_completed_task(&self, cx: &AppContext) -> Task<()> {
