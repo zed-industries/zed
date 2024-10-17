@@ -51,7 +51,11 @@ use std::{
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
-use util::{maybe, parse_env_output, paths::PathExt, ResultExt, TryFutureExt};
+use util::{
+    maybe, parse_env_output,
+    paths::{PathExt, SanitizedPathBuf},
+    ResultExt, TryFutureExt,
+};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
@@ -1236,7 +1240,10 @@ impl ToString for IdType {
 
 fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
-        Ok(path) => Ok(format!("file://{}", path.sanitized_pathbuf_string()?)),
+        Ok(path) => Ok(format!(
+            "file://{}",
+            SanitizedPathBuf::from(path).as_trimmed_string()?
+        )),
         Err(error) => {
             if arg.starts_with("file://")
                 || arg.starts_with("zed-cli://")
