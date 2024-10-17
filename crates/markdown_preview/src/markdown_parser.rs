@@ -36,6 +36,11 @@ struct MarkdownParser<'a> {
     language_registry: Option<Arc<LanguageRegistry>>,
 }
 
+struct MarkdownListItem {
+    content: Vec<ParsedMarkdownElement>,
+    item_type: Option<ParsedMarkdownListItemType>,
+}
+
 impl<'a> MarkdownParser<'a> {
     fn new(
         tokens: Vec<(Event<'a>, Range<usize>)>,
@@ -479,9 +484,8 @@ impl<'a> MarkdownParser<'a> {
         let (_, list_source_range) = self.previous().unwrap();
 
         let mut items = Vec::new();
-        let mut items_stack = vec![Vec::new()];
+        let mut items_stack = vec![MarkdownListItem { content: Vec::new(), item_type: None }];
         let mut depth = 1;
-        let mut task_item = None;
         let mut order = order;
         let mut order_stack = Vec::new();
 
@@ -521,8 +525,9 @@ impl<'a> MarkdownParser<'a> {
                     start_item_range = source_range.clone();
 
                     self.cursor += 1;
-                    items_stack.push(Vec::new());
+                    items_stack.push(MarkdownListItem { content: Vec::new(), item_type: None });
 
+                    let mut is_task_list = None;
                     // Check for task list marker (`- [ ]` or `- [x]`)
                     if let Some(event) = self.current_event() {
                         // If there is a linebreak in between two list items the task list marker will actually be the first element of the paragraph
@@ -531,7 +536,7 @@ impl<'a> MarkdownParser<'a> {
                         }
 
                         if let Some((Event::TaskListMarker(checked), range)) = self.current() {
-                            task_item = Some((*checked, range.clone()));
+                            is_task_list = Some(ParsedMarkdownListItemType::Task(*checked, range.clone()));
                             self.cursor += 1;
                         }
                     }
@@ -543,13 +548,22 @@ impl<'a> MarkdownParser<'a> {
                             let text = self.parse_text(false, Some(range.clone()));
                             let block = ParsedMarkdownElement::Paragraph(text);
                             if let Some(content) = items_stack.last_mut() {
-                                content.push(block);
+                                if let Some(task_list) = is_task_list {
+                                    content.content.push(block);
+                                    content.item_type = Some(task_list)
+                                } else if let Some(order) = order {
+                                    content.content.push(block);
+                                    content.item_type = Some(ParsedMarkdownListItemType::Ordered(order))
+                                } else {
+                                    content.content.push(block);
+                                    content.item_type = Some(ParsedMarkdownListItemType::Unordered);
+                                }
                             }
                         } else {
                             let block = self.parse_block().await;
                             if let Some(block) = block {
-                                if let Some(content) = items_stack.last_mut() {
-                                    content.extend(block);
+                                if let Some(list_item) = items_stack.last_mut() {
+                                    list_item.content.extend(block);
                                 }
                             }
                         }
@@ -563,30 +577,25 @@ impl<'a> MarkdownParser<'a> {
                 Event::End(TagEnd::Item) => {
                     self.cursor += 1;
 
-                    let item_type = if let Some((checked, range)) = task_item {
-                        ParsedMarkdownListItemType::Task(checked, range)
-                    } else if let Some(order) = order {
-                        ParsedMarkdownListItemType::Ordered(order)
-                    } else {
-                        ParsedMarkdownListItemType::Unordered
-                    };
-
                     if let Some(current) = order {
                         order = Some(current + 1);
                     }
 
-                    if let Some(content) = items_stack.pop() {
+                    if let Some(list_item) = items_stack.pop() {
                         let source_range = source_ranges
                             .remove(&depth)
                             .unwrap_or(start_item_range.clone());
+                        if list_item.item_type.is_none() {
+                            break;
+                        }
 
                         // We need to remove the last character of the source range, because it includes the newline character
                         let source_range = source_range.start..source_range.end - 1;
                         let item = ParsedMarkdownElement::ListItem(ParsedMarkdownListItem {
                             source_range,
-                            content,
+                            content: list_item.content,
                             depth,
-                            item_type,
+                            item_type: list_item.item_type.unwrap(),
                         });
 
                         if let Some(index) = insertion_indices.get(&depth) {
@@ -596,8 +605,6 @@ impl<'a> MarkdownParser<'a> {
                             items.push(item);
                         }
                     }
-
-                    task_item = None;
                 }
                 _ => {
                     if depth == 0 {
@@ -607,10 +614,10 @@ impl<'a> MarkdownParser<'a> {
                     // or the list item contains blocks that should be rendered after the nested list items
                     let block = self.parse_block().await;
                     if let Some(block) = block {
-                        if let Some(items_stack) = items_stack.last_mut() {
+                        if let Some(list_item) = items_stack.last_mut() {
                             // If we did not insert any nested items yet (in this case insertion index is set), we can append the block to the current list item
                             if !insertion_indices.contains_key(&depth) {
-                                items_stack.extend(block);
+                                list_item.content.extend(block);
                                 continue;
                             }
                         }
@@ -726,7 +733,7 @@ mod tests {
     use gpui::BackgroundExecutor;
     use language::{tree_sitter_rust, HighlightId, Language, LanguageConfig, LanguageMatcher};
     use pretty_assertions::assert_eq;
-
+    use gpui::KeyBindingContextPredicate::Or;
     use ParsedMarkdownListItemType::*;
 
     async fn parse(input: &str) -> ParsedMarkdown {
@@ -956,6 +963,33 @@ Some other content
             vec![
                 list_item(0..10, 1, Task(false, 2..5), vec![p("TODO", 6..10)]),
                 list_item(11..24, 1, Task(true, 13..16), vec![p("Checked", 17..24)]),
+            ],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_with_indented_task() {
+        let parsed = parse(
+            "\
+- [ ] TODO
+  - [x] Checked
+  - Unordered
+  1. Number 1
+  1. Number 2
+1. Number A
+",
+        )
+            .await;
+
+        assert_eq!(
+            parsed.children,
+            vec![
+                list_item(0..12, 1, Task(false, 2..5), vec![p("TODO", 6..10)]),
+                list_item(13..26, 2, Task(true, 15..18), vec![p("Checked", 19..26)]),
+                list_item(29..40, 2, Unordered, vec![p("Unordered", 31..40)]),
+                list_item(43..54, 2, Ordered(1), vec![p("Number 1", 46..54)]),
+                list_item(57..68, 2, Ordered(2), vec![p("Number 2", 60..68)]),
+                list_item(69..80, 1, Ordered(1), vec![p("Number A", 72..80)]),
             ],
         );
     }
