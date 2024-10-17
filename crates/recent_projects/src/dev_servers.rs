@@ -20,7 +20,7 @@ use gpui::Task;
 use gpui::WeakView;
 use gpui::{
     Animation, AnimationExt, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, FontWeight, Model, ScrollHandle, View, ViewContext,
+    FocusableView, FontWeight, Model, PromptLevel, ScrollHandle, View, ViewContext,
 };
 use picker::Picker;
 use project::terminals::wrap_for_ssh;
@@ -986,46 +986,38 @@ impl DevServerProjects {
                     .child({
                         fn remove_ssh_server(
                             dev_servers: View<DevServerProjects>,
-                            workspace: WeakView<Workspace>,
                             index: usize,
                             connection_string: SharedString,
                             cx: &mut WindowContext<'_>,
                         ) {
-                            workspace
-                                .update(cx, |this, cx| {
-                                    struct SshServerRemoval;
-                                    let notification = format!(
-                                        "Do you really want to remove server `{}`?",
-                                        connection_string
-                                    );
-                                    this.show_toast(
-                                        Toast::new(
-                                            NotificationId::composite::<SshServerRemoval>(
-                                                connection_string.clone(),
-                                            ),
-                                            notification,
-                                        )
-                                        .on_click(
-                                            "Yes, delete it",
-                                            move |cx| {
-                                                dev_servers.update(cx, |this, cx| {
-                                                    this.delete_ssh_server(index, cx);
-                                                    this.mode = Mode::default_mode();
-                                                    cx.notify();
-                                                })
-                                            },
-                                        ),
-                                        cx,
-                                    );
-                                })
-                                .ok();
+                            let prompt_message = format!("Remove server `{}`?", connection_string);
+
+                            let confirmation = cx.prompt(
+                                PromptLevel::Warning,
+                                &prompt_message,
+                                None,
+                                &["Yes, remove it", "No, keep it"],
+                            );
+
+                            cx.spawn(|mut cx| async move {
+                                if confirmation.await.ok() == Some(0) {
+                                    dev_servers
+                                        .update(&mut cx, |this, cx| {
+                                            this.delete_ssh_server(index, cx);
+                                            this.mode = Mode::default_mode();
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
                         }
                         self.selectable_items.add_item(Box::new({
                             let connection_string = connection_string.clone();
-                            move |this, cx| {
+                            move |_, cx| {
                                 remove_ssh_server(
                                     cx.view().clone(),
-                                    this.workspace.clone(),
                                     index,
                                     connection_string.clone(),
                                     cx,
@@ -1033,16 +1025,15 @@ impl DevServerProjects {
                             }
                         }));
                         let is_selected = self.selectable_items.is_selected();
-                        ListItem::new("delete-server")
+                        ListItem::new("remove-server")
                             .selected(is_selected)
                             .inset(true)
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::Trash).color(Color::Error))
-                            .child(Label::new("Delete Server").color(Color::Error))
-                            .on_click(cx.listener(move |this, _, cx| {
+                            .child(Label::new("Remove Server").color(Color::Error))
+                            .on_click(cx.listener(move |_, _, cx| {
                                 remove_ssh_server(
                                     cx.view().clone(),
-                                    this.workspace.clone(),
                                     index,
                                     connection_string.clone(),
                                     cx,
