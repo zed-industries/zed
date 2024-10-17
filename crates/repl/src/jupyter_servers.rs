@@ -3,11 +3,12 @@ use gpui::{
     prelude::*, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Render, ScrollHandle, View, ViewContext, WeakView,
 };
-use settings::Settings;
+use settings::{update_settings_file, Settings};
 use ui::{
-    prelude::*, v_flex, Button, Color, Divider, Icon, IconButton, IconName, IconSize, IntoElement,
-    Label, List, ListItem, Modal, ModalHeader, Section, SharedString, Tooltip,
+    prelude::*, v_flex, Button, Color, Icon, IconButton, IconName, IconSize, IntoElement, Label,
+    List, ListItem, Modal, ModalHeader, Section, SharedString, Tooltip,
 };
+use util::ResultExt as _;
 use workspace::{ModalView, Workspace};
 
 use crate::{
@@ -82,13 +83,13 @@ impl JupyterServers {
                 editor.clear(cx);
             });
 
-            self.update_settings(cx);
+            self.update_server_list(cx);
         }
     }
 
     fn remove_server(&mut self, index: usize, cx: &mut ViewContext<Self>) {
         self.server_list.remove(index);
-        self.update_settings(cx);
+        self.update_server_list(cx);
     }
 
     fn update_settings_file(
@@ -96,19 +97,24 @@ impl JupyterServers {
         cx: &mut ViewContext<Self>,
         f: impl FnOnce(&mut JupyterSettingsContent, &AppContext) + Send + Sync + 'static,
     ) {
-        // let Some(fs) = self
-        //     .workspace
-        //     .update(cx, |workspace, _| workspace.app_state().fs.clone())
-        //     .log_err()
-        // else {
-        //     return;
-        // };
-        // update_settings_file::<SshSettings>(fs, cx, move |setting, cx| f(setting, cx));
+        let Some(fs) = self
+            .workspace
+            .update(cx, |workspace, _| workspace.app_state().fs.clone())
+            .log_err()
+        else {
+            return;
+        };
+
+        update_settings_file::<JupyterSettings>(fs, cx, move |setting, cx| f(setting, cx));
     }
 
-    fn update_settings(&self, cx: &mut ViewContext<Self>) {
-        let settings = JupyterSettings::get_global(cx);
-        dbg!(&self.server_list);
+    fn update_server_list(&mut self, cx: &mut ViewContext<Self>) {
+        let server_list = self.server_list.clone();
+        self.update_settings_file(cx, move |setting, _| {
+            setting.jupyter_servers = Some(server_list);
+        });
+        self.update_selectable_items(cx);
+        cx.notify();
     }
 
     pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
@@ -121,8 +127,12 @@ impl JupyterServers {
     pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
         let focus_handle = cx.focus_handle();
 
+        eprintln!("Debug: Starting JupyterServers::new");
         let settings = JupyterSettings::get_global(cx);
+        eprintln!("Debug: JupyterSettings::get_global result: {:?}", settings);
+
         let server_list = settings.jupyter_servers.clone();
+        eprintln!("Debug: Cloned server_list: {:?}", server_list);
 
         let new_server_url = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
@@ -136,7 +146,7 @@ impl JupyterServers {
             editor
         });
 
-        Self {
+        let mut jupyter_servers = Self {
             focus_handle,
             scroll_handle: ScrollHandle::new(),
             workspace,
@@ -148,11 +158,16 @@ impl JupyterServers {
                 items: Vec::new(),
                 active_item: None,
             },
-        }
+        };
+
+        // Initialize selectable items based on the server list
+        jupyter_servers.update_selectable_items(cx);
+
+        jupyter_servers
     }
 
-    fn connect_to_server(&self, server: JupyterServer, cx: &AppContext) {
-        todo!()
+    fn connect_to_server(&self, _server: JupyterServer, _cx: &AppContext) {
+        dbg!("TODO: Connect to server");
     }
 
     fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
@@ -200,6 +215,19 @@ impl JupyterServers {
             }
         }
     }
+
+    fn update_selectable_items(&mut self, cx: &mut ViewContext<Self>) {
+        self.selectable_items.items.clear();
+        for (_index, server) in self.server_list.iter().enumerate() {
+            let server = server.clone();
+            self.selectable_items.items.push(Box::new(
+                move |this: &mut JupyterServers, cx: &mut ViewContext<JupyterServers>| {
+                    this.connect_to_server(server.clone(), cx);
+                },
+            ));
+        }
+        cx.notify();
+    }
 }
 
 impl ModalView for JupyterServers {}
@@ -216,7 +244,12 @@ impl Render for JupyterServers {
         div()
             .elevation_3(cx)
             .key_context("JupyterServersModal")
+            .on_action(cx.listener(Self::cancel))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::prev_item))
+            .on_action(cx.listener(Self::next_item))
             .on_mouse_down_out(cx.listener(|_, _, cx| cx.emit(DismissEvent)))
+            .w(rems(34.))
             .child(
                 Modal::new("jupyter-servers", Some(self.scroll_handle.clone()))
                     .header(ModalHeader::new().child(Label::new("Jupyter Servers")))
@@ -240,9 +273,17 @@ impl Render for JupyterServers {
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(
-                                            Icon::new(IconName::Server)
-                                                .color(Color::Muted)
-                                                .size(IconSize::Small),
+                                            h_flex()
+                                                .child(
+                                                    Icon::new(IconName::ReplNeutral)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small),
+                                                )
+                                                .child(
+                                                    Icon::new(IconName::Server)
+                                                        .color(Color::Muted)
+                                                        .size(IconSize::Small),
+                                                ),
                                         )
                                         .child(Label::new(name))
                                         .on_click(cx.listener(move |this, _, cx| {
@@ -260,7 +301,7 @@ impl Render for JupyterServers {
                                                         IconName::Settings,
                                                     )
                                                     .icon_size(IconSize::Small)
-                                                    .on_click(cx.listener(move |this, _, cx| {
+                                                    .on_click(cx.listener(move |this, _, _cx| {
                                                         // TODO: Implement edit server logic
                                                         eprintln!(
                                                             "Editing server: {:?}",
