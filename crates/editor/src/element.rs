@@ -3325,6 +3325,7 @@ impl EditorElement {
                     &layout.position_map.snapshot,
                     line_height,
                     layout.gutter_hitbox.bounds,
+                    &layout.gutter_dimensions,
                     coverage,
                 );
 
@@ -3343,6 +3344,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         line_height: Pixels,
         gutter_bounds: Bounds<Pixels>,
+        gutter_dimensions: &GutterDimensions,
         display_row: &DisplayRow,
     ) -> Bounds<Pixels> {
         let scroll_position = snapshot.scroll_position();
@@ -3351,17 +3353,28 @@ impl EditorElement {
         let start_y = display_row.as_f32() * line_height - scroll_top;
         let end_y = start_y + line_height;
 
-        // todo: update origin to end of line number
+        let left_offset = Self::coverage_strip_left_offset(line_height);
+        let highlight_origin = point(
+            gutter_bounds.right() - gutter_dimensions.right_padding + left_offset,
+            gutter_bounds.top() + start_y,
+        );
+
         let width = Self::coverage_strip_width(line_height);
-        let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
-        let highlight_size = size(width, end_y - start_y);
+        let height = end_y - start_y;
+        let highlight_size = size(width, height);
+
         Bounds::new(highlight_origin, highlight_size)
     }
 
     /// Returns the width of the coverage strip that will be displayed in the gutter.
-    pub(super) fn coverage_strip_width(line_height: Pixels) -> Pixels {
+    fn coverage_strip_width(line_height: Pixels) -> Pixels {
         // We floor the value to prevent pixel rounding.
-        (0.18 * line_height).floor()
+        (0.125 * line_height).floor()
+    }
+
+    fn coverage_strip_left_offset(line_height: Pixels) -> Pixels {
+        // We floor the value to prevent pixel rounding.
+        (0.275 * line_height).floor()
     }
 
     fn paint_diff_hunks(layout: &mut EditorLayout, cx: &mut WindowContext) {
