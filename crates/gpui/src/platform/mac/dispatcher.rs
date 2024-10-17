@@ -26,7 +26,7 @@ pub(crate) mod dispatch_sys {
 
 use dispatch_sys::*;
 pub(crate) fn dispatch_get_main_queue() -> dispatch_queue_t {
-    unsafe { addr_of!(_dispatch_main_q) as *const _ as dispatch_queue_t }
+    addr_of!(_dispatch_main_q) as *const _ as dispatch_queue_t
 }
 
 pub(crate) struct MacDispatcher {
