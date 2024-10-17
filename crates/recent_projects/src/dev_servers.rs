@@ -37,7 +37,6 @@ use ui::Scrollbar;
 use ui::ScrollbarState;
 use ui::Section;
 use ui::{prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
-use util::paths::SanitizedPathBuf;
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
@@ -244,6 +243,7 @@ impl ProjectPicker {
 
                             let tasks = paths
                                 .into_iter()
+                                .map(Into::into)
                                 .map(|path| {
                                     project.update(cx, |project, cx| {
                                         project.find_or_create_worktree(&path, true, cx)

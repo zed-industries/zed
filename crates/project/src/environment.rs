@@ -144,11 +144,11 @@ impl ProjectEnvironment {
             let load_direnv = ProjectSettings::get_global(cx).load_direnv.clone();
 
             cx.spawn(|this, mut cx| async move {
+                let abs_path = worktree_abs_path.clone();
                 let (mut shell_env, error_message) = cx
                     .background_executor()
                     .spawn(async move {
-                        load_shell_environment(worktree_abs_path.as_raw_path_buf(), &load_direnv)
-                            .await
+                        load_shell_environment(abs_path.as_raw_path_buf(), &load_direnv).await
                     })
                     .await;
 

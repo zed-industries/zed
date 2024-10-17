@@ -293,7 +293,11 @@ fn collect_files(
                     } else {
                         let entry_name = format!("{}/{}", prefix_paths, &filename);
                         output.text.push_str(&entry_name);
-                        directory_stack.push((entry.relative_path.clone(), entry_name, entry_start));
+                        directory_stack.push((
+                            entry.relative_path.clone(),
+                            entry_name,
+                            entry_start,
+                        ));
                     }
                     output.text.push('\n');
                 } else if entry.is_file() {

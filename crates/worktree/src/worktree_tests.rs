@@ -1731,9 +1731,17 @@ fn randomly_mutate_worktree(
                     Ok(())
                 })
             } else {
-                log::info!("overwriting file {:?} ({})", entry.relative_path, entry.id.0);
-                let task =
-                    worktree.write_file(entry.relative_path.clone(), "".into(), Default::default(), cx);
+                log::info!(
+                    "overwriting file {:?} ({})",
+                    entry.relative_path,
+                    entry.id.0
+                );
+                let task = worktree.write_file(
+                    entry.relative_path.clone(),
+                    "".into(),
+                    Default::default(),
+                    cx,
+                );
                 cx.background_executor().spawn(async move {
                     task.await?;
                     Ok(())

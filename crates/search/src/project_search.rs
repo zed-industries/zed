@@ -2736,7 +2736,11 @@ pub mod tests {
         assert!(a_dir_entry.is_dir());
         window
             .update(cx, |workspace, cx| {
-                ProjectSearchView::new_search_in_directory(workspace, &a_dir_entry.relative_path, cx)
+                ProjectSearchView::new_search_in_directory(
+                    workspace,
+                    &a_dir_entry.relative_path,
+                    cx,
+                )
             })
             .unwrap();
 
