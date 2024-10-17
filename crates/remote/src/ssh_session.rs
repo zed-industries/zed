@@ -1083,9 +1083,11 @@ impl SshRemoteClient {
 
         let platform = ssh_connection.query_platform().await?;
         let remote_binary_path = delegate.remote_server_binary_path(platform, cx)?;
-        ssh_connection
-            .ensure_server_binary(&delegate, &remote_binary_path, platform, cx)
-            .await?;
+        if !reconnect {
+            ssh_connection
+                .ensure_server_binary(&delegate, &remote_binary_path, platform, cx)
+                .await?;
+        }
 
         let socket = ssh_connection.socket.clone();
         run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
