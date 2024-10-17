@@ -405,6 +405,7 @@ fn adjust_runs(
     runs
 }
 
+#[derive(Default)]
 pub(crate) struct GoContextProvider;
 
 const GO_PACKAGE_TASK_VARIABLE: VariableName = VariableName::Custom(Cow::Borrowed("GO_PACKAGE"));

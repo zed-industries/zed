@@ -30,6 +30,121 @@ mod yaml;
 #[exclude = "*.rs"]
 struct LanguageDir;
 
+mod dsl {
+    use std::sync::Arc;
+
+    use language::{ContextProvider, LanguageRegistry, LspAdapter};
+
+    use crate::{load_config, load_queries};
+
+    pub(super) struct LanguageBootstrapRecipe<'a> {
+        name: &'static str,
+        adapters: &'a [Arc<dyn LspAdapter>],
+        context_provider: Option<Box<dyn Fn() -> Arc<dyn ContextProvider> + 'static + Send + Sync>>,
+    }
+    impl From<&'static str> for LanguageBootstrapRecipe<'static> {
+        fn from(name: &'static str) -> Self {
+            Self {
+                name,
+                adapters: &[],
+                context_provider: None,
+            }
+        }
+    }
+
+    impl<'a, const ADAPTER_COUNT: usize>
+        From<(&'static str, &'a [Arc<dyn LspAdapter>; ADAPTER_COUNT])>
+        for LanguageBootstrapRecipe<'a>
+    {
+        fn from(value: (&'static str, &'a [Arc<dyn LspAdapter>; ADAPTER_COUNT])) -> Self {
+            Self {
+                name: value.0,
+                adapters: value.1.as_ref(),
+                context_provider: None,
+            }
+        }
+    }
+    impl<
+            'a,
+            const ADAPTER_COUNT: usize,
+            T: ContextProvider + 'static,
+            Callback: Fn() -> T + 'static + Send + Sync,
+        >
+        From<(
+            &'static str,
+            &'a [Arc<dyn LspAdapter>; ADAPTER_COUNT],
+            Callback,
+        )> for LanguageBootstrapRecipe<'a>
+    {
+        fn from(
+            value: (
+                &'static str,
+                &'a [Arc<dyn LspAdapter>; ADAPTER_COUNT],
+                Callback,
+            ),
+        ) -> Self {
+            Self {
+                name: value.0,
+                adapters: value.1.as_ref(),
+                context_provider: Some(Box::new(move || Arc::new((value.2)()))),
+            }
+        }
+    }
+    impl<T: ContextProvider + 'static, Callback: Fn() -> T + 'static + Send + Sync>
+        From<(&'static str, Callback)> for LanguageBootstrapRecipe<'static>
+    {
+        fn from(value: (&'static str, Callback)) -> Self {
+            Self {
+                name: value.0,
+                adapters: &[],
+                context_provider: Some(Box::new(move || Arc::new((value.1)()))),
+            }
+        }
+    }
+
+    pub(super) fn language<'a>(
+        languages: &LanguageRegistry,
+        config: impl Into<LanguageBootstrapRecipe<'a>>,
+    ) {
+        let config = config.into();
+        language_impl(languages, config)
+    }
+    fn language_impl<'a>(
+        languages: &LanguageRegistry,
+        bootstrap_config: LanguageBootstrapRecipe<'a>,
+    ) {
+        let config = load_config(bootstrap_config.name);
+        for adapter in bootstrap_config.adapters {
+            languages.register_lsp_adapter(config.name.clone(), adapter.clone());
+        }
+        languages.register_language(
+            config.name.clone(),
+            config.grammar.clone(),
+            config.matcher.clone(),
+            move || {
+                let context_provider = if let Some(factory) = &bootstrap_config.context_provider {
+                    Some(factory())
+                } else {
+                    None
+                };
+                Ok((
+                    config.clone(),
+                    load_queries(bootstrap_config.name),
+                    context_provider,
+                ))
+            },
+        );
+    }
+}
+type Adapter = Arc<dyn LspAdapter>;
+trait DynAdapter {
+    fn create<T: LspAdapter>(inner: T) -> Adapter;
+}
+impl DynAdapter for Adapter {
+    fn create<T: LspAdapter>(inner: T) -> Adapter {
+        Arc::new(inner)
+    }
+}
 pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mut AppContext) {
     #[cfg(feature = "load-grammars")]
     languages.register_native_grammars([
@@ -55,134 +170,107 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
     ]);
 
     macro_rules! language {
-        ($name:literal) => {
-            let config = load_config($name);
-            languages.register_language(
-                config.name.clone(),
-                config.grammar.clone(),
-                config.matcher.clone(),
-                move || Ok((config.clone(), load_queries($name), None)),
-            );
-        };
-        ($name:literal, $adapters:expr) => {
-            let config = load_config($name);
-            // typeck helper
-            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
-            for adapter in adapters {
-                languages.register_lsp_adapter(config.name.clone(), adapter);
-            }
-            languages.register_language(
-                config.name.clone(),
-                config.grammar.clone(),
-                config.matcher.clone(),
-                move || Ok((config.clone(), load_queries($name), None)),
-            );
-        };
-        ($name:literal, $adapters:expr, $context_provider:expr) => {
-            let config = load_config($name);
-            // typeck helper
-            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
-            for adapter in adapters {
-                languages.register_lsp_adapter(config.name.clone(), adapter);
-            }
-            languages.register_language(
-                config.name.clone(),
-                config.grammar.clone(),
-                config.matcher.clone(),
-                move || {
-                    Ok((
-                        config.clone(),
-                        load_queries($name),
-                        Some(Arc::new($context_provider)),
-                    ))
-                },
-            );
-        };
+        ($($arg:expr), *) => {
+            dsl::language(&languages, ($($arg), *))
+        }
+
     }
-    language!("bash", Vec::new(), bash_task_context());
-    language!("c", vec![Arc::new(c::CLspAdapter) as Arc<dyn LspAdapter>]);
-    language!("cpp", vec![Arc::new(c::CLspAdapter)]);
+    language!("bash", bash_task_context);
+    language!("c", &[Adapter::create(c::CLspAdapter)]);
+    language!("cpp", &[Adapter::create(c::CLspAdapter)]);
     language!(
         "css",
-        vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
+        &[Adapter::create(css::CssLspAdapter::new(
+            node_runtime.clone()
+        )),]
     );
     language!("diff");
-    language!("go", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
-    language!("gomod", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
+    language!(
+        "go",
+        &[Adapter::create(go::GoLspAdapter)],
+        GoContextProvider::default
+    );
+    language!(
+        "gomod",
+        &[Adapter::create(go::GoLspAdapter)],
+        GoContextProvider::default
+    );
     language!(
         "gowork",
-        vec![Arc::new(go::GoLspAdapter)],
-        GoContextProvider
+        &[Adapter::create(go::GoLspAdapter)],
+        GoContextProvider::default
     );
 
     language!(
         "json",
-        vec![
-            Arc::new(json::JsonLspAdapter::new(
+        &[
+            Adapter::create(json::JsonLspAdapter::new(
                 node_runtime.clone(),
                 languages.clone(),
             )),
-            Arc::new(json::NodeVersionAdapter)
+            Adapter::create(json::NodeVersionAdapter)
         ],
-        json_task_context()
+        json_task_context
     );
     language!(
         "jsonc",
-        vec![Arc::new(json::JsonLspAdapter::new(
+        &[Adapter::create(json::JsonLspAdapter::new(
             node_runtime.clone(),
             languages.clone(),
         ))],
-        json_task_context()
+        json_task_context
     );
     language!("markdown");
     language!("markdown-inline");
     language!(
         "python",
-        vec![Arc::new(python::PythonLspAdapter::new(
+        &[Adapter::create(python::PythonLspAdapter::new(
             node_runtime.clone(),
         ))],
-        PythonContextProvider
+        PythonContextProvider::default
     );
     language!(
         "rust",
-        vec![Arc::new(rust::RustLspAdapter)],
-        RustContextProvider
+        &[Adapter::create(rust::RustLspAdapter)],
+        RustContextProvider::default
     );
     language!(
         "tsx",
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        &[
+            Adapter::create(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Adapter::create(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
         ],
-        typescript_task_context()
+        typescript_task_context
     );
     language!(
         "typescript",
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        &[
+            Adapter::create(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Adapter::create(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
         ],
-        typescript_task_context()
+        typescript_task_context
     );
     language!(
         "javascript",
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
-            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        &[
+            Adapter::create(typescript::TypeScriptLspAdapter::new(node_runtime.clone())),
+            Adapter::create(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
         ],
-        typescript_task_context()
+        typescript_task_context
     );
     language!(
         "jsdoc",
-        vec![
-            Arc::new(typescript::TypeScriptLspAdapter::new(node_runtime.clone(),)),
-            Arc::new(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
+        &[
+            Adapter::create(typescript::TypeScriptLspAdapter::new(node_runtime.clone(),)),
+            Adapter::create(vtsls::VtslsLspAdapter::new(node_runtime.clone()))
         ]
     );
     language!("regex");
     language!(
         "yaml",
-        vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
+        &[Adapter::create(yaml::YamlLspAdapter::new(
+            node_runtime.clone()
+        ))]
     );
 
     // Register globally available language servers.

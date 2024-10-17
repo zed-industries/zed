@@ -227,6 +227,7 @@ async fn get_cached_server_binary(
     }
 }
 
+#[derive(Default)]
 pub(crate) struct PythonContextProvider;
 
 const PYTHON_UNITTEST_TARGET_TASK_VARIABLE: VariableName =

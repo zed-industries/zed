@@ -362,6 +362,7 @@ impl LspAdapter for RustLspAdapter {
     }
 }
 
+#[derive(Default)]
 pub(crate) struct RustContextProvider;
 
 const RUST_PACKAGE_TASK_VARIABLE: VariableName =
