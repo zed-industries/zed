@@ -1897,11 +1897,7 @@ impl Workspace {
                 directories: true,
                 multiple: true,
             },
-            if self.project.read(cx).is_via_ssh() {
-                DirectoryLister::Project(self.project.clone())
-            } else {
-                DirectoryLister::Local(self.app_state.fs.clone())
-            },
+            DirectoryLister::Local(self.app_state.fs.clone()),
             cx,
         );
 
