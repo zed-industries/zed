@@ -487,7 +487,9 @@ impl ContextProvider for BasicContextProvider {
         if let Some(worktree_path) = worktree_abs_path {
             task_variables.insert(
                 VariableName::WorktreeRoot,
-                worktree_path.to_string_lossy().to_string(),
+                // TODO:
+                // use to_string() or to_trimmed_string()?
+                worktree_path.to_string(),
             );
             if let Some(full_path) = current_file.as_ref() {
                 let relative_path = pathdiff::diff_paths(full_path, worktree_path);

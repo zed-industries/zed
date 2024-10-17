@@ -1029,7 +1029,8 @@ fn open_settings_file(
                 let worktree_creation_task = workspace.project().update(cx, |project, cx| {
                     // Set up a dedicated worktree for settings, since otherwise we're dropping and re-starting LSP servers for each file inside on every settings file close/open
                     // TODO: Do note that all other external files (e.g. drag and drop from OS) still have their worktrees released on file close, causing LSP servers' restarts.
-                    project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
+                    let path = paths::config_dir();
+                    project.find_or_create_worktree(path, false, cx)
                 });
                 let settings_open_task = create_and_open_local_file(abs_path, cx, default_content);
                 (worktree_creation_task, settings_open_task)
@@ -1220,7 +1221,7 @@ mod tests {
                         .worktrees(cx)
                         .map(|w| w.read(cx).abs_path())
                         .collect::<Vec<_>>(),
-                    &[Path::new("/root/e").into()]
+                    &[PathBuf::from("/root/e").into()]
                 );
                 assert!(workspace.left_dock().read(cx).is_open());
                 assert!(workspace.active_pane().focus_handle(cx).is_focused(cx));
@@ -1837,7 +1838,7 @@ mod tests {
                 "Unexpected project panel selected worktree path"
             );
             assert_eq!(
-                selected_entry.path.as_ref(),
+                selected_entry.relative_path.as_ref(),
                 expected_entry_path,
                 "Unexpected project panel selected entry path"
             );

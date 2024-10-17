@@ -23,7 +23,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
-use util::ResultExt;
+use util::{paths::SanitizedPathBuf, ResultExt};
 use worktree::Snapshot;
 
 use crate::{indexing::IndexingEntrySet, summary_backlog::SummaryBacklog};
@@ -320,7 +320,7 @@ impl SummaryIndex {
         txn: &RoTxn<'_>,
         entry: &Entry,
     ) -> Vec<(Arc<Path>, Option<SystemTime>)> {
-        let entry_db_key = db_key_for_path(&entry.path);
+        let entry_db_key = db_key_for_path(&entry.relative_path);
 
         match digest_db.get(&txn, &entry_db_key) {
             Ok(opt_saved_digest) => {
@@ -331,10 +331,10 @@ impl SummaryIndex {
 
                     log::info!(
                         "Inserting {:?} ({:?} bytes) into backlog",
-                        &entry.path,
+                        &entry.relative_path,
                         entry.size,
                     );
-                    backlog.insert(Arc::clone(&entry.path), entry.size, entry.mtime);
+                    backlog.insert(Arc::clone(&entry.relative_path), entry.size, entry.mtime);
 
                     if backlog.needs_drain() {
                         log::info!("Draining summary backlog...");
@@ -415,7 +415,7 @@ impl SummaryIndex {
     fn digest_files(
         &self,
         paths: channel::Receiver<Vec<(Arc<Path>, Option<SystemTime>)>>,
-        worktree_abs_path: Arc<Path>,
+        worktree_abs_path: SanitizedPathBuf,
         cx: &AppContext,
     ) -> MightNeedSummaryFiles {
         let fs = self.fs.clone();
@@ -433,7 +433,7 @@ impl SummaryIndex {
                                     // Load the file's contents and compute its hash digest.
                                     let unsummarized_file = {
                                         let Some(contents) = fs
-                                            .load(&entry_abs_path)
+                                            .load(entry_abs_path.as_raw_path_buf())
                                             .await
                                             .with_context(|| {
                                                 format!("failed to read path {entry_abs_path:?}")
@@ -640,7 +640,7 @@ impl SummaryIndex {
     /// Empty out the backlog of files that haven't been resummarized, and resummarize them immediately.
     pub(crate) fn flush_backlog(
         &self,
-        worktree_abs_path: Arc<Path>,
+        worktree_abs_path: SanitizedPathBuf,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
         let start = Instant::now();

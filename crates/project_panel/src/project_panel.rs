@@ -42,7 +42,7 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{prelude::*, v_flex, ContextMenu, Icon, KeyBinding, Label, ListItem, Tooltip};
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, paths::SanitizedPathBuf, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
@@ -119,7 +119,7 @@ struct EntryDetails {
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
-    canonical_path: Option<Box<Path>>,
+    canonical_path: Option<SanitizedPathBuf>,
 }
 
 #[derive(PartialEq, Clone, Default, Debug, Deserialize)]
@@ -340,7 +340,7 @@ impl ProjectPanel {
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
-                            let file_path = entry.path.clone();
+                            let file_path = entry.relative_path.clone();
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
 
@@ -405,7 +405,7 @@ impl ProjectPanel {
                                 .split_path(
                                     ProjectPath {
                                         worktree_id: worktree.read(cx).id(),
-                                        path: entry.path.clone(),
+                                        path: entry.relative_path.clone(),
                                     },
                                     cx,
                                 )
@@ -593,7 +593,7 @@ impl ProjectPanel {
             return false;
         }
 
-        if let Some(parent_path) = entry.path.parent() {
+        if let Some(parent_path) = entry.relative_path.parent() {
             let snapshot = worktree.snapshot();
             let mut child_entries = snapshot.child_entries(parent_path);
             if let Some(child) = child_entries.next() {
@@ -609,7 +609,7 @@ impl ProjectPanel {
         if entry.is_dir() {
             let snapshot = worktree.snapshot();
 
-            let mut child_entries = snapshot.child_entries(&entry.path);
+            let mut child_entries = snapshot.child_entries(&entry.relative_path);
             if let Some(child) = child_entries.next() {
                 if child_entries.next().is_none() {
                     return child.kind.is_dir();
@@ -683,8 +683,10 @@ impl ProjectPanel {
                         break;
                     }
                     Err(_) => {
-                        if let Some(parent_entry) =
-                            entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                        if let Some(parent_entry) = entry
+                            .relative_path
+                            .parent()
+                            .and_then(|p| worktree.entry_for_path(p))
                         {
                             entry = parent_entry;
                         } else {
@@ -812,7 +814,7 @@ impl ProjectPanel {
                 worktree_id,
                 entry_id: NEW_ENTRY_ID,
             });
-            let new_path = entry.path.join(filename.trim_start_matches('/'));
+            let new_path = entry.relative_path.join(filename.trim_start_matches('/'));
             if path_already_exists(new_path.as_path()) {
                 return None;
             }
@@ -822,7 +824,7 @@ impl ProjectPanel {
                 project.create_entry((worktree_id, &new_path), is_dir, cx)
             });
         } else {
-            let new_path = if let Some(parent) = entry.path.clone().parent() {
+            let new_path = if let Some(parent) = entry.relative_path.clone().parent() {
                 parent.join(&filename)
             } else {
                 filename.clone().into()
@@ -873,6 +875,7 @@ impl ProjectPanel {
                     })?;
                 }
                 Ok(CreatedEntry::Excluded { abs_path }) => {
+                    let abs_path = abs_path.into();
                     if let Some(open_task) = project_panel
                         .update(&mut cx, |project_panel, cx| {
                             project_panel.marked_entries.clear();
@@ -965,7 +968,7 @@ impl ProjectPanel {
                             directory_id = entry.id;
                             break;
                         } else {
-                            if let Some(parent_path) = entry.path.parent() {
+                            if let Some(parent_path) = entry.relative_path.parent() {
                                 if let Some(parent_entry) = worktree.entry_for_path(parent_path) {
                                     entry = parent_entry;
                                     continue;
@@ -1031,12 +1034,12 @@ impl ProjectPanel {
                         depth: 0,
                     });
                     let file_name = entry
-                        .path
+                        .relative_path
                         .file_name()
                         .map(|s| s.to_string_lossy())
                         .unwrap_or_default()
                         .to_string();
-                    let file_stem = entry.path.file_stem().map(|s| s.to_string_lossy());
+                    let file_stem = entry.relative_path.file_stem().map(|s| s.to_string_lossy());
                     let selection_end =
                         file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
                     self.filename_editor.update(cx, |editor, cx| {
@@ -1150,7 +1153,7 @@ impl ProjectPanel {
             self.unfolded_dir_ids.insert(entry.id);
 
             let snapshot = worktree.snapshot();
-            let mut parent_path = entry.path.parent();
+            let mut parent_path = entry.relative_path.parent();
             while let Some(path) = parent_path {
                 if let Some(parent_entry) = worktree.entry_for_path(path) {
                     let mut children_iter = snapshot.child_entries(path);
@@ -1177,13 +1180,13 @@ impl ProjectPanel {
             self.unfolded_dir_ids.remove(&entry.id);
 
             let snapshot = worktree.snapshot();
-            let mut path = &*entry.path;
+            let mut path = &*entry.relative_path;
             loop {
                 let mut child_entries_iter = snapshot.child_entries(path);
                 if let Some(child) = child_entries_iter.next() {
                     if child_entries_iter.next().is_none() && child.is_dir() {
                         self.unfolded_dir_ids.remove(&child.id);
-                        path = &*child.path;
+                        path = &*child.relative_path;
                     } else {
                         break;
                     }
@@ -1234,7 +1237,7 @@ impl ProjectPanel {
 
     fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            if let Some(parent) = entry.path.parent() {
+            if let Some(parent) = entry.relative_path.parent() {
                 if let Some(parent_entry) = worktree.entry_for_path(parent) {
                     self.selection = Some(SelectedEntry {
                         worktree_id: worktree.id(),
@@ -1321,7 +1324,7 @@ impl ProjectPanel {
         (worktree, target_entry): (Model<Worktree>, &Entry),
         cx: &AppContext,
     ) -> Option<PathBuf> {
-        let mut new_path = target_entry.path.to_path_buf();
+        let mut new_path = target_entry.relative_path.to_path_buf();
         // If we're pasting into a file, or a directory into itself, go up one level.
         if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
             new_path.pop();
@@ -1390,8 +1393,8 @@ impl ProjectPanel {
                         .read(cx)
                         .absolute_path(&clipboard_project_path, cx)?;
                     Some(relativize_path(
-                        &target_base_path,
-                        clipboard_abs_path.as_path(),
+                        target_base_path.as_trimmed_path_buf(),
+                        clipboard_abs_path.as_trimmed_path_buf(),
                     ))
                 } else {
                     None
@@ -1485,8 +1488,7 @@ impl ProjectPanel {
                             .worktree_for_id(entry.worktree_id, cx)?
                             .read(cx)
                             .abs_path()
-                            .join(entry_path)
-                            .to_string_lossy()
+                            .join(&entry_path)
                             .to_string(),
                     )
                 })
@@ -1520,32 +1522,46 @@ impl ProjectPanel {
 
     fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            cx.reveal_path(&worktree.abs_path().join(&entry.path));
+            cx.reveal_path(
+                worktree
+                    .abs_path()
+                    .join(&entry.relative_path)
+                    .as_raw_path_buf(),
+            );
         }
     }
 
     fn open_system(&mut self, _: &OpenWithSystem, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
-            let abs_path = worktree.abs_path().join(&entry.path);
-            cx.open_with_system(&abs_path);
+            let abs_path = worktree.abs_path().join(&entry.relative_path);
+            cx.open_with_system(abs_path.as_raw_path_buf());
         }
     }
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            let abs_path = worktree.abs_path().join(&entry.path);
+            let abs_path = worktree.abs_path().join(&entry.relative_path);
             let working_directory = if entry.is_dir() {
                 Some(abs_path)
             } else {
                 if entry.is_symlink {
-                    abs_path.canonicalize().ok()
+                    abs_path
+                        .as_raw_path_buf()
+                        .canonicalize()
+                        .ok()
+                        .map(Into::into)
                 } else {
                     Some(abs_path)
                 }
-                .and_then(|path| Some(path.parent()?.to_path_buf()))
+                .and_then(|path| Some(path.as_raw_path_buf().parent()?.to_path_buf().into()))
             };
             if let Some(working_directory) = working_directory {
-                cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
+                cx.dispatch_action(
+                    workspace::OpenTerminal {
+                        working_directory: working_directory.into(),
+                    }
+                    .boxed_clone(),
+                )
             }
         }
     }
@@ -1560,10 +1576,10 @@ impl ProjectPanel {
                 let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
                 let dir_path = if include_root {
                     let mut full_path = PathBuf::from(worktree.root_name());
-                    full_path.push(&entry.path);
+                    full_path.push(&entry.relative_path);
                     Arc::from(full_path)
                 } else {
-                    entry.path.clone()
+                    entry.relative_path.clone()
                 };
 
                 self.workspace
@@ -1743,7 +1759,7 @@ impl ProjectPanel {
         let (worktree, entry) = self.selected_entry(cx)?;
         let expanded_dir_ids = self.expanded_dir_ids.entry(worktree.id()).or_default();
 
-        for path in entry.path.ancestors() {
+        for path in entry.relative_path.ancestors() {
             let Some(entry) = worktree.entry_for_path(path) else {
                 continue;
             };
@@ -1811,9 +1827,9 @@ impl ProjectPanel {
                     auto_folded_ancestors.push(entry.id);
                     if !self.unfolded_dir_ids.contains(&entry.id) {
                         if let Some(root_path) = snapshot.root_entry() {
-                            let mut child_entries = snapshot.child_entries(&entry.path);
+                            let mut child_entries = snapshot.child_entries(&entry.relative_path);
                             if let Some(child) = child_entries.next() {
-                                if entry.path != root_path.path
+                                if entry.relative_path != root_path.relative_path
                                     && child_entries.next().is_none()
                                     && child.kind.is_dir()
                                 {
@@ -1852,7 +1868,7 @@ impl ProjectPanel {
                     visible_worktree_entries.push(Entry {
                         id: NEW_ENTRY_ID,
                         kind: new_entry_kind,
-                        path: entry.path.join("\0").into(),
+                        relative_path: entry.relative_path.join("\0").into(),
                         inode: 0,
                         mtime: entry.mtime,
                         size: entry.size,
@@ -1869,6 +1885,7 @@ impl ProjectPanel {
                 let worktree_abs_path = worktree.read(cx).abs_path();
                 let (depth, path) = if Some(entry) == worktree.read(cx).root_entry() {
                     let Some(path_name) = worktree_abs_path
+                        .as_raw_path_buf()
                         .file_name()
                         .with_context(|| {
                             format!("Worktree abs path has no file name, root entry: {entry:?}")
@@ -1882,7 +1899,7 @@ impl ProjectPanel {
                     (depth, path)
                 } else if entry.is_file() {
                     let Some(path_name) = entry
-                        .path
+                        .relative_path
                         .file_name()
                         .with_context(|| format!("Non-root entry has no file name: {entry:?}"))
                         .log_err()
@@ -1890,7 +1907,7 @@ impl ProjectPanel {
                         continue;
                     };
                     let path = Arc::from(Path::new(path_name));
-                    let depth = entry.path.ancestors().count() - 1;
+                    let depth = entry.relative_path.ancestors().count() - 1;
                     (depth, path)
                 } else {
                     let path = self
@@ -1901,10 +1918,10 @@ impl ProjectPanel {
                             let root_folded_entry = worktree
                                 .read(cx)
                                 .entry_for_id(*outermost_ancestor)?
-                                .path
+                                .relative_path
                                 .as_ref();
                             entry
-                                .path
+                                .relative_path
                                 .strip_prefix(root_folded_entry)
                                 .ok()
                                 .and_then(|suffix| {
@@ -1912,8 +1929,14 @@ impl ProjectPanel {
                                     Some(Arc::<Path>::from(full_path.join(suffix)))
                                 })
                         })
-                        .or_else(|| entry.path.file_name().map(Path::new).map(Arc::from))
-                        .unwrap_or_else(|| entry.path.clone());
+                        .or_else(|| {
+                            entry
+                                .relative_path
+                                .file_name()
+                                .map(Path::new)
+                                .map(Arc::from)
+                        })
+                        .unwrap_or_else(|| entry.relative_path.clone());
                     let depth = path.components().count();
                     (depth, path)
                 };
@@ -2000,8 +2023,10 @@ impl ProjectPanel {
                             expanded_dir_ids.insert(ix, entry.id);
                         }
 
-                        if let Some(parent_entry) =
-                            entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                        if let Some(parent_entry) = entry
+                            .relative_path
+                            .parent()
+                            .and_then(|p| worktree.entry_for_path(p))
                         {
                             entry = parent_entry;
                         } else {
@@ -2026,7 +2051,11 @@ impl ProjectPanel {
         let Some((target_directory, worktree)) = maybe!({
             let worktree = self.project.read(cx).worktree_for_entry(entry_id, cx)?;
             let entry = worktree.read(cx).entry_for_id(entry_id)?;
-            let path = worktree.read(cx).absolutize(&entry.path).ok()?;
+            let path: PathBuf = worktree
+                .read(cx)
+                .absolutize(&entry.relative_path)
+                .ok()?
+                .into();
             let target_directory = if path.is_dir() {
                 path
             } else {
@@ -2163,7 +2192,7 @@ impl ProjectPanel {
                 let entries = entries_paths.get_or_init(|| {
                     visible_worktree_entries
                         .iter()
-                        .map(|e| (e.path.clone()))
+                        .map(|e| (e.relative_path.clone()))
                         .collect()
                 });
                 for entry in visible_worktree_entries[entry_range].iter() {
@@ -2172,7 +2201,7 @@ impl ProjectPanel {
                     let icon = match entry.kind {
                         EntryKind::File => {
                             if show_file_icons {
-                                FileIcons::get_icon(&entry.path, cx)
+                                FileIcons::get_icon(&entry.relative_path, cx)
                             } else {
                                 None
                             }
@@ -2191,15 +2220,15 @@ impl ProjectPanel {
 
                     let filename = match difference {
                         diff if diff > 1 => entry
-                            .path
+                            .relative_path
                             .iter()
-                            .skip(entry.path.components().count() - diff)
+                            .skip(entry.relative_path.components().count() - diff)
                             .collect::<PathBuf>()
                             .to_str()
                             .unwrap_or_default()
                             .to_string(),
                         _ => entry
-                            .path
+                            .relative_path
                             .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
@@ -2211,7 +2240,7 @@ impl ProjectPanel {
                     let mut details = EntryDetails {
                         filename,
                         icon,
-                        path: entry.path.clone(),
+                        path: entry.relative_path.clone(),
                         depth,
                         kind: entry.kind,
                         is_ignored: entry.is_ignored,
@@ -2272,12 +2301,12 @@ impl ProjectPanel {
         visible_worktree_entries: &HashSet<Arc<Path>>,
     ) -> (usize, usize) {
         let (depth, difference) = entry
-            .path
+            .relative_path
             .ancestors()
             .skip(1) // Skip the entry itself
             .find_map(|ancestor| {
                 if let Some(parent_entry) = visible_worktree_entries.get(ancestor) {
-                    let entry_path_components_count = entry.path.components().count();
+                    let entry_path_components_count = entry.relative_path.components().count();
                     let parent_path_components_count = parent_entry.components().count();
                     let difference = entry_path_components_count - parent_path_components_count;
                     let depth = parent_entry
@@ -2327,7 +2356,7 @@ impl ProjectPanel {
         let canonical_path = details
             .canonical_path
             .as_ref()
-            .map(|f| f.to_string_lossy().to_string());
+            .map(|f| f.to_trimmed_string());
         let path = details.path.clone();
 
         let depth = details.depth;
@@ -2355,7 +2384,13 @@ impl ProjectPanel {
                                 .read(cx)
                                 .worktree_for_id(selection.worktree_id, cx)?;
                             let worktree = worktree.read(cx);
-                            let abs_path = worktree.absolutize(&path).log_err()?;
+                            let abs_path = worktree
+                                .absolutize(&path)
+                                .log_err()?
+                                // TODO:
+                                // use trimmed or ?
+                                .as_trimmed_path_buf()
+                                .clone();
                             let path = if abs_path.is_dir() {
                                 path.as_ref()
                             } else {

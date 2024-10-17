@@ -95,6 +95,124 @@ impl<T: AsRef<Path>> PathExt for T {
     }
 }
 
+/// The path here should always be absolute path
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Hash, PartialOrd, Ord)]
+pub struct SanitizedPathBuf {
+    raw: PathBuf,
+    #[cfg(target_os = "windows")]
+    trimmed: PathBuf,
+}
+
+// impl Deref for SanitizedPathBuf {
+//     type Target = PathBuf;
+
+//     fn deref(&self) -> &Self::Target {
+//         &self.0
+//     }
+// }
+
+impl From<PathBuf> for SanitizedPathBuf {
+    fn from(path: PathBuf) -> Self {
+        println!("path: {:?}, absolute: {}", path, path.is_absolute());
+        #[cfg(target_os = "windows")]
+        {
+            let path_string = path.to_string_lossy();
+            let trimmed = PathBuf::from(path_string.trim_start_matches("\\\\?\\"));
+            SanitizedPathBuf { raw: path, trimmed }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            SanitizedPathBuf { raw: path }
+        }
+    }
+}
+
+impl From<SanitizedPathBuf> for PathBuf {
+    fn from(value: SanitizedPathBuf) -> Self {
+        value.raw
+    }
+}
+
+impl AsRef<Path> for SanitizedPathBuf {
+    fn as_ref(&self) -> &Path {
+        &self.raw
+    }
+}
+
+impl SanitizedPathBuf {
+    pub fn new() -> Self {
+        PathBuf::new().into()
+    }
+
+    pub fn as_raw_path_buf(&self) -> &PathBuf {
+        &self.raw
+    }
+
+    pub fn as_trimmed_path_buf(&self) -> &PathBuf {
+        #[cfg(target_os = "windows")]
+        {
+            &self.trimmed
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            &self.raw
+        }
+    }
+
+    pub fn to_string(&self) -> String {
+        self.raw.to_string_lossy().to_string()
+    }
+
+    pub fn to_trimmed_string(&self) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.to_string_lossy().to_string()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.raw.to_string_lossy().to_string()
+        }
+    }
+
+    pub fn join(&self, relative_path: &Path) -> Self {
+        Self {
+            raw: self.raw.join(relative_path),
+            #[cfg(target_os = "windows")]
+            trimmed: self.trimmed.join(relative_path),
+        }
+    }
+
+    pub fn display(&self) -> impl std::fmt::Display + '_ {
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.display()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.raw.display()
+        }
+    }
+
+    pub fn pop(&mut self) {
+        self.raw.pop();
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.pop();
+        }
+    }
+
+    pub fn strip_prefix(&self, prefix: &Self) -> Result<&Path, std::path::StripPrefixError> {
+        #[cfg(target_os = "windows")]
+        {
+            self.trimmed.strip_prefix(prefix.as_trimmed_path_buf())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.raw.strip_prefix(prefix.as_raw_path_buf())
+        }
+    }
+}
+
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
@@ -224,7 +342,7 @@ impl PathWithPosition {
         let maybe_file_name_with_row_col = path.file_name().unwrap_or_default().to_string_lossy();
         if maybe_file_name_with_row_col.is_empty() {
             return Self {
-                path: Path::new(s).to_path_buf(),
+                path: PathBuf::from(s),
                 row: None,
                 column: None,
             };
@@ -247,13 +365,13 @@ impl PathWithPosition {
                 let path_without_suffix = &trimmed[..trimmed.len() - suffix_length];
 
                 Self {
-                    path: Path::new(path_without_suffix).to_path_buf(),
+                    path: PathBuf::from(path_without_suffix),
                     row,
                     column,
                 }
             }
             None => Self {
-                path: Path::new(s).to_path_buf(),
+                path: PathBuf::from(s),
                 row: None,
                 column: None,
             },

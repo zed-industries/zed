@@ -97,7 +97,7 @@ use ui::{
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, paths::SanitizedPathBuf, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -1137,9 +1137,15 @@ impl Workspace {
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
             for path in paths_to_open.into_iter() {
+                let trimmed_path = path.clone().into();
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
-                        Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
+                        Workspace::project_path_for_path(
+                            project_handle.clone(),
+                            &trimmed_path,
+                            true,
+                            cx,
+                        )
                     })?
                     .await
                     .log_err()
@@ -1281,9 +1287,11 @@ impl Workspace {
         &self,
         limit: Option<usize>,
         cx: &AppContext,
-    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
-        let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
-        let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
+    ) -> Vec<(ProjectPath, Option<SanitizedPathBuf>)> {
+        let mut abs_paths_opened: HashMap<SanitizedPathBuf, HashSet<ProjectPath>> =
+            HashMap::default();
+        let mut history: HashMap<ProjectPath, (Option<SanitizedPathBuf>, usize)> =
+            HashMap::default();
         for pane in &self.panes {
             let pane = pane.read(cx);
             pane.nav_history()
@@ -1540,7 +1548,14 @@ impl Workspace {
                 .project
                 .update(cx, |project, cx| {
                     let worktree = project.visible_worktrees(cx).next()?;
-                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    Some(
+                        worktree
+                            .read(cx)
+                            .as_local()?
+                            .abs_path()
+                            .as_trimmed_path_buf()
+                            .clone(),
+                    )
                 })
                 .unwrap_or_else(|| Path::new("").into());
 
@@ -1565,10 +1580,10 @@ impl Workspace {
                     }
                 };
 
-                let project_path = abs_path.and_then(|abs_path| {
+                let project_path = abs_path.map(SanitizedPathBuf::from).and_then(|abs_path| {
                     this.update(&mut cx, |this, cx| {
                         this.project.update(cx, |project, cx| {
-                            project.find_or_create_worktree(abs_path, true, cx)
+                            project.find_or_create_worktree(&abs_path, true, cx)
                         })
                     })
                     .ok()
@@ -1579,7 +1594,7 @@ impl Workspace {
                     let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id())?;
                     tx.send(Some(ProjectPath {
                         worktree_id,
-                        path: path.into(),
+                        path: path.as_trimmed_path_buf().as_path().into(),
                     }))
                     .ok();
                 } else {
@@ -1992,7 +2007,7 @@ impl Workspace {
                         .update(&mut cx, |this, cx| {
                             Workspace::project_path_for_path(
                                 this.project.clone(),
-                                abs_path,
+                                &abs_path.clone().into(),
                                 visible,
                                 cx,
                             )
@@ -2015,15 +2030,13 @@ impl Workspace {
                         this.update(&mut cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
-                            let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                            let abs_path: SanitizedPathBuf = abs_path.into();
+                            let entry_id = if abs_path == worktree_abs_path {
                                 worktree.root_entry()
                             } else {
-                                abs_path
-                                    .strip_prefix(worktree_abs_path.as_ref())
-                                    .ok()
-                                    .and_then(|relative_path| {
-                                        worktree.entry_for_path(relative_path)
-                                    })
+                                abs_path.strip_prefix(&worktree_abs_path).ok().and_then(
+                                    |relative_path| worktree.entry_for_path(relative_path),
+                                )
                             }
                             .map(|entry| entry.id);
                             if let Some(entry_id) = entry_id {
@@ -2098,7 +2111,7 @@ impl Workspace {
 
     pub fn project_path_for_path(
         project: Model<Project>,
-        abs_path: &Path,
+        abs_path: &SanitizedPathBuf,
         visible: bool,
         cx: &mut AppContext,
     ) -> Task<Result<(Model<Worktree>, ProjectPath)>> {
@@ -2112,7 +2125,7 @@ impl Workspace {
                 worktree,
                 ProjectPath {
                     worktree_id,
-                    path: path.into(),
+                    path: path.as_trimmed_path_buf().as_path().into(),
                 },
             ))
         })
@@ -2564,6 +2577,7 @@ impl Workspace {
         visible: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
+        let abs_path = abs_path.into();
         let project_path_task =
             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
         cx.spawn(|this, mut cx| async move {
@@ -3967,6 +3981,7 @@ impl Workspace {
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
+                    .map(|p| p.as_raw_path_buf().as_path().into())
                     .collect::<Vec<_>>(),
             )
         } else {
@@ -4994,7 +5009,7 @@ impl WorkspaceHandle for View<Workspace> {
                 let worktree_id = worktree.read(cx).id();
                 worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
                     worktree_id,
-                    path: f.path.clone(),
+                    path: f.relative_path.clone(),
                 })
             })
             .collect::<Vec<_>>()
@@ -5559,8 +5574,11 @@ pub fn open_ssh_project(
         let mut project_path_errors = vec![];
 
         for path in paths {
+            let trimmed_path = path.clone().into();
             let result = cx
-                .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
+                .update(|cx| {
+                    Workspace::project_path_for_path(project.clone(), &trimmed_path, true, cx)
+                })?
                 .await;
             match result {
                 Ok((_, project_path)) => {
