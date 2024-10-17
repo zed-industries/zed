@@ -21,7 +21,7 @@ use crate::{
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use assistant_tool::ToolRegistry;
-use client::{proto, Client, Status};
+use client::{proto, zed_urls, Client, Status};
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
@@ -3675,7 +3675,6 @@ impl ContextEditor {
 
     fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
-        const ACCOUNT_URL: &str = "https://zed.dev/account";
 
         v_flex()
             .gap_0p5()
@@ -3700,7 +3699,7 @@ impl ContextEditor {
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, cx| {
                             this.last_error = None;
-                            cx.open_url(ACCOUNT_URL);
+                            cx.open_url(&zed_urls::account_url(cx));
                             cx.notify();
                         },
                     )))
@@ -3716,7 +3715,6 @@ impl ContextEditor {
 
     fn render_max_monthly_spend_reached_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-        const ACCOUNT_URL: &str = "https://zed.dev/account";
 
         v_flex()
             .gap_0p5()
@@ -3742,7 +3740,7 @@ impl ContextEditor {
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
                             cx.listener(|this, _, cx| {
                                 this.last_error = None;
-                                cx.open_url(ACCOUNT_URL);
+                                cx.open_url(&zed_urls::account_url(cx));
                                 cx.notify();
                             }),
                         ),
