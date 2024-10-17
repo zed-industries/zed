@@ -1202,7 +1202,7 @@ impl BufferStore {
                         .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
 
                     let provider_registry =
-                        cx.update(|cx| GitHostingProviderRegistry::default_global(cx))?;
+                        cx.update(GitHostingProviderRegistry::default_global)?;
 
                     let (provider, remote) =
                         parse_git_remote_url(provider_registry, &origin_url)

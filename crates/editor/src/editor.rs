@@ -11519,7 +11519,7 @@ impl Editor {
             return Task::ready(Err(anyhow!("failed to determine buffer and selection")));
         };
 
-        let Some(project) = self.project.as_ref().clone() else {
+        let Some(project) = self.project.as_ref() else {
             return Task::ready(Err(anyhow!("editor does not have project")));
         };
 
