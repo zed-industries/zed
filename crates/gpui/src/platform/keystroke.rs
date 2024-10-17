@@ -132,6 +132,22 @@ impl Keystroke {
                 || self.modifiers.alt)
     }
 
+    /// Returns true if this keystroke is valid as an ime commit.
+    /// And filter out keys that are simulated
+    pub fn is_valid_ime_commit(&self) -> bool {
+        if self.ime_key.is_some() {
+            match self.key.as_str() {
+                "space" => self.ime_key != Some(" ".into()),
+                "enter" => self.ime_key != Some("\n".into()),
+                "shift_l" => true,
+                "shift_r" => true,
+                _ => false,
+            }
+        } else {
+            false
+        }
+    }
+
     /// Returns a new keystroke with the ime_key filled.
     /// This is used for dispatch_keystroke where we want users to
     /// be able to simulate typing "space", etc.
