@@ -6,6 +6,7 @@ use crate::{
     proxy::ProxyLaunchError,
 };
 use anyhow::{anyhow, Context as _, Result};
+use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
     channel::{
@@ -347,7 +348,7 @@ const MAX_RECONNECT_ATTEMPTS: usize = 3;
 enum State {
     Connecting,
     Connected {
-        ssh_connection: SshRemoteConnection,
+        ssh_connection: Box<dyn SshRemoteProcess>,
         delegate: Arc<dyn SshClientDelegate>,
         forwarder: ChannelForwarder,
 
@@ -357,7 +358,7 @@ enum State {
     HeartbeatMissed {
         missed_heartbeats: usize,
 
-        ssh_connection: SshRemoteConnection,
+        ssh_connection: Box<dyn SshRemoteProcess>,
         delegate: Arc<dyn SshClientDelegate>,
         forwarder: ChannelForwarder,
 
@@ -366,7 +367,7 @@ enum State {
     },
     Reconnecting,
     ReconnectFailed {
-        ssh_connection: SshRemoteConnection,
+        ssh_connection: Box<dyn SshRemoteProcess>,
         delegate: Arc<dyn SshClientDelegate>,
         forwarder: ChannelForwarder,
 
@@ -392,11 +393,11 @@ impl fmt::Display for State {
 }
 
 impl State {
-    fn ssh_connection(&self) -> Option<&SshRemoteConnection> {
+    fn ssh_connection(&self) -> Option<&dyn SshRemoteProcess> {
         match self {
-            Self::Connected { ssh_connection, .. } => Some(ssh_connection),
-            Self::HeartbeatMissed { ssh_connection, .. } => Some(ssh_connection),
-            Self::ReconnectFailed { ssh_connection, .. } => Some(ssh_connection),
+            Self::Connected { ssh_connection, .. } => Some(ssh_connection.as_ref()),
+            Self::HeartbeatMissed { ssh_connection, .. } => Some(ssh_connection.as_ref()),
+            Self::ReconnectFailed { ssh_connection, .. } => Some(ssh_connection.as_ref()),
             _ => None,
         }
     }
@@ -541,23 +542,19 @@ impl SshRemoteClient {
             let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
 
-            let (ssh_connection, ssh_proxy_process) = Self::establish_connection(
+            let (ssh_connection, io_task) = Self::establish_connection(
                 unique_identifier,
                 false,
                 connection_options,
+                proxy_incoming_tx,
+                proxy_outgoing_rx,
+                connection_activity_tx,
                 delegate.clone(),
                 &mut cx,
             )
             .await?;
 
-            let multiplex_task = Self::multiplex(
-                this.downgrade(),
-                ssh_proxy_process,
-                proxy_incoming_tx,
-                proxy_outgoing_rx,
-                connection_activity_tx,
-                &mut cx,
-            );
+            let multiplex_task = Self::monitor(this.downgrade(), io_task, &cx);
 
             if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                 log::error!("failed to establish connection: {}", error);
@@ -703,30 +700,24 @@ impl SshRemoteClient {
                 };
             }
 
-            if let Err(error) = ssh_connection.master_process.kill() {
+            if let Err(error) = ssh_connection.kill().await.context("Failed to kill ssh process") {
                 failed!(error, attempts, ssh_connection, delegate, forwarder);
             };
 
-            if let Err(error) = ssh_connection
-                .master_process
-                .status()
-                .await
-                .context("Failed to kill ssh process")
-            {
-                failed!(error, attempts, ssh_connection, delegate, forwarder);
-            }
-
-            let connection_options = ssh_connection.socket.connection_options.clone();
+            let connection_options = ssh_connection.connection_options();
 
             let (incoming_tx, outgoing_rx) = forwarder.into_channels().await;
             let (forwarder, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
             let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
-            let (ssh_connection, ssh_process) = match Self::establish_connection(
+            let (ssh_connection, io_task) = match Self::establish_connection(
                 identifier,
                 true,
                 connection_options,
+                proxy_incoming_tx,
+                proxy_outgoing_rx,
+                connection_activity_tx,
                 delegate.clone(),
                 &mut cx,
             )
@@ -738,14 +729,7 @@ impl SshRemoteClient {
                 }
             };
 
-            let multiplex_task = Self::multiplex(
-                this.clone(),
-                ssh_process,
-                proxy_incoming_tx,
-                proxy_outgoing_rx,
-                connection_activity_tx,
-                &mut cx,
-            );
+            let multiplex_task = Self::monitor(this.clone(), io_task, &cx);
 
             if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                 failed!(error, attempts, ssh_connection, delegate, forwarder);
@@ -911,18 +895,17 @@ impl SshRemoteClient {
     }
 
     fn multiplex(
-        this: WeakModel<Self>,
         mut ssh_proxy_process: Child,
         incoming_tx: UnboundedSender<Envelope>,
         mut outgoing_rx: UnboundedReceiver<Envelope>,
         mut connection_activity_tx: Sender<()>,
         cx: &AsyncAppContext,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<Option<i32>>> {
         let mut child_stderr = ssh_proxy_process.stderr.take().unwrap();
         let mut child_stdout = ssh_proxy_process.stdout.take().unwrap();
         let mut child_stdin = ssh_proxy_process.stdin.take().unwrap();
 
-        let io_task = cx.background_executor().spawn(async move {
+        cx.background_executor().spawn(async move {
             let mut stdin_buffer = Vec::new();
             let mut stdout_buffer = Vec::new();
             let mut stderr_buffer = Vec::new();
@@ -1001,8 +984,14 @@ impl SshRemoteClient {
                     }
                 }
             }
-        });
+        })
+    }
 
+    fn monitor(
+        this: WeakModel<Self>,
+        io_task: Task<Result<Option<i32>>>,
+        cx: &AsyncAppContext,
+    ) -> Task<Result<()>> {
         cx.spawn(|mut cx| async move {
             let result = io_task.await;
 
@@ -1065,9 +1054,17 @@ impl SshRemoteClient {
         unique_identifier: String,
         reconnect: bool,
         connection_options: SshConnectionOptions,
+        proxy_incoming_tx: UnboundedSender<Envelope>,
+        proxy_outgoing_rx: UnboundedReceiver<Envelope>,
+        connection_activity_tx: Sender<()>,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
-    ) -> Result<(SshRemoteConnection, Child)> {
+    ) -> Result<(Box<dyn SshRemoteProcess>, Task<Result<Option<i32>>>)> {
+        #[cfg(any(test, feature = "test-support"))]
+        if let Some(fake) = FakeSshRemoteConnection::new(&connection_options, cx) {
+            return Ok(fake);
+        }
+
         let ssh_connection =
             SshRemoteConnection::new(connection_options, delegate.clone(), cx).await?;
 
@@ -1100,7 +1097,15 @@ impl SshRemoteClient {
             .spawn()
             .context("failed to spawn remote server")?;
 
-        Ok((ssh_connection, ssh_proxy_process))
+        let io_task = Self::multiplex(
+            ssh_proxy_process,
+            proxy_incoming_tx,
+            proxy_outgoing_rx,
+            connection_activity_tx,
+            &cx,
+        );
+
+        Ok((Box::new(ssh_connection), io_task))
     }
 
     pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {
@@ -1112,7 +1117,7 @@ impl SshRemoteClient {
             .lock()
             .as_ref()
             .and_then(|state| state.ssh_connection())
-            .map(|ssh_connection| ssh_connection.socket.ssh_args())
+            .map(|ssh_connection| ssh_connection.ssh_args())
     }
 
     pub fn proto_client(&self) -> AnyProtoClient {
@@ -1176,6 +1181,13 @@ impl From<SshRemoteClient> for AnyProtoClient {
     }
 }
 
+#[async_trait]
+trait SshRemoteProcess: Send + Sync {
+    async fn kill(&mut self) -> Result<()>;
+    fn ssh_args(&self) -> Vec<String>;
+    fn connection_options(&self) -> SshConnectionOptions;
+}
+
 struct SshRemoteConnection {
     socket: SshSocket,
     master_process: process::Child,
@@ -1187,6 +1199,25 @@ impl Drop for SshRemoteConnection {
         if let Err(error) = self.master_process.kill() {
             log::error!("failed to kill SSH master process: {}", error);
         }
+    }
+}
+
+#[async_trait]
+impl SshRemoteProcess for SshRemoteConnection {
+    async fn kill(&mut self) -> Result<()> {
+        self.master_process.kill()?;
+
+        self.master_process.status().await?;
+
+        Ok(())
+    }
+
+    fn ssh_args(&self) -> Vec<String> {
+        self.socket.ssh_args()
+    }
+
+    fn connection_options(&self) -> SshConnectionOptions {
+        self.socket.connection_options.clone()
     }
 }
 
@@ -1461,6 +1492,34 @@ impl SshRemoteConnection {
                 String::from_utf8_lossy(&output.stderr)
             ))
         }
+    }
+}
+
+struct FakeSshRemoteConnection {
+    connection_options: SshConnectionOptions,
+}
+
+impl FakeSshRemoteConnection {
+    fn new(
+        _connection_options: &SshConnectionOptions,
+        _cx: &mut AsyncAppContext,
+    ) -> Option<(Box<dyn SshRemoteProcess>, Task<Result<Option<i32>>>)> {
+        return None;
+    }
+}
+
+#[async_trait]
+impl SshRemoteProcess for FakeSshRemoteConnection {
+    async fn kill(&mut self) -> Result<()> {
+        Ok(())
+    }
+
+    fn ssh_args(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn connection_options(&self) -> SshConnectionOptions {
+        self.connection_options.clone()
     }
 }
 
