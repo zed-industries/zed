@@ -9,6 +9,13 @@ use settings::{Settings, SettingsSources};
 #[derive(Debug, Default)]
 pub struct JupyterSettings {
     pub kernel_selections: HashMap<String, String>,
+    pub jupyter_servers: Vec<JupyterServer>,
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct JupyterServer {
+    pub url: String,
+    pub nickname: Option<String>,
 }
 
 impl JupyterSettings {
@@ -26,12 +33,15 @@ pub struct JupyterSettingsContent {
     ///
     /// Default: `{}`
     pub kernel_selections: Option<HashMap<String, String>>,
+
+    pub jupyter_servers: Option<Vec<JupyterServer>>,
 }
 
 impl Default for JupyterSettingsContent {
     fn default() -> Self {
         JupyterSettingsContent {
             kernel_selections: Some(HashMap::new()),
+            jupyter_servers: Some(Vec::new()),
         }
     }
 }
