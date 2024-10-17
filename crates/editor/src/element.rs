@@ -5,7 +5,7 @@ use crate::{
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
-        ShowScrollbar,
+        ScrollbarAxis, ShowScrollbar,
     },
     git::blame::{CommitDetails, GitBlame},
     hover_popover::{
@@ -1204,13 +1204,22 @@ impl EditorElement {
             ShowScrollbar::Always => true,
             ShowScrollbar::Never => false,
         };
+
+        let axes: AxisPair<bool> = match scrollbar_settings.axis {
+            ScrollbarAxis::XY => axis_pair(true, true),
+            ScrollbarAxis::X => axis_pair(true, false),
+            ScrollbarAxis::Y => axis_pair(false, true),
+        };
+
         if snapshot.mode != EditorMode::Full {
             return axis_pair(None, None);
         }
 
         let visible_range = axis_pair(
-            scroll_position.x..scroll_position.x + text_units_per_page.horizontal,
-            scroll_position.y..scroll_position.y + text_units_per_page.vertical,
+            axes.horizontal
+                .then(|| scroll_position.x..scroll_position.x + text_units_per_page.horizontal),
+            axes.vertical
+                .then(|| scroll_position.y..scroll_position.y + text_units_per_page.vertical),
         );
 
         // If a drag took place after we started dragging the scrollbar,
@@ -1228,20 +1237,24 @@ impl EditorElement {
 
         // Using point for this is really dumb but it'll work for now
         let track_bounds = axis_pair(
-            Bounds::from_corners(
-                point(
-                    bounds.lower_left().x,
-                    bounds.lower_left().y - self.style.scrollbar_width,
-                ),
-                point(
-                    bounds.lower_right().x - self.style.scrollbar_width,
-                    bounds.lower_right().y,
-                ),
-            ),
-            Bounds::from_corners(
-                point(self.scrollbar_left(&bounds), bounds.origin.y),
-                bounds.lower_right(),
-            ),
+            axes.horizontal.then(|| {
+                Bounds::from_corners(
+                    point(
+                        bounds.lower_left().x,
+                        bounds.lower_left().y - self.style.scrollbar_width,
+                    ),
+                    point(
+                        bounds.lower_right().x - self.style.scrollbar_width,
+                        bounds.lower_right().y,
+                    ),
+                )
+            }),
+            axes.vertical.then(|| {
+                Bounds::from_corners(
+                    point(self.scrollbar_left(&bounds), bounds.origin.y),
+                    bounds.lower_right(),
+                )
+            }),
         );
 
         let settings = EditorSettings::get_global(cx);
@@ -1255,59 +1268,99 @@ impl EditorElement {
         };
 
         let total_text_units = {
-            let total_text_units_x: f32 = {
-                let ems_in_bounds = track_bounds.horizontal.size.width / em_width;
+            let total_text_units_x = {
+                let ems_in_bounds = track_bounds
+                    .horizontal
+                    .map(|bounds| bounds.size.width / em_width);
 
-                let longest_line: f32 =
-                    (snapshot.line_len(snapshot.longest_row()) as f32 - ems_in_bounds).max(0.0);
+                let longest_line = ems_in_bounds
+                    .map(|ems| (snapshot.line_len(snapshot.longest_row()) as f32 - ems).max(0.0));
 
-                (longest_line + scroll_beyond_last_line.horizontal)
-                    .max(text_units_per_page.horizontal)
+                longest_line.map(|longest| {
+                    (longest + scroll_beyond_last_line.horizontal)
+                        .max(text_units_per_page.horizontal)
+                })
             };
 
-            let total_text_units_y: f32 = (snapshot.max_point().row().as_f32()
-                + scroll_beyond_last_line.vertical)
-                .max(text_units_per_page.vertical);
+            let total_text_units_y = axes.vertical.then(|| {
+                (snapshot.max_point().row().as_f32() + scroll_beyond_last_line.vertical)
+                    .max(text_units_per_page.vertical)
+            });
 
             axis_pair(total_text_units_x, total_text_units_y)
         };
 
         let px_per_text_unit = axis_pair(
-            track_bounds.horizontal.size.width / total_text_units.horizontal,
-            track_bounds.vertical.size.height / total_text_units.vertical,
+            total_text_units
+                .horizontal
+                .zip(track_bounds.horizontal)
+                .map(|(text_units, bounds)| bounds.size.width / text_units),
+            total_text_units
+                .vertical
+                .zip(track_bounds.vertical)
+                .map(|(text_units, bounds)| bounds.size.height / text_units),
         );
 
-        let thumb_size: AxisPair<Pixels> = axis_pair(
-            (text_units_per_page.horizontal * px_per_text_unit.horizontal)
-                .max(ScrollbarLayout::MIN_THUMB_HEIGHT),
-            (text_units_per_page.vertical * px_per_text_unit.vertical)
-                .max(ScrollbarLayout::MIN_THUMB_HEIGHT),
+        let thumb_size = axis_pair(
+            px_per_text_unit.horizontal.map(|px_per_unit| {
+                (px_per_unit * text_units_per_page.horizontal)
+                    .max(ScrollbarLayout::MIN_THUMB_HEIGHT)
+            }),
+            px_per_text_unit.vertical.map(|px_per_unit| {
+                (px_per_unit * text_units_per_page.vertical).max(ScrollbarLayout::MIN_THUMB_HEIGHT)
+            }),
         );
 
         let text_unit_size = axis_pair(
-            (track_bounds.horizontal.size.width - thumb_size.horizontal)
-                / (total_text_units.horizontal - text_units_per_page.horizontal).max(0.),
-            (track_bounds.vertical.size.height - thumb_size.vertical)
-                / (total_text_units.vertical - text_units_per_page.vertical).max(0.),
+            thumb_size
+                .horizontal
+                .zip(track_bounds.horizontal)
+                .zip(total_text_units.horizontal)
+                .map(|((thumb_size, track_bounds), total_text_units)| {
+                    (track_bounds.size.width - thumb_size)
+                        / (total_text_units - text_units_per_page.horizontal).max(0.)
+                }),
+            thumb_size
+                .vertical
+                .zip(track_bounds.vertical)
+                .zip(total_text_units.vertical)
+                .map(|((thumb_size, track_bounds), total_text_units)| {
+                    (track_bounds.size.height - thumb_size)
+                        / (total_text_units - text_units_per_page.vertical).max(0.)
+                }),
         );
 
-        let horizontal_scrollbar = Some(ScrollbarLayout {
-            hitbox: cx.insert_hitbox(track_bounds.horizontal, false),
-            visible_range: visible_range.horizontal,
-            text_unit_size: text_unit_size.horizontal,
-            visible: show_scrollbars,
-            thumb_size: thumb_size.horizontal,
-            axis: Axis::Horizontal,
-        });
+        let horizontal_scrollbar = track_bounds
+            .horizontal
+            .zip(visible_range.horizontal)
+            .zip(text_unit_size.horizontal)
+            .zip(thumb_size.horizontal)
+            .map(
+                |(((track_bounds, visible_range), text_unit_size), thumb_size)| ScrollbarLayout {
+                    hitbox: cx.insert_hitbox(track_bounds, false),
+                    visible_range,
+                    text_unit_size,
+                    visible: show_scrollbars,
+                    thumb_size,
+                    axis: Axis::Horizontal,
+                },
+            );
 
-        let vertical_scrollbar = Some(ScrollbarLayout {
-            hitbox: cx.insert_hitbox(track_bounds.vertical, false),
-            visible_range: visible_range.vertical,
-            text_unit_size: text_unit_size.vertical,
-            visible: show_scrollbars,
-            thumb_size: thumb_size.vertical,
-            axis: Axis::Vertical,
-        });
+        let vertical_scrollbar = track_bounds
+            .vertical
+            .zip(visible_range.vertical)
+            .zip(text_unit_size.vertical)
+            .zip(thumb_size.vertical)
+            .map(
+                |(((track_bounds, visible_range), text_unit_size), thumb_size)| ScrollbarLayout {
+                    hitbox: cx.insert_hitbox(track_bounds, false),
+                    visible_range,
+                    text_unit_size,
+                    visible: show_scrollbars,
+                    thumb_size,
+                    axis: Axis::Vertical,
+                },
+            );
 
         axis_pair(horizontal_scrollbar, vertical_scrollbar)
     }
@@ -3819,23 +3872,22 @@ impl EditorElement {
             text_unit_ranges.1 = Some(scrollbar_layout_y.visible_range.clone());
         }
 
-        // TODO: make this stop acting like an etch-a-sketch
         cx.on_mouse_event({
             let editor = self.editor.clone();
 
-            let Some(hitbox) = scrollbar_hitboxes.0.clone() else {
-                return;
-            };
-
-            let Some(text_unit_size) = text_unit_sizes.0.clone() else {
-                return;
-            };
+            let hitbox = scrollbar_hitboxes.0.clone();
+            let text_unit_size = text_unit_sizes.0.clone();
 
             let mut mouse_position = cx.mouse_position();
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     return;
                 }
+
+                let Some(ref hitbox) = hitbox else { return };
+                let Some(text_unit_size) = text_unit_size else {
+                    return;
+                };
 
                 editor.update(cx, |editor, cx| {
                     if event.pressed_button == Some(MouseButton::Left)
@@ -3874,19 +3926,19 @@ impl EditorElement {
         cx.on_mouse_event({
             let editor = self.editor.clone();
 
-            let Some(hitbox) = scrollbar_hitboxes.1.clone() else {
-                return;
-            };
-
-            let Some(text_unit_size) = text_unit_sizes.1.clone() else {
-                return;
-            };
+            let hitbox = scrollbar_hitboxes.1.clone();
+            let text_unit_size = text_unit_sizes.1.clone();
 
             let mut mouse_position = cx.mouse_position();
             move |event: &MouseMoveEvent, phase, cx| {
                 if phase == DispatchPhase::Capture {
                     return;
                 }
+
+                let Some(ref hitbox) = hitbox else { return };
+                let Some(text_unit_size) = text_unit_size else {
+                    return;
+                };
 
                 editor.update(cx, |editor, cx| {
                     if event.pressed_button == Some(MouseButton::Left)
@@ -3943,23 +3995,23 @@ impl EditorElement {
             cx.on_mouse_event({
                 let editor = self.editor.clone();
 
-                let Some(hitbox) = scrollbar_hitboxes.0.clone() else {
-                    return;
-                };
-
-                let Some(thumb_bounds) = thumb_bounds.0.clone() else {
-                    return;
-                };
-
-                let Some(text_unit_size) = text_unit_sizes.0.clone() else {
-                    return;
-                };
-
-                let Some(text_unit_range) = text_unit_ranges.0.clone() else {
-                    return;
-                };
+                let hitbox = scrollbar_hitboxes.0.clone();
+                let thumb_bounds = thumb_bounds.0.clone();
+                let text_unit_size = text_unit_sizes.0.clone();
+                let text_unit_range = text_unit_ranges.0.clone();
 
                 move |event: &MouseDownEvent, phase, cx| {
+                    let Some(ref hitbox) = hitbox else { return };
+                    let Some(thumb_bounds) = thumb_bounds else {
+                        return;
+                    };
+                    let Some(text_unit_size) = text_unit_size else {
+                        return;
+                    };
+                    let Some(ref text_unit_range) = text_unit_range else {
+                        return;
+                    };
+
                     if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
                         return;
                     }
@@ -4013,23 +4065,23 @@ impl EditorElement {
             cx.on_mouse_event({
                 let editor = self.editor.clone();
 
-                let Some(hitbox) = scrollbar_hitboxes.1.clone() else {
-                    return;
-                };
-
-                let Some(thumb_bounds) = thumb_bounds.1.clone() else {
-                    return;
-                };
-
-                let Some(text_unit_size) = text_unit_sizes.1.clone() else {
-                    return;
-                };
-
-                let Some(text_unit_range) = text_unit_ranges.1.clone() else {
-                    return;
-                };
+                let hitbox = scrollbar_hitboxes.1.clone();
+                let thumb_bounds = thumb_bounds.1.clone();
+                let text_unit_size = text_unit_sizes.1.clone();
+                let text_unit_range = text_unit_ranges.1.clone();
 
                 move |event: &MouseDownEvent, phase, cx| {
+                    let Some(ref hitbox) = hitbox else { return };
+                    let Some(thumb_bounds) = thumb_bounds else {
+                        return;
+                    };
+                    let Some(text_unit_size) = text_unit_size else {
+                        return;
+                    };
+                    let Some(ref text_unit_range) = text_unit_range else {
+                        return;
+                    };
+
                     if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
                         return;
                     }

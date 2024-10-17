@@ -239,7 +239,9 @@
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
     // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true
+    "diagnostics": true,
+    /// When the show option permits it, which axes should show scrollbars.
+    "axis": "xy"
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,

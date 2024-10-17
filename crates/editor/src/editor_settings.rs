@@ -106,6 +106,7 @@ pub struct Scrollbar {
     pub search_results: bool,
     pub diagnostics: bool,
     pub cursors: bool,
+    pub axis: ScrollbarAxis,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -131,6 +132,20 @@ pub enum ShowScrollbar {
     Always,
     /// Never show the scrollbar.
     Never,
+}
+
+/// When the show option permits it, which axes should show scrollbars.
+///
+/// Default: xy
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollbarAxis {
+    /// Show both/either axes when applicable
+    XY,
+    /// Only show the horizotal scrollbar.
+    X,
+    /// Only show the vertical scrollbar.
+    Y,
 }
 
 /// The key to use for adding multiple cursors
@@ -336,6 +351,10 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub cursors: Option<bool>,
+    /// When the show option permits it, which axes should show scrollbars.
+    ///
+    /// Default: xy
+    pub axis: Option<ScrollbarAxis>,
 }
 
 /// Gutter related settings
