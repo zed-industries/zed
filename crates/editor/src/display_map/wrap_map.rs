@@ -831,15 +831,20 @@ impl<'a> Iterator for WrapChunks<'a> {
             } else {
                 *self.output_position.column_mut() += char_len as u32;
             }
-
             if self.output_position >= transform_end {
                 self.transforms.next(&());
                 break;
             }
         }
-
         let (prefix, suffix) = self.input_chunk.text.split_at(input_len);
         self.input_chunk.text = suffix;
+        if (prefix.contains(" ") || prefix.contains("�")) && self.input_chunk.is_invisible {
+            return Some(Chunk {
+                text: prefix,
+                diagnostic_severity: Some(lsp::DiagnosticSeverity::WARNING),
+                ..self.input_chunk.clone()
+            });
+        }
         Some(Chunk {
             text: prefix,
             ..self.input_chunk.clone()
