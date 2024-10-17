@@ -2509,13 +2509,7 @@ impl Project {
         cx: &mut ModelContext<Project>,
     ) -> Result<(), anyhow::Error> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostic_entries(
-                server_id,
-                abs_path.into(),
-                version,
-                diagnostics,
-                cx,
-            )
+            lsp_store.update_diagnostic_entries(server_id, abs_path, version, diagnostics, cx)
         })
     }
 

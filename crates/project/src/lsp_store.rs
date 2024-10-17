@@ -3360,7 +3360,7 @@ impl LspStore {
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
-        abs_path: SanitizedPathBuf,
+        abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Self>,
@@ -6448,7 +6448,7 @@ impl LspStore {
 
         self.update_diagnostic_entries(
             language_server_id,
-            abs_path.into(),
+            abs_path,
             params.version,
             diagnostics,
             cx,
