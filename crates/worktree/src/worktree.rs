@@ -724,13 +724,11 @@ impl Worktree {
                             .await
                             .map(CreatedEntry::Included),
                         None => {
-                            let abs_path = this
-                                .update(&mut cx, |worktree, _| {
-                                    worktree
-                                        .absolutize(&relative_path)
-                                        .with_context(|| format!("absolutizing {relative_path:?}"))
-                                })??
-                                .into();
+                            let abs_path = this.update(&mut cx, |worktree, _| {
+                                worktree
+                                    .absolutize(&relative_path)
+                                    .with_context(|| format!("absolutizing {relative_path:?}"))
+                            })??;
                             Ok(CreatedEntry::Excluded { abs_path })
                         }
                     }
