@@ -372,6 +372,7 @@ messages!(
     (OpenServerSettings, Foreground),
     (GetPermalinkToLine, Foreground),
     (GetPermalinkToLineResponse, Foreground),
+    (FlushBufferedMessages, Foreground),
 );
 
 request_messages!(
@@ -498,6 +499,7 @@ request_messages!(
     (RemoveWorktree, Ack),
     (OpenServerSettings, OpenBufferResponse),
     (GetPermalinkToLine, GetPermalinkToLineResponse),
+    (FlushBufferedMessages, Ack),
 );
 
 entity_messages!(
