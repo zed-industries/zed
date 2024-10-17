@@ -352,7 +352,7 @@ impl Fs for RealFs {
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path_string = Into::<SanitizedPathBuf>::into(path.canonicalize()?).as_trimmed_string();
+        let path_string = Into::<SanitizedPathBuf>::into(path.canonicalize()?).to_trimmed_string();
         let file = StorageFile::GetFileFromPathAsync(&HSTRING::from(path_string))?.get()?;
         file.DeleteAsync(StorageDeleteOption::Default)?.get()?;
         Ok(())
@@ -377,7 +377,7 @@ impl Fs for RealFs {
         };
         // todo(windows)
         // When new version of `windows-rs` release, make this operation `async`
-        let path_string = Into::<SanitizedPathBuf>::into(path.canonicalize()?).as_trimmed_string();
+        let path_string = Into::<SanitizedPathBuf>::into(path.canonicalize()?).to_trimmed_string();
         let folder = StorageFolder::GetFolderFromPathAsync(&HSTRING::from(path_string))?.get()?;
         folder.DeleteAsync(StorageDeleteOption::Default)?.get()?;
         Ok(())

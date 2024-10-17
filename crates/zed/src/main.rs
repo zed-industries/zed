@@ -1242,7 +1242,7 @@ fn parse_url_arg(arg: &str, cx: &AppContext) -> Result<String> {
     match std::fs::canonicalize(Path::new(&arg)) {
         Ok(path) => Ok(format!(
             "file://{}",
-            SanitizedPathBuf::from(path).as_trimmed_string()?
+            SanitizedPathBuf::from(path).to_trimmed_string()?
         )),
         Err(error) => {
             if arg.starts_with("file://")

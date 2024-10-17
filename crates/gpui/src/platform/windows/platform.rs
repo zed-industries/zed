@@ -641,7 +641,7 @@ fn file_save_dialog(directory: PathBuf) -> Result<Option<PathBuf>> {
             .log_err()
             .map(SanitizedPathBuf::from)
         {
-            let full_path_string = full_path.as_trimmed_string();
+            let full_path_string = full_path.to_trimmed_string();
             let path_item: IShellItem =
                 unsafe { SHCreateItemFromParsingName(&HSTRING::from(full_path_string), None)? };
             unsafe { dialog.SetFolder(&path_item).log_err() };
