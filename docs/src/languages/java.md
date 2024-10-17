@@ -1,22 +1,93 @@
 # Java
 
-Java language support in Zed is provided the [zed Java extension](https://github.com/zed-extensions/java) and [zed-java-eclipse-jdtls](https://github.com/ABckh/zed-java-eclipse-jdtls). You may choose one between them to satisfy your needs.
+There are two extensions that provide Java language support for Zed:
 
-## Java extension for Zed
+- Zed Java: [zed-extensions/java](https://github.com/zed-extensions/java) and
+- Java with Eclipse JDTLS: [zed-java-eclipse-jdtls](https://github.com/ABckh/zed-java-eclipse-jdtls).
+
+Both use:
 
 - Tree Sitter: [tree-sitter/tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java)
 - Language Server: [eclipse-jdtls/eclipse.jdt.ls](https://github.com/eclipse-jdtls/eclipse.jdt.ls)
 
-Report issues to: <https://github.com/zed-extensions/java/issues>.
+## Pre-requisites
 
-### Configuration
+You will need to install both a Java runtime (OpenJDK) and Eclipse JDT Language Server (`eclipse.jdt.ls`).
 
-To enable the functionality of LSP, you have to install JDTLS yourself.
+### Install OpenJDK
 
-#### Settings
+- MacOS: `brew install openjdk`
+- Ubuntu: `sudo add-apt-repository ppa:openjdk-23 && sudo apt-get install openjdk-23`
+- Windows: `choco install openjdk`
+- Arch Linux: `sudo pacman -S jre-openjdk-headless`
 
-You can optionally configure the class path that [JDTLS] (the language server) uses in your Zed
-settings like so:
+Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
+
+### Install JDTLS
+
+- MacOS: `brew install jdtls`
+- Arch: [`jdtls` from AUR](https://aur.archlinux.org/packages/jdtls)
+
+Or manually download install:
+
+- [JDTLS Milestone Builds](http://download.eclipse.org/jdtls/milestones/) (updated every two weeks)
+- [JDTLS Snapshot Builds](https://download.eclipse.org/jdtls/snapshots/) (frequent updates)
+
+## Extension Install
+
+You can install either by opening {#action zed::Extensions}({#kb zed::Extensions}) and searching for `java`.
+We recommend you install one or the other and not both.
+
+## Settings / Initialization Options
+
+See [JDTLS Language Server Settings & Capabilities](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Language-Server-Settings-&-Capabilities) for a complete list of options.
+
+Add the following to your Zed Settings by launching {#action zed::OpenSettings}({#kb zed::OpenSettings}).
+
+### Zed Java Settings
+
+```json
+{
+  "lsp": {
+    "jdtls": {
+      "settings": {},
+      "initialization_options": {}
+      }
+    }
+  }
+}
+```
+
+### Java with Eclipse JDTLS settings
+
+```json
+{
+  "lsp": {
+    "java": {
+      "settings": {},
+      "initialization_options": {}
+    }
+  }
+}
+```
+
+## See also
+
+- [Zed Java Readme](https://github.com/zed-extensions/java)
+- [Java with Eclipse JDTLS Readme](https://github.com/ABckh/zed-java-eclipse-jdtls)
+
+### Support
+
+If you have issues with either of these plugins, please open issues on their respective repositories:
+
+- [Zed Java Issues](https://github.com/zed-extensions/java/issues)
+- [Java with Eclipse JDTLS Issues](https://github.com/eclipse-jdtls/eclipse.jdt.ls/issues)
+
+## Example Configs
+
+### Zed Java Classpath
+
+You can optionally configure the class path that JDTLS uses with:
 
 ```json
 {
@@ -30,7 +101,7 @@ settings like so:
 }
 ```
 
-#### Initialization Options
+#### Zed Java Initialization Options
 
 There are also many more options you can pass directly to the language server, for example:
 
@@ -113,58 +184,20 @@ There are also many more options you can pass directly to the language server, f
 }
 ```
 
-*Example taken from JDTLS's [initialization options wiki page].*
+## Java with Eclipse JTDLS Configuration {#zed-java-eclipse-configuration}
 
-You can see all the options JDTLS accepts [here][initialization options wiki page].
+Configuration options match those provided in the [redhat-developer/vscode-java extension](https://github.com/redhat-developer/vscode-java#supported-vs-code-settings).
 
-[JDTLS]: https://github.com/eclipse-jdtls/eclipse.jdt.ls
-[initialization options wiki page]: https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request
-
-## zed-java-eclipse-jdtls
-
-- Tree Sitter: [tree-sitter/tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java)
-- Language Server: [Eclipse JDTLS](https://github.com/eclipse-jdtls/eclipse.jdt.ls)
-
-Report issues to: <https://github.com/ABckh/zed-java-eclipse-jdtls/issues>.
-
-### Configuration
-
-#### Configuring LSP Options
-
-To configure the LSP options, you can utilize the same fields provided by VSCode's Java support documentation. These fields are documented in detail and cover a wide range of customization options. Follow these steps to configure your LSP:
-
-1. **Open the Zed Configuration File:**
-   Open configuration file for Zed (`CMD + ,`). Edit the configuration to include your desired LSP options.
-
-2. **Set Custom Options:**
-   Add the relevant fields in the configuration file to match the options provided in the [VSCode Java support documentation](https://github.com/redhat-developer/vscode-java#configuration).
+For example, to enable [Lombok Support](https://github.com/redhat-developer/vscode-java/wiki/Lombok-support):
 
 ```json
 {
   "lsp": {
     "java": {
+      "settings": {
         "java.jdt.ls.lombokSupport.enabled:": true
+      }
     }
   }
 }
 ```
-
-#### Using a Custom JDTLS Binary
-
-If you have a custom JDTLS binary that you would like to use with the Zed extension, follow these steps:
-
-1. **Locate the JDTLS Binary:**
-   By default, the Zed extension uses the JDTLS binary located at:
-   - **Linux:** `~/.local/share/zed/extensions/work/java-eclipse-jdtls/eclipse.jdt.ls/bin/jdtls`
-   - **macOS:** `~/Library/Application Support/Zed/extensions/work/java-eclipse-jdtls/eclipse.jdt.ls/bin/jdtls`
-   - **Windows:** `%APPDATA%/Zed/extensions/work/java-eclipse-jdtls/eclipse.jdt.ls/bin/jdtls`
-
-2. **Create a Symlink:**
-   Symlink the default JDTLS binary path to your custom JDTLS binary. This ensures that when Zed starts the JDTLS, it will use your custom version.
-
-Example for Linux:
-```bash
-ln -s /path/to/your/custom/jdtls ~/.local/share/zed/extensions/work/java-eclipse-jdtls/eclipse.jdt.ls/bin/jdtls
-```
-
-For any updates. please refer to the [README.md](https://github.com/ABckh/zed-java-eclipse-jdtls).
