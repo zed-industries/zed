@@ -1099,13 +1099,13 @@
   // }
   "command_aliases": {},
   // ssh_connections is an array of ssh connections.
-  // By default this setting is null, which disables the direct ssh connection support.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
   // Examples:
   // [
   //   {
   //     "host": "example-box",
+  //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"]
   //     "projects": [
   //       {
   //         "paths": ["/home/user/code/zed"]
@@ -1113,7 +1113,7 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null,
+  "ssh_connections": [],
   // Configures the Context Server Protocol binaries
   //
   // Examples:
