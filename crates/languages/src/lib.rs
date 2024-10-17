@@ -177,7 +177,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
-            python_toolchain.clone()
         ))],
         PythonContextProvider,
         python_toolchain.clone() as Arc<dyn ToolchainLister>

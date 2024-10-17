@@ -31,14 +31,13 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct PythonLspAdapter {
     node: NodeRuntime,
-    toolchain: Arc<PythonToolchainProvider>,
 }
 
 impl PythonLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
-    pub fn new(node: NodeRuntime, toolchain: Arc<PythonToolchainProvider>) -> Self {
-        PythonLspAdapter { node, toolchain }
+    pub fn new(node: NodeRuntime) -> Self {
+        PythonLspAdapter { node }
     }
 }
 
