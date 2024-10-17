@@ -4,21 +4,29 @@
 //! which is a set of tools used to interact with the projects written in said language.
 //! For example, a Python project can have an associated virtual environment; a Rust project can have a toolchain override.
 
+use async_trait::async_trait;
 use gpui::SharedString;
 
 /// Represents a single toolchain.
 pub struct Toolchain {
     /// User-facing label
     pub label: SharedString,
-    /// Action that should be taken in order to activate a given toolchain.
-    pub action: (),
 }
 
-///
+#[async_trait]
 pub trait ToolchainLister {
-    fn list(&self) -> ToolchainList;
-    fn activate(&self, _: Toolchain);
+    async fn list(&self) -> ToolchainList;
+    async fn activate(&self, _: Toolchain);
 }
 
 type DefaultIndex = usize;
-pub struct ToolchainList(Vec<Toolchain>, DefaultIndex);
+pub struct ToolchainList {
+    toolchains: Vec<Toolchain>,
+    default: Option<DefaultIndex>,
+}
+
+impl ToolchainList {
+    pub fn toolchains(&self) -> &[Toolchain] {
+        &self.toolchains
+    }
+}
