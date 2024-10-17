@@ -299,7 +299,8 @@
       "ctrl-q": ["vim::PushOperator", { "Literal": {} }],
       "ctrl-shift-q": ["vim::PushOperator", { "Literal": {} }],
       "ctrl-r": ["vim::PushOperator", "Register"],
-      "insert": "vim::ToggleReplace"
+      "insert": "vim::ToggleReplace",
+      "ctrl-o": "vim::TemporaryNormal"
     }
   },
   {
