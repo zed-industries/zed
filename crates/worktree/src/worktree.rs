@@ -5025,16 +5025,22 @@ impl WorktreeModelHandle for Model<Worktree> {
         });
 
         async move {
-            fs.create_file(&root_path.join(file_name), Default::default())
-                .await
-                .unwrap();
+            fs.create_file(
+                &root_path.as_raw_path_buf().join(file_name),
+                Default::default(),
+            )
+            .await
+            .unwrap();
 
             cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_some())
                 .await;
 
-            fs.remove_file(&root_path.join(file_name), Default::default())
-                .await
-                .unwrap();
+            fs.remove_file(
+                &root_path.as_raw_path_buf().join(file_name),
+                Default::default(),
+            )
+            .await
+            .unwrap();
             cx.condition(&tree, |tree, _| tree.entry_for_path(file_name).is_none())
                 .await;
 

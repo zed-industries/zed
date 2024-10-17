@@ -252,7 +252,7 @@ impl DevServer {
         })?;
 
         for path in &dev_server_project.paths {
-            let path = PathBuf::from(shellexpand::tilde(path).to_string()).into();
+            let path = PathBuf::from(shellexpand::tilde(path).to_string());
             let (worktree, _) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_worktree(&path, true, cx)
@@ -320,7 +320,7 @@ impl DevServer {
                 }
 
                 for config in dev_server_project.paths.iter() {
-                    let path = PathBuf::from(shellexpand::tilde(config).to_string()).into();
+                    let path = PathBuf::from(shellexpand::tilde(config).to_string());
                     tasks.push(project.find_or_create_worktree(&path, true, cx));
                 }
 
