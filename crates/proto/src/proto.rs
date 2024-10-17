@@ -370,6 +370,8 @@ messages!(
     (Toast, Background),
     (HideToast, Background),
     (OpenServerSettings, Foreground),
+    (GetPermalinkToLine, Foreground),
+    (GetPermalinkToLineResponse, Foreground),
 );
 
 request_messages!(
@@ -494,7 +496,8 @@ request_messages!(
     (CheckFileExists, CheckFileExistsResponse),
     (ShutdownRemoteServer, Ack),
     (RemoveWorktree, Ack),
-    (OpenServerSettings, OpenBufferResponse)
+    (OpenServerSettings, OpenBufferResponse),
+    (GetPermalinkToLine, GetPermalinkToLineResponse),
 );
 
 entity_messages!(
@@ -571,7 +574,7 @@ entity_messages!(
     Toast,
     HideToast,
     OpenServerSettings,
-
+    GetPermalinkToLine,
 );
 
 entity_messages!(

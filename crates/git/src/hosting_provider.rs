@@ -166,12 +166,11 @@ pub fn parse_git_remote_url(
     Arc<dyn GitHostingProvider + Send + Sync + 'static>,
     ParsedGitRemote,
 )> {
-    provider_registry
-        .list_hosting_providers()
-        .into_iter()
-        .find_map(|provider| {
-            provider
-                .parse_remote_url(url)
-                .map(|parsed_remote| (provider, parsed_remote))
-        })
+    let providers = provider_registry.list_hosting_providers();
+    dbg!(providers.len());
+    providers.into_iter().find_map(|provider| {
+        provider
+            .parse_remote_url(url)
+            .map(|parsed_remote| (provider, parsed_remote))
+    })
 }
