@@ -81,7 +81,7 @@ Add the following to your Zed Settings by launching {#action zed::OpenSettings}(
 If you have issues with either of these plugins, please open issues on their respective repositories:
 
 - [Zed Java Issues](https://github.com/zed-extensions/java/issues)
-- [Java with Eclipse JDTLS Issues](https://github.com/eclipse-jdtls/eclipse.jdt.ls/issues)
+- [Java with Eclipse JDTLS Issues](https://github.com/ABckh/zed-java-eclipse-jdtls/issues)
 
 ## Example Configs
 
