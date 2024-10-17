@@ -11,7 +11,7 @@ use db::sqlez::{
 };
 use gpui::{AsyncWindowContext, Model, View, WeakView};
 use project::Project;
-use remote::{ssh_session::SshProjectId, SshConnectionOptions};
+use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -49,15 +49,6 @@ impl SerializedSshProject {
                 PathBuf::from(result)
             })
             .collect()
-    }
-
-    pub fn connection_options(&self) -> SshConnectionOptions {
-        SshConnectionOptions {
-            host: self.host.clone(),
-            username: self.user.clone(),
-            port: self.port,
-            password: None,
-        }
     }
 }
 
