@@ -385,34 +385,6 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // A server is started up, and it is notified about Rust files.
     let mut fake_rust_server = fake_rust_servers.next().await.unwrap();
-    fake_rust_server
-        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
-            registrations: vec![lsp::Registration {
-                id: Default::default(),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: serde_json::to_value(
-                    lsp::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    "/the-root/Cargo.toml".to_string(),
-                                ),
-                                kind: None,
-                            },
-                            lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    "/the-root/*.rs".to_string(),
-                                ),
-                                kind: None,
-                            },
-                        ],
-                    },
-                )
-                .ok(),
-            }],
-        })
-        .await
-        .unwrap();
     assert_eq!(
         fake_rust_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -460,24 +432,6 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // A json language server is started up and is only notified about the json buffer.
     let mut fake_json_server = fake_json_servers.next().await.unwrap();
-    fake_json_server
-        .request::<lsp::request::RegisterCapability>(lsp::RegistrationParams {
-            registrations: vec![lsp::Registration {
-                id: Default::default(),
-                method: "workspace/didChangeWatchedFiles".to_string(),
-                register_options: serde_json::to_value(
-                    lsp::DidChangeWatchedFilesRegistrationOptions {
-                        watchers: vec![lsp::FileSystemWatcher {
-                            glob_pattern: lsp::GlobPattern::String("/the-root/*.json".to_string()),
-                            kind: None,
-                        }],
-                    },
-                )
-                .ok(),
-            }],
-        })
-        .await
-        .unwrap();
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
@@ -528,13 +482,20 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         )
     );
 
-    // Save notifications are reported only to servers that signed up for a given extension.
+    // Save notifications are reported to all servers.
     project
         .update(cx, |project, cx| project.save_buffer(toml_buffer, cx))
         .await
         .unwrap();
     assert_eq!(
         fake_rust_server
+            .receive_notification::<lsp::notification::DidSaveTextDocument>()
+            .await
+            .text_document,
+        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+    );
+    assert_eq!(
+        fake_json_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
@@ -1185,7 +1146,11 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(LanguageServerId(0)),
+        Event::LanguageServerAdded(
+            LanguageServerId(0),
+            fake_server.server.name().into(),
+            Some(worktree_id)
+        ),
     );
 
     fake_server
@@ -1295,6 +1260,8 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         },
     );
 
+    let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
+
     let buffer = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
         .await
@@ -1314,7 +1281,11 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
     let fake_server = fake_servers.next().await.unwrap();
     assert_eq!(
         events.next().await.unwrap(),
-        Event::LanguageServerAdded(LanguageServerId(1))
+        Event::LanguageServerAdded(
+            LanguageServerId(1),
+            fake_server.server.name().into(),
+            Some(worktree_id)
+        )
     );
     fake_server.start_progress(progress_token).await;
     assert_eq!(

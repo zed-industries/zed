@@ -824,6 +824,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-astro"]
@@ -849,6 +850,10 @@
     },
     "Dart": {
       "tab_size": 2
+    },
+    "Diff": {
+      "remove_trailing_whitespace_on_save": false,
+      "ensure_final_newline_on_save": false
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]

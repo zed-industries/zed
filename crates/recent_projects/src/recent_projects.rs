@@ -21,7 +21,7 @@ use picker::{
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use settings::Settings;
-use ssh_connections::SshSettings;
+pub use ssh_connections::SshSettings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -384,11 +384,13 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 ..Default::default()
                             };
 
+                            let args = SshSettings::get_global(cx).args_for(&ssh_project.host, ssh_project.port, &ssh_project.user);
                             let connection_options = SshConnectionOptions {
                                 host: ssh_project.host.clone(),
                                 username: ssh_project.user.clone(),
                                 port: ssh_project.port,
                                 password: None,
+                                args,
                             };
 
                             let paths = ssh_project.paths.iter().map(PathBuf::from).collect();

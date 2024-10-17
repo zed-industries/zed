@@ -1,6 +1,5 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
-use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -40,13 +39,13 @@ fn main() {
 }
 
 #[cfg(not(windows))]
-fn main() -> Result<()> {
+fn main() {
     use remote::proxy::ProxyLaunchError;
     use remote_server::unix::{execute_proxy, execute_run};
 
     let cli = Cli::parse();
 
-    match cli.command {
+    let result = match cli.command {
         Some(Commands::Run {
             log_file,
             pid_file,
@@ -74,11 +73,15 @@ fn main() -> Result<()> {
         },
         Some(Commands::Version) => {
             eprintln!("{}", env!("ZED_PKG_VERSION"));
-            Ok(())
+            std::process::exit(0);
         }
         None => {
             eprintln!("usage: remote <run|proxy|version>");
             std::process::exit(1);
         }
+    };
+    if let Err(error) = result {
+        log::error!("exiting due to error: {}", error);
+        std::process::exit(1);
     }
 }

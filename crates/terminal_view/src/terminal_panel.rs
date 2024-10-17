@@ -395,7 +395,21 @@ impl TerminalPanel {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
-            Shell::System => retrieve_system_shell().map(|shell| (shell, Vec::new())),
+            Shell::System => {
+                match self
+                    .workspace
+                    .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
+                {
+                    Ok(local) => {
+                        if local {
+                            retrieve_system_shell().map(|shell| (shell, Vec::new()))
+                        } else {
+                            Some(("\"${SHELL:-sh}\"".to_string(), Vec::new()))
+                        }
+                    }
+                    Err(_no_window_e) => return,
+                }
+            }
             Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
