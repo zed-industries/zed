@@ -650,7 +650,7 @@
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
       "ctrl-o": ["terminal::SendKeystroke", "ctrl-o"], // readline: accept-line and down; nano save
-      // "ctrl-p": ["terminal::SendKeystroke", "ctrl-p"], // readline: history-search-backward
+      // "ctrl-p": ["terminal::SendKeystroke", "ctrl-p"], // readline: history-search-backward (conflicts with FileFinder::Toggle).
       "ctrl-q": ["terminal::SendKeystroke", "ctrl-q"], // xon; nano search backwards
       "ctrl-s": ["terminal::SendKeystroke", "ctrl-s"], // xoff;
       "ctrl-t": ["terminal::SendKeystroke", "ctrl-t"], // readline: swap last two characters
