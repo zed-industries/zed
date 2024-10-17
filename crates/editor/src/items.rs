@@ -1006,13 +1006,14 @@ impl SerializableItem for Editor {
                 mtime,
                 ..
             } => {
+                let trimmed_path = path.clone().into();
                 let project_item = project.update(cx, |project, cx| {
                     let (worktree, path) = project
-                        .find_worktree(&path, cx)
+                        .find_worktree(&trimmed_path, cx)
                         .with_context(|| format!("No worktree for path: {path:?}"))?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path.into(),
+                        path: path.as_trimmed_path_buf().as_path().into(),
                     };
 
                     Ok(project.open_path(project_path, cx))
@@ -1097,7 +1098,8 @@ impl SerializableItem for Editor {
             .file()
             .map(|file| file.full_path(cx))
             .and_then(|full_path| project.read(cx).find_project_path(&full_path, cx))
-            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx));
+            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx))
+            .map(Into::into);
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();

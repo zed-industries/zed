@@ -37,6 +37,7 @@ use ui::Scrollbar;
 use ui::ScrollbarState;
 use ui::Section;
 use ui::{prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
+use util::paths::SanitizedPathBuf;
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::OpenOptions;

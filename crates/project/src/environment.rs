@@ -1,6 +1,6 @@
 use futures::{future::Shared, FutureExt};
-use std::{path::Path, sync::Arc};
-use util::ResultExt;
+use std::path::Path;
+use util::{paths::SanitizedPathBuf, ResultExt};
 
 use collections::HashMap;
 use gpui::{AppContext, Context, Model, ModelContext, Task};
@@ -88,7 +88,7 @@ impl ProjectEnvironment {
     pub(crate) fn get_environment(
         &mut self,
         worktree_id: Option<WorktreeId>,
-        worktree_abs_path: Option<Arc<Path>>,
+        worktree_abs_path: Option<SanitizedPathBuf>,
         cx: &ModelContext<Self>,
     ) -> Shared<Task<Option<HashMap<String, String>>>> {
         if let Some(task) = self.get_environment_task.as_ref() {
@@ -106,7 +106,7 @@ impl ProjectEnvironment {
     fn build_environment_task(
         &mut self,
         worktree_id: Option<WorktreeId>,
-        worktree_abs_path: Option<Arc<Path>>,
+        worktree_abs_path: Option<SanitizedPathBuf>,
         cx: &ModelContext<Self>,
     ) -> Task<Option<HashMap<String, String>>> {
         let worktree = worktree_id.zip(worktree_abs_path);
@@ -134,7 +134,7 @@ impl ProjectEnvironment {
     fn get_worktree_env(
         &mut self,
         worktree_id: WorktreeId,
-        worktree_abs_path: Arc<Path>,
+        worktree_abs_path: SanitizedPathBuf,
         cx: &ModelContext<Self>,
     ) -> Task<Option<HashMap<String, String>>> {
         let cached_env = self.cached_shell_environments.get(&worktree_id).cloned();
@@ -146,9 +146,9 @@ impl ProjectEnvironment {
             cx.spawn(|this, mut cx| async move {
                 let (mut shell_env, error_message) = cx
                     .background_executor()
-                    .spawn({
-                        let cwd = worktree_abs_path.clone();
-                        async move { load_shell_environment(&cwd, &load_direnv).await }
+                    .spawn(async move {
+                        load_shell_environment(worktree_abs_path.as_raw_path_buf(), &load_direnv)
+                            .await
                     })
                     .await;
 

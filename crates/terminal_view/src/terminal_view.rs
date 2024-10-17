@@ -27,7 +27,10 @@ use terminal::{
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{paths::PathWithPosition, ResultExt};
+use util::{
+    paths::{PathWithPosition, SanitizedPathBuf},
+    ResultExt,
+};
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
     notifications::NotifyResultExt,
@@ -851,10 +854,14 @@ fn possible_open_targets(
         }
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
-                for potential_worktree_path in workspace
-                    .worktrees(cx)
-                    .map(|worktree| worktree.read(cx).abs_path().join(&maybe_path))
-                {
+                for potential_worktree_path in workspace.worktrees(cx).map(|worktree| {
+                    worktree
+                        .read(cx)
+                        .abs_path()
+                        .join(&maybe_path)
+                        .as_raw_path_buf()
+                        .clone()
+                }) {
                     potential_cwd_and_workspace_paths.insert(potential_worktree_path);
                 }
 
@@ -862,10 +869,14 @@ fn possible_open_targets(
                     let prefix_str = &prefix.to_string();
                     if maybe_path.starts_with(prefix_str) {
                         let stripped = maybe_path.strip_prefix(prefix_str).unwrap_or(&maybe_path);
-                        for potential_worktree_path in workspace
-                            .worktrees(cx)
-                            .map(|worktree| worktree.read(cx).abs_path().join(&stripped))
-                        {
+                        for potential_worktree_path in workspace.worktrees(cx).map(|worktree| {
+                            worktree
+                                .read(cx)
+                                .abs_path()
+                                .join(&stripped)
+                                .as_raw_path_buf()
+                                .clone()
+                        }) {
                             potential_cwd_and_workspace_paths.insert(potential_worktree_path);
                         }
                     }
@@ -1211,7 +1222,7 @@ impl SerializableItem for TerminalView {
                         .as_ref()
                         .is_some_and(|from_db| !from_db.as_os_str().is_empty())
                     {
-                        from_db
+                        from_db.map(Into::into)
                     } else {
                         workspace
                             .upgrade()
@@ -1352,7 +1363,10 @@ impl SearchableItem for TerminalView {
 
 ///Gets the working directory for the given workspace, respecting the user's settings.
 /// None implies "~" on whichever machine we end up on.
-pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+pub fn default_working_directory(
+    workspace: &Workspace,
+    cx: &AppContext,
+) -> Option<SanitizedPathBuf> {
     match &TerminalSettings::get_global(cx).working_directory {
         WorkingDirectory::CurrentProjectDirectory => {
             workspace.project().read(cx).active_project_directory(cx)
@@ -1362,18 +1376,19 @@ pub fn default_working_directory(workspace: &Workspace, cx: &AppContext) -> Opti
         WorkingDirectory::Always { directory } => {
             shellexpand::full(&directory) //TODO handle this better
                 .ok()
-                .map(|dir| Path::new(&dir.to_string()).to_path_buf())
+                .map(|dir| PathBuf::from(&dir.to_string()))
                 .filter(|dir| dir.is_dir())
+                .map(Into::into)
         }
     }
 }
 ///Gets the first project's home directory, or the home directory
-fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<PathBuf> {
+fn first_project_directory(workspace: &Workspace, cx: &AppContext) -> Option<SanitizedPathBuf> {
     let worktree = workspace.worktrees(cx).next()?.read(cx);
     if !worktree.root_entry()?.is_dir() {
         return None;
     }
-    Some(worktree.abs_path().to_path_buf())
+    Some(worktree.abs_path())
 }
 
 #[cfg(test)]
@@ -1559,7 +1574,7 @@ mod tests {
         cx.update(|cx| {
             let p = ProjectPath {
                 worktree_id: wt.read(cx).id(),
-                path: entry.path,
+                path: entry.relative_path,
             };
             project.update(cx, |project, cx| project.set_active_path(Some(p), cx));
         });
