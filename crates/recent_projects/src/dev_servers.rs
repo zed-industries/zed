@@ -1151,17 +1151,10 @@ impl DevServerProjects {
             )
             .into_any_element();
 
-        let server_count = format!("Servers: {}", ssh_connections.len());
-
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
-                ModalHeader::new().child(
-                    h_flex()
-                        .items_center()
-                        .justify_between()
-                        .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall))
-                        .child(Label::new(server_count).size(LabelSize::Small)),
-                ),
+                ModalHeader::new()
+                    .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(
