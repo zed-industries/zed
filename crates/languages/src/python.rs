@@ -3,6 +3,9 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
+use language::Toolchain;
+use language::ToolchainList;
+use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -28,13 +31,14 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct PythonLspAdapter {
     node: NodeRuntime,
+    toolchain: Arc<PythonToolchainProvider>,
 }
 
 impl PythonLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
-    pub fn new(node: NodeRuntime) -> Self {
-        PythonLspAdapter { node }
+    pub fn new(node: NodeRuntime, toolchain: Arc<PythonToolchainProvider>) -> Self {
+        PythonLspAdapter { node, toolchain }
     }
 }
 
@@ -320,6 +324,15 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .to_string()
 }
 
+pub(crate) struct PythonToolchainProvider;
+
+#[async_trait]
+impl ToolchainLister for PythonToolchainProvider {
+    async fn list(&self) -> ToolchainList {
+        ToolchainList::default()
+    }
+    async fn activate(&self, _: Toolchain) {}
+}
 #[cfg(test)]
 mod tests {
     use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};

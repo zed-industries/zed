@@ -29,7 +29,7 @@ use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-pub use language_registry::LanguageName;
+pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
 use parking_lot::Mutex;
 use regex::Regex;

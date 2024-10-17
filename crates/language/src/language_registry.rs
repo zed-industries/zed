@@ -4,7 +4,7 @@ use crate::{
     },
     task_context::ContextProvider,
     with_parser, CachedLspAdapter, File, Language, LanguageConfig, LanguageId, LanguageMatcher,
-    LanguageServerName, LspAdapter, PLAIN_TEXT,
+    LanguageServerName, LspAdapter, ToolchainLister, PLAIN_TEXT,
 };
 use anyhow::{anyhow, Context, Result};
 use collections::{hash_map, HashMap, HashSet};
@@ -123,16 +123,7 @@ pub struct AvailableLanguage {
     name: LanguageName,
     grammar: Option<Arc<str>>,
     matcher: LanguageMatcher,
-    load: Arc<
-        dyn Fn() -> Result<(
-                LanguageConfig,
-                LanguageQueries,
-                Option<Arc<dyn ContextProvider>>,
-            )>
-            + 'static
-            + Send
-            + Sync,
-    >,
+    load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     loaded: bool,
 }
 
@@ -198,6 +189,13 @@ pub struct LanguageQueries {
 #[derive(Clone, Default)]
 struct LspBinaryStatusSender {
     txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, LanguageServerBinaryStatus)>>>>,
+}
+
+pub struct LoadedLanguage {
+    pub config: LanguageConfig,
+    pub queries: LanguageQueries,
+    pub context_provider: Option<Arc<dyn ContextProvider>>,
+    pub toolchain_provider: Option<Arc<dyn ToolchainLister>>,
 }
 
 impl LanguageRegistry {
@@ -424,14 +422,7 @@ impl LanguageRegistry {
         name: LanguageName,
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
-        load: impl Fn() -> Result<(
-                LanguageConfig,
-                LanguageQueries,
-                Option<Arc<dyn ContextProvider>>,
-            )>
-            + 'static
-            + Send
-            + Sync,
+        load: impl Fn() -> Result<LoadedLanguage> + 'static + Send + Sync,
     ) {
         let load = Arc::new(load);
         let state = &mut *self.state.write();
@@ -726,16 +717,16 @@ impl LanguageRegistry {
                 self.executor
                     .spawn(async move {
                         let language = async {
-                            let (config, queries, provider) = (language_load)()?;
+                            let loaded_language = (language_load)()?;
 
-                            if let Some(grammar) = config.grammar.clone() {
+                            if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
-                                Language::new_with_id(id, config, grammar)
-                                    .with_context_provider(provider)
-                                    .with_queries(queries)
+                                Language::new_with_id(id, loaded_language.config, grammar)
+                                    .with_context_provider(loaded_language.context_provider)
+                                    .with_queries(loaded_language.queries)
                             } else {
-                                Ok(Language::new_with_id(id, config, None)
-                                    .with_context_provider(provider))
+                                Ok(Language::new_with_id(id, loaded_language.config, None)
+                                    .with_context_provider(loaded_language.context_provider))
                             }
                         }
                         .await;

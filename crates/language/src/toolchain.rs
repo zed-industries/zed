@@ -14,12 +14,13 @@ pub struct Toolchain {
 }
 
 #[async_trait]
-pub trait ToolchainLister {
+pub trait ToolchainLister: Send + Sync {
     async fn list(&self) -> ToolchainList;
     async fn activate(&self, _: Toolchain);
 }
 
 type DefaultIndex = usize;
+#[derive(Default)]
 pub struct ToolchainList {
     toolchains: Vec<Toolchain>,
     default: Option<DefaultIndex>,
