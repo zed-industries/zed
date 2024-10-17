@@ -1173,8 +1173,7 @@ impl Project {
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
-                    let path = path.to_path_buf().into();
-                    project.find_or_create_worktree(&path, true, cx)
+                    project.find_or_create_worktree(path, true, cx)
                 })
                 .unwrap()
                 .await
@@ -1214,8 +1213,7 @@ impl Project {
         for path in root_paths {
             let (tree, _) = project
                 .update(cx, |project, cx| {
-                    let path = path.to_path_buf().into();
-                    project.find_or_create_worktree(&path, true, cx)
+                    project.find_or_create_worktree(path, true, cx)
                 })
                 .await
                 .unwrap();
@@ -2505,13 +2503,19 @@ impl Project {
     pub fn update_diagnostic_entries(
         &mut self,
         server_id: LanguageServerId,
-        abs_path: SanitizedPathBuf,
+        abs_path: PathBuf,
         version: Option<i32>,
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Project>,
     ) -> Result<(), anyhow::Error> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.update_diagnostic_entries(server_id, abs_path, version, diagnostics, cx)
+            lsp_store.update_diagnostic_entries(
+                server_id,
+                abs_path.into(),
+                version,
+                diagnostics,
+                cx,
+            )
         })
     }
 
