@@ -380,6 +380,8 @@ impl WorkspaceDb {
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
+        // paths are sorted before db interactions to ensure that the order of the paths
+        // doesn't affect the workspace selection for existing workspaces
         let local_paths = LocalPaths::new(worktree_roots);
 
         // Note that we re-assign the workspace_id here in case it's empty
@@ -833,8 +835,8 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn session_workspaces(session_id: String) -> Result<Vec<(LocalPaths, Option<u64>, Option<u64>)>> {
-            SELECT local_paths, window_id, ssh_project_id
+        fn session_workspaces(session_id: String) -> Result<Vec<(LocalPaths, LocalPathsOrder, Option<u64>, Option<u64>)>> {
+            SELECT local_paths, local_paths_order, window_id, ssh_project_id
             FROM workspaces
             WHERE session_id = ?1 AND dev_server_project_id IS NULL
             ORDER BY timestamp DESC
@@ -971,7 +973,7 @@ impl WorkspaceDb {
     ) -> Result<Vec<SerializedWorkspaceLocation>> {
         let mut workspaces = Vec::new();
 
-        for (location, window_id, ssh_project_id) in
+        for (location, order, window_id, ssh_project_id) in
             self.session_workspaces(last_session_id.to_owned())?
         {
             if let Some(ssh_project_id) = ssh_project_id {
@@ -980,8 +982,7 @@ impl WorkspaceDb {
             } else if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                let location =
-                    SerializedWorkspaceLocation::from_local_paths(location.paths().iter());
+                let location = SerializedWorkspaceLocation::Local(location, order);
                 workspaces.push((location, window_id.map(WindowId::from)));
             }
         }
@@ -1603,27 +1604,56 @@ mod tests {
             window_id: Some(50),
         };
 
+        let workspace_6 = SerializedWorkspace {
+            id: WorkspaceId(6),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp6a", "/tmp6b", "/tmp6c"]),
+                LocalPathsOrder::new([2, 1, 0]),
+            ),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("session-id-3".to_owned()),
+            window_id: Some(60),
+        };
+
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_2.clone()).await;
         db.save_workspace(workspace_3.clone()).await;
         db.save_workspace(workspace_4.clone()).await;
         db.save_workspace(workspace_5.clone()).await;
+        db.save_workspace(workspace_6.clone()).await;
 
         let locations = db.session_workspaces("session-id-1".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
         assert_eq!(locations[0].0, LocalPaths::new(["/tmp1"]));
-        assert_eq!(locations[0].1, Some(10));
+        assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[0].2, Some(10));
         assert_eq!(locations[1].0, LocalPaths::new(["/tmp2"]));
-        assert_eq!(locations[1].1, Some(20));
+        assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[1].2, Some(20));
 
         let locations = db.session_workspaces("session-id-2".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
         assert_eq!(locations[0].0, LocalPaths::new(["/tmp3"]));
-        assert_eq!(locations[0].1, Some(30));
+        assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[0].2, Some(30));
         let empty_paths: Vec<&str> = Vec::new();
         assert_eq!(locations[1].0, LocalPaths::new(empty_paths.iter()));
-        assert_eq!(locations[1].1, Some(50));
-        assert_eq!(locations[1].2, Some(ssh_project.id.0));
+        assert_eq!(locations[1].1, LocalPathsOrder::new([]));
+        assert_eq!(locations[1].2, Some(50));
+        assert_eq!(locations[1].3, Some(ssh_project.id.0));
+
+        let locations = db.session_workspaces("session-id-3".to_owned()).unwrap();
+        assert_eq!(locations.len(), 1);
+        assert_eq!(
+            locations[0].0,
+            LocalPaths::new(["/tmp6a", "/tmp6b", "/tmp6c"]),
+        );
+        assert_eq!(locations[0].1, LocalPathsOrder::new([2, 1, 0]));
+        assert_eq!(locations[0].2, Some(60));
     }
 
     fn default_workspace<P: AsRef<Path>>(
@@ -1654,15 +1684,30 @@ mod tests {
             WorkspaceDb(open_test_db("test_serializing_workspaces_last_session_workspaces").await);
 
         let workspaces = [
-            (1, dir1.path().to_str().unwrap(), 9),
-            (2, dir2.path().to_str().unwrap(), 5),
-            (3, dir3.path().to_str().unwrap(), 8),
-            (4, dir4.path().to_str().unwrap(), 2),
+            (1, vec![dir1.path()], vec![0], 9),
+            (2, vec![dir2.path()], vec![0], 5),
+            (3, vec![dir3.path()], vec![0], 8),
+            (4, vec![dir4.path()], vec![0], 2),
+            (
+                5,
+                vec![dir1.path(), dir2.path(), dir3.path()],
+                vec![0, 1, 2],
+                3,
+            ),
+            (
+                6,
+                vec![dir2.path(), dir3.path(), dir4.path()],
+                vec![2, 1, 0],
+                4,
+            ),
         ]
         .into_iter()
-        .map(|(id, location, window_id)| SerializedWorkspace {
+        .map(|(id, locations, order, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
-            location: SerializedWorkspaceLocation::from_local_paths([location]),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(locations),
+                LocalPathsOrder::new(order),
+            ),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1681,28 +1726,44 @@ mod tests {
             WindowId::from(2), // Top
             WindowId::from(8),
             WindowId::from(5),
-            WindowId::from(9), // Bottom
+            WindowId::from(9),
+            WindowId::from(3),
+            WindowId::from(4), // Bottom
         ]));
 
         let have = db
             .last_session_workspace_locations("one-session", stack)
             .unwrap();
-        assert_eq!(have.len(), 4);
+        assert_eq!(have.len(), 6);
         assert_eq!(
             have[0],
-            SerializedWorkspaceLocation::from_local_paths(&[dir4.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths(&[dir4.path()])
         );
         assert_eq!(
             have[1],
-            SerializedWorkspaceLocation::from_local_paths([dir3.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths([dir3.path()])
         );
         assert_eq!(
             have[2],
-            SerializedWorkspaceLocation::from_local_paths([dir2.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths([dir2.path()])
         );
         assert_eq!(
             have[3],
-            SerializedWorkspaceLocation::from_local_paths([dir1.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths([dir1.path()])
+        );
+        assert_eq!(
+            have[4],
+            SerializedWorkspaceLocation::Local(
+                LocalPaths::new([dir1.path(), dir2.path(), dir3.path()]),
+                LocalPathsOrder::new([0, 1, 2]),
+            ),
+        );
+        assert_eq!(
+            have[5],
+            SerializedWorkspaceLocation::Local(
+                LocalPaths::new([dir2.path(), dir3.path(), dir4.path()]),
+                LocalPathsOrder::new([2, 1, 0]),
+            ),
         );
     }
 
