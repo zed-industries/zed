@@ -20,6 +20,7 @@ use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
+use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -910,10 +911,8 @@ impl Buffer {
         self.apply_ops([operation.clone()], cx);
 
         if let Some(timestamp) = operation_to_undo {
-            let operation = self
-                .text
-                .undo_operations([(timestamp, u32::MAX)].into_iter().collect());
-            self.send_operation(Operation::Buffer(operation), true, cx);
+            let counts = [(timestamp, u32::MAX)].into_iter().collect();
+            self.undo_operations(counts, cx);
         }
 
         self.diff_base_version += 1;
@@ -2329,6 +2328,18 @@ impl Buffer {
             self.did_edit(&old_version, was_dirty, cx)
         }
         undone
+    }
+
+    pub fn undo_operations(
+        &mut self,
+        counts: HashMap<Lamport, u32>,
+        cx: &mut ModelContext<Buffer>,
+    ) {
+        let was_dirty = self.is_dirty();
+        let operation = self.text.undo_operations(counts);
+        let old_version = self.version.clone();
+        self.send_operation(Operation::Buffer(operation), true, cx);
+        self.did_edit(&old_version, was_dirty, cx);
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.

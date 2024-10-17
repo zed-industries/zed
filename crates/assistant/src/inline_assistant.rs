@@ -82,31 +82,11 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    assist_observations: HashMap<
-        InlineAssistId,
-        (
-            async_watch::Sender<AssistStatus>,
-            async_watch::Receiver<AssistStatus>,
-        ),
-    >,
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
-}
-
-pub enum AssistStatus {
-    Idle,
-    Started,
-    Stopped,
-    Finished,
-}
-
-impl AssistStatus {
-    pub fn is_done(&self) -> bool {
-        matches!(self, Self::Stopped | Self::Finished)
-    }
 }
 
 impl Global for InlineAssistant {}
@@ -123,7 +103,6 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
-            assist_observations: HashMap::default(),
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
@@ -835,17 +814,6 @@ impl InlineAssistant {
                     .insert(assist_id, confirmed_alternative);
             }
         }
-
-        // Remove the assist from the status updates map
-        self.assist_observations.remove(&assist_id);
-    }
-
-    pub fn undo_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
-        let Some(codegen) = self.confirmed_assists.remove(&assist_id) else {
-            return false;
-        };
-        codegen.update(cx, |this, cx| this.undo(cx));
-        true
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -1039,10 +1007,6 @@ impl InlineAssistant {
                 codegen.start(user_prompt, assistant_panel_context, cx)
             })
             .log_err();
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Started).ok();
-        }
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -1053,25 +1017,6 @@ impl InlineAssistant {
         };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Stopped).ok();
-        }
-    }
-
-    pub fn assist_status(&self, assist_id: InlineAssistId, cx: &AppContext) -> InlineAssistStatus {
-        if let Some(assist) = self.assists.get(&assist_id) {
-            match assist.codegen.read(cx).status(cx) {
-                CodegenStatus::Idle => InlineAssistStatus::Idle,
-                CodegenStatus::Pending => InlineAssistStatus::Pending,
-                CodegenStatus::Done => InlineAssistStatus::Done,
-                CodegenStatus::Error(_) => InlineAssistStatus::Error,
-            }
-        } else if self.confirmed_assists.contains_key(&assist_id) {
-            InlineAssistStatus::Confirmed
-        } else {
-            InlineAssistStatus::Canceled
-        }
     }
 
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
@@ -1256,42 +1201,6 @@ impl InlineAssistant {
                 .into_iter()
                 .collect();
         })
-    }
-
-    pub fn observe_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-    ) -> async_watch::Receiver<AssistStatus> {
-        if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
-            rx.clone()
-        } else {
-            let (tx, rx) = async_watch::channel(AssistStatus::Idle);
-            self.assist_observations.insert(assist_id, (tx, rx.clone()));
-            rx
-        }
-    }
-}
-
-pub enum InlineAssistStatus {
-    Idle,
-    Pending,
-    Done,
-    Error,
-    Confirmed,
-    Canceled,
-}
-
-impl InlineAssistStatus {
-    pub(crate) fn is_pending(&self) -> bool {
-        matches!(self, Self::Pending)
-    }
-
-    pub(crate) fn is_confirmed(&self) -> bool {
-        matches!(self, Self::Confirmed)
-    }
-
-    pub(crate) fn is_done(&self) -> bool {
-        matches!(self, Self::Done)
     }
 }
 
@@ -2290,8 +2199,6 @@ impl InlineAssist {
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
-                            } else if let Some(tx) = this.assist_observations.get(&assist_id) {
-                                tx.0.send(AssistStatus::Finished).ok();
                             }
                         }
                     })
