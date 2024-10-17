@@ -1454,9 +1454,9 @@ mod tests {
             assert!(active_entry.is_none());
             assert!(workspace.worktrees(cx).next().is_some());
 
-            let res = default_working_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx).map(Into::into);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
-            let res = first_project_directory(workspace, cx);
+            let res = first_project_directory(workspace, cx).map(Into::into);
             assert_eq!(res, Some((Path::new("/root/")).to_path_buf()));
         });
     }
@@ -1478,7 +1478,7 @@ mod tests {
 
             let res = default_working_directory(workspace, cx);
             assert_eq!(res, None);
-            let res = first_project_directory(workspace, cx);
+            let res = first_project_directory(workspace, cx).map(Into::into);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });
     }
@@ -1498,9 +1498,9 @@ mod tests {
 
             assert!(active_entry.is_some());
 
-            let res = default_working_directory(workspace, cx);
+            let res = default_working_directory(workspace, cx).map(Into::into);
             assert_eq!(res, Some((Path::new("/root2/")).to_path_buf()));
-            let res = first_project_directory(workspace, cx);
+            let res = first_project_directory(workspace, cx).map(Into::into);
             assert_eq!(res, Some((Path::new("/root1/")).to_path_buf()));
         });
     }
