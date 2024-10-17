@@ -38,6 +38,24 @@ struct SelectableItemList {
     active_item: Option<usize>,
 }
 
+impl SelectableItemList {
+    fn next(&mut self, _cx: &mut ViewContext<JupyterServers>) {
+        if let Some(active_item) = self.active_item.as_mut() {
+            *active_item = (*active_item + 1) % self.items.len();
+        } else if !self.items.is_empty() {
+            self.active_item = Some(0);
+        }
+    }
+
+    fn prev(&mut self, _cx: &mut ViewContext<JupyterServers>) {
+        if let Some(active_item) = self.active_item.as_mut() {
+            *active_item = (*active_item + self.items.len() - 1) % self.items.len();
+        } else if !self.items.is_empty() {
+            self.active_item = Some(self.items.len() - 1);
+        }
+    }
+}
+
 impl JupyterServers {
     fn add_server(&mut self, cx: &mut ViewContext<Self>) {
         let added_server = self.new_server_url.read(cx).text(cx);
@@ -120,6 +138,52 @@ impl JupyterServers {
     fn connect_to_server(&self, server: JupyterServer, cx: &AppContext) {
         todo!()
     }
+
+    fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        if let JupyterServerMode::Default = self.mode {
+            self.selectable_items.next(cx);
+            cx.notify();
+        }
+    }
+
+    fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        if let JupyterServerMode::Default = self.mode {
+            self.selectable_items.prev(cx);
+            cx.notify();
+        }
+    }
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        match self.mode {
+            JupyterServerMode::Default => {
+                if let Some(active_item) = self.selectable_items.active_item {
+                    // if active_item < self.selectable_items.items.len() {
+                    //     let item = self.selectable_items.items[active_item].clone();
+                    //     item(self, cx);
+                    // }
+                }
+            }
+            JupyterServerMode::CreateServer => {
+                self.add_server(cx);
+                self.mode = JupyterServerMode::Default;
+                cx.notify();
+            }
+            JupyterServerMode::EditServer(_) => {
+                // TODO: Implement edit confirmation
+                self.mode = JupyterServerMode::Default;
+                cx.notify();
+            }
+        }
+    }
+
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        match self.mode {
+            JupyterServerMode::Default => cx.emit(DismissEvent),
+            _ => {
+                self.mode = JupyterServerMode::Default;
+                cx.notify();
+            }
+        }
+    }
 }
 
 impl ModalView for JupyterServers {}
@@ -133,67 +197,92 @@ impl FocusableView for JupyterServers {
 }
 impl Render for JupyterServers {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        Modal::new("jupyter-servers", Some(self.scroll_handle.clone()))
-            .header(ModalHeader::new().child(Label::new("Jupyter Servers")))
-            .child(Section::new().child(
-                List::new().empty_message("No servers added yet.").children(
-                    self.server_list.iter().enumerate().map(|(index, server)| {
-                        let name = server
-                            .nickname
-                            .clone()
-                            .unwrap_or_else(|| server.url.clone());
-
-                        ListItem::new(SharedString::from(format!("jupyter-server-{name}")))
-                            .inset(true)
-                            .spacing(ui::ListItemSpacing::Sparse)
-                            .start_slot(
-                                Icon::new(IconName::Server)
-                                    .color(Color::Muted)
-                                    .size(IconSize::Small),
-                            )
-                            .child(Label::new(name))
-                            .on_click(cx.listener(move |this, _, cx| {
-                                this.connect_to_server(this.server_list[index].clone(), cx);
-                            }))
-                            .end_hover_slot::<AnyElement>(Some(
-                                h_flex()
-                                    .gap_2()
-                                    .child(
-                                        IconButton::new("edit-jupyter-server", IconName::Settings)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                // TODO: Implement edit server logic
-                                                eprintln!(
-                                                    "Editing server: {:?}",
-                                                    this.server_list[index]
-                                                );
-                                            }))
-                                            .tooltip(|cx| Tooltip::text("Edit Server", cx)),
-                                    )
-                                    .child(
-                                        IconButton::new("remove-jupyter-server", IconName::Trash)
-                                            .icon_size(IconSize::Small)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                this.remove_server(index, cx);
-                                            }))
-                                            .tooltip(|cx| Tooltip::text("Delete Server", cx)),
-                                    )
-                                    .into_any_element(),
-                            ))
-                    }),
-                ),
-            ))
+        div()
+            .elevation_3(cx)
+            .key_context("JupyterServersModal")
+            .on_mouse_down_out(cx.listener(|_, _, cx| cx.emit(DismissEvent)))
             .child(
-                Section::new().child(
-                    v_flex()
-                        .gap_2()
-                        .child(self.new_server_url.clone())
-                        .child(self.new_server_nickname.clone())
-                        .child(
-                            Button::new("add-server", "Add Server")
-                                .on_click(cx.listener(|this, _, cx| this.add_server(cx))),
-                        ),
-                ),
+                Modal::new("jupyter-servers", Some(self.scroll_handle.clone()))
+                    .header(ModalHeader::new().child(Label::new("Jupyter Servers")))
+                    .child(
+                        v_flex()
+                            .size_full()
+                            .p_4()
+                            .border_1()
+                            .border_color(cx.theme().colors().border_variant)
+                            .child(Section::new().child(
+                                List::new().empty_message("No servers added yet.").children(
+                                    self.server_list.iter().enumerate().map(|(index, server)| {
+                                        let name = server
+                                            .nickname
+                                            .clone()
+                                            .unwrap_or_else(|| server.url.clone());
+
+                                        ListItem::new(SharedString::from(format!(
+                                            "jupyter-server-{name}"
+                                        )))
+                                        .inset(true)
+                                        .spacing(ui::ListItemSpacing::Sparse)
+                                        .start_slot(
+                                            Icon::new(IconName::Server)
+                                                .color(Color::Muted)
+                                                .size(IconSize::Small),
+                                        )
+                                        .child(Label::new(name))
+                                        .on_click(cx.listener(move |this, _, cx| {
+                                            this.connect_to_server(
+                                                this.server_list[index].clone(),
+                                                cx,
+                                            );
+                                        }))
+                                        .end_hover_slot::<AnyElement>(Some(
+                                            h_flex()
+                                                .gap_2()
+                                                .child(
+                                                    IconButton::new(
+                                                        "edit-jupyter-server",
+                                                        IconName::Settings,
+                                                    )
+                                                    .icon_size(IconSize::Small)
+                                                    .on_click(cx.listener(move |this, _, cx| {
+                                                        // TODO: Implement edit server logic
+                                                        eprintln!(
+                                                            "Editing server: {:?}",
+                                                            this.server_list[index]
+                                                        );
+                                                    }))
+                                                    .tooltip(|cx| Tooltip::text("Edit Server", cx)),
+                                                )
+                                                .child(
+                                                    IconButton::new(
+                                                        "remove-jupyter-server",
+                                                        IconName::Trash,
+                                                    )
+                                                    .icon_size(IconSize::Small)
+                                                    .on_click(cx.listener(move |this, _, cx| {
+                                                        this.remove_server(index, cx);
+                                                    }))
+                                                    .tooltip(|cx| {
+                                                        Tooltip::text("Delete Server", cx)
+                                                    }),
+                                                )
+                                                .into_any_element(),
+                                        ))
+                                    }),
+                                ),
+                            ))
+                            .child(
+                                Section::new().child(
+                                    v_flex()
+                                        .gap_2()
+                                        .child(self.new_server_url.clone())
+                                        .child(self.new_server_nickname.clone())
+                                        .child(Button::new("add-server", "Add Server").on_click(
+                                            cx.listener(|this, _, cx| this.add_server(cx)),
+                                        )),
+                                ),
+                            ),
+                    ),
             )
     }
 }

@@ -9221,6 +9221,7 @@ dependencies = [
  "languages",
  "log",
  "markdown_preview",
+ "menu",
  "multi_buffer",
  "project",
  "runtimelib",
