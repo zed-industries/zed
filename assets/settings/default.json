@@ -371,6 +371,10 @@
       "show": null
     }
   },
+  "project_search": {
+    // Whether to show the project search button in the status bar
+    "button": false
+  },
   "outline_panel": {
     // Whether to show the outline panel button in the status bar
     "button": true,
