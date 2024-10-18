@@ -592,7 +592,6 @@ impl SettingsStore {
         cx: &mut AppContext,
     ) -> std::result::Result<(), InvalidSettingsError> {
         let mut zed_settings_changed = false;
-        let mut editorconfig_settings_changed = false;
         match (
             kind,
             settings_content
@@ -611,10 +610,8 @@ impl SettingsStore {
                     .is_some()
             }
             (LocalSettingsKind::Editorconfig, None) => {
-                editorconfig_settings_changed = self
-                    .raw_editorconfig_settings
-                    .remove(&(root_id, directory_path.clone()))
-                    .is_some()
+                self.raw_editorconfig_settings
+                    .remove(&(root_id, directory_path.clone()));
             }
             (LocalSettingsKind::Settings, Some(settings_contents)) => {
                 let new_settings = parse_json_with_comments::<serde_json::Value>(settings_contents)
@@ -646,7 +643,6 @@ impl SettingsStore {
                     btree_map::Entry::Vacant(v) => match editorconfig_contents.parse() {
                         Ok(new_contents) => {
                             v.insert((editorconfig_contents.to_owned(), Some(new_contents)));
-                            editorconfig_settings_changed = true;
                         }
                         Err(e) => {
                             v.insert((editorconfig_contents.to_owned(), None));
@@ -664,7 +660,6 @@ impl SettingsStore {
                                         editorconfig_contents.to_owned(),
                                         Some(new_contents),
                                     ));
-                                    editorconfig_settings_changed = true;
                                 }
                                 Err(e) => {
                                     o.insert((editorconfig_contents.to_owned(), None));
@@ -682,9 +677,6 @@ impl SettingsStore {
 
         if zed_settings_changed {
             self.recompute_values(Some((root_id, &directory_path)), cx)?;
-        }
-        if editorconfig_settings_changed {
-            // TODO kb remove this all?
         }
 
         Ok(())
