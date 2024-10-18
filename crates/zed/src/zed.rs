@@ -1106,8 +1106,7 @@ fn open_settings_file(
                         // drag and drop from OS) still have their worktrees
                         // released on file close, causing LSP servers'
                         // restarts.
-                        let path = paths::config_dir();
-                        project.find_or_create_worktree(path, false, cx)
+                        project.find_or_create_worktree(paths::config_dir().as_path(), false, cx)
                     });
                     let settings_open_task =
                         create_and_open_local_file(abs_path, cx, default_content);

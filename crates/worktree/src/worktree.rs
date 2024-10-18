@@ -1467,7 +1467,6 @@ impl LocalWorktree {
         let entry = self.entry_for_id(entry_id)?.clone();
         let abs_path = self.absolutize(&entry.relative_path);
         let fs = self.fs.clone();
-        println!("--> delete_entry: {:?}", abs_path);
 
         let delete = cx.background_executor().spawn(async move {
             if entry.is_file() {
@@ -2437,8 +2436,8 @@ impl Snapshot {
         self.scan_id
     }
 
-    pub fn entry_for_path(&self, path: impl AsRef<Path>) -> Option<&Entry> {
-        let path = path.as_ref();
+    pub fn entry_for_path(&self, relative_path: impl AsRef<Path>) -> Option<&Entry> {
+        let path = relative_path.as_ref();
         self.traverse_from_path(true, true, true, path)
             .entry()
             .and_then(|entry| {
@@ -2530,14 +2529,10 @@ impl LocalSnapshot {
     fn insert_entry(&mut self, mut entry: Entry, fs: &dyn Fs) -> Entry {
         if entry.is_file() && entry.relative_path.file_name() == Some(&GITIGNORE) {
             let abs_path = self.abs_path.join(&entry.relative_path);
-            // TODO:
-            // as_raw_path_buf ?
             match smol::block_on(build_gitignore(abs_path.as_raw_path_buf(), fs)) {
                 Ok(ignore) => {
                     self.ignores_by_parent_abs_path.insert(
-                        // TODO:
-                        // as_trimmed_path_buf ?
-                        abs_path.as_trimmed_path_buf().parent().unwrap().into(),
+                        abs_path.as_raw_path_buf().parent().unwrap().into(),
                         (Arc::new(ignore), true),
                     );
                 }
@@ -2580,9 +2575,9 @@ impl LocalSnapshot {
         entry
     }
 
-    fn ancestor_inodes_for_path(&self, path: &Path) -> TreeSet<u64> {
+    fn ancestor_inodes_for_path(&self, relative_path: &Path) -> TreeSet<u64> {
         let mut inodes = TreeSet::default();
-        for ancestor in path.ancestors().skip(1) {
+        for ancestor in relative_path.ancestors().skip(1) {
             if let Some(entry) = self.entry_for_path(ancestor) {
                 inodes.insert(entry.inode);
             }
@@ -2691,7 +2686,7 @@ impl LocalSnapshot {
         if git_state {
             for ignore_parent_abs_path in self.ignores_by_parent_abs_path.keys() {
                 let ignore_parent_path = ignore_parent_abs_path
-                    .strip_prefix(self.abs_path.as_trimmed_path_buf())
+                    .strip_prefix(self.abs_path.as_raw_path_buf())
                     .unwrap();
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
                 assert!(self
@@ -2855,7 +2850,7 @@ impl BackgroundScannerState {
                 .snapshot
                 .abs_path
                 .join(parent_path)
-                .as_trimmed_path_buf()
+                .as_raw_path_buf()
                 .as_path()
                 .into();
             self.snapshot
@@ -2927,7 +2922,7 @@ impl BackgroundScannerState {
                 if let Some((_, needs_update)) = self
                     .snapshot
                     .ignores_by_parent_abs_path
-                    .get_mut(abs_parent_path.as_trimmed_path_buf().as_path())
+                    .get_mut(abs_parent_path.as_raw_path_buf().as_path())
                 {
                     *needs_update = true;
                 }
@@ -3194,12 +3189,13 @@ impl language::File for File {
 impl language::LocalFile for File {
     // TODO:
     // as_trimmed_path_buf ?
+    /// returns non-trimmed path
     fn abs_path(&self, cx: &AppContext) -> PathBuf {
         let worktree_path = &self.worktree.read(cx).as_local().unwrap().abs_path;
         if self.path.as_ref() == Path::new("") {
-            worktree_path.as_trimmed_path_buf().clone()
+            worktree_path.as_raw_path_buf().clone()
         } else {
-            worktree_path.join(&self.path).as_trimmed_path_buf().clone()
+            worktree_path.join(&self.path).as_raw_path_buf().clone()
         }
     }
 
@@ -3635,18 +3631,15 @@ impl BackgroundScanner {
             let mut state = self.state.lock();
             state.snapshot.scan_id += 1;
             if let Some(mut root_entry) = state.snapshot.root_entry().cloned() {
-                // TODO:
-                // as_trimmed_path_buf ?
                 let ignore_stack = state
                     .snapshot
-                    .ignore_stack_for_abs_path(root_abs_path.as_trimmed_path_buf(), true);
+                    .ignore_stack_for_abs_path(root_abs_path.as_raw_path_buf(), true);
                 if ignore_stack.is_abs_path_ignored(root_abs_path.as_trimmed_path_buf(), true) {
                     root_entry.is_ignored = true;
                     state.insert_entry(root_entry.clone(), self.fs.as_ref());
                 }
                 state.enqueue_scan_dir(
-                    // TODO:
-                    root_abs_path.as_trimmed_path_buf().as_path().into(),
+                    root_abs_path.as_raw_path_buf().as_path().into(),
                     &root_entry,
                     &scan_job_tx,
                 );
@@ -3769,7 +3762,6 @@ impl BackgroundScanner {
         self.send_status_update(scanning, request.done)
     }
 
-    // TODO:
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
         let root_path = self.state.lock().snapshot.abs_path.clone();
         // TODO:
@@ -3875,7 +3867,7 @@ impl BackgroundScanner {
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         log::debug!("received fs events {:?}", relative_paths);
         self.reload_entries_for_paths(
-            root_path.as_trimmed_path_buf().as_path().into(),
+            root_path.as_raw_path_buf().as_path().into(),
             root_canonical_path,
             &relative_paths,
             abs_paths,
@@ -3914,9 +3906,8 @@ impl BackgroundScanner {
                     if let Some(entry) = state.snapshot.entry_for_path(ancestor) {
                         if entry.kind == EntryKind::UnloadedDir {
                             let abs_path = root_path.join(ancestor);
-                            // TODO:
                             state.enqueue_scan_dir(
-                                abs_path.as_trimmed_path_buf().as_path().into(),
+                                abs_path.as_raw_path_buf().as_path().into(),
                                 entry,
                                 &scan_job_tx,
                             );
@@ -4409,6 +4400,9 @@ impl BackgroundScanner {
     }
 
     async fn update_ignore_statuses(&self, scan_job_tx: Sender<ScanJob>) {
+        // NOTE:
+        // We should use SanitizedPathBuf.as_trimmed_path_buf() when we are handling
+        // git ignore events.
         use futures::FutureExt as _;
 
         let mut ignores_to_update = Vec::new();
@@ -4492,6 +4486,9 @@ impl BackgroundScanner {
     }
 
     async fn update_ignore_status(&self, job: UpdateIgnoreStatusJob, snapshot: &LocalSnapshot) {
+        // NOTE:
+        // Since UpdateIgnoreStatusJob.abs_path is non-trimmed path, so we call
+        // SanitizedPathBuf.as_raw_path_buf() everywhere.
         log::trace!("update ignore status {:?}", job.abs_path);
 
         let mut ignore_stack = job.ignore_stack;
@@ -4503,14 +4500,14 @@ impl BackgroundScanner {
         let mut entries_by_path_edits = Vec::new();
         let path = job
             .abs_path
-            .strip_prefix(snapshot.abs_path.as_trimmed_path_buf())
+            .strip_prefix(snapshot.abs_path.as_raw_path_buf())
             .unwrap();
         let repo = snapshot.repo_for_path(path);
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;
             let abs_path: Arc<Path> = snapshot
                 .abs_path()
-                .as_trimmed_path_buf()
+                .as_raw_path_buf()
                 .join(&entry.relative_path)
                 .into();
             entry.is_ignored = ignore_stack.is_abs_path_ignored(&abs_path, entry.is_dir());
@@ -4975,6 +4972,7 @@ impl RepoPaths {
 }
 
 struct ScanJob {
+    /// To developers, this absolute path should be non-trimmed absolute path.
     abs_path: Arc<Path>,
     path: Arc<Path>,
     ignore_stack: Arc<IgnoreStack>,
@@ -4991,6 +4989,7 @@ struct ScanJobContainingRepository {
 }
 
 struct UpdateIgnoreStatusJob {
+    /// To developers, this absolute path should be non-trimmed absolute path.
     abs_path: Arc<Path>,
     ignore_stack: Arc<IgnoreStack>,
     ignore_queue: Sender<UpdateIgnoreStatusJob>,
