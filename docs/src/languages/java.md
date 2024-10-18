@@ -25,9 +25,9 @@ Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
 
 ### (Optional) Install JDTLS
 
-If you are using Java with Eclipse JDTLS, you can skip this section as it will automatically download a binary for you.
+Both extensions will automatically download a binary for you.
 
-If you are using Zed Java you need to install your own copy of Eclipse JDT Language Server (`eclipse.jdt.ls`).
+If you would prefer, you can install JDTLS yourself and both extensions will use the version you install instead.
 
 - MacOS: `brew install jdtls`
 - Arch: [`jdtls` from AUR](https://aur.archlinux.org/packages/jdtls)
@@ -36,6 +36,21 @@ Or manually download install:
 
 - [JDTLS Milestone Builds](http://download.eclipse.org/jdtls/milestones/) (updated every two weeks)
 - [JDTLS Snapshot Builds](https://download.eclipse.org/jdtls/snapshots/) (frequent updates)
+
+If you are using Zed Java you can also specify a specific version of JDTLS you would like the extension to download, per-project or globally.
+For example:
+
+```json
+{
+  "lsp": {
+    "jdtls": {
+      "settings": {
+        "version": "1.40.0"
+      }
+    }
+  }
+}
+```
 
 ## Extension Install
 
@@ -88,15 +103,16 @@ If you have issues with either of these plugins, please open issues on their res
 
 ## Example Configs
 
-### Zed Java Classpath
+### Zed Java Settings
 
-You can optionally configure the class path that JDTLS uses with:
+You can optionally configure the version of JDTLS to download (see <#optional-install-jdtls>) or the class path that JDTLS uses with:
 
 ```json
 {
   "lsp": {
     "jdtls": {
       "settings": {
+        "version": "1.40.0", // This is the default value
         "classpath": "/path/to/classes.jar:/path/to/more/classes/"
       }
     }
