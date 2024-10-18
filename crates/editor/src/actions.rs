@@ -18,7 +18,7 @@ pub struct SelectPrevious {
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
-    pub(super) stop_at_soft_wraps: bool,
+    pub stop_at_soft_wraps: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
