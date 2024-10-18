@@ -864,7 +864,11 @@ impl Copilot {
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
         let position = position.to_point_utf16(buffer);
-        let settings = language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx);
+        let settings = language_settings(
+            buffer.language_at(position).map(|l| l.name()),
+            buffer.file(),
+            cx,
+        );
         let tab_size = settings.tab_size;
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer

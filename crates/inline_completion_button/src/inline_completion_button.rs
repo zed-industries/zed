@@ -248,8 +248,9 @@ impl InlineCompletionButton {
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
-            let language_enabled = language_settings::language_settings(Some(&language), None, cx)
-                .show_inline_completions;
+            let language_enabled =
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_inline_completions;
 
             menu = menu.entry(
                 format!(
