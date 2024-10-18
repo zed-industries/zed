@@ -359,8 +359,7 @@ impl PrettierStore {
                                     format!("prettier ({name})")
                                 } else {
                                     let dir_to_display = prettier_dir
-                                        .as_trimmed_path_buf()
-                                        .strip_prefix(worktree_path.as_trimmed_path_buf())
+                                        .strip_prefix(&worktree_path)
                                         .ok()
                                         .map(|p| p.to_path_buf())
                                         .unwrap_or(prettier_dir.as_trimmed_path_buf().clone());
@@ -484,7 +483,7 @@ impl PrettierStore {
                     Prettier::locate_prettier_installation(
                         fs.as_ref(),
                         &installed_prettiers,
-                        locate_from.as_ref(),
+                        locate_from.as_raw_path_buf(),
                     )
                     .await
                 })

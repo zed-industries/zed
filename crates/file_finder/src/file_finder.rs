@@ -79,19 +79,11 @@ impl FileFinder {
             .active_item(cx)
             .and_then(|item| item.project_path(cx))
             .map(|project_path| {
-                let abs_path =
-                    project
-                        .worktree_for_id(project_path.worktree_id, cx)
-                        .map(|worktree| {
-                            worktree
-                                .read(cx)
-                                .abs_path()
-                                .join(&project_path.path)
-                                .as_raw_path_buf()
-                                .clone()
-                        });
+                let abs_path = project
+                    .worktree_for_id(project_path.worktree_id, cx)
+                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path).into());
                 // TODO:
-                // abs_path should be trimmed path or not?
+                // After testing, use non-trimmed path seems working fine, we should use non-trimmed path here, right?
                 FoundPath::new(project_path, abs_path)
             });
 
@@ -102,12 +94,7 @@ impl FileFinder {
                 Some(abs_path) => history_file_exists(abs_path.as_raw_path_buf()),
                 None => true,
             })
-            .map(|(history_path, abs_path)| {
-                FoundPath::new(
-                    history_path,
-                    abs_path.map(|p| p.as_trimmed_path_buf().clone()),
-                )
-            })
+            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path.map(Into::into)))
             .collect::<Vec<_>>();
 
         let project = workspace.project().clone();
@@ -782,7 +769,7 @@ impl FileFinderDelegate {
                 return;
             };
 
-            let query_path = PathBuf::from(query.path_query());
+            let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
 
             let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
@@ -797,7 +784,7 @@ impl FileFinderDelegate {
                 let update_result = project
                     .update(&mut cx, |project, cx| {
                         if let Some((worktree, relative_path)) =
-                            project.find_worktree(&query_path, cx)
+                            project.find_worktree(query_path, cx)
                         {
                             path_matches.push(ProjectPanelOrdMatch(PathMatch {
                                 score: 1.0,

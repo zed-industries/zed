@@ -34,7 +34,6 @@ use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 use crate::{search::SearchQuery, ProjectPath};
 
 struct MatchingEntry {
-    // TODO:
     worktree_path: SanitizedPathBuf,
     path: ProjectPath,
     respond: oneshot::Sender<ProjectPath>,
@@ -338,7 +337,7 @@ impl WorktreeStore {
             .visible_worktrees(cx)
             // TODO:
             // to_string() or to_trimmed_string()?
-            .map(|worktree| worktree.read(cx).abs_path().to_trimmed_string())
+            .map(|worktree| worktree.read(cx).abs_path().to_string())
             .collect();
         paths.push(path.to_string_lossy().to_string());
         let request = client.request(proto::UpdateDevServerProject {
@@ -610,7 +609,7 @@ impl WorktreeStore {
                     visible: worktree.is_visible(),
                     // TODO:
                     // to_string() or to_trimmed_string()?
-                    abs_path: worktree.abs_path().to_trimmed_string(),
+                    abs_path: worktree.abs_path().to_string(),
                 }
             })
             .collect()
@@ -774,6 +773,7 @@ impl WorktreeStore {
                 if metadata.is_symlink || metadata.is_fifo {
                     continue;
                 }
+                let file: SanitizedPathBuf = file.into();
                 results.push((
                     file.strip_prefix(snapshot.abs_path())?.to_path_buf(),
                     !metadata.is_dir,

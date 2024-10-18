@@ -353,7 +353,7 @@ fn local_task_context_for_location(
             project_env: project_env.unwrap_or_default(),
             // TODO:
             // use trimmed path or non-trimmed ?
-            cwd: worktree_abs_path.map(|path| path.into()),
+            cwd: worktree_abs_path.map(Into::into),
             task_variables,
         })
     })
