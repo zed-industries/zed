@@ -587,8 +587,7 @@ impl Fs for RealFs {
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
         let root_path = path.to_path_buf();
 
-        // Check if root path is a symlink
-        let target_path = self.read_link(&path).await.ok();
+        let target_path = self.canonicalize(&path).await.ok();
 
         watcher::global({
             let target_path = target_path.clone();
@@ -606,18 +605,52 @@ impl Fs for RealFs {
                         .paths
                         .iter()
                         .filter_map(|path| {
+                            let Ok(canonical_path) = std::fs::canonicalize(&path) else {
+                                use notify::event::ModifyKind;
+                                let file_renamed = match event.kind {
+                                    EventKind::Modify(ModifyKind::Name(_)) => true,
+                                    _ => false,
+                                };
+                                if kind == Some(PathEventKind::Removed) || file_renamed {
+                                    // expected failure because file doesn't exist anymore
+                                    if let Some(parent) = path.parent() {
+                                        if let Ok(canonical_parent) = std::fs::canonicalize(&parent)
+                                        {
+                                            if path.clone().starts_with(canonical_parent.clone())
+                                                || path.starts_with(parent)
+                                            {
+                                                if target_path != Some(root_path.clone()) {
+                                                    // symlinks above workspace root
+                                                    if let Some(file_name) = path.file_name() {
+                                                        return Some(PathEvent {
+                                                            path: canonical_parent.join(file_name),
+                                                            kind,
+                                                        });
+                                                    }
+                                                }
+                                                return Some(PathEvent {
+                                                    path: path.clone(),
+                                                    kind,
+                                                });
+                                            }
+                                        }
+                                    }
+                                }
+                                return None;
+                            };
                             if let Some(target) = target_path.clone() {
-                                if path.starts_with(target) {
+                                if canonical_path.starts_with(&target) {
+                                    return Some(PathEvent {
+                                        path: canonical_path.clone(),
+                                        kind,
+                                    });
+                                } else if path.starts_with(&target) {
+                                    // this can happen when target is above the symlink and path is at/below it
                                     return Some(PathEvent {
                                         path: path.clone(),
                                         kind,
                                     });
                                 }
-                            } else if path.starts_with(&root_path) {
-                                return Some(PathEvent {
-                                    path: path.clone(),
-                                    kind,
-                                });
                             }
                             None
                         })
@@ -641,14 +674,6 @@ impl Fs for RealFs {
         let watcher = Arc::new(RealWatcher {});
 
         watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
-
-        // Check if path is a symlink and follow the target parent
-        if let Some(target) = target_path {
-            watcher.add(&target).ok();
-            if let Some(parent) = target.parent() {
-                watcher.add(parent).log_err();
-            }
-        }
 
         // watch the parent dir so we can tell when settings.json is created
         if let Some(parent) = path.parent() {
