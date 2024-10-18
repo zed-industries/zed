@@ -1433,10 +1433,10 @@ impl LspStore {
             });
             if let Some((language, adapter)) = language {
                 let worktree = self.worktree_for_id(worktree_id, cx).ok();
-                let file = worktree.as_ref().and_then(|tree| {
-                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
-                });
-                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
+                if !self
+                    .worktree_language_settings(worktree.as_ref(), &language.name(), cx)
+                    .enable_language_server
+                {
                     language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
                 } else if let Some(worktree) = worktree {
                     let server_name = &adapter.name;
@@ -5288,13 +5288,14 @@ impl LspStore {
         })
     }
 
-    fn language_settings<'a>(
+    fn worktree_language_settings<'a>(
         &'a self,
-        worktree: &'a Model<Worktree>,
+        worktree: Option<&'a Model<Worktree>>,
         language: &LanguageName,
         cx: &'a mut ModelContext<Self>,
     ) -> &'a LanguageSettings {
-        let root_file = worktree.update(cx, |tree, cx| tree.root_file(cx));
+        let root_file =
+            worktree.and_then(|worktree| worktree.update(cx, |tree, cx| tree.root_file(cx)));
         all_language_settings(root_file.map(|f| f as _).as_ref(), cx).language(Some(language))
     }
 
@@ -5304,7 +5305,7 @@ impl LspStore {
         language: LanguageName,
         cx: &mut ModelContext<Self>,
     ) {
-        let settings = self.language_settings(worktree, &language, cx);
+        let settings = self.worktree_language_settings(Some(worktree), &language, cx);
         if !settings.enable_language_server || self.mode.is_remote() {
             return;
         }
