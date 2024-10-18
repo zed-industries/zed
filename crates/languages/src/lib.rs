@@ -104,7 +104,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.grammar.clone(),
                 config.matcher.clone(),
                 move || {
-                    dbg!(&config.name);
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),

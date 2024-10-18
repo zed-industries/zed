@@ -718,7 +718,6 @@ impl LanguageRegistry {
                     .spawn(async move {
                         let language = async {
                             let loaded_language = (language_load)()?;
-                            dbg!(loaded_language.toolchain_provider.is_some());
                             if let Some(grammar) = loaded_language.config.grammar.clone() {
                                 let grammar = Some(this.get_or_load_grammar(grammar).await?);
 

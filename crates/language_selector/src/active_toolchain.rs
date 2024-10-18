@@ -40,17 +40,13 @@ impl ActiveToolchain {
     }
     fn spawn_tracker_task(cx: &mut ViewContext<Self>) -> Task<Option<()>> {
         cx.spawn(|this, mut cx| async move {
-            dbg!("Tracking");
             let (lister, active_file) = this
                 .update(&mut cx, |this, _| {
-                    dbg!(this.lister.is_some(), this.active_file.is_some());
                     this.lister.clone().zip(this.active_file.clone())
                 })
                 .ok()
                 .flatten()?;
-            dbg!("Tracking still");
             let toolchain = Self::active_toolchain(lister, active_file, cx.clone()).await?;
-            dbg!("Welp");
             let _ = this.update(&mut cx, |this, cx| {
                 dbg!(&toolchain.label);
                 this.active_toolchain = Some(toolchain);
@@ -65,10 +61,10 @@ impl ActiveToolchain {
 
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-            self.lister = buffer.read(cx).language().and_then(|language| {
-                dbg!(language.name());
-                language.toolchain_lister()
-            });
+            self.lister = buffer
+                .read(cx)
+                .language()
+                .and_then(|language| language.toolchain_lister());
             self.active_file = buffer.read(cx).file().cloned();
         }
 
