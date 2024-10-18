@@ -1321,7 +1321,10 @@ impl SshRemoteConnection {
             let mut stderr = master_process.stderr.take().unwrap();
             stderr.read_to_end(&mut output).await?;
 
-            let error_message = format!("failed to connect: {}", String::from_utf8_lossy(&output));
+            let error_message = format!(
+                "failed to connect: {}",
+                String::from_utf8_lossy(&output).trim()
+            );
             delegate.set_error(error_message.clone(), cx);
             Err(anyhow!(error_message))?;
         }
@@ -1382,14 +1385,14 @@ impl SshRemoteConnection {
         let server_mode = 0o755;
 
         let t0 = Instant::now();
-        delegate.set_status(Some("uploading remote development server"), cx);
+        delegate.set_status(Some("Uploading remote development server"), cx);
         log::info!("uploading remote development server ({}kb)", size / 1024);
         self.upload_file(&src_path, &dst_path_gz)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
 
-        delegate.set_status(Some("extracting remote development server"), cx);
+        delegate.set_status(Some("Extracting remote development server"), cx);
         run_cmd(
             self.socket
                 .ssh_command("gunzip")
@@ -1398,7 +1401,7 @@ impl SshRemoteConnection {
         )
         .await?;
 
-        delegate.set_status(Some("unzipping remote development server"), cx);
+        delegate.set_status(Some("Marking remote development server executable"), cx);
         run_cmd(
             self.socket
                 .ssh_command("chmod")
