@@ -13,8 +13,7 @@ use futures::{
         oneshot,
     },
     future::BoxFuture,
-    select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, SinkExt,
-    StreamExt as _,
+    select_biased, AsyncReadExt as _, Future, FutureExt as _, SinkExt, StreamExt as _,
 };
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SemanticVersion, Task,
@@ -1204,6 +1203,7 @@ impl SshRemoteConnection {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
+        use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
