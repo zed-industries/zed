@@ -12,7 +12,6 @@ message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
-    optional uint32 ack_id = 266;
 
     oneof payload {
         Hello hello = 4;
@@ -296,9 +295,7 @@ message Envelope {
         OpenServerSettings open_server_settings = 263;
 
         GetPermalinkToLine get_permalink_to_line = 264;
-        GetPermalinkToLineResponse get_permalink_to_line_response = 265;
-
-        FlushBufferedMessages flush_buffered_messages = 267;
+        GetPermalinkToLineResponse get_permalink_to_line_response = 265;  // current max
     }
 
     reserved 87 to 88;
@@ -2524,6 +2521,3 @@ message GetPermalinkToLine {
 message GetPermalinkToLineResponse {
     string permalink = 1;
 }
-
-message FlushBufferedMessages {}
-message FlushBufferedMessagesResponse {}
