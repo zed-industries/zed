@@ -3242,7 +3242,6 @@ impl ContextEditor {
                 let tasks = paths
                     .clone()
                     .into_iter()
-                    .map(Into::into)
                     .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
