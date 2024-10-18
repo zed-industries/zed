@@ -19,6 +19,7 @@ test-support = ["fs/test-support"]
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
 collections.workspace = true
 fs.workspace = true
 futures.workspace = true
