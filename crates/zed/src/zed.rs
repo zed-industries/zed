@@ -1912,7 +1912,7 @@ mod tests {
                 .selected_entry(cx)
                 .expect("project panel should have a selected entry");
             assert_eq!(
-                selected_worktree.abs_path().as_ref(),
+                selected_worktree.abs_path().as_raw_path_buf(),
                 expected_worktree_path,
                 "Unexpected project panel selected worktree path"
             );
@@ -1959,7 +1959,14 @@ mod tests {
             assert_project_panel_selection(workspace, Path::new("/dir2/b.txt"), Path::new(""), cx);
             let worktree_roots = workspace
                 .worktrees(cx)
-                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .map(|w| {
+                    w.read(cx)
+                        .as_local()
+                        .unwrap()
+                        .abs_path()
+                        .as_raw_path_buf()
+                        .as_path()
+                })
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
@@ -1999,7 +2006,14 @@ mod tests {
             assert_project_panel_selection(workspace, Path::new("/dir3"), Path::new("c.txt"), cx);
             let worktree_roots = workspace
                 .worktrees(cx)
-                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .map(|w| {
+                    w.read(cx)
+                        .as_local()
+                        .unwrap()
+                        .abs_path()
+                        .as_raw_path_buf()
+                        .as_path()
+                })
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
@@ -2034,7 +2048,14 @@ mod tests {
             assert_project_panel_selection(workspace, Path::new("/d.txt"), Path::new(""), cx);
             let worktree_roots = workspace
                 .worktrees(cx)
-                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .map(|w| {
+                    w.read(cx)
+                        .as_local()
+                        .unwrap()
+                        .abs_path()
+                        .as_raw_path_buf()
+                        .as_path()
+                })
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
@@ -2046,7 +2067,14 @@ mod tests {
 
             let visible_worktree_roots = workspace
                 .visible_worktrees(cx)
-                .map(|w| w.read(cx).as_local().unwrap().abs_path().as_ref())
+                .map(|w| {
+                    w.read(cx)
+                        .as_local()
+                        .unwrap()
+                        .abs_path()
+                        .as_raw_path_buf()
+                        .as_path()
+                })
                 .collect::<HashSet<_>>();
             assert_eq!(
                 visible_worktree_roots,

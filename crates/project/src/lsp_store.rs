@@ -2719,7 +2719,7 @@ impl LspStore {
                 worktree: WeakModel<Worktree>,
                 // TODO:
                 // should it be SanitizedPathBuf?
-                worktree_abs_path: SanitizedPathBuf,
+                worktree_abs_path: Arc<Path>,
                 lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
             }
 
@@ -2736,7 +2736,12 @@ impl LspStore {
                 if !worktree.is_visible() {
                     continue;
                 }
-                let worktree_abs_path = worktree.abs_path().clone();
+                let worktree_abs_path = worktree
+                    .abs_path()
+                    .clone()
+                    .as_raw_path_buf()
+                    .as_path()
+                    .into();
 
                 let (lsp_adapter, language, server) =
                     match self.as_local().unwrap().language_servers.get(server_id) {
@@ -2818,18 +2823,13 @@ impl LspStore {
                                     path = rel_path;
                                 } else {
                                     worktree = source_worktree.clone();
-                                    path = relativize_path(
-                                        result.worktree_abs_path.as_trimmed_path_buf(),
-                                        &abs_path,
-                                    );
+                                    path = relativize_path(&result.worktree_abs_path, &abs_path);
                                 }
 
                                 let worktree_id = worktree.read(cx).id();
                                 let project_path = ProjectPath {
                                     worktree_id,
-                                    // TODO:
-                                    // path is Arc<Path>, should it be SanitizedPathBuf?
-                                    path: path.as_path().into(),
+                                    path: path.into(),
                                 };
                                 let signature = this.symbol_signature(&project_path);
                                 Some(CoreSymbol {
@@ -3499,7 +3499,7 @@ impl LspStore {
             };
 
             let symbol_abs_path =
-                resolve_path(worktree_abs_path.as_trimmed_path_buf(), &symbol.path.path);
+                resolve_path(worktree_abs_path.as_raw_path_buf(), &symbol.path.path);
             let symbol_uri = if let Ok(uri) = lsp::Url::from_file_path(symbol_abs_path) {
                 uri
             } else {
@@ -6784,7 +6784,10 @@ impl LspStore {
                                     PathChange::AddedOrUpdated => lsp::FileChangeType::CHANGED,
                                 };
                                 Some(lsp::FileEvent {
-                                    uri: lsp::Url::from_file_path(abs_path.join(path)).unwrap(),
+                                    uri: lsp::Url::from_file_path(
+                                        abs_path.join(path).as_raw_path_buf(),
+                                    )
+                                    .unwrap(),
                                     typ,
                                 })
                             })
@@ -7743,7 +7746,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     }
 
     fn worktree_root_path(&self) -> &Path {
-        self.worktree.abs_path().as_ref()
+        self.worktree.abs_path().as_raw_path_buf()
     }
 
     async fn shell_env(&self) -> HashMap<String, String> {

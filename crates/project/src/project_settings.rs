@@ -404,8 +404,8 @@ impl SettingsObserver {
 
             let removed = change == &PathChange::Removed;
             let fs = fs.clone();
-            let abs_path = match worktree.read(cx).absolutize(path) {
-                Ok(abs_path) => abs_path.as_raw_path_buf().clone(),
+            let abs_path: PathBuf = match worktree.read(cx).absolutize(path) {
+                Ok(abs_path) => abs_path.into(),
                 Err(e) => {
                     log::warn!("Cannot absolutize {path:?} received as {change:?} FS change: {e}");
                     continue;

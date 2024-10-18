@@ -1598,7 +1598,7 @@ impl Workspace {
                     }
                 };
 
-                let project_path = abs_path.map(SanitizedPathBuf::from).and_then(|abs_path| {
+                let project_path = abs_path.and_then(|abs_path| {
                     this.update(&mut cx, |this, cx| {
                         this.project.update(cx, |project, cx| {
                             project.find_or_create_worktree(&abs_path, true, cx)

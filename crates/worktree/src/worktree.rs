@@ -285,6 +285,8 @@ pub struct LocalSnapshot {
     snapshot: Snapshot,
     /// All of the gitignore files in the worktree, indexed by their relative path.
     /// The boolean indicates whether the gitignore needs to be updated.
+    ///
+    /// For developers, the `Arc<Path>` here should be the trimmed path.
     ignores_by_parent_abs_path: HashMap<Arc<Path>, (Arc<Gitignore>, bool)>,
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
@@ -983,7 +985,16 @@ impl LocalWorktree {
     }
 
     pub fn contains_abs_path(&self, path: &Path) -> bool {
-        path.starts_with(&self.abs_path)
+        #[cfg(target_os = "windows")]
+        {
+            let path: SanitizedPathBuf = path.to_path_buf().into();
+            path.as_trimmed_path_buf()
+                .starts_with(self.abs_path.as_trimmed_path_buf())
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            path.starts_with(self.abs_path.as_raw_path_buf())
+        }
     }
 
     pub fn is_path_private(&self, path: &Path) -> bool {
@@ -1617,7 +1628,7 @@ impl LocalWorktree {
     ) -> Task<Result<Vec<ProjectEntryId>>> {
         let worktree_path = self.abs_path().clone();
         let fs = self.fs.clone();
-        let paths = paths
+        let paths: Vec<(Arc<Path>, SanitizedPathBuf)> = paths
             .into_iter()
             .filter_map(|source| {
                 let file_name = source.file_name()?;
@@ -1626,7 +1637,7 @@ impl LocalWorktree {
 
                 // Do not allow copying the same file to itself.
                 if source.as_ref() != target.as_path() {
-                    Some((source, target))
+                    Some((source, target.into()))
                 } else {
                     None
                 }
@@ -1645,7 +1656,7 @@ impl LocalWorktree {
                         copy_recursive(
                             fs.as_ref(),
                             &source,
-                            &target,
+                            target.as_raw_path_buf(),
                             fs::CopyOptions {
                                 overwrite: overwrite_existing_files,
                                 ..Default::default()
@@ -2679,8 +2690,9 @@ impl LocalSnapshot {
 
         if git_state {
             for ignore_parent_abs_path in self.ignores_by_parent_abs_path.keys() {
-                let ignore_parent_path =
-                    ignore_parent_abs_path.strip_prefix(&self.abs_path).unwrap();
+                let ignore_parent_path = ignore_parent_abs_path
+                    .strip_prefix(self.abs_path.as_trimmed_path_buf())
+                    .unwrap();
                 assert!(self.entry_for_path(ignore_parent_path).is_some());
                 assert!(self
                     .entry_for_path(ignore_parent_path.join(*GITIGNORE))
@@ -3133,7 +3145,7 @@ impl language::File for File {
                         .unwrap(),
                 );
             } else {
-                full_path.push(path)
+                full_path.push(path.as_trimmed_path_buf())
             }
         }
 
@@ -4408,7 +4420,9 @@ impl BackgroundScanner {
             snapshot
                 .ignores_by_parent_abs_path
                 .retain(|parent_abs_path, (_, needs_update)| {
-                    if let Ok(parent_path) = parent_abs_path.strip_prefix(&abs_path) {
+                    if let Ok(parent_path) =
+                        parent_abs_path.strip_prefix(abs_path.as_trimmed_path_buf())
+                    {
                         if *needs_update {
                             *needs_update = false;
                             if snapshot.snapshot.entry_for_path(parent_path).is_some() {
@@ -4487,7 +4501,10 @@ impl BackgroundScanner {
 
         let mut entries_by_id_edits = Vec::new();
         let mut entries_by_path_edits = Vec::new();
-        let path = job.abs_path.strip_prefix(&snapshot.abs_path).unwrap();
+        let path = job
+            .abs_path
+            .strip_prefix(snapshot.abs_path.as_trimmed_path_buf())
+            .unwrap();
         let repo = snapshot.repo_for_path(path);
         for mut entry in snapshot.child_entries(path).cloned() {
             let was_ignored = entry.is_ignored;

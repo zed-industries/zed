@@ -2381,7 +2381,7 @@ impl ProjectPanel {
                                     .log_err()?
                                     // TODO:
                                     // use trimmed or ?
-                                    .as_trimmed_path_buf()
+                                    .as_raw_path_buf()
                                     .clone();
                                 let path = if abs_path.is_dir() {
                                     path.as_ref()

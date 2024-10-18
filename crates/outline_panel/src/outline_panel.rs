@@ -1992,11 +1992,11 @@ impl OutlinePanel {
                 match worktree.snapshot().root_entry() {
                     Some(root_entry) => {
                         if root_entry.id == entry.id {
-                            file_name(worktree.abs_path().as_ref())
+                            file_name(worktree.abs_path().as_raw_path_buf())
                         } else {
                             let path = worktree.absolutize(entry.relative_path.as_ref()).ok();
                             let path = path
-                                .map(|p| p.as_trimmed_path_buf().as_path().into())
+                                .map(|p| p.as_raw_path_buf().as_path().into())
                                 .unwrap_or_else(|| entry.relative_path.clone());
                             file_name(&path)
                         }
@@ -2004,7 +2004,7 @@ impl OutlinePanel {
                     None => {
                         let path = worktree.absolutize(entry.relative_path.as_ref()).ok();
                         let path = path
-                            .map(|p| p.as_trimmed_path_buf().as_path().into())
+                            .map(|p| p.as_raw_path_buf().as_path().into())
                             .unwrap_or_else(|| entry.relative_path.clone());
                         file_name(&path)
                     }

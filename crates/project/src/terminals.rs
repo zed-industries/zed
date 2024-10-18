@@ -281,16 +281,16 @@ impl Project {
         cx: &AppContext,
     ) -> Option<PathBuf> {
         let venv_settings = settings.detect_venv.as_option()?;
-        let bin_dir_name = PathBuf::from(match std::env::consts::OS {
+        let bin_dir_name = match std::env::consts::OS {
             "windows" => "Scripts",
             _ => "bin",
-        });
+        };
         venv_settings
             .directories
             .iter()
             .map(|virtual_environment_name| abs_path.join(virtual_environment_name))
             .find(|venv_path| {
-                let bin_path = venv_path.join(&bin_dir_name);
+                let bin_path = venv_path.join(bin_dir_name);
                 self.find_worktree(&bin_path, cx)
                     .and_then(|(worktree, relative_path)| {
                         worktree.read(cx).entry_for_path(&relative_path)

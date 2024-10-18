@@ -391,7 +391,7 @@ impl TerminalPanel {
         terminal_panel
             .update(cx, |panel, cx| {
                 panel.add_terminal(
-                    TerminalKind::Shell(Some(action.working_directory.clone().into())),
+                    TerminalKind::Shell(Some(action.working_directory.clone())),
                     RevealStrategy::Always,
                     cx,
                 )

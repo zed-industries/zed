@@ -18,7 +18,7 @@ use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
+use util::{paths::SanitizedPathBuf, post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
@@ -452,10 +452,10 @@ impl ContextProvider for BasicContextProvider {
             symbol.text[range].to_string()
         });
 
-        let current_file = buffer
+        let current_file: Option<SanitizedPathBuf> = buffer
             .file()
             .and_then(|file| file.as_local())
-            .map(|file| file.abs_path(cx).to_string_lossy().to_string());
+            .map(|file| file.abs_path(cx).into());
         let Point { row, column } = location.range.start.to_point(&buffer_snapshot);
         let row = row + 1;
         let column = column + 1;
@@ -492,7 +492,10 @@ impl ContextProvider for BasicContextProvider {
                 worktree_path.to_string(),
             );
             if let Some(full_path) = current_file.as_ref() {
-                let relative_path = pathdiff::diff_paths(full_path, worktree_path);
+                let relative_path = pathdiff::diff_paths(
+                    full_path.as_trimmed_path_buf(),
+                    worktree_path.as_trimmed_path_buf(),
+                );
                 if let Some(relative_path) = relative_path {
                     task_variables.insert(
                         VariableName::RelativeFile,
@@ -502,8 +505,7 @@ impl ContextProvider for BasicContextProvider {
             }
         }
 
-        if let Some(path_as_string) = current_file {
-            let path = Path::new(&path_as_string);
+        if let Some(path) = current_file.map(Into::<PathBuf>::into) {
             if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                 task_variables.insert(VariableName::Filename, String::from(filename));
             }
@@ -516,7 +518,7 @@ impl ContextProvider for BasicContextProvider {
                 task_variables.insert(VariableName::Dirname, dirname.into());
             }
 
-            task_variables.insert(VariableName::File, path_as_string);
+            task_variables.insert(VariableName::File, path.to_string_lossy().to_string());
         }
 
         Ok(task_variables)

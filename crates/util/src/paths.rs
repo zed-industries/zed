@@ -145,11 +145,11 @@ impl From<SanitizedPathBuf> for PathBuf {
     }
 }
 
-impl AsRef<Path> for SanitizedPathBuf {
-    fn as_ref(&self) -> &Path {
-        &self.raw
-    }
-}
+// impl AsRef<Path> for SanitizedPathBuf {
+//     fn as_ref(&self) -> &Path {
+//         &self.raw
+//     }
+// }
 
 impl SanitizedPathBuf {
     pub fn new() -> Self {

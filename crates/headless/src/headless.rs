@@ -11,7 +11,7 @@ use postage::stream::Stream;
 use project::Project;
 use proto::{self, ErrorCode, TypedEnvelope};
 use settings::{Settings, SettingsStore};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
 use util::{ResultExt, TryFutureExt};
 
@@ -252,7 +252,7 @@ impl DevServer {
         })?;
 
         for path in &dev_server_project.paths {
-            let path = PathBuf::from(shellexpand::tilde(path).to_string());
+            let path = shellexpand::tilde(path).to_string();
             let (worktree, _) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_worktree(&path, true, cx)
@@ -320,7 +320,7 @@ impl DevServer {
                 }
 
                 for config in dev_server_project.paths.iter() {
-                    let path = PathBuf::from(shellexpand::tilde(config).to_string());
+                    let path = shellexpand::tilde(config).to_string();
                     tasks.push(project.find_or_create_worktree(&path, true, cx));
                 }
 

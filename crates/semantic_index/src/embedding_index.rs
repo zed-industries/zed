@@ -21,11 +21,11 @@ use std::{
     cmp::Ordering,
     future::Future,
     iter,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
 };
-use util::{paths::SanitizedPathBuf, ResultExt};
+use util::ResultExt;
 use worktree::Snapshot;
 
 pub struct EmbeddingIndex {
@@ -72,9 +72,9 @@ impl EmbeddingIndex {
         }
 
         let worktree = self.worktree.read(cx).snapshot();
-        let worktree_abs_path = worktree.abs_path().clone();
+        let worktree_abs_path = worktree.abs_path().clone().into();
         let scan = self.scan_entries(worktree, cx);
-        let chunk = self.chunk_files(&worktree_abs_path, scan.updated_entries, cx);
+        let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
@@ -94,9 +94,9 @@ impl EmbeddingIndex {
         }
 
         let worktree = self.worktree.read(cx).snapshot();
-        let worktree_abs_path = worktree.abs_path().clone();
+        let worktree_abs_path = worktree.abs_path().clone().into();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
-        let chunk = self.chunk_files(&worktree_abs_path, scan.updated_entries, cx);
+        let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
         let persist = self.persist_embeddings(scan.deleted_entry_ranges, embed.files, cx);
         async move {
@@ -232,14 +232,13 @@ impl EmbeddingIndex {
 
     fn chunk_files(
         &self,
-        worktree_abs_path: &SanitizedPathBuf,
+        worktree_abs_path: PathBuf,
         entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> ChunkFiles {
         let language_registry = self.language_registry.clone();
         let fs = self.fs.clone();
         let (chunked_files_tx, chunked_files_rx) = channel::bounded(2048);
-        let worktree_abs_path = worktree_abs_path.clone();
         let task = cx.spawn(|cx| async move {
             cx.background_executor()
                 .scoped(|cx| {
@@ -247,9 +246,7 @@ impl EmbeddingIndex {
                         cx.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.relative_path);
-                                if let Some(text) =
-                                    fs.load(entry_abs_path.as_raw_path_buf()).await.ok()
-                                {
+                                if let Some(text) = fs.load(&entry_abs_path).await.ok() {
                                     let language = language_registry
                                         .language_for_file_path(&entry.relative_path)
                                         .await

@@ -516,8 +516,6 @@ impl DirectoryLister {
     pub fn default_query(&self, cx: &mut AppContext) -> String {
         if let DirectoryLister::Project(project) = self {
             if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
-                // TODO:
-                // to_string() or to_trimmed_string() ?
                 return worktree.read(cx).abs_path().to_trimmed_string();
             }
         };
@@ -1849,8 +1847,7 @@ impl Project {
         abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let abs_path = abs_path.as_ref();
-        if let Some((worktree, relative_path)) = self.find_worktree(abs_path, cx) {
+        if let Some((worktree, relative_path)) = self.find_worktree(abs_path.as_ref(), cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
         } else {
             Task::ready(Err(anyhow!("no such path")))
@@ -3310,7 +3307,7 @@ impl Project {
 
     pub fn create_worktree(
         &mut self,
-        abs_path: &SanitizedPathBuf,
+        abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {

@@ -111,7 +111,7 @@ fn main() {
                 let content = cx
                     .update(|cx| {
                         let worktree = search_result.worktree.read(cx);
-                        let entry_abs_path = worktree.abs_path().join(&search_result.path.clone());
+                        let entry_abs_path = worktree.abs_path().join(&search_result.path);
                         let fs = project.read(cx).fs().clone();
                         cx.spawn(|_| async move {
                             fs.load(entry_abs_path.as_raw_path_buf()).await.unwrap()

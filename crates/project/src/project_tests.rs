@@ -2588,7 +2588,12 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
             .map(|worktree| {
                 let worktree = worktree.read(cx);
                 (
-                    worktree.as_local().unwrap().abs_path().as_ref(),
+                    worktree
+                        .as_local()
+                        .unwrap()
+                        .abs_path()
+                        .as_raw_path_buf()
+                        .as_path(),
                     worktree.is_visible(),
                 )
             })
