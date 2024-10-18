@@ -253,7 +253,6 @@ impl DevServer {
 
         for path in &dev_server_project.paths {
             let path = shellexpand::tilde(path).to_string();
-
             let (worktree, _) = project
                 .update(cx, |project, cx| {
                     project.find_or_create_worktree(&path, true, cx)
@@ -304,7 +303,8 @@ impl DevServer {
                 for worktree in project.visible_worktrees(cx) {
                     let mut delete = true;
                     for config in dev_server_project.paths.iter() {
-                        if worktree.read(cx).abs_path().to_string_lossy()
+                        // shellexpand::tilde(config) will return trimmed path, right?
+                        if worktree.read(cx).abs_path().to_trimmed_string()
                             == shellexpand::tilde(config)
                         {
                             delete = false;
@@ -320,11 +320,8 @@ impl DevServer {
                 }
 
                 for config in dev_server_project.paths.iter() {
-                    tasks.push(project.find_or_create_worktree(
-                        shellexpand::tilde(config).to_string(),
-                        true,
-                        cx,
-                    ));
+                    let path = shellexpand::tilde(config).to_string();
+                    tasks.push(project.find_or_create_worktree(&path, true, cx));
                 }
 
                 tasks

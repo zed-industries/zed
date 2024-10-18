@@ -81,7 +81,9 @@ impl FileFinder {
             .map(|project_path| {
                 let abs_path = project
                     .worktree_for_id(project_path.worktree_id, cx)
-                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path));
+                    .map(|worktree| worktree.read(cx).abs_path().join(&project_path.path).into());
+                // TODO:
+                // After testing, use non-trimmed path seems working fine, we should use non-trimmed path here, right?
                 FoundPath::new(project_path, abs_path)
             });
 
@@ -89,10 +91,10 @@ impl FileFinder {
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
             .filter(|(_, history_abs_path)| match history_abs_path {
-                Some(abs_path) => history_file_exists(abs_path),
+                Some(abs_path) => history_file_exists(abs_path.as_raw_path_buf()),
                 None => true,
             })
-            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path))
+            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path.map(Into::into)))
             .collect::<Vec<_>>();
 
         let project = workspace.project().clone();

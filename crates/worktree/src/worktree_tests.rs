@@ -46,7 +46,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(false, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
                 Path::new(""),
@@ -57,7 +57,7 @@ async fn test_traversal(cx: &mut TestAppContext) {
         );
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
                 Path::new(""),
@@ -111,7 +111,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(false, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
                 Path::new(""),
@@ -137,7 +137,7 @@ async fn test_circular_symlinks(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(false, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![
                 Path::new(""),
@@ -226,7 +226,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
                 (Path::new(""), false),
@@ -259,7 +259,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
                 (Path::new(""), false),
@@ -296,7 +296,7 @@ async fn test_symlinks_pointing_outside(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_external))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_external))
                 .collect::<Vec<_>>(),
             vec![
                 (Path::new(""), false),
@@ -359,7 +359,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![Path::new(""), Path::new(OLD_NAME)]
         );
@@ -381,7 +381,7 @@ async fn test_renaming_case_only(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| entry.path.as_ref())
+                .map(|entry| entry.relative_path.as_ref())
                 .collect::<Vec<_>>(),
             vec![Path::new(""), Path::new(NEW_NAME)]
         );
@@ -436,7 +436,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             vec![
                 (Path::new(""), false),
@@ -463,7 +463,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             vec![
                 (Path::new(""), false),
@@ -503,7 +503,7 @@ async fn test_open_gitignored_files(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             vec![
                 (Path::new(""), false),
@@ -606,7 +606,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|e| (e.path.as_ref(), e.is_ignored))
+                .map(|e| (e.relative_path.as_ref(), e.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 (Path::new(""), false),
@@ -638,7 +638,7 @@ async fn test_dirs_no_longer_ignored(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _| {
         assert_eq!(
             tree.entries(true, 0)
-                .map(|e| (e.path.as_ref(), e.is_ignored))
+                .map(|e| (e.relative_path.as_ref(), e.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 (Path::new(""), false),
@@ -698,7 +698,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     .await;
 
     let tree = Worktree::local(
-        "/root/tree".as_ref(),
+        "/root/tree",
         true,
         fs.clone(),
         Default::default(),
@@ -779,7 +779,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
     .await;
 
     let tree = Worktree::local(
-        "/root".as_ref(),
+        "/root",
         true,
         fs.clone(),
         Default::default(),
@@ -1165,15 +1165,9 @@ async fn test_create_directory_during_initial_scan(cx: &mut TestAppContext) {
     )
     .await;
 
-    let tree = Worktree::local(
-        "/root".as_ref(),
-        true,
-        fs,
-        Default::default(),
-        &mut cx.to_async(),
-    )
-    .await
-    .unwrap();
+    let tree = Worktree::local("/root", true, fs, Default::default(), &mut cx.to_async())
+        .await
+        .unwrap();
 
     let snapshot1 = tree.update(cx, |tree, cx| {
         let tree = tree.as_local_mut().unwrap();
@@ -1231,7 +1225,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     .await;
 
     let tree = Worktree::local(
-        "/root".as_ref(),
+        "/root",
         true,
         fs.clone(),
         Default::default(),
@@ -1298,7 +1292,7 @@ async fn test_create_dir_all_on_create_entry(cx: &mut TestAppContext) {
         .await;
 
     let tree_fake = Worktree::local(
-        "/root".as_ref(),
+        "/root",
         true,
         fs_fake,
         Default::default(),
@@ -1578,7 +1572,7 @@ async fn test_random_worktree_changes(cx: &mut TestAppContext, mut rng: StdRng) 
     snapshot.check_invariants(true);
     let expanded_paths = snapshot
         .expanded_entries()
-        .map(|e| e.path.clone())
+        .map(|e| e.relative_path.clone())
         .collect::<Vec<_>>();
 
     {
@@ -1647,7 +1641,7 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
         if let Event::UpdatedEntries(changes) = event {
             for (path, _, change_type) in changes.iter() {
                 let entry = tree.entry_for_path(path).cloned();
-                let ix = match entries.binary_search_by_key(&path, |e| &e.path) {
+                let ix = match entries.binary_search_by_key(&path, |e| &e.relative_path) {
                     Ok(ix) | Err(ix) => ix,
                 };
                 match change_type {
@@ -1656,12 +1650,12 @@ fn check_worktree_change_events(tree: &mut Worktree, cx: &mut ModelContext<Workt
                     PathChange::Updated => {
                         let entry = entry.unwrap();
                         let existing_entry = entries.get_mut(ix).unwrap();
-                        assert_eq!(existing_entry.path, entry.path);
+                        assert_eq!(existing_entry.relative_path, entry.relative_path);
                         *existing_entry = entry;
                     }
                     PathChange::AddedOrUpdated | PathChange::Loaded => {
                         let entry = entry.unwrap();
-                        if entries.get(ix).map(|e| &e.path) == Some(&entry.path) {
+                        if entries.get(ix).map(|e| &e.relative_path) == Some(&entry.relative_path) {
                             *entries.get_mut(ix).unwrap() = entry;
                         } else {
                             entries.insert(ix, entry);
@@ -1688,25 +1682,25 @@ fn randomly_mutate_worktree(
     let entry = snapshot.entries(false, 0).choose(rng).unwrap();
 
     match rng.gen_range(0_u32..100) {
-        0..=33 if entry.path.as_ref() != Path::new("") => {
-            log::info!("deleting entry {:?} ({})", entry.path, entry.id.0);
+        0..=33 if entry.relative_path.as_ref() != Path::new("") => {
+            log::info!("deleting entry {:?} ({})", entry.relative_path, entry.id.0);
             worktree.delete_entry(entry.id, false, cx).unwrap()
         }
-        ..=66 if entry.path.as_ref() != Path::new("") => {
+        ..=66 if entry.relative_path.as_ref() != Path::new("") => {
             let other_entry = snapshot.entries(false, 0).choose(rng).unwrap();
             let new_parent_path = if other_entry.is_dir() {
-                other_entry.path.clone()
+                other_entry.relative_path.clone()
             } else {
-                other_entry.path.parent().unwrap().into()
+                other_entry.relative_path.parent().unwrap().into()
             };
             let mut new_path = new_parent_path.join(random_filename(rng));
-            if new_path.starts_with(&entry.path) {
+            if new_path.starts_with(&entry.relative_path) {
                 new_path = random_filename(rng).into();
             }
 
             log::info!(
                 "renaming entry {:?} ({}) to {:?}",
-                entry.path,
+                entry.relative_path,
                 entry.id.0,
                 new_path
             );
@@ -1718,7 +1712,7 @@ fn randomly_mutate_worktree(
         }
         _ => {
             if entry.is_dir() {
-                let child_path = entry.path.join(random_filename(rng));
+                let child_path = entry.relative_path.join(random_filename(rng));
                 let is_dir = rng.gen_bool(0.3);
                 log::info!(
                     "creating {} at {:?}",
@@ -1731,9 +1725,17 @@ fn randomly_mutate_worktree(
                     Ok(())
                 })
             } else {
-                log::info!("overwriting file {:?} ({})", entry.path, entry.id.0);
-                let task =
-                    worktree.write_file(entry.path.clone(), "".into(), Default::default(), cx);
+                log::info!(
+                    "overwriting file {:?} ({})",
+                    entry.relative_path,
+                    entry.id.0
+                );
+                let task = worktree.write_file(
+                    entry.relative_path.clone(),
+                    "".into(),
+                    Default::default(),
+                    cx,
+                );
                 cx.background_executor().spawn(async move {
                     task.await?;
                     Ok(())
@@ -2046,7 +2048,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
             .entries_with_repositories(entries)
             .map(|(entry, repo)| {
                 (
-                    entry.path.as_ref(),
+                    entry.relative_path.as_ref(),
                     repo.and_then(|repo| {
                         repo.work_directory(tree)
                             .map(|work_directory| work_directory.0.to_path_buf())
@@ -2494,7 +2496,7 @@ fn check_propagated_statuses(
     assert_eq!(
         entries
             .iter()
-            .map(|e| (e.path.as_ref(), e.git_status))
+            .map(|e| (e.relative_path.as_ref(), e.git_status))
             .collect::<Vec<_>>(),
         expected_statuses
     );

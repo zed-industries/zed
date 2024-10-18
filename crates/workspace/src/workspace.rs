@@ -97,7 +97,7 @@ use ui::{
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{maybe, paths::SanitizedPathBuf, ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -1281,9 +1281,11 @@ impl Workspace {
         &self,
         limit: Option<usize>,
         cx: &AppContext,
-    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
-        let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
-        let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
+    ) -> Vec<(ProjectPath, Option<SanitizedPathBuf>)> {
+        let mut abs_paths_opened: HashMap<SanitizedPathBuf, HashSet<ProjectPath>> =
+            HashMap::default();
+        let mut history: HashMap<ProjectPath, (Option<SanitizedPathBuf>, usize)> =
+            HashMap::default();
         for pane in &self.panes {
             let pane = pane.read(cx);
             pane.nav_history()
@@ -1540,7 +1542,14 @@ impl Workspace {
                 .project
                 .update(cx, |project, cx| {
                     let worktree = project.visible_worktrees(cx).next()?;
-                    Some(worktree.read(cx).as_local()?.abs_path().to_path_buf())
+                    Some(
+                        worktree
+                            .read(cx)
+                            .as_local()?
+                            .abs_path()
+                            .as_trimmed_path_buf()
+                            .clone(),
+                    )
                 })
                 .unwrap_or_else(|| Path::new("").into());
 
@@ -1568,7 +1577,7 @@ impl Workspace {
                 let project_path = abs_path.and_then(|abs_path| {
                     this.update(&mut cx, |this, cx| {
                         this.project.update(cx, |project, cx| {
-                            project.find_or_create_worktree(abs_path, true, cx)
+                            project.find_or_create_worktree(&abs_path, true, cx)
                         })
                     })
                     .ok()
@@ -2015,15 +2024,13 @@ impl Workspace {
                         this.update(&mut cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
-                            let entry_id = if abs_path == worktree_abs_path.as_ref() {
+                            let abs_path: SanitizedPathBuf = abs_path.into();
+                            let entry_id = if abs_path == worktree_abs_path {
                                 worktree.root_entry()
                             } else {
-                                abs_path
-                                    .strip_prefix(worktree_abs_path.as_ref())
-                                    .ok()
-                                    .and_then(|relative_path| {
-                                        worktree.entry_for_path(relative_path)
-                                    })
+                                abs_path.strip_prefix(&worktree_abs_path).ok().and_then(
+                                    |relative_path| worktree.entry_for_path(relative_path),
+                                )
                             }
                             .map(|entry| entry.id);
                             if let Some(entry_id) = entry_id {
@@ -3967,6 +3974,7 @@ impl Workspace {
                 project
                     .visible_worktrees(cx)
                     .map(|worktree| worktree.read(cx).abs_path())
+                    .map(|p| p.as_raw_path_buf().as_path().into())
                     .collect::<Vec<_>>(),
             )
         } else {
@@ -4994,7 +5002,7 @@ impl WorkspaceHandle for View<Workspace> {
                 let worktree_id = worktree.read(cx).id();
                 worktree.read(cx).files(true, 0).map(move |f| ProjectPath {
                     worktree_id,
-                    path: f.path.clone(),
+                    path: f.relative_path.clone(),
                 })
             })
             .collect::<Vec<_>>()
@@ -5564,7 +5572,7 @@ pub fn open_ssh_project(
                 .await;
             match result {
                 Ok((_, project_path)) => {
-                    project_paths_to_open.push((path.clone(), Some(project_path)));
+                    project_paths_to_open.push((path, Some(project_path)));
                 }
                 Err(error) => {
                     project_path_errors.push(error);

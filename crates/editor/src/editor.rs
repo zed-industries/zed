@@ -6285,7 +6285,7 @@ impl Editor {
             let project_path = buffer.read(cx).project_path(cx)?;
             let project = self.project.as_ref()?.read(cx);
             let entry = project.entry_for_path(&project_path, cx)?;
-            let abs_path = project.absolute_path(&project_path, cx)?;
+            let abs_path: PathBuf = project.absolute_path(&project_path, cx)?.into();
             let parent = if entry.is_symlink {
                 abs_path.canonicalize().ok()?
             } else {
@@ -6295,6 +6295,9 @@ impl Editor {
             .to_path_buf();
             Some(parent)
         }) {
+            // TODO:
+            // how is the terminal opened here?
+            // we should use non-trimmed path here, right?
             cx.dispatch_action(OpenTerminal { working_directory }.boxed_clone());
         }
     }

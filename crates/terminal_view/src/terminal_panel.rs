@@ -1,4 +1,4 @@
-use std::{ops::ControlFlow, path::PathBuf, sync::Arc};
+use std::{ops::ControlFlow, sync::Arc};
 
 use crate::{default_working_directory, TerminalView};
 use collections::{HashMap, HashSet};
@@ -23,7 +23,7 @@ use ui::{
     h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu, Selectable,
     Tooltip,
 };
-use util::{ResultExt, TryFutureExt};
+use util::{paths::SanitizedPathBuf, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     item::SerializableItem,
@@ -129,7 +129,12 @@ impl TerminalPanel {
                         add_paths_to_terminal(pane, &[entry_path], cx);
                     }
                 } else if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                    add_paths_to_terminal(pane, paths.paths(), cx);
+                    let paths = paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.clone().into())
+                        .collect::<Vec<_>>();
+                    add_paths_to_terminal(pane, &paths, cx);
                 }
 
                 ControlFlow::Break(())
@@ -542,7 +547,7 @@ impl TerminalPanel {
             return;
         };
 
-        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+        let kind = TerminalKind::Shell(default_working_directory(workspace, cx).map(Into::into));
 
         terminal_panel
             .update(cx, |this, cx| {
@@ -735,13 +740,20 @@ async fn wait_for_terminals_tasks(
     let _: Vec<()> = join_all(pending_tasks).await;
 }
 
-fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], cx: &mut ViewContext<'_, Pane>) {
+fn add_paths_to_terminal(
+    pane: &mut Pane,
+    paths: &[SanitizedPathBuf],
+    cx: &mut ViewContext<'_, Pane>,
+) {
     if let Some(terminal_view) = pane
         .active_item()
         .and_then(|item| item.downcast::<TerminalView>())
     {
         cx.focus_view(&terminal_view);
-        let mut new_text = paths.iter().map(|path| format!(" {path:?}")).join("");
+        let mut new_text = paths
+            .iter()
+            .map(|path| format!(" {}", path.display()))
+            .join("");
         new_text.push(' ');
         terminal_view.update(cx, |terminal_view, cx| {
             terminal_view.terminal().update(cx, |terminal, _| {
@@ -838,7 +850,7 @@ impl Panel for TerminalPanel {
         }
         cx.defer(|this, cx| {
             let Ok(kind) = this.workspace.update(cx, |workspace, cx| {
-                TerminalKind::Shell(default_working_directory(workspace, cx))
+                TerminalKind::Shell(default_working_directory(workspace, cx).map(Into::into))
             }) else {
                 return;
             };

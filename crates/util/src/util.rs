@@ -390,7 +390,7 @@ where
         &log::Record::builder()
             .target(target.unwrap_or(""))
             .module_path(target)
-            .args(format_args!("{:?}", error))
+            .args(format_args!("{}, {}, {:?}", file, caller.line(), error))
             .file(Some(caller.file()))
             .line(Some(caller.line()))
             .level(level)
