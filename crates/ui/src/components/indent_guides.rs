@@ -1,12 +1,19 @@
-use std::{cmp::Ordering, ops::Range};
+use std::{cmp::Ordering, ops::Range, rc::Rc};
 
-use gpui::{fill, point, size, AnyElement, Bounds, Point, UniformListDecoration, View};
+use gpui::{fill, point, size, AnyElement, Bounds, Hsla, Point, UniformListDecoration, View};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+#[derive(Debug, Clone)]
+pub struct IndentGuideColors {
+    pub default: Hsla,
+    pub hovered: Hsla,
+    pub active: Hsla,
+}
+
 pub struct IndentGuides {
-    line_color: Color,
+    colors: IndentGuideColors,
     indent_size: Pixels,
     compute_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
     render_fn: Option<
@@ -17,28 +24,33 @@ pub struct IndentGuides {
             ) -> SmallVec<[RenderedIndentGuide; 16]>,
         >,
     >,
+    on_hovered_indent_guide_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
 }
 
 pub fn indent_guides<V: Render>(
     view: View<V>,
     indent_size: Pixels,
+    colors: IndentGuideColors,
     compute_fn: impl Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> SmallVec<[usize; 64]> + 'static,
-    cx: &WindowContext,
 ) -> IndentGuides {
     let compute_indent_guides = move |range, cx: &mut WindowContext| {
         view.update(cx, |this, cx| compute_fn(this, range, cx))
     };
     IndentGuides {
-        line_color: Color::Custom(cx.theme().colors().editor_indent_guide),
+        colors,
         indent_size,
         compute_fn: Box::new(compute_indent_guides),
         render_fn: None,
+        on_hovered_indent_guide_click: None,
     }
 }
 
 impl IndentGuides {
-    pub fn with_color(mut self, color: Color) -> Self {
-        self.line_color = color;
+    pub fn on_hovered_indent_guide_click(
+        mut self,
+        on_click: impl Fn(&IndentGuideLayout, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.on_hovered_indent_guide_click = Some(Rc::new(on_click));
         self
     }
 
@@ -68,7 +80,8 @@ pub struct RenderIndentGuideParams {
 
 pub struct RenderedIndentGuide {
     pub bounds: Bounds<Pixels>,
-    pub color: Color,
+    pub layout: IndentGuideLayout,
+    pub is_active: bool,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -79,11 +92,9 @@ pub struct IndentGuideLayout {
 }
 
 mod uniform_list {
-    use super::*;
+    use gpui::{DispatchPhase, Hitbox, MouseButton, MouseDownEvent};
 
-    struct IndentGuidesElement {
-        indent_guides: SmallVec<[RenderedIndentGuide; 16]>,
-    }
+    use super::*;
 
     impl UniformListDecoration for IndentGuides {
         fn compute(
@@ -121,7 +132,8 @@ mod uniform_list {
                             ),
                             size(px(1.), px(layout.length as f32) * -item_height),
                         ),
-                        color: self.line_color,
+                        layout,
+                        is_active: false,
                     })
                     .collect()
             };
@@ -129,14 +141,28 @@ mod uniform_list {
                 guide.bounds.origin += bounds.origin;
             }
 
-            let indent_guides = IndentGuidesElement { indent_guides };
+            let indent_guides = IndentGuidesElement {
+                indent_guides: Rc::new(indent_guides),
+                colors: self.colors.clone(),
+                on_hovered_indent_guide_click: self.on_hovered_indent_guide_click.clone(),
+            };
             indent_guides.into_any_element()
         }
     }
 
+    struct IndentGuidesElement {
+        colors: IndentGuideColors,
+        indent_guides: Rc<SmallVec<[RenderedIndentGuide; 16]>>,
+        on_hovered_indent_guide_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
+    }
+
+    struct IndentGuidesElementPrepaintState {
+        hitboxes: SmallVec<[Hitbox; 16]>,
+    }
+
     impl Element for IndentGuidesElement {
         type RequestLayoutState = ();
-        type PrepaintState = ();
+        type PrepaintState = IndentGuidesElementPrepaintState;
 
         fn id(&self) -> Option<ElementId> {
             None
@@ -155,9 +181,13 @@ mod uniform_list {
             _id: Option<&gpui::GlobalElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
-            _cx: &mut WindowContext,
+            cx: &mut WindowContext,
         ) -> Self::PrepaintState {
-            ()
+            let mut hitboxes = SmallVec::<[Hitbox; 16]>::new();
+            for guide in self.indent_guides.as_ref().iter() {
+                hitboxes.push(cx.insert_hitbox(guide.bounds, true));
+            }
+            Self::PrepaintState { hitboxes }
         }
 
         fn paint(
@@ -165,11 +195,48 @@ mod uniform_list {
             _id: Option<&gpui::GlobalElementId>,
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
-            _prepaint: &mut Self::PrepaintState,
+            prepaint: &mut Self::PrepaintState,
             cx: &mut WindowContext,
         ) {
-            for guide in &self.indent_guides {
-                cx.paint_quad(fill(guide.bounds, guide.color.color(cx)));
+            let callback = self.on_hovered_indent_guide_click.clone();
+            if let Some(callback) = callback {
+                cx.on_mouse_event({
+                    let hitboxes = prepaint.hitboxes.clone();
+                    let indent_guides = self.indent_guides.clone();
+                    move |event: &MouseDownEvent, phase, cx| {
+                        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                            let mut active_hitbox_ix = None;
+                            for (i, hitbox) in hitboxes.iter().enumerate() {
+                                if hitbox.is_hovered(cx) {
+                                    active_hitbox_ix = Some(i);
+                                    break;
+                                }
+                            }
+
+                            let Some(active_hitbox_ix) = active_hitbox_ix else {
+                                return;
+                            };
+
+                            let active_indent_guide = &indent_guides[active_hitbox_ix].layout;
+                            callback(active_indent_guide, cx);
+
+                            cx.stop_propagation();
+                            cx.prevent_default();
+                        }
+                    }
+                });
+            }
+
+            for (i, hitbox) in prepaint.hitboxes.iter().enumerate() {
+                let fill_color = if hitbox.is_hovered(cx) {
+                    self.colors.hovered
+                } else if self.indent_guides[i].is_active {
+                    self.colors.active
+                } else {
+                    self.colors.default
+                };
+
+                cx.paint_quad(fill(hitbox.bounds, fill_color));
             }
         }
     }

@@ -45,7 +45,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, Icon, IndentGuideLayout, KeyBinding, Label, ListItem, Tooltip,
+    prelude::*, v_flex, ContextMenu, Icon, IndentGuideColors, IndentGuideLayout, KeyBinding, Label,
+    ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -616,6 +617,32 @@ impl ProjectPanel {
         false
     }
 
+    fn is_auto_folded_dir(&self, entry: &Entry, worktree: &Worktree, cx: &AppContext) -> bool {
+        if !ProjectPanelSettings::get_global(cx).auto_fold_dirs {
+            return false;
+        }
+
+        if entry.is_dir() {
+            let snapshot = worktree.snapshot();
+
+            let Some(parent) = entry.path.parent() else {
+                return false;
+            };
+
+            let Some(parent_entry) = worktree.entry_for_path(parent) else {
+                return false;
+            };
+
+            let mut child_entries = snapshot.child_entries(&parent_entry.path);
+            if let Some(child) = child_entries.next() {
+                if child_entries.next().is_none() {
+                    return child.kind.is_dir();
+                }
+            }
+        }
+        false
+    }
+
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
@@ -652,41 +679,51 @@ impl ProjectPanel {
     }
 
     fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
-        if let Some((worktree, mut entry)) = self.selected_entry(cx) {
-            if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
-                if folded_ancestors.current_ancestor_depth + 1
-                    < folded_ancestors.max_ancestor_depth()
-                {
-                    folded_ancestors.current_ancestor_depth += 1;
-                    cx.notify();
-                    return;
-                }
-            }
-            let worktree_id = worktree.id();
-            let expanded_dir_ids =
-                if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
-                    expanded_dir_ids
-                } else {
-                    return;
-                };
+        let Some((worktree, entry)) = self.selected_entry_handle(cx) else {
+            return;
+        };
+        self.collapse_entry(entry.clone(), worktree, cx)
+    }
 
-            loop {
-                let entry_id = entry.id;
-                match expanded_dir_ids.binary_search(&entry_id) {
-                    Ok(ix) => {
-                        expanded_dir_ids.remove(ix);
-                        self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-                        cx.notify();
+    fn collapse_entry(
+        &mut self,
+        entry: Entry,
+        worktree: Model<Worktree>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let worktree = worktree.read(cx);
+        if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
+            if folded_ancestors.current_ancestor_depth + 1 < folded_ancestors.max_ancestor_depth() {
+                folded_ancestors.current_ancestor_depth += 1;
+                cx.notify();
+                return;
+            }
+        }
+        let worktree_id = worktree.id();
+        let expanded_dir_ids =
+            if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
+                expanded_dir_ids
+            } else {
+                return;
+            };
+
+        let mut entry = &entry;
+        loop {
+            let entry_id = entry.id;
+            match expanded_dir_ids.binary_search(&entry_id) {
+                Ok(ix) => {
+                    expanded_dir_ids.remove(ix);
+                    self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                    cx.notify();
+                    break;
+                }
+                Err(_) => {
+                    if let Some(parent_entry) =
+                        entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                    {
+                        entry = parent_entry;
+                    } else {
                         break;
-                    }
-                    Err(_) => {
-                        if let Some(parent_entry) =
-                            entry.path.parent().and_then(|p| worktree.entry_for_path(p))
-                        {
-                            entry = parent_entry;
-                        } else {
-                            break;
-                        }
                     }
                 }
             }
@@ -1701,6 +1738,7 @@ impl ProjectPanel {
             .copied()
             .unwrap_or(id)
     }
+
     pub fn selected_entry<'a>(
         &self,
         cx: &'a AppContext,
@@ -2141,6 +2179,19 @@ impl ProjectPanel {
                 .enumerate()
                 .find(|(_, entry)| entry.id == entry_id)
                 .map(|(ix, _)| (worktree_ix, ix, total_ix + ix));
+        }
+        None
+    }
+
+    fn entry_at_index(&self, index: usize) -> Option<(WorktreeId, &Entry)> {
+        let mut offset = 0;
+        for (worktree_id, visible_worktree_entries, _) in &self.visible_entries {
+            if visible_worktree_entries.len() > offset + index {
+                return visible_worktree_entries
+                    .get(index)
+                    .map(|entry| (*worktree_id, entry));
+            }
+            offset += visible_worktree_entries.len();
         }
         None
     }
@@ -2888,6 +2939,9 @@ impl ProjectPanel {
     ) -> Option<usize> {
         let (worktree, entry) = self.selected_entry(cx)?;
 
+        // Find the parent entry of the indent guide, this will either be the
+        // expanded folder we have selected, or the parent of the currently
+        // selected file/collapsed directory
         let mut entry = entry;
         loop {
             let is_expanded_dir = entry.is_dir()
@@ -2896,9 +2950,7 @@ impl ProjectPanel {
                     .get(&worktree.id())
                     .map(|ids| ids.binary_search(&entry.id).is_ok())
                     .unwrap_or(false);
-            let has_files = worktree.files_in_folder(&entry.path).next().is_some();
-
-            if is_expanded_dir && has_files {
+            if is_expanded_dir {
                 break;
             }
             entry = worktree.entry_for_path(&entry.path.parent()?)?;
@@ -3063,12 +3115,15 @@ impl Render for ProjectPanel {
                         }
                     })
                     .when(indent_guides, |this| {
-                        let line_color = cx.theme().colors().panel_indent_guide;
-                        let active_line_color = cx.theme().colors().panel_indent_guide_active;
                         this.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
                                 px(indent_size),
+                                IndentGuideColors {
+                                    default: cx.theme().colors().panel_indent_guide,
+                                    hovered: cx.theme().colors().panel_indent_guide_hover,
+                                    active: cx.theme().colors().panel_indent_guide_active,
+                                },
                                 |this, range, cx| {
                                     use smallvec::SmallVec;
                                     let mut items =
@@ -3079,8 +3134,29 @@ impl Render for ProjectPanel {
                                     });
                                     items
                                 },
-                                cx,
                             )
+                            .on_hovered_indent_guide_click(cx.listener(
+                                |this, active_indent_guide: &IndentGuideLayout, cx| {
+                                    if cx.modifiers().secondary() {
+                                        let ix = active_indent_guide.offset.y;
+                                        let Some((target_entry, worktree)) = maybe!({
+                                            let (worktree_id, entry) = this.entry_at_index(ix)?;
+                                            let worktree = this
+                                                .project
+                                                .read(cx)
+                                                .worktree_for_id(worktree_id, cx)?;
+                                            let target_entry = worktree
+                                                .read(cx)
+                                                .entry_for_path(&entry.path.parent()?)?;
+                                            Some((target_entry, worktree))
+                                        }) else {
+                                            return;
+                                        };
+
+                                        this.collapse_entry(target_entry.clone(), worktree, cx);
+                                    }
+                                },
+                            ))
                             .with_render_fn(
                                 cx.view().clone(),
                                 move |this, params, cx| {
@@ -3117,13 +3193,8 @@ impl Render for ProjectPanel {
                                                             - px(offset.0 * 2.),
                                                     ),
                                                 ),
-                                                color: Color::Custom(
-                                                    if Some(idx) == active_indent_guide_index {
-                                                        active_line_color
-                                                    } else {
-                                                        line_color
-                                                    },
-                                                ),
+                                                layout,
+                                                is_active: Some(idx) == active_indent_guide_index,
                                             }
                                         })
                                         .collect()

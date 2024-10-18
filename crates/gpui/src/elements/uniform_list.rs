@@ -297,29 +297,9 @@ impl Element for UniformList {
 
                     let mut items = (self.render_items)(visible_range.clone(), cx);
 
-                    let bounds = Bounds::new(
-                        padded_bounds.origin + point(px(0.), scroll_offset.y + padding.top),
-                        padded_bounds.size,
-                    );
-                    for decoration in &self.decorations {
-                        let mut decoration = decoration.as_ref().compute(
-                            visible_range.clone(),
-                            bounds,
-                            item_height,
-                            cx,
-                        );
-                        let available_space = size(
-                            AvailableSpace::Definite(bounds.size.width),
-                            AvailableSpace::Definite(bounds.size.height),
-                        );
-                        decoration.layout_as_root(available_space, cx);
-                        decoration.prepaint_at(bounds.origin, cx);
-                        frame_state.decorations.push(decoration);
-                    }
-
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
-                        for (mut item, ix) in items.into_iter().zip(visible_range) {
+                        for (mut item, ix) in items.into_iter().zip(visible_range.clone()) {
                             let item_origin = padded_bounds.origin
                                 + point(
                                     scroll_offset.x + padding.left,
@@ -337,6 +317,26 @@ impl Element for UniformList {
                             item.layout_as_root(available_space, cx);
                             item.prepaint_at(item_origin, cx);
                             frame_state.items.push(item);
+                        }
+
+                        let bounds = Bounds::new(
+                            padded_bounds.origin + point(px(0.), scroll_offset.y + padding.top),
+                            padded_bounds.size,
+                        );
+                        for decoration in &self.decorations {
+                            let mut decoration = decoration.as_ref().compute(
+                                visible_range.clone(),
+                                bounds,
+                                item_height,
+                                cx,
+                            );
+                            let available_space = size(
+                                AvailableSpace::Definite(bounds.size.width),
+                                AvailableSpace::Definite(bounds.size.height),
+                            );
+                            decoration.layout_as_root(available_space, cx);
+                            decoration.prepaint_at(bounds.origin, cx);
+                            frame_state.decorations.push(decoration);
                         }
                     });
                 }

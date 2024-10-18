@@ -137,6 +137,7 @@ pub(crate) fn one_dark() -> Theme {
                 panel_background: bg,
                 panel_focused_border: blue,
                 panel_indent_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
+                panel_indent_guide_hover: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 panel_indent_guide_active: hsla(225. / 360., 13. / 100., 12. / 100., 1.),
                 pane_focused_border: blue,
                 pane_group_border: hsla(225. / 360., 13. / 100., 12. / 100., 1.),

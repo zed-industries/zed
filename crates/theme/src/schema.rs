@@ -323,6 +323,9 @@ pub struct ThemeColorsContent {
     #[serde(rename = "panel.indent_guide")]
     pub panel_indent_guide: Option<String>,
 
+    #[serde(rename = "panel.indent_guide_hover")]
+    pub panel_indent_guide_hover: Option<String>,
+
     #[serde(rename = "panel.indent_guide_active")]
     pub panel_indent_guide_active: Option<String>,
 
@@ -716,6 +719,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             panel_indent_guide: self
                 .panel_indent_guide
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            panel_indent_guide_hover: self
+                .panel_indent_guide_hover
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             panel_indent_guide_active: self

@@ -122,6 +122,7 @@ pub struct ThemeColors {
     pub panel_background: Hsla,
     pub panel_focused_border: Hsla,
     pub panel_indent_guide: Hsla,
+    pub panel_indent_guide_hover: Hsla,
     pub panel_indent_guide_active: Hsla,
     pub pane_focused_border: Hsla,
     pub pane_group_border: Hsla,
