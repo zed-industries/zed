@@ -983,12 +983,12 @@ impl SettingsStore {
         for_path: &Path,
     ) -> Option<EditorconfigProperties> {
         let mut properties = EditorconfigProperties::new();
-        properties.use_fallbacks();
 
         for (directory_with_config, _, parsed_editorconfig) in
             self.local_editorconfig_settings(for_worktree)
         {
             if !for_path.starts_with(&directory_with_config) {
+                properties.use_fallbacks();
                 return Some(properties);
             }
             let Some(parsed_editorconfig) = parsed_editorconfig else {
@@ -996,13 +996,13 @@ impl SettingsStore {
             };
             if parsed_editorconfig.is_root {
                 properties = EditorconfigProperties::new();
-                properties.use_fallbacks();
             }
             for section in parsed_editorconfig.sections {
                 section.apply_to(&mut properties, for_path).log_err()?;
             }
         }
 
+        properties.use_fallbacks();
         Some(properties)
     }
 }
