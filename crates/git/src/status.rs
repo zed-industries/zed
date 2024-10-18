@@ -2,7 +2,7 @@ use crate::repository::{GitFileStatus, RepoPath};
 use anyhow::{anyhow, Result};
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
 };
 
@@ -17,9 +17,7 @@ impl GitStatus {
         working_directory: &Path,
         path_prefixes: &[PathBuf],
     ) -> Result<Self> {
-        let mut child = Command::new(git_binary);
-
-        child
+        let child = util::command::new_std_command(git_binary)
             .current_dir(working_directory)
             .args([
                 "--no-optional-locks",
@@ -37,15 +35,7 @@ impl GitStatus {
             }))
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            child.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
-        }
-
-        let child = child
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| anyhow!("Failed to start git status process: {}", e))?;
 
