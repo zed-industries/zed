@@ -1626,16 +1626,19 @@ impl ChannelClient {
                             cx.clone(),
                         ) {
                             log::debug!("ssh message received. name:{type_name}");
-                            match future.await {
-                                Ok(_) => {
-                                    log::debug!("ssh message handled. name:{type_name}");
+                            cx.foreground_executor().spawn(async move {
+                                match future.await {
+                                    Ok(_) => {
+                                        log::debug!("ssh message handled. name:{type_name}");
+                                    }
+                                    Err(error) => {
+                                        log::error!(
+                                            "error handling message. type:{type_name}, error:{error}",
+                                        );
+                                    }
                                 }
-                                Err(error) => {
-                                    log::error!(
-                                        "error handling message. type:{type_name}, error:{error}",
-                                    );
-                                }
-                            }
+                            }).detach();
+
                         } else {
                             log::error!("unhandled ssh message name:{type_name}");
                         }
