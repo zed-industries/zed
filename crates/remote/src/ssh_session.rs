@@ -1591,14 +1591,16 @@ impl ChannelClient {
                             buffer.pop_front();
                         }
                     }
-                    if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload {
+                    if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) =
+                        &incoming.payload
+                    {
                         {
                             let buffer = this.buffer.lock();
                             for envelope in buffer.iter() {
                                 this.outgoing_tx.unbounded_send(envelope.clone()).ok();
                             }
                         }
-                        let response = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
+                        let response = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
                         this.send_dynamic(response).ok();
                         continue;
                     }
