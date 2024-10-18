@@ -531,7 +531,8 @@ impl SshRemoteClient {
             let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
             let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
-            let client = cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx))?;
+            let client =
+                cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
             let this = cx.new_model(|_| Self {
                 client: client.clone(),
                 unique_identifier: unique_identifier.clone(),
@@ -782,7 +783,7 @@ impl SshRemoteClient {
                     cx.emit(SshRemoteEvent::Disconnected);
                     Ok(())
                 } else {
-                    log::debug!("State has transition from Reconnecting into new state while attempting reconnect. Ignoring new state.");
+                    log::debug!("State has transition from Reconnecting into new state while attempting reconnect.");
                     Ok(())
                 }
             })
@@ -1189,7 +1190,7 @@ impl SshRemoteClient {
             let (forwarder, _, _) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx.to_async());
 
-            let client = ChannelClient::new(incoming_rx, outgoing_tx, cx);
+            let client = ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server");
             (forwarder, client)
         })
     }
@@ -1562,6 +1563,7 @@ impl ChannelClient {
         incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &AppContext,
+        name: &'static str,
     ) -> Arc<Self> {
         let this = Arc::new(Self {
             outgoing_tx,
@@ -1572,7 +1574,7 @@ impl ChannelClient {
             buffer: Mutex::new(VecDeque::new()),
         });
 
-        Self::start_handling_messages(this.clone(), incoming_rx, cx);
+        Self::start_handling_messages(this.clone(), incoming_rx, cx, name);
 
         this
     }
@@ -1581,6 +1583,7 @@ impl ChannelClient {
         this: Arc<Self>,
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         cx: &AppContext,
+        name: &'static str,
     ) {
         cx.spawn(|cx| {
             let this = Arc::downgrade(&this);
@@ -1600,14 +1603,20 @@ impl ChannelClient {
                     if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) =
                         &incoming.payload
                     {
+                        dbg!("wow");
                         {
                             let buffer = this.buffer.lock();
                             for envelope in buffer.iter() {
                                 this.outgoing_tx.unbounded_send(envelope.clone()).ok();
                             }
                         }
+                        dbg!("and then...");
                         let response = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
-                        this.send_dynamic(response).ok();
+                        let mut envelope = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
+                        envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+                        dbg!("responding...");
+                        this.outgoing_tx.unbounded_send(envelope).ok();
+                        dbg!("responded...");
                         continue;
                     }
 
@@ -1633,10 +1642,24 @@ impl ChannelClient {
                             this.clone().into(),
                             cx.clone(),
                         ) {
+<<<<<<< HEAD
                             log::debug!("ssh message received. name:{type_name}");
                             match future.await {
                                 Ok(_) => {
                                     log::debug!("ssh message handled. name:{type_name}");
+=======
+                            log::debug!("{name}:ssh message received. name:{type_name}");
+                            cx.foreground_executor().spawn(async move {
+                                match future.await {
+                                    Ok(_) => {
+                                        log::debug!("{name}:ssh message handled. name:{type_name}");
+                                    }
+                                    Err(error) => {
+                                        log::error!(
+                                            "{name}:error handling message. type:{type_name}, error:{error}",
+                                        );
+                                    }
+>>>>>>> 1ba60d1a8d (Undo refactoring that broke things)
                                 }
                                 Err(error) => {
                                     log::error!(
@@ -1645,7 +1668,7 @@ impl ChannelClient {
                                 }
                             }
                         } else {
-                            log::error!("unhandled ssh message name:{type_name}");
+                            log::error!("{name}:unhandled ssh message name:{type_name}");
                         }
                     }
                 }
