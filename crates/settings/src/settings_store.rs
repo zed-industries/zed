@@ -991,9 +991,7 @@ impl SettingsStore {
                 properties.use_fallbacks();
                 return Some(properties);
             }
-            let Some(parsed_editorconfig) = parsed_editorconfig else {
-                return None;
-            };
+            let parsed_editorconfig = parsed_editorconfig?;
             if parsed_editorconfig.is_root {
                 properties = EditorconfigProperties::new();
             }
