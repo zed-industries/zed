@@ -1742,7 +1742,7 @@ impl Pane {
         let abs_path = worktree
             .absolutize(&entry.relative_path)
             .ok()?
-            .as_trimmed_path_buf()
+            .as_raw_path_buf()
             .clone();
         if entry.is_symlink {
             abs_path.canonicalize().ok()
