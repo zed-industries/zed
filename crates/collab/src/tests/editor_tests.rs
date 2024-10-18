@@ -12,6 +12,7 @@ use editor::{
     test::editor_test_context::{AssertionContextManager, EditorTestContext},
     Editor,
 };
+use fs::Fs;
 use futures::StreamExt;
 use gpui::{TestAppContext, UpdateGlobal, VisualContext, VisualTestContext};
 use indoc::indoc;
@@ -30,7 +31,7 @@ use serde_json::json;
 use settings::SettingsStore;
 use std::{
     ops::Range,
-    path::Path,
+    path::{Path, PathBuf},
     sync::{
         atomic::{self, AtomicBool, AtomicUsize},
         Arc,
@@ -2178,9 +2179,10 @@ async fn test_collaborating_with_editorconfig(
                     "main.rs": "mod other;\nfn main() { let foo = other::foo(); }",
                     "other_mod": {
                         "other.rs": "pub fn foo() -> usize {\n    4\n}",
+                        ".editorconfig": "",
                     },
-                    ".editorconfig": "[*]\ntab_width = 2\n",
-                }
+                },
+                ".editorconfig": "[*]\ntab_width = 2\n",
             }),
         )
         .await;
@@ -2237,7 +2239,7 @@ async fn test_collaborating_with_editorconfig(
     let main_editor_b =
         cx_b.new_view(|cx| Editor::for_buffer(main_buffer_b, Some(project_b.clone()), cx));
     let other_editor_b =
-        cx_b.new_view(|cx| Editor::for_buffer(other_buffer_b, Some(project_b), cx));
+        cx_b.new_view(|cx| Editor::for_buffer(other_buffer_b, Some(project_b.clone()), cx));
     let mut main_editor_cx_b = EditorTestContext {
         cx: cx_b.clone(),
         window: cx_b.handle(),
@@ -2296,10 +2298,109 @@ fn main() { let foo = other::foo(); }"};
         false,
     );
 
-    // TODO kb why in tests editorconfig is not propagated to the client?
-    // TODO kb test cx_a editing the existing .editorconfig + cx_b tabbing
+    client_a
+        .fs()
+        .atomic_write(
+            PathBuf::from("/a/src/.editorconfig"),
+            "[*]\ntab_width = 3\n".to_owned(),
+        )
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let second_tabbed_main = indoc! {"
+   ˇmod other;
+fn main() { let foo = other::foo(); }"};
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        true,
+    );
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        false,
+    );
+
+    let second_tabbed_other = indoc! {"
+   ˇpub fn foo() -> usize {
+    4
+}"};
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        second_tabbed_other,
+        true,
+    );
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        second_tabbed_other,
+        false,
+    );
+
+    let editorconfig_buffer_b = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer((worktree_id, "src/other_mod/.editorconfig"), cx)
+        })
+        .await
+        .unwrap();
+    editorconfig_buffer_b.update(cx_b, |buffer, cx| {
+        buffer.set_text("[*.rs]\ntab_width = 6\n", cx);
+    });
+    project_b
+        .update(cx_b, |project, cx| {
+            project.save_buffer(editorconfig_buffer_b.clone(), cx)
+        })
+        .await
+        .unwrap();
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        true,
+    );
+    tab_undo_assert(
+        &mut main_editor_cx_a,
+        &mut main_editor_cx_b,
+        initial_main,
+        second_tabbed_main,
+        false,
+    );
+
+    let third_tabbed_other = indoc! {"
+      ˇpub fn foo() -> usize {
+    4
+}"};
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        third_tabbed_other,
+        true,
+    );
+
+    tab_undo_assert(
+        &mut other_editor_cx_a,
+        &mut other_editor_cx_b,
+        initial_other,
+        third_tabbed_other,
+        false,
+    );
 }
 
+#[track_caller]
 fn tab_undo_assert(
     cx_a: &mut EditorTestContext,
     cx_b: &mut EditorTestContext,

@@ -185,7 +185,7 @@ pub struct SettingsStore {
 #[derive(Clone)]
 pub struct Editorconfig {
     pub is_root: bool,
-    pub sections: Vec<Section>,
+    pub sections: SmallVec<[Section; 5]>,
 }
 
 impl FromStr for Editorconfig {
@@ -196,7 +196,7 @@ impl FromStr for Editorconfig {
             .context("creating editorconfig parser")?;
         let is_root = parser.is_root;
         let sections = parser
-            .collect::<Result<Vec<_>, _>>()
+            .collect::<Result<SmallVec<_>, _>>()
             .context("parsing editorconfig sections")?;
         Ok(Self { is_root, sections })
     }
@@ -678,7 +678,6 @@ impl SettingsStore {
         if zed_settings_changed {
             self.recompute_values(Some((root_id, &directory_path)), cx)?;
         }
-
         Ok(())
     }
 
