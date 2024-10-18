@@ -120,13 +120,11 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
             for adapter in adapters {
                 languages.register_lsp_adapter(config.name.clone(), adapter);
             }
-            dbg!("Registering toolchain provider with xddd", &config.name);
             languages.register_language(
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
                 move || {
-                    dbg!("Registering toolchain provider with some", &config.name);
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),

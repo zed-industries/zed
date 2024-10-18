@@ -775,7 +775,7 @@
   "tasks": {
     "variables": {}
   },
-  "toolchain": null,
+  "toolchain": { "name": "default", "path": "default" },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
