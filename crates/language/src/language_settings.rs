@@ -4,6 +4,10 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
+use ec4rs::{
+    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
+    Properties as EditorconfigProperties,
+};
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
@@ -17,8 +21,7 @@ use serde::{
 };
 use serde_json::Value;
 use settings::{
-    add_references_to_properties, EditorconfigProperties, Settings, SettingsLocation,
-    SettingsSources, SettingsStore,
+    add_references_to_properties, Settings, SettingsLocation, SettingsSources, SettingsStore,
 };
 use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
@@ -866,28 +869,57 @@ impl AllLanguageSettings {
     }
 }
 
-fn merge_with_editorconfig(settings: &mut LanguageSettings, content: &EditorconfigProperties) {
-    // TODO kb
-    // fn merge<T>(target: &mut T, value: Option<T>) {
-    //     if let Some(value) = value {
-    //         *target = value;
-    //     }
-    // }
-    // merge(&mut settings.tab_size, content.tab_size);
-    // merge(&mut settings.hard_tabs, content.hard_tabs);
-    // merge(
-    //     &mut settings.remove_trailing_whitespace_on_save,
-    //     content.remove_trailing_whitespace_on_save,
-    // );
-    // merge(
-    //     &mut settings.ensure_final_newline_on_save,
-    //     content.ensure_final_newline_on_save,
-    // );
-    // merge(
-    //     &mut settings.preferred_line_length,
-    //     content.preferred_line_length,
-    // );
-    // merge(&mut settings.soft_wrap, content.soft_wrap);
+fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
+    let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
+    let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
+        IndentSize::Value(u) => NonZeroU32::new(u as u32),
+        IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
+            TabWidth::Value(u) => NonZeroU32::new(u as u32),
+        }),
+    });
+    let hard_tabs = cfg
+        .get::<IndentStyle>()
+        .map(|v| v.eq(&IndentStyle::Tabs))
+        .ok();
+    let ensure_final_newline_on_save = cfg
+        .get::<FinalNewline>()
+        .map(|v| match v {
+            FinalNewline::Value(b) => b,
+        })
+        .ok();
+    let remove_trailing_whitespace_on_save = cfg
+        .get::<TrimTrailingWs>()
+        .map(|v| match v {
+            TrimTrailingWs::Value(b) => b,
+        })
+        .ok();
+    let preferred_line_length = max_line_length;
+    let soft_wrap = if max_line_length.is_some() {
+        Some(SoftWrap::PreferredLineLength)
+    } else {
+        None
+    };
+
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+    merge(&mut settings.tab_size, tab_size);
+    merge(&mut settings.hard_tabs, hard_tabs);
+    merge(
+        &mut settings.remove_trailing_whitespace_on_save,
+        remove_trailing_whitespace_on_save,
+    );
+    merge(
+        &mut settings.ensure_final_newline_on_save,
+        ensure_final_newline_on_save,
+    );
+    merge(&mut settings.preferred_line_length, preferred_line_length);
+    merge(&mut settings.soft_wrap, soft_wrap);
 }
 
 /// The kind of an inlay hint.

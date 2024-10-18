@@ -6216,6 +6216,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "ec4rs",
  "env_logger",
  "futures 0.3.30",
  "fuzzy",
