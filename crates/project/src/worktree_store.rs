@@ -147,15 +147,13 @@ impl WorktreeStore {
 
     pub fn find_worktree(
         &self,
-        abs_path: &SanitizedPathBuf,
+        abs_path: &Path,
         cx: &AppContext,
-    ) -> Option<(Model<Worktree>, SanitizedPathBuf)> {
+    ) -> Option<(Model<Worktree>, PathBuf)> {
         for tree in self.worktrees() {
-            if let Ok(relative_path) = abs_path
-                .as_trimmed_path_buf()
-                .strip_prefix(&tree.read(cx).abs_path())
-            {
-                return Some((tree.clone(), relative_path.to_path_buf().into()));
+            let abs_path = SanitizedPathBuf::from(abs_path.to_path_buf());
+            if let Ok(relative_path) = abs_path.strip_prefix(&tree.read(cx).abs_path()) {
+                return Some((tree.clone(), relative_path.to_path_buf()));
             }
         }
         None
@@ -163,16 +161,17 @@ impl WorktreeStore {
 
     pub fn find_or_create_worktree(
         &mut self,
-        abs_path: &SanitizedPathBuf,
+        abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(Model<Worktree>, SanitizedPathBuf)>> {
+    ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
+        let abs_path = abs_path.as_ref();
         if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
             Task::ready(Ok((tree, relative_path)))
         } else {
             let worktree = self.create_worktree(abs_path, visible, cx);
             cx.background_executor()
-                .spawn(async move { Ok((worktree.await?, SanitizedPathBuf::new())) })
+                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
         }
     }
 
@@ -194,11 +193,11 @@ impl WorktreeStore {
 
     pub fn create_worktree(
         &mut self,
-        abs_path: &SanitizedPathBuf,
+        abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {
-        let path = abs_path.clone();
+        let path = abs_path.as_ref().to_path_buf().into();
         if !self.loading_worktrees.contains_key(&path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
@@ -357,7 +356,7 @@ impl WorktreeStore {
             };
             let observer = cx.update(|cx| {
                 cx.observe(&project, move |project, cx| {
-                    let abs_path = abs_path.clone().into();
+                    let abs_path = abs_path.clone();
                     project.update(cx, |project, cx| {
                         if let Some((worktree, _)) = project.find_worktree(&abs_path, cx) {
                             if let Some(tx) = tx.borrow_mut().take() {

@@ -116,9 +116,21 @@ impl From<PathBuf> for SanitizedPathBuf {
         println!("path: {:?}, absolute: {}", path, path.is_absolute());
         #[cfg(target_os = "windows")]
         {
-            let path_string = path.to_string_lossy();
-            let trimmed = PathBuf::from(path_string.trim_start_matches("\\\\?\\"));
-            SanitizedPathBuf { raw: path, trimmed }
+            if path.is_absolute() {
+                let path_string = path.to_string_lossy();
+                if path_string.starts_with("\\\\?\\") {
+                    let trimmed = PathBuf::from(path_string.trim_start_matches("\\\\?\\"));
+                    SanitizedPathBuf { raw: path, trimmed }
+                } else {
+                    let raw = PathBuf::from("\\\\?\\".to_owned() + path_string.as_ref());
+                    SanitizedPathBuf { raw, trimmed: path }
+                }
+            } else {
+                SanitizedPathBuf {
+                    raw: path.clone(),
+                    trimmed: path,
+                }
+            }
         }
         #[cfg(not(target_os = "windows"))]
         {

@@ -2805,8 +2805,7 @@ impl LspStore {
                             .lsp_symbols
                             .into_iter()
                             .filter_map(|(symbol_name, symbol_kind, symbol_location)| {
-                                let abs_path: SanitizedPathBuf =
-                                    symbol_location.uri.to_file_path().ok()?.into();
+                                let abs_path = symbol_location.uri.to_file_path().ok()?;
                                 let source_worktree = result.worktree.upgrade()?;
                                 let source_worktree_id = source_worktree.read(cx).id();
 
@@ -2816,12 +2815,12 @@ impl LspStore {
                                     this.worktree_store.read(cx).find_worktree(&abs_path, cx)
                                 {
                                     worktree = tree;
-                                    path = rel_path.as_trimmed_path_buf().clone();
+                                    path = rel_path;
                                 } else {
                                     worktree = source_worktree.clone();
                                     path = relativize_path(
                                         result.worktree_abs_path.as_trimmed_path_buf(),
-                                        abs_path.as_trimmed_path_buf(),
+                                        &abs_path,
                                     );
                                 }
 
@@ -3374,7 +3373,7 @@ impl LspStore {
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
-            path: relative_path.as_trimmed_path_buf().as_path().into(),
+            path: relative_path.into(),
         };
 
         if let Some(buffer) = self.buffer_store.read(cx).get_by_path(&project_path, cx) {
@@ -3528,9 +3527,10 @@ impl LspStore {
             let current_scheme = abs_path.scheme().to_owned();
             let _ = abs_path.set_scheme("file");
 
-            let abs_path = abs_path
+            let abs_path: SanitizedPathBuf = abs_path
                 .to_file_path()
-                .map_err(|_| anyhow!("can't convert URI to path"))?;
+                .map_err(|_| anyhow!("can't convert URI to path"))?
+                .into();
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(&mut cx, move |lsp_store, cx| match lsp_store.as_local() {
@@ -3538,7 +3538,7 @@ impl LspStore {
                         cx.spawn(|this, mut cx| async move {
                             let t = this
                                 .update(&mut cx, |this, cx| {
-                                    this.process_path(&p, &current_scheme, cx)
+                                    this.process_path(p.as_raw_path_buf(), &current_scheme, cx)
                                 })
                                 .ok()?;
                             t.await
@@ -3549,9 +3549,9 @@ impl LspStore {
                 .await;
             let (worktree_root_target, known_relative_path) =
                 if let Some((zip_root, relative_path)) = yarn_worktree {
-                    (zip_root.to_path_buf().into(), Some(relative_path))
+                    (zip_root, Some(relative_path))
                 } else {
-                    (abs_path.clone().into(), None)
+                    (abs_path.as_raw_path_buf().clone().into(), None)
                 };
             let (worktree, relative_path) = if let Some(result) =
                 lsp_store.update(&mut cx, |lsp_store, cx| {
@@ -3559,10 +3559,8 @@ impl LspStore {
                         worktree_store.find_worktree(&worktree_root_target, cx)
                     })
                 })? {
-                // TODO:
-                // as_trimmed_path_buf() ?
-                let relative_path = known_relative_path
-                    .unwrap_or_else(|| Arc::<Path>::from(result.1.as_trimmed_path_buf().as_path()));
+                let relative_path =
+                    known_relative_path.unwrap_or_else(|| Arc::<Path>::from(result.1));
                 (result.0, relative_path)
             } else {
                 let worktree = lsp_store

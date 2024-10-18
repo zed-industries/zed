@@ -136,7 +136,7 @@ impl TerminalView {
         _: &NewCenterTerminal,
         cx: &mut ViewContext<Workspace>,
     ) {
-        let working_directory = default_working_directory(workspace, cx);
+        let working_directory = default_working_directory(workspace, cx).map(Into::into);
 
         let window = cx.window_handle();
         let terminal = workspace
@@ -1222,11 +1222,12 @@ impl SerializableItem for TerminalView {
                         .as_ref()
                         .is_some_and(|from_db| !from_db.as_os_str().is_empty())
                     {
-                        from_db.map(Into::into)
+                        from_db
                     } else {
                         workspace
                             .upgrade()
                             .and_then(|workspace| default_working_directory(workspace.read(cx), cx))
+                            .map(Into::into)
                     }
                 })
                 .ok()

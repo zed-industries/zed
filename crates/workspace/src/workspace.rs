@@ -1618,7 +1618,7 @@ impl Workspace {
                     let worktree_id = worktree.read_with(&cx, |worktree, _| worktree.id())?;
                     tx.send(Some(ProjectPath {
                         worktree_id,
-                        path: path.as_trimmed_path_buf().as_path().into(),
+                        path: path.into(),
                     }))
                     .ok();
                 } else {
@@ -2118,7 +2118,7 @@ impl Workspace {
                 worktree,
                 ProjectPath {
                     worktree_id,
-                    path: path.as_trimmed_path_buf().as_path().into(),
+                    path: path.into(),
                 },
             ))
         })

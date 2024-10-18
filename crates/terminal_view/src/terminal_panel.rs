@@ -550,7 +550,7 @@ impl TerminalPanel {
             return;
         };
 
-        let kind = TerminalKind::Shell(default_working_directory(workspace, cx));
+        let kind = TerminalKind::Shell(default_working_directory(workspace, cx).map(Into::into));
 
         terminal_panel
             .update(cx, |this, cx| {
@@ -853,7 +853,7 @@ impl Panel for TerminalPanel {
         }
         cx.defer(|this, cx| {
             let Ok(kind) = this.workspace.update(cx, |workspace, cx| {
-                TerminalKind::Shell(default_working_directory(workspace, cx))
+                TerminalKind::Shell(default_working_directory(workspace, cx).map(Into::into))
             }) else {
                 return;
             };
