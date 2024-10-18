@@ -1006,14 +1006,13 @@ impl SerializableItem for Editor {
                 mtime,
                 ..
             } => {
-                let trimmed_path = path.clone().into();
                 let project_item = project.update(cx, |project, cx| {
                     let (worktree, path) = project
-                        .find_worktree(&trimmed_path, cx)
+                        .find_worktree(&path, cx)
                         .with_context(|| format!("No worktree for path: {path:?}"))?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
-                        path: path.as_trimmed_path_buf().as_path().into(),
+                        path: path.into(),
                     };
 
                     Ok(project.open_path(project_path, cx))

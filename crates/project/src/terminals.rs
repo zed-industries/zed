@@ -30,7 +30,7 @@ pub struct Terminals {
 #[derive(Debug)]
 pub enum TerminalKind {
     /// Run a shell at the given path (or $HOME if None)
-    Shell(Option<SanitizedPathBuf>),
+    Shell(Option<PathBuf>),
     /// Run a task.
     Task(SpawnInTerminal),
 }
@@ -96,9 +96,9 @@ impl Project {
             TerminalKind::Shell(path) => path.clone(),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
-                    Some(cwd.clone().into())
+                    Some(cwd.clone())
                 } else {
-                    self.active_project_directory(cx)
+                    self.active_project_directory(cx).map(Into::into)
                 }
             }
         };
@@ -109,8 +109,7 @@ impl Project {
             if let Some((worktree, _)) = self.find_worktree(path, cx) {
                 settings_location = Some(SettingsLocation {
                     worktree_id: worktree.read(cx).id(),
-                    // TODO:
-                    path: path.as_trimmed_path_buf(),
+                    path,
                 });
             }
         }
@@ -156,7 +155,8 @@ impl Project {
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
 
-                        let (program, args) = wrap_for_ssh(ssh_command, None, path, env, None);
+                        let (program, args) =
+                            wrap_for_ssh(ssh_command, None, path.as_deref(), env, None);
                         env = HashMap::default();
                         (None, Shell::WithArguments { program, args })
                     }
@@ -191,7 +191,7 @@ impl Project {
                         let (program, args) = wrap_for_ssh(
                             ssh_command,
                             Some((&spawn_task.command, &spawn_task.args)),
-                            path,
+                            path.as_deref(),
                             env,
                             python_venv_directory,
                         );
@@ -216,7 +216,7 @@ impl Project {
         };
 
         let terminal = TerminalBuilder::new(
-            local_path.map(|p| p.as_trimmed_path_buf().clone()),
+            local_path,
             spawn_task,
             shell,
             env,
@@ -259,7 +259,7 @@ impl Project {
 
     pub fn python_venv_directory(
         &self,
-        abs_path: &SanitizedPathBuf,
+        abs_path: &Path,
         settings: &TerminalSettings,
         cx: &AppContext,
     ) -> Option<PathBuf> {
@@ -280,7 +280,6 @@ impl Project {
                     })
                     .is_some_and(|entry| entry.is_dir())
             })
-            .map(|p| p.as_trimmed_path_buf().clone())
     }
 
     fn python_activate_command(
@@ -338,7 +337,7 @@ impl Project {
 pub fn wrap_for_ssh(
     ssh_command: &SshCommand,
     command: Option<(&String, &Vec<String>)>,
-    path: Option<SanitizedPathBuf>,
+    path: Option<&Path>,
     env: HashMap<String, String>,
     venv_directory: Option<PathBuf>,
 ) -> (String, Vec<String>) {
@@ -363,11 +362,11 @@ pub fn wrap_for_ssh(
     }
 
     let commands = if let Some(path) = path {
-        let path_string = path.to_trimmed_string();
+        let path_string = path.to_string_lossy().to_string();
         // shlex will wrap the command in single quotes (''), disabling ~ expansion,
         // replace ith with something that works
         let tilde_prefix = "~/";
-        if path.as_trimmed_path_buf().starts_with(tilde_prefix) {
+        if path.starts_with(tilde_prefix) {
             let trimmed_path = path_string
                 .trim_start_matches("/")
                 .trim_start_matches("~")

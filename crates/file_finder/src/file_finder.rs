@@ -782,7 +782,7 @@ impl FileFinderDelegate {
                 return;
             };
 
-            let query_path = PathBuf::from(query.path_query()).into();
+            let query_path = PathBuf::from(query.path_query());
             let mut path_matches = Vec::new();
 
             let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
@@ -803,7 +803,7 @@ impl FileFinderDelegate {
                                 score: 1.0,
                                 positions: Vec::new(),
                                 worktree_id: worktree.read(cx).id().to_usize(),
-                                path: Arc::from(relative_path.as_trimmed_path_buf().as_path()),
+                                path: Arc::from(relative_path),
                                 path_prefix: "".into(),
                                 is_dir: false, // File finder doesn't support directories
                                 distance_to_relative_ancestor: usize::MAX,

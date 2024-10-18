@@ -274,7 +274,7 @@ pub enum Event {
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
     // TODO:
-    // use SanitizedPathBuf ?
+    // This should always be relative path, right ?
     pub path: Arc<Path>,
 }
 
@@ -1841,12 +1841,11 @@ impl Project {
 
     pub fn open_local_buffer(
         &mut self,
-        // abs_path: &SanitizedPathBuf,
         abs_path: impl AsRef<Path>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Buffer>>> {
-        let abs_path = abs_path.as_ref().to_path_buf().into();
-        if let Some((worktree, relative_path)) = self.find_worktree(&abs_path, cx) {
+        let abs_path = abs_path.as_ref();
+        if let Some((worktree, relative_path)) = self.find_worktree(abs_path, cx) {
             self.open_buffer((worktree.read(cx).id(), relative_path), cx)
         } else {
             Task::ready(Err(anyhow!("no such path")))
@@ -3130,18 +3129,17 @@ impl Project {
         abs_path: impl AsRef<Path>,
         visible: bool,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<(Model<Worktree>, SanitizedPathBuf)>> {
-        let abs_path = abs_path.as_ref().to_path_buf().into();
+    ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
         self.worktree_store.update(cx, |worktree_store, cx| {
-            worktree_store.find_or_create_worktree(&abs_path, visible, cx)
+            worktree_store.find_or_create_worktree(abs_path, visible, cx)
         })
     }
 
     pub fn find_worktree(
         &self,
-        abs_path: &SanitizedPathBuf,
+        abs_path: &Path,
         cx: &AppContext,
-    ) -> Option<(Model<Worktree>, SanitizedPathBuf)> {
+    ) -> Option<(Model<Worktree>, PathBuf)> {
         self.worktree_store.read_with(cx, |worktree_store, cx| {
             worktree_store.find_worktree(abs_path, cx)
         })
