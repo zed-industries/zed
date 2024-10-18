@@ -529,7 +529,8 @@ impl SshRemoteClient {
             let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
             let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
-            let client = cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx))?;
+            let client =
+                cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
             let this = cx.new_model(|_| Self {
                 client: client.clone(),
                 unique_identifier: unique_identifier.clone(),
@@ -797,7 +798,7 @@ impl SshRemoteClient {
                     cx.emit(SshRemoteEvent::Disconnected);
                     Ok(())
                 } else {
-                    log::debug!("State has transition from Reconnecting into new state while attempting reconnect. Ignoring new state.");
+                    log::debug!("State has transition from Reconnecting into new state while attempting reconnect.");
                     Ok(())
                 }
             })
@@ -1138,6 +1139,25 @@ impl SshRemoteClient {
         ConnectionState::Connected
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn fake_server(
+        server_cx: &mut gpui::TestAppContext,
+    ) -> (ChannelForwarder, Arc<ChannelClient>) {
+        server_cx.update(|cx| {
+            let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
+            let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+
+            // We use the forwarder on the server side (in production we only use one on the client side)
+            // the idea is that we can simulate a disconnect/reconnect by just messing with the forwarder.
+            let (forwarder, _, _) =
+                ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx.to_async());
+
+            let client = ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server");
+            (forwarder, client)
+        })
+
+    }
+  
     pub fn is_disconnected(&self) -> bool {
         self.connection_state() == ConnectionState::Disconnected
     }
@@ -1479,6 +1499,7 @@ impl ChannelClient {
         incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         outgoing_tx: mpsc::UnboundedSender<Envelope>,
         cx: &AppContext,
+        name: &'static str,
     ) -> Arc<Self> {
         let this = Arc::new(Self {
             outgoing_tx,
@@ -1487,7 +1508,7 @@ impl ChannelClient {
             message_handlers: Default::default(),
         });
 
-        Self::start_handling_messages(this.clone(), incoming_rx, cx);
+        Self::start_handling_messages(this.clone(), incoming_rx, cx, name);
 
         this
     }
@@ -1496,6 +1517,7 @@ impl ChannelClient {
         this: Arc<Self>,
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         cx: &AppContext,
+        name: &'static str,
     ) {
         cx.spawn(|cx| {
             let this = Arc::downgrade(&this);
@@ -1505,6 +1527,27 @@ impl ChannelClient {
                     let Some(this) = this.upgrade() else {
                         return anyhow::Ok(());
                     };
+
+                    if let Some(ack_id) = incoming.ack_id {
+                        let mut buffer = this.buffer.lock();
+                        while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
+                            buffer.pop_front();
+                        }
+                    }
+                    if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload {
+                        {
+                            let buffer = this.buffer.lock();
+                            for envelope in buffer.iter() {
+                                this.outgoing_tx.unbounded_send(envelope.clone()).ok();
+                            }
+                        }
+                        let mut envelope = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
+                        envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+                        this.outgoing_tx.unbounded_send(envelope)?;
+                        continue;
+                    }
+
+                    this.max_received.store(incoming.id, SeqCst);
 
                     if let Some(request_id) = incoming.responding_to {
                         let request_id = MessageId(request_id);
@@ -1526,19 +1569,22 @@ impl ChannelClient {
                             this.clone().into(),
                             cx.clone(),
                         ) {
-                            log::debug!("ssh message received. name:{type_name}");
-                            match future.await {
-                                Ok(_) => {
-                                    log::debug!("ssh message handled. name:{type_name}");
+                            log::debug!("{name}:ssh message received. name:{type_name}");
+                            cx.foreground_executor().spawn(async move {
+                                match future.await {
+                                    Ok(_) => {
+                                        log::debug!("{name}:ssh message handled. name:{type_name}");
+                                    }
+                                    Err(error) => {
+                                        log::error!(
+                                            "{name}:error handling message. type:{type_name}, error:{error}",
+                                        );
+                                    }
                                 }
-                                Err(error) => {
-                                    log::error!(
-                                        "error handling message. type:{type_name}, error:{error}",
-                                    );
-                                }
-                            }
+                            }).detach();
+
                         } else {
-                            log::error!("unhandled ssh message name:{type_name}");
+                            log::error!("{name}:unhandled ssh message name:{type_name}");
                         }
                     }
                 }
