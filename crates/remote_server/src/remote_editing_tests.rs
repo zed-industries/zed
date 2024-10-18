@@ -641,7 +641,7 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
     })
 }
 
-#[gpui::test(iterations = 10)]
+#[gpui::test(iterations = 20)]
 async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let (project, _headless, fs) = init_test(cx, server_cx).await;
 
