@@ -423,11 +423,10 @@ impl DisplayMap {
     }
 
     fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
-        let language = buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).language());
-        language_settings(language, None, cx).tab_size
+        let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
+        let language = buffer.and_then(|buffer| buffer.language());
+        let file = buffer.and_then(|buffer| buffer.file());
+        language_settings(language, file, cx).tab_size
     }
 
     #[cfg(test)]
