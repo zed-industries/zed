@@ -1,4 +1,5 @@
 mod components;
+mod jupyter_servers;
 mod jupyter_settings;
 mod kernels;
 mod outputs;

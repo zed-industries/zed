@@ -1,13 +1,13 @@
 use std::time::Duration;
 
-use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
+use gpui::{percentage, prelude::*, Animation, AnimationExt, AnyElement, Transformation, View};
 use repl::{
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
     SessionSupport,
 };
 use ui::{
-    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
-    Tooltip,
+    prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, Label,
+    PopoverMenu, Tooltip,
 };
 
 use gpui::ElementId;
@@ -378,3 +378,25 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         },
     }
 }
+
+// pub fn render_jupyter_url_input(cx: &mut WindowContext) -> AnyElement {
+//     let input_id = "jupyter-url-input".to_string();
+//     let label = Label::new("Enter the URL of the running Jupyter Server");
+//     let text_input = TextInput::new(input_id.clone())
+//         .placeholder("Enter the url of the running Jupyter Server")
+//         .on_submit(|value, cx| {
+//             // Handle the submitted URL here
+//             println!("Submitted URL: {}", value);
+//         });
+
+//     let submit_button = Button::new("Submit", move |_, cx| {
+//             let value = cx.get_text_input_value(&input_id);
+//             println!("Submitted URL: {}", value);
+//         });
+
+//     div()
+//         .child(label)
+//         .child(text_input)
+//         .child(submit_button)
+//         .into_any_element()
+// }
