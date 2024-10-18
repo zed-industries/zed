@@ -1,7 +1,7 @@
 use crate::{
     json_log::LogRecord,
     protocol::{
-        message_len_from_buffer, read_message_with_len, write_message, MessageId, MESSAGE_LEN_SIZE,
+        message_len_from_buffer, read_message_with_len, write_message_log, MessageId, MESSAGE_LEN_SIZE,
     },
     proxy::ProxyLaunchError,
 };
@@ -11,10 +11,7 @@ use futures::{
     channel::{
         mpsc::{self, Sender, UnboundedReceiver, UnboundedSender},
         oneshot,
-    },
-    future::BoxFuture,
-    select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, SinkExt,
-    StreamExt as _,
+    }, future::BoxFuture, select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, SinkExt, StreamExt as _
 };
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SemanticVersion, Task,
@@ -296,13 +293,17 @@ impl ChannelForwarder {
             loop {
                 select_biased! {
                     _ = quit_rx.next().fuse() => {
+                        log::debug!("ChannelForwarder. quit");
                         break;
                     },
                     incoming_envelope = proxy_incoming_rx.next().fuse() => {
+                        // log::debug!("ChannelForwarder. incoming envelope.");
                         if let Some(envelope) = incoming_envelope {
+                            // let id = envelope.id;
                             if incoming_tx.send(envelope).await.is_err() {
                                 break;
                             }
+                            // log::debug!("ChannelForwarder. incoming envelope sent. id: {:?}", id);
                         } else {
                             break;
                         }
@@ -310,8 +311,10 @@ impl ChannelForwarder {
                     outgoing_envelope = outgoing_rx.next().fuse() => {
                         if let Some(envelope) = outgoing_envelope {
                             if proxy_outgoing_tx.send(envelope).await.is_err() {
+                                // log::debug!("ChannelForwarder. outgoing envelope errored.");
                                 break;
                             }
+                            // log::debug!("ChannelForwarder. outgoing envelope sent.");
                         } else {
                             break;
                         }
@@ -622,6 +625,7 @@ impl SshRemoteClient {
     }
 
     fn reconnect(&mut self, cx: &mut ModelContext<Self>) -> Result<()> {
+        log::debug!("reconnect...");
         let mut lock = self.state.lock();
 
         let can_reconnect = lock
@@ -638,6 +642,7 @@ impl SshRemoteClient {
             return Err(anyhow!(error));
         }
 
+        log::debug!("reconnect... taking state.");
         let state = lock.take().unwrap();
         let (attempts, mut ssh_connection, delegate, forwarder) = match state {
             State::Connected {
@@ -836,6 +841,7 @@ impl SshRemoteClient {
                             keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
 
                             if missed_heartbeats != 0 {
+                                log::debug!("Resetting missed heartbeats to 0");
                                 missed_heartbeats = 0;
                                 this.update(&mut cx, |this, mut cx| {
                                     this.handle_heartbeat_result(missed_heartbeats, &mut cx)
@@ -863,6 +869,7 @@ impl SshRemoteClient {
                                     MAX_MISSED_HEARTBEATS
                                 );
                             } else if missed_heartbeats != 0 {
+                                log::debug!("Resetting missed heartbeats to 0");
                                 missed_heartbeats = 0;
                             } else {
                                 continue;
@@ -938,18 +945,24 @@ impl SshRemoteClient {
                             return anyhow::Ok(None);
                         };
 
-                        write_message(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
+                        // {"level":2,"module_path":"remote_server::unix","file":"crates/remote_server/src/unix.rs","line":281,"message":"(remote server) error reading message on stdin: read message with len=3793265416 failed."}
+                        write_message_log(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
+                        child_stdin.flush().await?;
                     }
 
                     result = child_stdout.read(&mut stdout_buffer).fuse() => {
                         match result {
                             Ok(0) => {
+                                log::debug!("child_stdout. 0. closing channels");
                                 child_stdin.close().await?;
                                 outgoing_rx.close();
+                                // log::debug!("child_stdout. 0. getting status");
                                 let status = ssh_proxy_process.status().await?;
+                                // log::debug!("child_stdout. 0. got status");
                                 // If we don't have a code, we assume process
                                 // has been killed and treat it as non-zero exit
                                 // code
+                                log::debug!("child_stdout. 0. returning");
                                 return Ok(status.code().or_else(|| Some(1)));
                             }
                             Ok(len) => {
@@ -977,6 +990,7 @@ impl SshRemoteClient {
                     result = child_stderr.read(&mut stderr_buffer[stderr_offset..]).fuse() => {
                         match result {
                             Ok(len) => {
+                                // log::debug!("child_stderr. len: {}", len);
                                 stderr_offset += len;
                                 let mut start_ix = 0;
                                 while let Some(ix) = stderr_buffer[start_ix..stderr_offset].iter().position(|b| b == &b'\n') {
@@ -1006,8 +1020,11 @@ impl SshRemoteClient {
         cx.spawn(|mut cx| async move {
             let result = io_task.await;
 
+            log::debug!("IO Task finished. result: {:?}", result);
+
             match result {
                 Ok(Some(exit_code)) => {
+                    log::debug!("Proxy exited with code {:?}", exit_code);
                     if let Some(error) = ProxyLaunchError::from_exit_code(exit_code) {
                         match error {
                             ProxyLaunchError::ServerNotRunning => {
@@ -1046,6 +1063,7 @@ impl SshRemoteClient {
         cx: &mut ModelContext<Self>,
         map: impl FnOnce(&State) -> Option<State>,
     ) {
+        log::debug!("try_set_state ...");
         let mut lock = self.state.lock();
         let new_state = lock.as_ref().and_then(map);
 
@@ -1053,6 +1071,7 @@ impl SshRemoteClient {
             lock.replace(new_state);
             cx.notify();
         }
+        log::debug!("try_set_state done");
     }
 
     fn set_state(&self, state: State, cx: &mut ModelContext<Self>) {
@@ -1275,8 +1294,8 @@ impl SshRemoteConnection {
             .args(connection_options.additional_args().unwrap_or(&Vec::new()))
             .args([
                 "-N",
-                "-o",
-                "ControlPersist=no",
+                // "-o",
+                // "ControlPersist=no",
                 "-o",
                 "ControlMaster=yes",
                 "-o",
@@ -1519,20 +1538,21 @@ impl ChannelClient {
                         build_typed_envelope(peer_id, Instant::now(), incoming)
                     {
                         let type_name = envelope.payload_type_name();
+                        let id = envelope.message_id();
                         if let Some(future) = ProtoMessageHandlerSet::handle_message(
                             &this.message_handlers,
                             envelope,
                             this.clone().into(),
                             cx.clone(),
                         ) {
-                            log::debug!("ssh message received. name:{type_name}");
+                            log::debug!("ssh message received. name:{type_name} id:{id}");
                             match future.await {
                                 Ok(_) => {
-                                    log::debug!("ssh message handled. name:{type_name}");
+                                    log::debug!("ssh message handled. name:{type_name} id:{id}");
                                 }
                                 Err(error) => {
                                     log::error!(
-                                        "error handling message. type:{type_name}, error:{error}",
+                                        "error handling message. type:{type_name}, error:{error} id:{id}",
                                     );
                                 }
                             }
@@ -1573,7 +1593,15 @@ impl ChannelClient {
         log::debug!("ssh request start. name:{}", T::NAME);
         let response = self.request_dynamic(payload.into_envelope(0, None, None), T::NAME);
         async move {
-            let response = response.await?;
+            let response = futures::select! {
+                response = response.fuse() => response?,
+                _ = async {
+                    loop {
+                        smol::Timer::after(Duration::from_secs(3)).await;
+                        log::debug!("Still waiting for response. name:{}", T::NAME);
+                    }
+                }.fuse() => unreachable!(),
+            };
             log::debug!("ssh request finish. name:{}", T::NAME);
             T::Response::from_envelope(response)
                 .ok_or_else(|| anyhow!("received a response of the wrong type"))
@@ -1596,15 +1624,16 @@ impl ChannelClient {
 
     pub fn send<T: EnvelopedMessage>(&self, payload: T) -> Result<()> {
         log::debug!("ssh send name:{}", T::NAME);
-        self.send_dynamic(payload.into_envelope(0, None, None))
+        self.send_dynamic(payload.into_envelope(0, None, None), T::NAME)
     }
 
-    pub fn request_dynamic(
+    fn request_dynamic(
         &self,
         mut envelope: proto::Envelope,
         type_name: &'static str,
     ) -> impl 'static + Future<Output = Result<proto::Envelope>> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
+        log::debug!("ssh send_dynamic name:{} id:{}", type_name, envelope.id);
         let (tx, rx) = oneshot::channel();
         let mut response_channels_lock = self.response_channels.lock();
         response_channels_lock.insert(MessageId(envelope.id), tx);
@@ -1624,8 +1653,9 @@ impl ChannelClient {
         }
     }
 
-    pub fn send_dynamic(&self, mut envelope: proto::Envelope) -> Result<()> {
+    fn send_dynamic(&self, mut envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
+        log::debug!("ssh send name:{} id:{}", message_type, envelope.id);
         self.outgoing_tx.unbounded_send(envelope)?;
         Ok(())
     }
@@ -1640,12 +1670,12 @@ impl ProtoClient for ChannelClient {
         self.request_dynamic(envelope, request_type).boxed()
     }
 
-    fn send(&self, envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {
-        self.send_dynamic(envelope)
+    fn send(&self, envelope: proto::Envelope, message_type: &'static str) -> Result<()> {
+        self.send_dynamic(envelope, message_type)
     }
 
-    fn send_response(&self, envelope: Envelope, _message_type: &'static str) -> anyhow::Result<()> {
-        self.send_dynamic(envelope)
+    fn send_response(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()> {
+        self.send_dynamic(envelope, message_type)
     }
 
     fn message_handler_set(&self) -> &Mutex<ProtoMessageHandlerSet> {
