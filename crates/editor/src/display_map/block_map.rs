@@ -1668,24 +1668,24 @@ mod tests {
         let block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
         let snapshot = block_map.read(wraps_snapshot, Default::default());
 
+        // Each excerpt has a header above and footer below. Excerpts are also *separated* by a newline.
+        assert_eq!(
+            snapshot.text(),
+            "\n\nBuff\ner 1\n\n\n\nBuff\ner 2\n\n\n\nBuff\ner 3\n"
+        );
+
         let blocks: Vec<_> = snapshot
             .blocks_in_range(0..u32::MAX)
-            .map(|(row, block)| (row, block.id()))
+            .map(|(row, block)| (row..row + block.height(), block.id()))
             .collect();
         assert_eq!(
             blocks,
             vec![
-                (0, BlockId::ExcerptBoundary(Some(excerpt_ids[0]))),
-                (4, BlockId::ExcerptBoundary(Some(excerpt_ids[1]))),
-                (8, BlockId::ExcerptBoundary(Some(excerpt_ids[2]))),
-                (11, BlockId::ExcerptBoundary(None)),
+                (0..2, BlockId::ExcerptBoundary(Some(excerpt_ids[0]))), // path, header
+                (4..7, BlockId::ExcerptBoundary(Some(excerpt_ids[1]))), // footer, path, header
+                (8..11, BlockId::ExcerptBoundary(Some(excerpt_ids[2]))), // footer, path, header
+                (14..15, BlockId::ExcerptBoundary(None)),               // footer
             ]
-        );
-
-        // Each excerpt has a header above and footer below. Excerpts are also *separated* by a newline.
-        assert_eq!(
-            snapshot.text(),
-            "\nBuff\ner 1\n\n\nBuff\ner 2\n\n\nBuff\ner 3\n"
         );
     }
 
@@ -2231,6 +2231,7 @@ mod tests {
             ExcerptBoundary {
                 height: u32,
                 starts_new_buffer: bool,
+                is_last: bool,
             },
             Custom {
                 disposition: BlockDisposition,
@@ -2270,7 +2271,13 @@ mod tests {
 
             fn disposition(&self) -> BlockDisposition {
                 match self {
-                    ExpectedBlock::ExcerptBoundary { .. } => BlockDisposition::Above,
+                    ExpectedBlock::ExcerptBoundary { is_last, .. } => {
+                        if *is_last {
+                            BlockDisposition::Below
+                        } else {
+                            BlockDisposition::Above
+                        }
+                    }
                     ExpectedBlock::Custom { disposition, .. } => *disposition,
                 }
             }
@@ -2288,10 +2295,12 @@ mod tests {
                     Block::ExcerptBoundary {
                         height,
                         starts_new_buffer,
+                        next_excerpt,
                         ..
                     } => ExpectedBlock::ExcerptBoundary {
                         height,
                         starts_new_buffer,
+                        is_last: next_excerpt.is_none(),
                     },
                 }
             }
