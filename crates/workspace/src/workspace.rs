@@ -1134,15 +1134,9 @@ impl Workspace {
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
             for path in paths_to_open.into_iter() {
-                let trimmed_path = path.clone().into();
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
-                        Workspace::project_path_for_path(
-                            project_handle.clone(),
-                            &trimmed_path,
-                            true,
-                            cx,
-                        )
+                        Workspace::project_path_for_path(project_handle.clone(), &path, true, cx)
                     })?
                     .await
                     .log_err()
@@ -2000,7 +1994,7 @@ impl Workspace {
                         .update(&mut cx, |this, cx| {
                             Workspace::project_path_for_path(
                                 this.project.clone(),
-                                &abs_path.clone().into(),
+                                abs_path,
                                 visible,
                                 cx,
                             )
@@ -2104,7 +2098,7 @@ impl Workspace {
 
     pub fn project_path_for_path(
         project: Model<Project>,
-        abs_path: &SanitizedPathBuf,
+        abs_path: &Path,
         visible: bool,
         cx: &mut AppContext,
     ) -> Task<Result<(Model<Worktree>, ProjectPath)>> {
@@ -2570,7 +2564,6 @@ impl Workspace {
         visible: bool,
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
-        let abs_path = abs_path.into();
         let project_path_task =
             Workspace::project_path_for_path(self.project.clone(), &abs_path, visible, cx);
         cx.spawn(|this, mut cx| async move {
@@ -5605,15 +5598,12 @@ pub fn open_ssh_project(
         let mut project_path_errors = vec![];
 
         for path in paths {
-            let trimmed_path = path.clone().into();
             let result = cx
-                .update(|cx| {
-                    Workspace::project_path_for_path(project.clone(), &trimmed_path, true, cx)
-                })?
+                .update(|cx| Workspace::project_path_for_path(project.clone(), &path, true, cx))?
                 .await;
             match result {
                 Ok((_, project_path)) => {
-                    project_paths_to_open.push((path.clone(), Some(project_path)));
+                    project_paths_to_open.push((path, Some(project_path)));
                 }
                 Err(error) => {
                     project_path_errors.push(error);
