@@ -51,6 +51,7 @@ settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
 util.workspace = true
+prost.workspace = true
 worktree.workspace = true
 
 [dev-dependencies]

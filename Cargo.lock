@@ -9161,6 +9161,7 @@ dependencies = [
  "node_runtime",
  "paths",
  "project",
+ "prost",
  "remote",
  "reqwest_client",
  "rpc",

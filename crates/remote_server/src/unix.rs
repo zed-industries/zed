@@ -12,6 +12,7 @@ use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
+
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -26,6 +27,8 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+
+use std::process::Stdio;
 use std::{
     io::Write,
     mem,
@@ -213,24 +216,33 @@ fn start_server(
 
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
+
+            let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
+            cx.background_executor().spawn(async move {
+                while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
+                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                        break;
+                    }
+                }
+            }).detach();
+
             loop {
+
                 select_biased! {
                     _ = app_quit_rx.next().fuse() => {
                         return anyhow::Ok(());
                     }
 
-                    stdin_message = read_message(&mut stdin_stream, &mut input_buffer).fuse() => {
-                        let message = match stdin_message {
-                            Ok(message) => message,
-                            Err(error) => {
-                                log::warn!("error reading message on stdin: {}. exiting.", error);
-                                break;
-                            }
+                    stdin_message = stdin_msg_rx.next().fuse() => {
+                        let Some(message) = stdin_message else {
+                            log::warn!("error reading message on stdin. exiting.");
+                            break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
                             log::error!("failed to send message to application: {:?}. exiting.", error);
                             return Err(anyhow!(error));
                         }
+
                     }
 
                     outgoing_message  = outgoing_rx.next().fuse() => {
@@ -526,6 +538,9 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
         .arg(&paths.stderr_socket)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()?;
 
     log::info!(
@@ -617,7 +632,10 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
     buffer: &mut Vec<u8>,
 ) -> Result<()> {
     let len = buffer.len() as u32;
+
+    // This is the problem?
     stream.write_all(len.to_le_bytes().as_slice()).await?;
+
     stream.write_all(buffer).await?;
     Ok(())
 }
