@@ -2298,7 +2298,6 @@ fn main() { let foo = other::foo(); }"};
 
     // TODO kb why in tests editorconfig is not propagated to the client?
     // TODO kb test cx_a editing the existing .editorconfig + cx_b tabbing
-    // TODO kb test cx_b creating a new .editorconfig + cx_a tabbing
 }
 
 fn tab_undo_assert(
