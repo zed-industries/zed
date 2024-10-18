@@ -1724,6 +1724,7 @@ impl LspStore {
 
     pub(crate) fn linked_edit(
         &self,
+
         buffer: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
@@ -2886,10 +2887,10 @@ impl LspStore {
 
     pub fn on_buffer_edited(
         &mut self,
-        buffer: Model<Buffer>,
+        buffer_handle: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let buffer = buffer.read(cx);
+        let buffer = buffer_handle.read(cx);
         let file = File::from_dyn(buffer.file())?;
         let abs_path = file.as_local()?.abs_path(cx);
         let uri = lsp::Url::from_file_path(abs_path).unwrap();
@@ -2978,6 +2979,15 @@ impl LspStore {
                     },
                 )
                 .log_err();
+
+            let buffer_handle = buffer_handle.clone();
+            cx.spawn(move |this, mut cx| async move {
+                this.update(&mut cx, |this, cx| {
+                    this.pull_diagnostic(language_server.server_id(), buffer_handle, cx);
+                })
+                .log_err();
+            })
+            .detach();
         }
 
         None
@@ -3015,7 +3025,59 @@ impl LspStore {
 
         for language_server_id in self.language_server_ids_for_buffer(buffer.read(cx), cx) {
             self.simulate_disk_based_diagnostics_events_if_needed(language_server_id, cx);
+            self.pull_diagnostic(language_server_id, buffer.clone(), cx);
         }
+
+        None
+    }
+
+    fn pull_diagnostic(
+        &mut self,
+        language_server_id: LanguageServerId,
+        buffer_handle: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
+
+        let previous_result_id = match self.as_local()?.language_servers.get(&language_server_id) {
+            Some(LanguageServerState::Running {
+                previous_document_diagnostic_result_id,
+                ..
+            }) => previous_document_diagnostic_result_id.clone(),
+            _ => None,
+        };
+
+        let lsp_request_task = self.request_lsp(
+            buffer_handle.clone(),
+            LanguageServerToQuery::Other(language_server_id),
+            GetDocumentDiagnostics {
+                language_server_id,
+                previous_result_id,
+            },
+            cx,
+        );
+
+        let snapshot =
+            self.buffer_snapshot_for_lsp_version(&buffer_handle, language_server_id, None, cx);
+
+        cx.spawn(move |_, mut cx| async move {
+            let snapshot = snapshot?;
+
+            cx.background_executor()
+                .timer(PULL_DIAGNOSTICS_DEBOUNCE)
+                .await;
+
+            let diagnostics = lsp_request_task
+                .await
+                .context("Unable to pull document diagnostic")
+                .unwrap_or_default();
+
+            buffer_handle.update(&mut cx, |buffer, cx| {
+                let set = DiagnosticSet::from_sorted_entries(diagnostics, &snapshot);
+                buffer.update_diagnostics(language_server_id, set, cx);
+            })
+        })
+        .detach();
 
         None
     }
@@ -6456,6 +6518,7 @@ impl LspStore {
                     language: language.clone(),
                     server: language_server.clone(),
                     simulate_disk_based_diagnostics_completion: None,
+                    previous_document_diagnostic_result_id: None,
                 },
             );
         }
@@ -7456,6 +7519,7 @@ pub enum LanguageServerState {
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
+        previous_document_diagnostic_result_id: Option<String>,
     },
 }
 
