@@ -201,7 +201,6 @@ pub enum Block {
     },
     ExcerptFooter {
         id: ExcerptId,
-        disposition: BlockDisposition,
         height: u32,
     },
 }
@@ -241,7 +240,7 @@ impl Block {
         match self {
             Block::Custom(block) => block.disposition,
             Block::ExcerptHeader { .. } => BlockDisposition::Above,
-            Block::ExcerptFooter { disposition, .. } => *disposition,
+            Block::ExcerptFooter { .. } => BlockDisposition::Below,
         }
     }
 
@@ -277,13 +276,9 @@ impl Debug for Block {
                 .field("path", &buffer.file().map(|f| f.path()))
                 .field("starts_new_buffer", &starts_new_buffer)
                 .finish(),
-            Block::ExcerptFooter {
-                id, disposition, ..
-            } => f
-                .debug_struct("ExcerptFooter")
-                .field("id", &id)
-                .field("disposition", &disposition)
-                .finish(),
+            Block::ExcerptFooter { id, .. } => {
+                f.debug_struct("ExcerptFooter").field("id", &id).finish()
+            }
         }
     }
 }
@@ -593,6 +588,10 @@ impl BlockMap {
         R: RangeBounds<T>,
         T: multi_buffer::ToOffset,
     {
+        #[cfg(test)]
+        {
+            dbg!(wrap_snapshot.text());
+        }
         buffer
             .excerpt_boundaries_in_range(range)
             .flat_map(move |excerpt_boundary| {
@@ -603,20 +602,21 @@ impl BlockMap {
                 [
                     show_excerpt_controls
                         .then(|| {
-                            let disposition;
-                            if excerpt_boundary.next.is_some() {
-                                disposition = BlockDisposition::Above;
-                            } else {
-                                wrap_row = wrap_snapshot
-                                    .make_wrap_point(
-                                        Point::new(
-                                            excerpt_boundary.row.0,
-                                            buffer.line_len(excerpt_boundary.row),
-                                        ),
-                                        Bias::Left,
-                                    )
-                                    .row();
-                                disposition = BlockDisposition::Below;
+                            dbg!(
+                                wrap_row,
+                                excerpt_boundary.next.is_some(),
+                                excerpt_boundary.prev.is_some()
+                            );
+                            if excerpt_boundary.next.is_none() {
+                                // wrap_row = wrap_snapshot
+                                //     .make_wrap_point(
+                                //         Point::new(
+                                //             excerpt_boundary.row.0,
+                                //             buffer.line_len(excerpt_boundary.row),
+                                //         ),
+                                //         Bias::Left,
+                                //     )
+                                //     .row();
                             }
 
                             excerpt_boundary.prev.as_ref().map(|prev| {
@@ -625,7 +625,6 @@ impl BlockMap {
                                     Block::ExcerptFooter {
                                         id: prev.id,
                                         height: excerpt_footer_height,
-                                        disposition,
                                     },
                                 )
                             })
@@ -2289,7 +2288,6 @@ mod tests {
             },
             ExcerptFooter {
                 height: u32,
-                disposition: BlockDisposition,
             },
             Custom {
                 disposition: BlockDisposition,
@@ -2332,9 +2330,9 @@ mod tests {
 
             fn disposition(&self) -> BlockDisposition {
                 match self {
-                    ExpectedBlock::ExcerptHeader { .. } => BlockDisposition::Above,
                     ExpectedBlock::Custom { disposition, .. } => *disposition,
-                    ExpectedBlock::ExcerptFooter { disposition, .. } => *disposition,
+                    ExpectedBlock::ExcerptHeader { .. } => BlockDisposition::Above,
+                    ExpectedBlock::ExcerptFooter { .. } => BlockDisposition::Below,
                 }
             }
         }
@@ -2356,14 +2354,7 @@ mod tests {
                         height,
                         starts_new_buffer,
                     },
-                    Block::ExcerptFooter {
-                        height,
-                        disposition,
-                        ..
-                    } => ExpectedBlock::ExcerptFooter {
-                        height,
-                        disposition,
-                    },
+                    Block::ExcerptFooter { height, .. } => ExpectedBlock::ExcerptFooter { height },
                 }
             }
         }
