@@ -1597,7 +1597,9 @@ impl ChannelClient {
                     if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload {
                         {
                             let buffer = this.buffer.lock();
+                            dbg!(&buffer);
                             for envelope in buffer.iter() {
+                                dbg!(("server sending: ", &envelope));
                                 this.outgoing_tx.unbounded_send(envelope.clone()).ok();
                             }
                         }
@@ -1630,7 +1632,6 @@ impl ChannelClient {
                             cx.clone(),
                         ) {
                             log::debug!("{name}:ssh message received. name:{type_name}");
-                            cx.foreground_executor().spawn(async move {
                                 match future.await {
                                     Ok(_) => {
                                         log::debug!("{name}:ssh message handled. name:{type_name}");
@@ -1641,7 +1642,6 @@ impl ChannelClient {
                                         );
                                     }
                                 }
-                            }).detach();
 
                         } else {
                             log::error!("{name}:unhandled ssh message name:{type_name}");
@@ -1690,8 +1690,11 @@ impl ChannelClient {
     pub async fn resync(&self, timeout: Duration) -> Result<()> {
         smol::future::or(
             async {
-                self.request(proto::FlushBufferedMessages {}).await?;
+                dbg!(&self.buffer);
+                self.request(proto::FlushBufferedMessages {}).await?; // ??????
+                dbg!(&self.buffer);
                 for envelope in self.buffer.lock().iter() {
+                    dbg!("resening", envelope);
                     self.outgoing_tx.unbounded_send(envelope.clone()).ok();
                 }
                 Ok(())
@@ -1755,6 +1758,7 @@ impl ChannelClient {
     }
 
     pub fn send_buffered(&self, mut envelope: proto::Envelope) -> Result<()> {
+        dbg!("sending...", &envelope);
         envelope.ack_id = Some(self.max_received.load(SeqCst));
         self.buffer.lock().push_back(envelope.clone());
         self.outgoing_tx.unbounded_send(envelope)?;
