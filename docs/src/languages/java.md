@@ -44,7 +44,7 @@ We recommend you install one or the other and not both.
 
 ## Settings / Initialization Options
 
-See [JDTLS Language Server Settings & Capabilities](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Language-Server-Settings-&-Capabilities) for a complete list of settings.
+For available `initialization_options` please see the [Initialize Request section of the Eclipse.jdt.ls Wiki](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request).
 
 Add the following to your Zed Settings by launching {#action zed::OpenSettings}({#kb zed::OpenSettings}).
 
