@@ -7796,7 +7796,12 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
     async fn which(&self, command: &OsStr) -> Option<PathBuf> {
         let worktree_abs_path = self.worktree.abs_path();
         let shell_path = self.shell_env().await.get("PATH").cloned();
-        which::which_in(command, shell_path.as_ref(), worktree_abs_path).ok()
+        which::which_in(
+            command,
+            shell_path.as_ref(),
+            worktree_abs_path.as_raw_path_buf(),
+        )
+        .ok()
     }
 
     #[cfg(target_os = "windows")]
