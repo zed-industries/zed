@@ -26,18 +26,21 @@ pub fn init(cx: &mut AppContext) {
 }
 
 /// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a>(
-    language: Option<&Arc<Language>>,
-    file: Option<&Arc<dyn File>>,
+pub fn language_settings<'a, 'b>(
+    language: Option<LanguageName>,
+    file: Option<&'a Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a LanguageSettings {
-    let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_ref())
+    let location = file.map(|f| SettingsLocation {
+        worktree_id: f.worktree_id(cx),
+        path: f.path().as_ref(),
+    });
+    AllLanguageSettings::get(location, cx).language(location, language.as_ref())
 }
 
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
-    file: Option<&Arc<dyn File>>,
+    file: Option<&'a Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| SettingsLocation {
@@ -810,7 +813,11 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
+    pub fn language<'a>(
+        &'a self,
+        location: Option<SettingsLocation<'a>>,
+        language_name: Option<&LanguageName>,
+    ) -> &'a LanguageSettings {
         if let Some(name) = language_name {
             if let Some(overrides) = self.languages.get(name) {
                 return overrides;
@@ -840,7 +847,7 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()).as_ref())
+        self.language(None, language.map(|l| l.name()).as_ref())
             .show_inline_completions
     }
 }
