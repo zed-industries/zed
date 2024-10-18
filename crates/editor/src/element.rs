@@ -21,7 +21,8 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
     PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -2141,7 +2142,7 @@ impl EditorElement {
                                 .flex_none()
                                 .w(gutter_dimensions.width
                                     - (gutter_dimensions.left_padding + gutter_dimensions.margin))
-                                .h_full()
+                                .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
                                 .child(
                                     ButtonLike::new("expand-icon")
                                         .style(ButtonStyle::Transparent)
@@ -2232,7 +2233,7 @@ impl EditorElement {
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
                                 .id("path header block")
-                                .h(2. * cx.line_height())
+                                .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
                                 .px(gpui::px(12.))
                                 .rounded_md()
                                 .shadow_md()
@@ -2301,7 +2302,7 @@ impl EditorElement {
                         .child(
                             h_flex()
                                 .flex_basis(Length::Definite(DefiniteLength::Fraction(0.333)))
-                                .h(1. * cx.line_height())
+                                .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
                                 .pt_1()
                                 .justify_end()
                                 .flex_none()
