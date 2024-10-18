@@ -27,8 +27,6 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
-
-use std::process::Stdio;
 use std::{
     io::Write,
     mem,
@@ -242,7 +240,6 @@ fn start_server(
                             log::error!("failed to send message to application: {:?}. exiting.", error);
                             return Err(anyhow!(error));
                         }
-
                     }
 
                     outgoing_message  = outgoing_rx.next().fuse() => {
@@ -538,9 +535,6 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
         .arg(&paths.stderr_socket)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
         .spawn()?;
 
     log::info!(
@@ -632,10 +626,7 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
     buffer: &mut Vec<u8>,
 ) -> Result<()> {
     let len = buffer.len() as u32;
-
-    // This is the problem?
     stream.write_all(len.to_le_bytes().as_slice()).await?;
-
     stream.write_all(buffer).await?;
     Ok(())
 }
