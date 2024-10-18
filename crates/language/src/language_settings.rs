@@ -32,7 +32,7 @@ pub fn init(cx: &mut AppContext) {
 }
 
 /// Returns the settings for the specified language from the provided file.
-pub fn language_settings<'a, 'b>(
+pub fn language_settings<'a>(
     language: Option<LanguageName>,
     file: Option<&'a Arc<dyn File>>,
     cx: &'a AppContext,
