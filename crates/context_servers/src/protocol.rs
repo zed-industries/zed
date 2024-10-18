@@ -185,9 +185,9 @@ impl InitializedContextServerProtocol {
     pub async fn list_tools(&self) -> Result<types::ListToolsResponse> {
         self.check_capability(ServerCapability::Tools)?;
 
-        let response: types::ListToolsResponse = self
+        let response = self
             .inner
-            .request(types::RequestType::ListTools.as_str(), ())
+            .request::<types::ListToolsResponse>(types::RequestType::ListTools.as_str(), ())
             .await?;
 
         Ok(response)

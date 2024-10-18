@@ -1,38 +1,42 @@
 use anyhow::anyhow;
 use assistant_tool::Tool;
 use context_servers::manager::ContextServerManager;
+use context_servers::types;
 use gpui::Task;
 
 pub struct SlashCommandTool {
     server_id: String,
-    name: String,
-    description: String,
-    input_schema: serde_json::Value,
+    tool: types::Tool,
 }
 
 impl SlashCommandTool {
-    pub fn new<S: Into<String>>(
-        server_id: S,
-        name: S,
-        description: S,
-        input_schema: serde_json::Value,
-    ) -> Self {
+    pub fn new<S: Into<String>>(server_id: S, tool: types::Tool) -> Self {
         Self {
             server_id: server_id.into(),
-            name: name.into(),
-            description: description.into(),
-            input_schema,
+            tool,
         }
     }
 }
 
 impl Tool for SlashCommandTool {
     fn name(&self) -> String {
-        self.name.clone()
+        self.tool.name.clone()
     }
 
     fn description(&self) -> String {
-        self.description.clone()
+        self.tool.description.clone().unwrap_or_default()
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        match &self.tool.input_schema {
+            serde_json::Value::Null => {
+                serde_json::json!({"type": "object", "properties": []})
+            }
+            serde_json::Value::Object(m) if m.is_empty() => {
+                serde_json::json!({"type": "object", "properties": []})
+            }
+            _ => self.tool.input_schema.clone(),
+        }
     }
 
     fn run(
@@ -41,7 +45,7 @@ impl Tool for SlashCommandTool {
         _workspace: gpui::WeakView<workspace::Workspace>,
         cx: &mut ui::WindowContext,
     ) -> gpui::Task<gpui::Result<String>> {
-        let tool_name = self.name.clone();
+        let tool_name = self.tool.name.clone();
 
         let manager = ContextServerManager::global(cx);
         let manager = manager.read(cx);
@@ -58,14 +62,18 @@ impl Tool for SlashCommandTool {
                     None
                 };
 
+                log::trace!(
+                    "Running tool: {} with arguments: {:?}",
+                    tool_name,
+                    arguments
+                );
                 let response = protocol.run_tool(tool_name, arguments).await?;
 
-                let tool_result = response.tool_result;
-                if let serde_json::Value::String(result_string) = tool_result {
-                    Ok(result_string)
-                } else {
-                    Err(anyhow!("Tool response did not contain a string value"))
-                }
+                let tool_result = match response.tool_result {
+                    serde_json::Value::String(s) => s,
+                    _ => serde_json::to_string(&response.tool_result)?,
+                };
+                Ok(tool_result)
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))
