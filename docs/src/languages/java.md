@@ -12,9 +12,9 @@ Both use:
 
 ## Pre-requisites
 
-You will need to install both a Java runtime (OpenJDK) and Eclipse JDT Language Server (`eclipse.jdt.ls`).
-
 ### Install OpenJDK
+
+You will need to install a Java runtime (OpenJDK).
 
 - MacOS: `brew install openjdk`
 - Ubuntu: `sudo add-apt-repository ppa:openjdk-23 && sudo apt-get install openjdk-23`
@@ -23,7 +23,11 @@ You will need to install both a Java runtime (OpenJDK) and Eclipse JDT Language 
 
 Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
 
-### Install JDTLS
+### (Optional) Install JDTLS
+
+If you are using Java with Eclipse JDTLS, you can skip this section as it will automatically download a binary for you.
+
+If you are using Zed Java you need to install your own copy of Eclipse JDT Language Server (`eclipse.jdt.ls`).
 
 - MacOS: `brew install jdtls`
 - Arch: [`jdtls` from AUR](https://aur.archlinux.org/packages/jdtls)
@@ -40,7 +44,7 @@ We recommend you install one or the other and not both.
 
 ## Settings / Initialization Options
 
-See [JDTLS Language Server Settings & Capabilities](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Language-Server-Settings-&-Capabilities) for a complete list of options.
+See [JDTLS Language Server Settings & Capabilities](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Language-Server-Settings-&-Capabilities) for a complete list of settings.
 
 Add the following to your Zed Settings by launching {#action zed::OpenSettings}({#kb zed::OpenSettings}).
 
@@ -52,7 +56,6 @@ Add the following to your Zed Settings by launching {#action zed::OpenSettings}(
     "jdtls": {
       "settings": {},
       "initialization_options": {}
-      }
     }
   }
 }
@@ -76,7 +79,7 @@ Add the following to your Zed Settings by launching {#action zed::OpenSettings}(
 - [Zed Java Readme](https://github.com/zed-extensions/java)
 - [Java with Eclipse JDTLS Readme](https://github.com/ABckh/zed-java-eclipse-jdtls)
 
-### Support
+## Support
 
 If you have issues with either of these plugins, please open issues on their respective repositories:
 
@@ -101,7 +104,7 @@ You can optionally configure the class path that JDTLS uses with:
 }
 ```
 
-#### Zed Java Initialization Options
+### Zed Java Initialization Options
 
 There are also many more options you can pass directly to the language server, for example:
 
@@ -184,7 +187,7 @@ There are also many more options you can pass directly to the language server, f
 }
 ```
 
-## Java with Eclipse JTDLS Configuration {#zed-java-eclipse-configuration}
+### Java with Eclipse JTDLS Configuration {#zed-java-eclipse-configuration}
 
 Configuration options match those provided in the [redhat-developer/vscode-java extension](https://github.com/redhat-developer/vscode-java#supported-vs-code-settings).
 
