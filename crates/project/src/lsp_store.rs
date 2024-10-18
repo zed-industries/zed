@@ -6078,40 +6078,45 @@ impl LspStore {
         buffer_handle: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
-        let buffer = buffer_handle.read(cx);
-        let file = File::from_dyn(buffer.file())?;
-        let abs_path = file.as_local()?.abs_path(cx);
-        let uri = lsp::Url::from_file_path(abs_path).log_err()?;
-
         const PULL_DIAGNOSTICS_DEBOUNCE: Duration = Duration::from_millis(125);
 
+        let previous_result_id = match self.as_local()?.language_servers.get(&language_server_id) {
+            Some(LanguageServerState::Running {
+                previous_document_diagnostic_result_id,
+                ..
+            }) => previous_document_diagnostic_result_id.clone(),
+            _ => None,
+        };
+
         let lsp_request_task = self.request_lsp(
-            buffer_handle,
+            buffer_handle.clone(),
             LanguageServerToQuery::Other(language_server_id),
-            GetDocumentDiagnostics {},
+            GetDocumentDiagnostics {
+                language_server_id,
+                previous_result_id,
+            },
             cx,
         );
 
-        cx.spawn(move |this, mut cx| async move {
+        let snapshot =
+            self.buffer_snapshot_for_lsp_version(&buffer_handle, language_server_id, None, cx);
+
+        cx.spawn(move |_, mut cx| async move {
+            let snapshot = snapshot?;
+
             cx.background_executor()
                 .timer(PULL_DIAGNOSTICS_DEBOUNCE)
                 .await;
 
-            let diagnostics = lsp_request_task.await;
-            this.update(&mut cx, |this, cx| {
-                this.update_diagnostics(
-                    language_server_id,
-                    lsp::PublishDiagnosticsParams {
-                        uri: uri.clone(),
-                        diagnostics: diagnostics.unwrap(),
-                        version: None,
-                    },
-                    &[],
-                    cx,
-                )
-                .log_err()
+            let diagnostics = lsp_request_task
+                .await
+                .context("Unable to pull document diagnostic")
+                .unwrap_or_default();
+
+            buffer_handle.update(&mut cx, |buffer, cx| {
+                let set = DiagnosticSet::from_sorted_entries(diagnostics, &snapshot);
+                buffer.update_diagnostics(language_server_id, set, cx);
             })
-            .ok();
         })
         .detach();
 

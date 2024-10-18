@@ -24,7 +24,7 @@ use language::{
 };
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
-    CompletionListItemDefaultsEditRange, CompletionTriggerKind, Diagnostic, DocumentHighlightKind,
+    CompletionListItemDefaultsEditRange, CompletionTriggerKind, DiagnosticSeverity, DocumentHighlightKind,
     LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
     ServerCapabilities,
 };
@@ -3652,9 +3652,26 @@ impl LspCommand for LinkedEditingRange {
     }
 }
 
+fn lsp_diagnostic_to_diagnostic(diagnostic: lsp::Diagnostic) -> Diagnostic {
+    Diagnostic {
+        source: diagnostic.source.clone(),
+        code: diagnostic.code.as_ref().map(|code| match code {
+            lsp::NumberOrString::Number(code) => code.to_string(),
+            lsp::NumberOrString::String(code) => code.clone(),
+        }),
+        severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
+        message: diagnostic.message,
+        group_id: 0,
+        is_primary: true,
+        is_disk_based: false,
+        is_unnecessary: true,
+        data: diagnostic.data.clone(),
+    }
+}
+
 #[async_trait(?Send)]
 impl LspCommand for GetDocumentDiagnostics {
-    type Response = Vec<Diagnostic>;
+    type Response = Vec<DiagnosticEntry<Anchor>>;
     type LspRequest = lsp::request::DocumentDiagnosticRequest;
     type ProtoRequest = proto::GetDocumentDiagnostics;
 
@@ -3695,10 +3712,10 @@ impl LspCommand for GetDocumentDiagnostics {
         self,
         message: lsp::DocumentDiagnosticReportResult,
         lsp_store: Model<LspStore>,
-        _: Model<Buffer>,
+        buffer: Model<Buffer>,
         language_server_id: LanguageServerId,
         mut cx: AsyncAppContext,
-    ) -> Result<Vec<Diagnostic>> {
+    ) -> Result<Vec<DiagnosticEntry<Anchor>>> {
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
                 lsp::DocumentDiagnosticReport::Full(report) => {
@@ -3716,15 +3733,32 @@ impl LspCommand for GetDocumentDiagnostics {
                         }
                     })?;
 
-                    Ok(report.full_document_diagnostic_report.items.clone())
+                    buffer.update(&mut cx, |buffer, _| {
+                        report
+                            .full_document_diagnostic_report
+                            .items
+                            .into_iter()
+                            .map(|diagnostic| {
+                                let start = buffer.clip_point_utf16(
+                                    point_from_lsp(diagnostic.range.start),
+                                    Bias::Left,
+                                );
+                                let end = buffer.clip_point_utf16(
+                                    point_from_lsp(diagnostic.range.end),
+                                    Bias::Left,
+                                );
+
+                                DiagnosticEntry {
+                                    range: buffer.anchor_after(start)..buffer.anchor_before(end),
+                                    diagnostic: lsp_diagnostic_to_diagnostic(diagnostic),
+                                }
+                            })
+                            .collect()
+                    })
                 }
-                lsp::DocumentDiagnosticReport::Unchanged(_) => {
-                    todo!("Not implemented yet.")
-                }
+                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(vec![]),
             },
-            lsp::DocumentDiagnosticReportResult::Partial(_) => {
-                todo!("Not implemented yet.")
-            }
+            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(vec![]),
         }
     }
 
@@ -3765,29 +3799,28 @@ impl LspCommand for GetDocumentDiagnostics {
     }
 
     fn response_to_proto(
-        _: Vec<Diagnostic>,
+        diagnostics: Vec<DiagnosticEntry<Anchor>>,
         _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
         _: &mut AppContext,
     ) -> proto::GetDocumentDiagnosticsResponse {
-        todo!("Not implemented yet.")
-        // let diagnostics = response
-        //     .into_iter()
-        //     .map(|diagnostic| language::proto::serialize_diagnostics(diagnostic))
-        //     .collect();
-        // proto::GetDocumentDiagnosticsResponse { diagnostics }
+        proto::GetDocumentDiagnosticsResponse {
+            diagnostics: language::proto::serialize_diagnostics(&diagnostics),
+            result_id: Default::default(),
+        }
     }
 
     async fn response_from_proto(
         self,
-        _: proto::GetDocumentDiagnosticsResponse,
+        message: proto::GetDocumentDiagnosticsResponse,
         _: Model<LspStore>,
         _: Model<Buffer>,
         _: AsyncAppContext,
-    ) -> Result<Vec<Diagnostic>> {
-        todo!("Not implemented yet.")
-        // language::proto::deserialize_diagnostics(message.diagnostics)
+    ) -> Result<Vec<DiagnosticEntry<Anchor>>> {
+        Ok(language::proto::deserialize_diagnostics(
+            message.diagnostics,
+        ))
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {

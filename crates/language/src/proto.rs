@@ -323,7 +323,7 @@ pub fn deserialize_operation(message: proto::Operation) -> Result<crate::Operati
                         value: message.lamport_timestamp,
                     },
                     server_id: LanguageServerId(message.server_id as usize),
-                    diagnostics: deserialize_diagnostics(message.diagnostics),
+                    diagnostics: Arc::from(deserialize_diagnostics(message.diagnostics)),
                 }
             }
             proto::operation::Variant::UpdateCompletionTriggers(message) => {
@@ -402,7 +402,7 @@ pub fn deserialize_selection(selection: proto::Selection) -> Option<Selection<An
 /// Deserializes a list of diagnostics from the RPC representation.
 pub fn deserialize_diagnostics(
     diagnostics: Vec<proto::Diagnostic>,
-) -> Arc<[DiagnosticEntry<Anchor>]> {
+) -> Vec<DiagnosticEntry<Anchor>> {
     diagnostics
         .into_iter()
         .filter_map(|diagnostic| {
