@@ -54,7 +54,28 @@
     (attribute_value) @content
     (#set! "language" "typescript")))
 
-; TODO: support less/sass/scss
+; Vue <style lang="css"> injections
 (style_element
-  (raw_text) @content
-  (#set! "language" "css"))
+    (start_tag
+        (attribute
+            (attribute_name) @_attr_name
+            (#eq? @_attr_name "lang")
+            (quoted_attribute_value
+                (attribute_value) @language
+            )
+        )
+    )
+    (raw_text) @content
+)
+
+; Vue <style> css injections (no lang attribute)
+(style_element
+    (start_tag
+        (attribute
+            (attribute_name) @_attr_name
+        )*
+    )
+    (raw_text) @content
+    (#not-any-of? @_attr_name "lang")
+    (#set! language "css")
+)
