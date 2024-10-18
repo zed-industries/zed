@@ -1,9 +1,23 @@
 use std::{cmp::Ordering, ops::Range};
 
-use gpui::{fill, point, size, Bounds, Point, UniformListDecoration, View};
+use gpui::{fill, point, size, AnyElement, Bounds, Point, UniformListDecoration, View};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
+
+pub struct IndentGuides {
+    line_color: Color,
+    indent_size: Pixels,
+    compute_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
+    render_fn: Option<
+        Box<
+            dyn Fn(
+                RenderIndentGuideParams,
+                &mut WindowContext,
+            ) -> SmallVec<[RenderedIndentGuide; 16]>,
+        >,
+    >,
+}
 
 pub fn indent_guides<V: Render>(
     view: View<V>,
@@ -20,20 +34,6 @@ pub fn indent_guides<V: Render>(
         compute_fn: Box::new(compute_indent_guides),
         render_fn: None,
     }
-}
-
-pub struct IndentGuides {
-    line_color: Color,
-    indent_size: Pixels,
-    compute_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
-    render_fn: Option<
-        Box<
-            dyn Fn(
-                RenderIndentGuideParams,
-                &mut WindowContext,
-            ) -> SmallVec<[RenderedIndentGuide; 16]>,
-        >,
-    >,
 }
 
 impl IndentGuides {
@@ -71,71 +71,116 @@ pub struct RenderedIndentGuide {
     pub color: Color,
 }
 
-pub struct IndentGuidesLayoutState {
-    indent_guides: SmallVec<[RenderedIndentGuide; 16]>,
-}
-
-impl Into<UniformListDecoration<IndentGuidesLayoutState>> for IndentGuides {
-    fn into(self) -> UniformListDecoration<IndentGuidesLayoutState> {
-        let line_color = self.line_color;
-        let indent_size = self.indent_size;
-        let compute_fn = self.compute_fn;
-        let render_fn = self.render_fn;
-
-        UniformListDecoration {
-            prepaint_fn: Box::new(move |mut visible_range, bounds, item_height, cx| {
-                visible_range.end += 1;
-                let visible_entries = &(compute_fn)(visible_range.clone(), cx);
-                // Check if we have an additional indent that is outside of the visible range
-                let includes_trailing_indent = visible_entries.len() == visible_range.len();
-                let indent_guides = compute_indent_guides(
-                    &visible_entries,
-                    visible_range.start,
-                    includes_trailing_indent,
-                );
-
-                let mut indent_guides = if let Some(ref custom_render) = render_fn {
-                    let params = RenderIndentGuideParams {
-                        indent_guides,
-                        indent_size,
-                        item_height,
-                    };
-                    custom_render(params, cx)
-                } else {
-                    indent_guides
-                        .into_iter()
-                        .map(|layout| RenderedIndentGuide {
-                            bounds: Bounds::new(
-                                point(
-                                    px(layout.offset.x as f32) * indent_size,
-                                    px(layout.offset.y as f32) * item_height,
-                                ),
-                                size(px(1.), px(layout.length as f32) * item_height),
-                            ),
-                            color: line_color,
-                        })
-                        .collect()
-                };
-
-                for guide in &mut indent_guides {
-                    guide.bounds.origin += bounds.origin;
-                }
-                IndentGuidesLayoutState { indent_guides }
-            }),
-            paint_fn: Box::new(|state, cx| {
-                for guide in &state.indent_guides {
-                    cx.paint_quad(fill(guide.bounds, guide.color.color(cx)));
-                }
-            }),
-        }
-    }
-}
-
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct IndentGuideLayout {
     pub offset: Point<usize>,
     pub length: usize,
     pub continues_offscreen: bool,
+}
+
+mod uniform_list {
+    use super::*;
+
+    struct IndentGuidesElement {
+        indent_guides: SmallVec<[RenderedIndentGuide; 16]>,
+    }
+
+    impl UniformListDecoration for IndentGuides {
+        fn compute(
+            &self,
+            visible_range: Range<usize>,
+            bounds: Bounds<Pixels>,
+            item_height: Pixels,
+            cx: &mut WindowContext,
+        ) -> AnyElement {
+            let mut visible_range = visible_range.clone();
+            visible_range.end += 1;
+            let visible_entries = &(self.compute_fn)(visible_range.clone(), cx);
+            // Check if we have an additional indent that is outside of the visible range
+            let includes_trailing_indent = visible_entries.len() == visible_range.len();
+            let indent_guides = compute_indent_guides(
+                &visible_entries,
+                visible_range.start,
+                includes_trailing_indent,
+            );
+            let mut indent_guides = if let Some(ref custom_render) = self.render_fn {
+                let params = RenderIndentGuideParams {
+                    indent_guides,
+                    indent_size: self.indent_size,
+                    item_height,
+                };
+                custom_render(params, cx)
+            } else {
+                indent_guides
+                    .into_iter()
+                    .map(|layout| RenderedIndentGuide {
+                        bounds: Bounds::new(
+                            point(
+                                px(layout.offset.x as f32) * self.indent_size,
+                                px(layout.offset.y as f32) * item_height,
+                            ),
+                            size(px(1.), px(layout.length as f32) * -item_height),
+                        ),
+                        color: self.line_color,
+                    })
+                    .collect()
+            };
+            for guide in &mut indent_guides {
+                guide.bounds.origin += bounds.origin;
+            }
+
+            let indent_guides = IndentGuidesElement { indent_guides };
+            indent_guides.into_any_element()
+        }
+    }
+
+    impl Element for IndentGuidesElement {
+        type RequestLayoutState = ();
+        type PrepaintState = ();
+
+        fn id(&self) -> Option<ElementId> {
+            None
+        }
+
+        fn request_layout(
+            &mut self,
+            _id: Option<&gpui::GlobalElementId>,
+            cx: &mut WindowContext,
+        ) -> (gpui::LayoutId, Self::RequestLayoutState) {
+            (cx.request_layout(gpui::Style::default(), []), ())
+        }
+
+        fn prepaint(
+            &mut self,
+            _id: Option<&gpui::GlobalElementId>,
+            _bounds: Bounds<Pixels>,
+            _request_layout: &mut Self::RequestLayoutState,
+            _cx: &mut WindowContext,
+        ) -> Self::PrepaintState {
+            ()
+        }
+
+        fn paint(
+            &mut self,
+            _id: Option<&gpui::GlobalElementId>,
+            _bounds: Bounds<Pixels>,
+            _request_layout: &mut Self::RequestLayoutState,
+            _prepaint: &mut Self::PrepaintState,
+            cx: &mut WindowContext,
+        ) {
+            for guide in &self.indent_guides {
+                cx.paint_quad(fill(guide.bounds, guide.color.color(cx)));
+            }
+        }
+    }
+
+    impl IntoElement for IndentGuidesElement {
+        type Element = Self;
+
+        fn into_element(self) -> Self::Element {
+            self
+        }
+    }
 }
 
 fn compute_indent_guides(
