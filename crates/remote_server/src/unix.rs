@@ -5,7 +5,7 @@ use client::ProxySettings;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
-use git::GitHostingProviderRegistry;
+// use git::GitHostingProviderRegistry;
 use gpui::{AppContext, Context as _, ModelContext, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
@@ -34,8 +34,61 @@ use std::{
 };
 use util::ResultExt;
 
-fn init_logging_proxy() {
-    env_logger::builder()
+
+// fn init_logging_proxy() {
+//     env_logger::builder()
+//         .format(|buf, record| {
+//             let mut log_record = LogRecord::new(record);
+//             log_record.message = format!("(remote proxy) {}", log_record.message);
+//             serde_json::to_writer(&mut *buf, &log_record)?;
+//             buf.write_all(b"\n")?;
+//             Ok(())
+//         })
+//         .init();
+// }
+
+fn init_logging_proxy(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
+    struct MultiWrite {
+        file: Box<dyn std::io::Write + Send + 'static>,
+        channel: Sender<Vec<u8>>,
+        buffer: Vec<u8>,
+    }
+
+    impl std::io::Write for MultiWrite {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            let written = self.file.write(buf)?;
+            self.buffer.extend_from_slice(&buf[..written]);
+            Ok(written)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.channel
+                .send_blocking(self.buffer.clone())
+                .map_err(|error| std::io::Error::new(std::io::ErrorKind::Other, error))?;
+            self.buffer.clear();
+            self.file.flush()
+        }
+    }
+
+    let log_file = Box::new(if log_file_path.exists() {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&log_file_path)
+            .context("Failed to open log file in append mode")?
+    } else {
+        std::fs::File::create(&log_file_path).context("Failed to create log file")?
+    });
+
+    let (tx, rx) = smol::channel::unbounded();
+
+    let target = Box::new(MultiWrite {
+        file: log_file,
+        channel: tx,
+        buffer: Vec::new(),
+    });
+
+    env_logger::Builder::from_default_env()
+        .target(env_logger::Target::Pipe(target))
         .format(|buf, record| {
             let mut log_record = LogRecord::new(record);
             log_record.message = format!("(remote proxy) {}", log_record.message);
@@ -44,6 +97,8 @@ fn init_logging_proxy() {
             Ok(())
         })
         .init();
+
+    Ok(rx)
 }
 
 fn init_logging_server(log_file_path: PathBuf) -> Result<Receiver<Vec<u8>>> {
@@ -223,14 +278,18 @@ fn start_server(
                         let message = match stdin_message {
                             Ok(message) => message,
                             Err(error) => {
-                                log::warn!("error reading message on stdin: {}. exiting.", error);
+                                log::warn!("error reading message on stdin: {}.", error);
+                                // std::process::exit(1);
                                 break;
                             }
                         };
+                        log::debug!("got message on stdin. forwarding to application.");
                         if let Err(error) = incoming_tx.unbounded_send(message) {
                             log::error!("failed to send message to application: {:?}. exiting.", error);
+                            // std::process::exit(1);
                             return Err(anyhow!(error));
                         }
+                        // log::debug!("forwarded message to application.");
                     }
 
                     outgoing_message  = outgoing_rx.next().fuse() => {
@@ -253,14 +312,18 @@ fn start_server(
 
                     log_message = log_rx.next().fuse() => {
                         if let Some(log_message) = log_message {
+                            // write_to_global_log("writing log message...");
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
-                                log::error!("failed to write log message to stderr: {:?}", error);
+                                // write_to_global_log(format!("writing log message to stderr failed: {:?}", error).as_str());
+                                // log::error!("failed to write log message to stderr: {:?}", error);
                                 break;
                             }
                             if let Err(error) = stderr_stream.flush().await {
-                                log::error!("failed to flush stderr stream: {:?}", error);
+                                // write_to_global_log(&format!("failed to flush stderr stream: {:?}", error));
+                                // log::error!("failed to flush stderr stream: {:?}", error);
                                 break;
                             }
+                            // write_to_global_log("writing log message... DONE");
                         }
                     }
                 }
@@ -315,7 +378,7 @@ pub fn execute_run(
 
     log::info!("starting headless gpui app");
 
-    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
+    // let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
         HeadlessProject::init(cx);
@@ -325,8 +388,8 @@ pub fn execute_run(
 
         client::init_settings(cx);
 
-        GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
-        git_hosting_providers::init(cx);
+        // GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
+        // git_hosting_providers::init(cx);
 
         let project = cx.new_model(|cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));
@@ -403,7 +466,8 @@ impl ServerPaths {
 }
 
 pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
-    init_logging_proxy();
+    let log_file = paths::remote_server_state_dir().join(&identifier).join("proxy.log");
+    init_logging_proxy(log_file).log_err();
     init_panic_hook();
 
     log::info!("starting proxy process. PID: {}", std::process::id());
@@ -443,6 +507,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         let mut stream = smol::net::unix::UnixStream::connect(&server_paths.stderr_socket).await?;
         let mut stderr_buffer = vec![0; 2048];
         loop {
+            log::debug!("proxy reading message from stderr socket");
             match stream.read(&mut stderr_buffer).await {
                 Ok(0) => {
                     let error =
@@ -598,6 +663,7 @@ where
 
     let mut buffer = Vec::new();
     loop {
+        log::debug!("proxy reading message from {}", socket_name);
         read_message_raw(&mut reader, &mut buffer)
             .await
             .with_context(|| format!("failed to read message from {}", socket_name))?;
@@ -617,6 +683,7 @@ async fn write_size_prefixed_buffer<S: AsyncWrite + Unpin>(
     buffer: &mut Vec<u8>,
 ) -> Result<()> {
     let len = buffer.len() as u32;
+    log::debug!("write_size_prefixed_buffer. writing len: {}", len);
     stream.write_all(len.to_le_bytes().as_slice()).await?;
     stream.write_all(buffer).await?;
     Ok(())
