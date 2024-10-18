@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
+use ec4rs::{ConfigParser, Properties as EditorconfigProperties, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
-use paths::local_settings_file_relative_path;
+use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
 use smallvec::SmallVec;
@@ -12,13 +13,13 @@ use std::{
     fmt::Debug,
     ops::Range,
     path::{Path, PathBuf},
-    str,
+    str::{self, FromStr},
     sync::{Arc, LazyLock},
 };
 use tree_sitter::Query;
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
 
-use crate::{editorconfig::Editorconfig, SettingsJsonSchemaParams, WorktreeId};
+use crate::{SettingsJsonSchemaParams, WorktreeId};
 
 /// A value that can be defined as a user setting.
 ///
@@ -177,6 +178,26 @@ pub struct SettingsStore {
     setting_file_updates_tx: mpsc::UnboundedSender<
         Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
     >,
+}
+
+#[derive(Clone)]
+pub struct Editorconfig {
+    pub is_root: bool,
+    pub sections: Vec<Section>,
+}
+
+impl FromStr for Editorconfig {
+    type Err = anyhow::Error;
+
+    fn from_str(contents: &str) -> Result<Self, Self::Err> {
+        let parser = ConfigParser::new_buffered(contents.as_bytes())
+            .context("creating editorconfig parser")?;
+        let is_root = parser.is_root;
+        let sections = parser
+            .collect::<Result<Vec<_>, _>>()
+            .context("parsing editorconfig sections")?;
+        Ok(Self { is_root, sections })
+    }
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
@@ -577,7 +598,7 @@ impl SettingsStore {
                 .filter(|content| !content.is_empty()),
         ) {
             (LocalSettingsKind::Tasks, _) => {
-                return Err(InvalidSettingsError::Other {
+                return Err(InvalidSettingsError::Tasks {
                     message: "Attempted to submit tasks into the settings store".to_string(),
                 })
             }
@@ -620,20 +641,37 @@ impl SettingsStore {
                     .raw_editorconfig_settings
                     .entry((root_id, directory_path.clone()))
                 {
-                    btree_map::Entry::Vacant(v) => {
-                        v.insert((
-                            editorconfig_contents.to_owned(),
-                            editorconfig_contents.parse().log_err(),
-                        ));
-                        editorconfig_settings_changed = true;
-                    }
+                    btree_map::Entry::Vacant(v) => match editorconfig_contents.parse() {
+                        Ok(new_contents) => {
+                            v.insert((editorconfig_contents.to_owned(), Some(new_contents)));
+                            editorconfig_settings_changed = true;
+                        }
+                        Err(e) => {
+                            v.insert((editorconfig_contents.to_owned(), None));
+                            return Err(InvalidSettingsError::Editorconfig {
+                                message: e.to_string(),
+                                path: directory_path.join(EDITORCONFIG_NAME),
+                            });
+                        }
+                    },
                     btree_map::Entry::Occupied(mut o) => {
                         if o.get().0 != editorconfig_contents {
-                            o.insert((
-                                editorconfig_contents.to_owned(),
-                                editorconfig_contents.parse().log_err(),
-                            ));
-                            editorconfig_settings_changed = true;
+                            match editorconfig_contents.parse() {
+                                Ok(new_contents) => {
+                                    o.insert((
+                                        editorconfig_contents.to_owned(),
+                                        Some(new_contents),
+                                    ));
+                                    editorconfig_settings_changed = true;
+                                }
+                                Err(e) => {
+                                    o.insert((editorconfig_contents.to_owned(), None));
+                                    return Err(InvalidSettingsError::Editorconfig {
+                                        message: e.to_string(),
+                                        path: directory_path.join(EDITORCONFIG_NAME),
+                                    });
+                                }
+                            }
                         }
                     }
                 }
@@ -644,10 +682,7 @@ impl SettingsStore {
             self.recompute_values(Some((root_id, &directory_path)), cx)?;
         }
         if editorconfig_settings_changed {
-            self.recompute_editorconfig_values(root_id, cx)
-                .map_err(|e| InvalidSettingsError::Editorconfig {
-                    message: e.to_string(),
-                })?;
+            // TODO kb remove this all?
         }
 
         Ok(())
@@ -940,37 +975,33 @@ impl SettingsStore {
         Ok(())
     }
 
-    fn recompute_editorconfig_values(
+    pub fn editorconfg_properties(
         &self,
         for_worktree: WorktreeId,
-        cx: &mut AppContext,
-    ) -> Result<()> {
-        let parsed_editorconfigs = self
-            .local_editorconfig_settings(for_worktree)
-            .map(|(editorconfig_path, _, parsed_editorconfig)| {
-                Ok((
-                    editorconfig_path,
-                    parsed_editorconfig.context("editorconfig is not parsed successfully")?,
-                ))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()
-            .context("reloading worktree editorconfig settings")?;
-        if parsed_editorconfigs.is_empty() {
-            return Ok(());
-        }
+        for_path: &Path,
+    ) -> Option<EditorconfigProperties> {
+        let mut properties = EditorconfigProperties::new();
+        properties.use_fallbacks();
 
-        let mut merged_editorconfigs = Vec::with_capacity(parsed_editorconfigs.len());
-        for (path, mut editorconfig) in parsed_editorconfigs {
-            if !editorconfig.is_root() {
-                if let Some((_, parent_editorconfig)) = merged_editorconfigs.last() {
-                    editorconfig.merge_with(parent_editorconfig);
-                }
+        for (directory_with_config, _, parsed_editorconfig) in
+            self.local_editorconfig_settings(for_worktree)
+        {
+            if !for_path.starts_with(&directory_with_config) {
+                return Some(properties);
             }
-            merged_editorconfigs.push((path, editorconfig));
+            let Some(parsed_editorconfig) = parsed_editorconfig else {
+                return None;
+            };
+            if parsed_editorconfig.is_root {
+                properties = EditorconfigProperties::new();
+                properties.use_fallbacks();
+            }
+            for section in parsed_editorconfig.sections {
+                section.apply_to(&mut properties, for_path).log_err()?;
+            }
         }
 
-        todo!("TODO kb call someone to accept the newly merged sequence");
-        Ok(())
+        Some(properties)
     }
 }
 
@@ -980,8 +1011,8 @@ pub enum InvalidSettingsError {
     UserSettings { message: String },
     ServerSettings { message: String },
     DefaultSettings { message: String },
-    Editorconfig { message: String },
-    Other { message: String },
+    Editorconfig { path: PathBuf, message: String },
+    Tasks { message: String },
 }
 
 impl std::fmt::Display for InvalidSettingsError {
@@ -991,8 +1022,8 @@ impl std::fmt::Display for InvalidSettingsError {
             | InvalidSettingsError::UserSettings { message }
             | InvalidSettingsError::ServerSettings { message }
             | InvalidSettingsError::DefaultSettings { message }
-            | InvalidSettingsError::Other { message }
-            | InvalidSettingsError::Editorconfig { message } => {
+            | InvalidSettingsError::Tasks { message }
+            | InvalidSettingsError::Editorconfig { message, .. } => {
                 write!(f, "{message}")
             }
         }
