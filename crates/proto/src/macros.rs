@@ -32,7 +32,6 @@ macro_rules! messages {
                         responding_to,
                         original_sender_id,
                         payload: Some(envelope::Payload::$name(self)),
-                        ack_id: None,
                     }
                 }
 
