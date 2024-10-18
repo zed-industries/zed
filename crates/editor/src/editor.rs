@@ -100,7 +100,7 @@ use language::{
 };
 use linked_editing_ranges::refresh_linked_ranges;
 pub use proposed_changes_editor::{
-    ProposedChangesBuffer, ProposedChangesEditor, ProposedChangesEditorToolbar,
+    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use similar::{ChangeTag, TextDiff};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
@@ -12363,10 +12363,15 @@ impl Editor {
 
         let proposed_changes_buffers = new_selections_by_buffer
             .into_iter()
-            .map(|(buffer, ranges)| ProposedChangesBuffer { buffer, ranges })
+            .map(|(buffer, ranges)| ProposedChangeLocation { buffer, ranges })
             .collect::<Vec<_>>();
         let proposed_changes_editor = cx.new_view(|cx| {
-            ProposedChangesEditor::new(proposed_changes_buffers, self.project.clone(), cx)
+            ProposedChangesEditor::new(
+                "Proposed changes",
+                proposed_changes_buffers,
+                self.project.clone(),
+                cx,
+            )
         });
 
         cx.window_context().defer(move |cx| {

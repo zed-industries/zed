@@ -175,7 +175,7 @@ impl Render for SshPrompt {
             .child(
                 h_flex()
                     .p_2()
-                    .flex_wrap()
+                    .flex()
                     .child(if self.error_message.is_some() {
                         Icon::new(IconName::XCircle)
                             .size(IconSize::Medium)
@@ -195,6 +195,7 @@ impl Render for SshPrompt {
                     })
                     .child(
                         div()
+                            .ml_1()
                             .text_ellipsis()
                             .overflow_x_hidden()
                             .when_some(self.error_message.as_ref(), |el, error| {
@@ -205,7 +206,7 @@ impl Render for SshPrompt {
                                 |el| {
                                     el.child(
                                         Label::new(format!(
-                                            "－{}…",
+                                            "{}…",
                                             self.status_message.clone().unwrap()
                                         ))
                                         .size(LabelSize::Small),
