@@ -222,7 +222,8 @@ impl LocalLspStore {
                 })?;
 
             let settings = buffer.handle.update(&mut cx, |buffer, cx| {
-                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx).clone()
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                    .into_owned()
             })?;
 
             let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
@@ -1225,7 +1226,7 @@ impl LspStore {
 
         let buffer_file = buffer.read(cx).file().cloned();
         let settings =
-            language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).clone();
+            language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -1407,8 +1408,10 @@ impl LspStore {
                         language_servers_to_start.push((file.worktree.clone(), language.name()));
                     }
                 }
-                language_formatters_to_check
-                    .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
+                language_formatters_to_check.push((
+                    buffer_file.map(|f| f.worktree_id(cx)),
+                    settings.into_owned(),
+                ));
             }
         }
 
@@ -1852,11 +1855,14 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         let options = buffer.update(cx, |buffer, cx| {
-            lsp_command::lsp_formatting_options(language_settings(
-                buffer.language_at(position).map(|l| l.name()),
-                buffer.file(),
-                cx,
-            ))
+            lsp_command::lsp_formatting_options(
+                language_settings(
+                    buffer.language_at(position).map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                )
+                .as_ref(),
+            )
         });
         self.request_lsp(
             buffer.clone(),

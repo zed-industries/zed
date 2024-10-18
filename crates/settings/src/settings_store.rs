@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
-use ec4rs::{ConfigParser, Properties as EditorconfigProperties, PropertiesSource, Section};
+use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
@@ -18,6 +18,8 @@ use std::{
 };
 use tree_sitter::Query;
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
+
+pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{SettingsJsonSchemaParams, WorktreeId};
 
