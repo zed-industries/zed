@@ -20,6 +20,7 @@
     )
 )
 
+; Style self-closing component attributes as @tag.property
 (self_closing_tag
     (
         (tag_name) @_tag_name
@@ -77,19 +78,19 @@
 ; Treating (if, each, ...) as a keyword inside of blocks
 ; like {#if ...} or {#each ...}
 (block_start_tag
-    tag: _ @tag.keyword
+    tag: _ @keyword
 )
 
 (block_tag
-    tag: _ @tag.keyword
+    tag: _ @keyword
 )
 
 (block_end_tag
-    tag: _ @tag.keyword
+    tag: _ @keyword
 )
 
 (expression_tag
-    tag: _ @tag.keyword
+    tag: _ @keyword
 )
 
 ; Style quoted string attribute values
