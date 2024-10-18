@@ -16,14 +16,22 @@ use workspace::{
 
 pub struct ProposedChangesEditor {
     editor: View<Editor>,
-    _subscriptions: Vec<Subscription>,
+    multibuffer: Model<MultiBuffer>,
+    title: SharedString,
+    buffer_entries: Vec<BufferEntry>,
     _recalculate_diffs_task: Task<Option<()>>,
     recalculate_diffs_tx: mpsc::UnboundedSender<RecalculateDiff>,
 }
 
-pub struct ProposedChangesBuffer<T> {
+pub struct ProposedChangeLocation<T> {
     pub buffer: Model<Buffer>,
     pub ranges: Vec<Range<T>>,
+}
+
+struct BufferEntry {
+    base: Model<Buffer>,
+    branch: Model<Buffer>,
+    _subscription: Subscription,
 }
 
 pub struct ProposedChangesEditorToolbar {
@@ -43,32 +51,14 @@ struct BranchBufferSemanticsProvider(Rc<dyn SemanticsProvider>);
 
 impl ProposedChangesEditor {
     pub fn new<T: ToOffset>(
-        buffers: Vec<ProposedChangesBuffer<T>>,
+        title: impl Into<SharedString>,
+        locations: Vec<ProposedChangeLocation<T>>,
         project: Option<Model<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let mut subscriptions = Vec::new();
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-
-        for buffer in buffers {
-            let branch_buffer = buffer.buffer.update(cx, |buffer, cx| buffer.branch(cx));
-            subscriptions.push(cx.subscribe(&branch_buffer, Self::on_buffer_event));
-
-            multibuffer.update(cx, |multibuffer, cx| {
-                multibuffer.push_excerpts(
-                    branch_buffer,
-                    buffer.ranges.into_iter().map(|range| ExcerptRange {
-                        context: range,
-                        primary: None,
-                    }),
-                    cx,
-                );
-            });
-        }
-
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
-
-        Self {
+        let mut this = Self {
             editor: cx.new_view(|cx| {
                 let mut editor = Editor::for_multibuffer(multibuffer.clone(), project, true, cx);
                 editor.set_expand_all_diff_hunks();
@@ -81,6 +71,9 @@ impl ProposedChangesEditor {
                 );
                 editor
             }),
+            multibuffer,
+            title: title.into(),
+            buffer_entries: Vec::new(),
             recalculate_diffs_tx,
             _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
                 let mut buffers_to_diff = HashSet::default();
@@ -112,7 +105,100 @@ impl ProposedChangesEditor {
                 }
                 None
             }),
-            _subscriptions: subscriptions,
+        };
+        this.reset_locations(locations, cx);
+        this
+    }
+
+    pub fn branch_buffer_for_base(&self, base_buffer: &Model<Buffer>) -> Option<Model<Buffer>> {
+        self.buffer_entries.iter().find_map(|entry| {
+            if &entry.base == base_buffer {
+                Some(entry.branch.clone())
+            } else {
+                None
+            }
+        })
+    }
+
+    pub fn set_title(&mut self, title: SharedString, cx: &mut ViewContext<Self>) {
+        self.title = title;
+        cx.notify();
+    }
+
+    pub fn reset_locations<T: ToOffset>(
+        &mut self,
+        locations: Vec<ProposedChangeLocation<T>>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        // Undo all branch changes
+        for entry in &self.buffer_entries {
+            let base_version = entry.base.read(cx).version();
+            entry.branch.update(cx, |buffer, cx| {
+                let undo_counts = buffer
+                    .operations()
+                    .iter()
+                    .filter_map(|(timestamp, _)| {
+                        if !base_version.observed(*timestamp) {
+                            Some((*timestamp, u32::MAX))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                buffer.undo_operations(undo_counts, cx);
+            });
+        }
+
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.clear(cx);
+        });
+
+        let mut buffer_entries = Vec::new();
+        for location in locations {
+            let branch_buffer;
+            if let Some(ix) = self
+                .buffer_entries
+                .iter()
+                .position(|entry| entry.base == location.buffer)
+            {
+                let entry = self.buffer_entries.remove(ix);
+                branch_buffer = entry.branch.clone();
+                buffer_entries.push(entry);
+            } else {
+                branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
+                buffer_entries.push(BufferEntry {
+                    branch: branch_buffer.clone(),
+                    base: location.buffer.clone(),
+                    _subscription: cx.subscribe(&branch_buffer, Self::on_buffer_event),
+                });
+            }
+
+            self.multibuffer.update(cx, |multibuffer, cx| {
+                multibuffer.push_excerpts(
+                    branch_buffer,
+                    location.ranges.into_iter().map(|range| ExcerptRange {
+                        context: range,
+                        primary: None,
+                    }),
+                    cx,
+                );
+            });
+        }
+
+        self.buffer_entries = buffer_entries;
+        self.editor.update(cx, |editor, cx| {
+            editor.change_selections(None, cx, |selections| selections.refresh())
+        });
+    }
+
+    pub fn recalculate_all_buffer_diffs(&self) {
+        for (ix, entry) in self.buffer_entries.iter().enumerate().rev() {
+            self.recalculate_diffs_tx
+                .unbounded_send(RecalculateDiff {
+                    buffer: entry.branch.clone(),
+                    debounce: ix > 0,
+                })
+                .ok();
         }
     }
 
@@ -162,11 +248,11 @@ impl Item for ProposedChangesEditor {
     type Event = EditorEvent;
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
-        Some(Icon::new(IconName::Pencil))
+        Some(Icon::new(IconName::Diff))
     }
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some("Proposed changes".into())
+        Some(self.title.clone())
     }
 
     fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {

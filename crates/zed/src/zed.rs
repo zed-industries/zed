@@ -11,7 +11,7 @@ pub(crate) mod windows_only_instance;
 pub use app_menus::*;
 use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
-use client::ZED_URL_SCHEME;
+use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
@@ -419,8 +419,7 @@ pub fn initialize_workspace(
             )
             .register_action(
                 |_: &mut Workspace, _: &OpenAccountSettings, cx: &mut ViewContext<Workspace>| {
-                    let server_url = &client::ClientSettings::get_global(cx).server_url;
-                    cx.open_url(&format!("{server_url}/account"));
+                    cx.open_url(&zed_urls::account_url(cx));
                 },
             )
             .register_action(

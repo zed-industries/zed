@@ -4,6 +4,7 @@ pub mod test;
 mod socks;
 pub mod telemetry;
 pub mod user;
+pub mod zed_urls;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_recursion::async_recursion;

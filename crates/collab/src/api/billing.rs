@@ -19,7 +19,7 @@ use stripe::{
 };
 use util::ResultExt;
 
-use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{
     db::{
@@ -50,6 +50,7 @@ pub fn router() -> Router {
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
         )
+        .route("/billing/monthly_spend", get(get_monthly_spend))
 }
 
 #[derive(Debug, Deserialize)]
@@ -670,6 +671,43 @@ async fn handle_customer_subscription_event(
         .await;
 
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct GetMonthlySpendParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct GetMonthlySpendResponse {
+    monthly_spend_in_cents: i32,
+}
+
+async fn get_monthly_spend(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<GetMonthlySpendParams>,
+) -> Result<Json<GetMonthlySpendResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(params.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let Some(llm_db) = app.llm_db.clone() else {
+        return Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "LLM database not available".into(),
+        ));
+    };
+
+    let monthly_spend = llm_db
+        .get_user_spending_for_month(user.id, Utc::now())
+        .await?
+        .saturating_sub(FREE_TIER_MONTHLY_SPENDING_LIMIT);
+
+    Ok(Json(GetMonthlySpendResponse {
+        monthly_spend_in_cents: monthly_spend.0 as i32,
+    }))
 }
 
 impl From<SubscriptionStatus> for StripeSubscriptionStatus {

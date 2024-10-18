@@ -2701,7 +2701,6 @@ impl ProjectPanel {
                 .cursor_default()
                 .when(self.width.is_some(), |this| {
                     this.children(Scrollbar::horizontal(
-                        //percentage as f32..end_offset as f32,
                         self.horizontal_scrollbar_state.clone(),
                     ))
                 }),
@@ -2918,7 +2917,9 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(cx))
-                .children(self.render_horizontal_scrollbar(cx))
+                .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
+                    this.pb_4().child(scrollbar)
+                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()

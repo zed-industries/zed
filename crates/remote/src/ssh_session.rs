@@ -832,7 +832,15 @@ impl SshRemoteClient {
                                 log::warn!("ssh heartbeat: connection activity channel has been dropped. stopping.");
                                 return Ok(());
                             }
+
                             keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
+
+                            if missed_heartbeats != 0 {
+                                missed_heartbeats = 0;
+                                this.update(&mut cx, |this, mut cx| {
+                                    this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                                })?;
+                            }
                         }
                         _ = keepalive_timer => {
                             log::debug!("Sending heartbeat to server...");
@@ -845,6 +853,7 @@ impl SshRemoteClient {
                                     ping_result
                                 }
                             };
+
                             if result.is_err() {
                                 missed_heartbeats += 1;
                                 log::warn!(
@@ -1517,19 +1526,16 @@ impl ChannelClient {
                             cx.clone(),
                         ) {
                             log::debug!("ssh message received. name:{type_name}");
-                            cx.foreground_executor().spawn(async move {
-                                match future.await {
-                                    Ok(_) => {
-                                        log::debug!("ssh message handled. name:{type_name}");
-                                    }
-                                    Err(error) => {
-                                        log::error!(
-                                            "error handling message. type:{type_name}, error:{error}",
-                                        );
-                                    }
+                            match future.await {
+                                Ok(_) => {
+                                    log::debug!("ssh message handled. name:{type_name}");
                                 }
-                            }).detach();
-
+                                Err(error) => {
+                                    log::error!(
+                                        "error handling message. type:{type_name}, error:{error}",
+                                    );
+                                }
+                            }
                         } else {
                             log::error!("unhandled ssh message name:{type_name}");
                         }
