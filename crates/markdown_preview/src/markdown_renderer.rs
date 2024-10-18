@@ -1,18 +1,19 @@
 use crate::markdown_elements::{
-    HeadingLevel, Link, ParsedMarkdown, ParsedMarkdownBlockQuote, ParsedMarkdownCodeBlock,
-    ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
+    HeadingLevel, Image, Link, MarkdownParagraph, ParsedMarkdown, ParsedMarkdownBlockQuote,
+    ParsedMarkdownCodeBlock, ParsedMarkdownElement, ParsedMarkdownHeading, ParsedMarkdownListItem,
     ParsedMarkdownListItemType, ParsedMarkdownTable, ParsedMarkdownTableAlignment,
-    ParsedMarkdownTableRow, ParsedMarkdownText,
+    ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
+    div, img, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
+    HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
     ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use settings::Settings;
 use std::{
     ops::{Mul, Range},
     sync::Arc,
+    vec,
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
@@ -152,7 +153,7 @@ fn render_markdown_heading(parsed: &ParsedMarkdownHeading, cx: &mut RenderContex
         .text_color(color)
         .pt(rems(0.15))
         .pb_1()
-        .child(render_markdown_text(&parsed.contents, cx))
+        .children(render_markdown_text(&parsed.contents, cx))
         .whitespace_normal()
         .into_any()
 }
@@ -230,17 +231,29 @@ fn render_markdown_list_item(
     cx.with_common_p(item).into_any()
 }
 
+fn paragraph_len(paragraphs: &Vec<MarkdownParagraph>) -> usize {
+    paragraphs
+        .iter()
+        .map(|paragraph| match paragraph {
+            MarkdownParagraph::MarkdownText(text) => text.contents.len(),
+            // TODO: Scale column width based on image size
+            MarkdownParagraph::MarkdownImage(_) => 1,
+        })
+        .sum()
+}
+
 fn render_markdown_table(parsed: &ParsedMarkdownTable, cx: &mut RenderContext) -> AnyElement {
     let mut max_lengths: Vec<usize> = vec![0; parsed.header.children.len()];
 
     for (index, cell) in parsed.header.children.iter().enumerate() {
-        let length = cell.contents.len();
+        let length = paragraph_len(&cell);
         max_lengths[index] = length;
     }
 
     for row in &parsed.body {
         for (index, cell) in row.children.iter().enumerate() {
-            let length = cell.contents.len();
+            let length = paragraph_len(&cell);
+
             if length > max_lengths[index] {
                 max_lengths[index] = length;
             }
@@ -306,11 +319,10 @@ fn render_markdown_table_row(
         };
 
         let max_width = max_column_widths.get(index).unwrap_or(&0.0);
-
         let mut cell = container
             .w(Length::Definite(relative(*max_width)))
             .h_full()
-            .child(contents)
+            .children(contents)
             .px_2()
             .py_1()
             .border_color(cx.border_color);
@@ -379,83 +391,152 @@ fn render_markdown_code_block(
         .into_any()
 }
 
-fn render_markdown_paragraph(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
+fn render_markdown_paragraph(
+    parsed: &Vec<MarkdownParagraph>,
+    cx: &mut RenderContext,
+) -> AnyElement {
     cx.with_common_p(div())
-        .child(render_markdown_text(parsed, cx))
+        .children(render_markdown_text(parsed, cx))
+        .flex()
         .into_any_element()
 }
 
-fn render_markdown_text(parsed: &ParsedMarkdownText, cx: &mut RenderContext) -> AnyElement {
-    let element_id = cx.next_id(&parsed.source_range);
+fn render_markdown_text(
+    parsed_new: &Vec<MarkdownParagraph>,
+    cx: &mut RenderContext,
+) -> Vec<AnyElement> {
+    let mut any_element = vec![];
+    // No need to clone parsed_new here, just iterate over the reference
+    for parsed_region in parsed_new {
+        match parsed_region {
+            MarkdownParagraph::MarkdownText(parsed) => {
+                let element_id = cx.next_id(&parsed.source_range);
 
-    let highlights = gpui::combine_highlights(
-        parsed.highlights.iter().filter_map(|(range, highlight)| {
-            let highlight = highlight.to_highlight_style(&cx.syntax_theme)?;
-            Some((range.clone(), highlight))
-        }),
-        parsed
-            .regions
-            .iter()
-            .zip(&parsed.region_ranges)
-            .filter_map(|(region, range)| {
-                if region.code {
-                    Some((
-                        range.clone(),
-                        HighlightStyle {
-                            background_color: Some(cx.code_span_background_color),
-                            ..Default::default()
+                let highlights = gpui::combine_highlights(
+                    parsed.highlights.iter().filter_map(|(range, highlight)| {
+                        let highlight = highlight.to_highlight_style(&cx.syntax_theme)?;
+                        Some((range.clone(), highlight))
+                    }),
+                    parsed.regions.iter().zip(&parsed.region_ranges).filter_map(
+                        |(region, range)| {
+                            if region.code {
+                                Some((
+                                    range.clone(),
+                                    HighlightStyle {
+                                        background_color: Some(cx.code_span_background_color),
+                                        ..Default::default()
+                                    },
+                                ))
+                            } else {
+                                None
+                            }
                         },
-                    ))
-                } else {
-                    None
+                    ),
+                );
+                let mut links = Vec::new();
+                let mut link_ranges = Vec::new();
+                for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
+                    if let Some(link) = region.link.clone() {
+                        links.push(link);
+                        link_ranges.push(range.clone());
+                    }
                 }
-            }),
-    );
+                let workspace = cx.workspace.clone();
+                let element = div()
+                    .child(
+                        InteractiveText::new(
+                            element_id,
+                            StyledText::new(parsed.contents.clone())
+                                .with_highlights(&cx.text_style, highlights),
+                        )
+                        .tooltip({
+                            let links = links.clone();
+                            let link_ranges = link_ranges.clone();
+                            move |idx, cx| {
+                                for (ix, range) in link_ranges.iter().enumerate() {
+                                    if range.contains(&idx) {
+                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
+                                    }
+                                }
+                                None
+                            }
+                        })
+                        .on_click(
+                            link_ranges,
+                            move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
+                                Link::Web { url } => window_cx.open_url(url),
+                                Link::Path {
+                                    path,
+                                    display_path: _,
+                                } => {
+                                    if let Some(workspace) = &workspace {
+                                        _ = workspace.update(window_cx, |workspace, cx| {
+                                            workspace
+                                                .open_abs_path(path.clone(), false, cx)
+                                                .detach();
+                                        });
+                                    }
+                                }
+                            },
+                        ),
+                    )
+                    .into_any();
+                any_element.push(element);
+            }
+            MarkdownParagraph::MarkdownImage(image) => {
+                let (link, source_range, image_source) = match image {
+                    Image::Web {
+                        link,
+                        source_range,
+                        url,
+                    } => (link, source_range, ImageSource::Uri(url.clone().into())),
+                    Image::Path {
+                        link,
+                        source_range,
+                        path,
+                        ..
+                    } => (link, source_range, ImageSource::File(path.clone().into())),
+                };
+                let element_id = cx.next_id(source_range);
 
-    let mut links = Vec::new();
-    let mut link_ranges = Vec::new();
-    for (range, region) in parsed.region_ranges.iter().zip(&parsed.regions) {
-        if let Some(link) = region.link.clone() {
-            links.push(link);
-            link_ranges.push(range.clone());
+                match link {
+                    None => {
+                        let element = div().child(img(image_source)).id(element_id).into_any();
+                        any_element.push(element);
+                    }
+                    Some(link) => {
+                        let link_click = link.clone();
+                        let link_tooltip = link.clone();
+                        let image_element = div()
+                            .child(img(image_source))
+                            .id(element_id)
+                            .tooltip(move |cx| LinkPreview::new(&link_tooltip.to_string(), cx))
+                            .on_click({
+                                let workspace = cx.workspace.clone();
+                                move |_event, window_cx| match &link_click {
+                                    Link::Web { url } => window_cx.open_url(url),
+                                    Link::Path {
+                                        display_path: _,
+                                        path,
+                                    } => {
+                                        if let Some(workspace) = &workspace {
+                                            _ = workspace.update(window_cx, |workspace, cx| {
+                                                workspace
+                                                    .open_abs_path(path.clone(), false, cx)
+                                                    .detach();
+                                            });
+                                        }
+                                    }
+                                }
+                            })
+                            .into_any();
+                        any_element.push(image_element);
+                    }
+                }
+            }
         }
     }
-
-    let workspace = cx.workspace.clone();
-
-    InteractiveText::new(
-        element_id,
-        StyledText::new(parsed.contents.clone()).with_highlights(&cx.text_style, highlights),
-    )
-    .tooltip({
-        let links = links.clone();
-        let link_ranges = link_ranges.clone();
-        move |idx, cx| {
-            for (ix, range) in link_ranges.iter().enumerate() {
-                if range.contains(&idx) {
-                    return Some(LinkPreview::new(&links[ix].to_string(), cx));
-                }
-            }
-            None
-        }
-    })
-    .on_click(
-        link_ranges,
-        move |clicked_range_ix, window_cx| match &links[clicked_range_ix] {
-            Link::Web { url } => window_cx.open_url(url),
-            Link::Path {
-                path,
-                display_path: _,
-            } => {
-                if let Some(workspace) = &workspace {
-                    _ = workspace.update(window_cx, |workspace, cx| {
-                        workspace.open_abs_path(path.clone(), false, cx).detach();
-                    });
-                }
-            }
-        },
-    )
-    .into_any_element()
+    any_element
 }
 
 fn render_markdown_rule(cx: &mut RenderContext) -> AnyElement {
