@@ -692,9 +692,9 @@ async fn init_test(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) -> (Model<Project>, Model<HeadlessProject>, Arc<FakeFs>) {
+    let (ssh_remote_client, ssh_server_client) = SshRemoteClient::fake(cx, server_cx);
     init_logger();
 
-    let (forwarder, ssh_server_client) = SshRemoteClient::fake_server(server_cx);
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
         "/code",
@@ -735,9 +735,8 @@ async fn init_test(
             cx,
         )
     });
+    let project = build_project(ssh_remote_client, cx);
 
-    let ssh = SshRemoteClient::fake_client(forwarder, cx).await;
-    let project = build_project(ssh, cx);
     project
         .update(cx, {
             let headless = headless.clone();
