@@ -26,9 +26,10 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  style:
+  migration_checks:
+    name: Check Postgres and Protobuf migrations, mergability
+    if: github.repository_owner == 'zed-industries'
     timeout-minutes: 60
-    name: Check formatting and spelling
     runs-on:
       - self-hosted
       - test
@@ -37,25 +38,16 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
-          fetch-depth: 0
+          fetch-depth: 0 # fetch full history
 
       - name: Remove untracked files
         run: git clean -df
 
-      - name: Check spelling
-        run: script/check-spelling
-
-      - name: Run style checks
-        uses: ./.github/actions/check_style
-
-      - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
-
-      - name: Check licenses are present
-        run: script/check-licenses
-
-      - name: Check license generation
-        run: script/generate-licenses /tmp/zed_licenses_output
+      - name: Find modified migrations
+        shell: bash -euxo pipefail {0}
+        run: |
+          export SQUAWK_GITHUB_TOKEN=${{ github.token }}
+          . ./script/squawk
 
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
@@ -77,6 +69,24 @@ jobs:
           input: "crates/proto/proto/"
           against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
+  style:
+    timeout-minutes: 60
+    name: Check formatting and spelling
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - buildjet-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+
+      - name: Run style checks
+        uses: ./.github/actions/check_style
+
+      - name: Check for typos
+        uses: crate-ci/typos@v1.24.6
+        with:
+          config: ./typos.toml
+
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
@@ -91,6 +101,14 @@ jobs:
 
       - name: cargo clippy
         run: ./script/clippy
+
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
+
+      - name: Check licenses
+        run: |
+          script/check-licenses
+          script/generate-licenses /tmp/zed_licenses_output
 
       - name: Run tests
         uses: ./.github/actions/run_tests
