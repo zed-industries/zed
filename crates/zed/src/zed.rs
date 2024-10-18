@@ -14,6 +14,7 @@ use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
+use debugger_ui::debugger_panel::DebugPanel;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
@@ -247,6 +248,7 @@ pub fn initialize_workspace(
                 workspace_handle.clone(),
                 cx.clone(),
             );
+            let debug_panel = DebugPanel::load(workspace_handle.clone(), cx.clone());
 
             let (
                 project_panel,
@@ -256,6 +258,7 @@ pub fn initialize_workspace(
                 channels_panel,
                 chat_panel,
                 notification_panel,
+                debug_panel,
             ) = futures::try_join!(
                 project_panel,
                 outline_panel,
@@ -264,6 +267,7 @@ pub fn initialize_workspace(
                 channels_panel,
                 chat_panel,
                 notification_panel,
+                debug_panel
             )?;
 
             workspace_handle.update(&mut cx, |workspace, cx| {
@@ -274,6 +278,7 @@ pub fn initialize_workspace(
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
+                workspace.add_panel(debug_panel, cx);
                 cx.focus_self();
             })
         })
@@ -3431,6 +3436,7 @@ mod tests {
                 cx,
             );
             tasks_ui::init(cx);
+            debugger_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);
             app_state
