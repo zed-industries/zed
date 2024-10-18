@@ -208,7 +208,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(None, Some(&"Rust".into()))
+                .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
             ["from-local-settings".to_string()]
         )
@@ -228,7 +228,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(None, Some(&"Rust".into()))
+                .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
             ["from-server-settings".to_string()]
         )
@@ -287,7 +287,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
                 }),
                 cx
             )
-            .language(None, Some(&"Rust".into()))
+            .language(None, Some(&"Rust".into()), cx)
             .language_servers,
             ["override-rust-analyzer".to_string()]
         )

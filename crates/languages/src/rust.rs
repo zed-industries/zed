@@ -428,9 +428,10 @@ impl ContextProvider for RustContextProvider {
         let package_to_run = language_settings(Some("Rust".into()), file.as_ref(), cx)
             .tasks
             .variables
-            .get(DEFAULT_RUN_NAME_STR);
+            .get(DEFAULT_RUN_NAME_STR)
+            .cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
-            vec!["run".into(), "-p".into(), package_to_run.clone()]
+            vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
         };

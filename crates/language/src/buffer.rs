@@ -37,6 +37,7 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
@@ -2830,7 +2831,7 @@ impl BufferSnapshot {
         &'a self,
         position: D,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         language_settings(
             self.language_at(position).map(|l| l.name()),
             self.file.as_ref(),
