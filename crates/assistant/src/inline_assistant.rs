@@ -1599,7 +1599,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx)), cx);
             editor
         });
 
@@ -1656,6 +1656,7 @@ impl PromptEditor {
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx)), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {
@@ -1664,6 +1665,15 @@ impl PromptEditor {
             editor
         });
         self.subscribe_to_editor(cx);
+    }
+
+    // todo!("Sub in actual keybindings if they exist, these are the defaults on macOS")
+    fn placeholder_text(codegen: &Codegen) -> String {
+        if codegen.is_insertion {
+            "Generate… • ⇧⌘? for context • ↓↑ for history".to_string()
+        } else {
+            "Transform… • ⇧⌘? for context • ↓↑ for history".to_string()
+        }
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
@@ -2262,6 +2272,7 @@ pub struct Codegen {
     initial_transaction_id: Option<TransactionId>,
     telemetry: Option<Arc<Telemetry>>,
     builder: Arc<PromptBuilder>,
+    is_insertion: bool,
 }
 
 impl Codegen {
@@ -2284,6 +2295,7 @@ impl Codegen {
             )
         });
         let mut this = Self {
+            is_insertion: range.to_offset(&buffer.read(cx).snapshot(cx)).is_empty(),
             alternatives: vec![codegen],
             active_alternative: 0,
             subscriptions: Vec::new(),
@@ -2678,7 +2690,7 @@ impl CodegenAlternative {
 
         let prompt = self
             .builder
-            .generate_content_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();
