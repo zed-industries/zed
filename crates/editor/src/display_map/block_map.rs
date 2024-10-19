@@ -573,7 +573,7 @@ impl BlockMap {
     {
         buffer
             .excerpt_boundaries_in_range(range)
-            .map(move |excerpt_boundary| {
+            .filter_map(move |excerpt_boundary| {
                 let wrap_row;
                 if excerpt_boundary.next.is_some() {
                     wrap_row = wrap_snapshot
@@ -598,17 +598,27 @@ impl BlockMap {
                 };
 
                 let mut height = 0;
-                if starts_new_buffer {
-                    height += buffer_header_height;
-                }
                 if excerpt_boundary.prev.is_some() {
-                    height += excerpt_footer_height;
+                    if show_excerpt_controls {
+                        height += excerpt_footer_height;
+                    }
                 }
                 if excerpt_boundary.next.is_some() {
-                    height += excerpt_header_height;
+                    if starts_new_buffer {
+                        height += buffer_header_height;
+                        if show_excerpt_controls {
+                            height += excerpt_header_height;
+                        }
+                    } else {
+                        height += excerpt_header_height;
+                    }
                 }
 
-                (
+                if height == 0 {
+                    return None;
+                }
+
+                Some((
                     wrap_row,
                     Block::ExcerptBoundary {
                         prev_excerpt: excerpt_boundary.prev,
@@ -617,7 +627,7 @@ impl BlockMap {
                         starts_new_buffer,
                         show_excerpt_controls,
                     },
-                )
+                ))
             })
     }
 
@@ -1683,7 +1693,7 @@ mod tests {
             vec![
                 (0..2, BlockId::ExcerptBoundary(Some(excerpt_ids[0]))), // path, header
                 (4..7, BlockId::ExcerptBoundary(Some(excerpt_ids[1]))), // footer, path, header
-                (8..11, BlockId::ExcerptBoundary(Some(excerpt_ids[2]))), // footer, path, header
+                (9..12, BlockId::ExcerptBoundary(Some(excerpt_ids[2]))), // footer, path, header
                 (14..15, BlockId::ExcerptBoundary(None)),               // footer
             ]
         );
