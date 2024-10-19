@@ -412,7 +412,7 @@ impl LlmDatabase {
             if !is_staff
                 && spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT
                 && has_llm_subscription
-                && spending_this_month <= max_monthly_spend
+                && (spending_this_month - FREE_TIER_MONTHLY_SPENDING_LIMIT) <= max_monthly_spend
             {
                 billing_event::ActiveModel {
                     id: ActiveValue::not_set(),

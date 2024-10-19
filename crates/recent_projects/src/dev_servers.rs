@@ -13,20 +13,19 @@ use futures::channel::oneshot;
 use futures::future::Shared;
 use futures::FutureExt;
 use gpui::canvas;
-use gpui::pulsating_between;
 use gpui::AsyncWindowContext;
 use gpui::ClipboardItem;
-use gpui::Subscription;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
-    Animation, AnimationExt, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, FontWeight, Model, ScrollHandle, View, ViewContext,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    Model, PromptLevel, ScrollHandle, View, ViewContext,
 };
 use picker::Picker;
 use project::terminals::wrap_for_ssh;
 use project::terminals::SshCommand;
 use project::Project;
+use remote::SshConnectionOptions;
 use rpc::proto::DevServerStatus;
 use settings::update_settings_file;
 use settings::Settings;
@@ -60,16 +59,15 @@ pub struct DevServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
-    dev_server_store: Model<dev_server_projects::Store>,
     workspace: WeakView<Workspace>,
-    _dev_server_subscription: Subscription,
     selectable_items: SelectableItemList,
 }
 
 struct CreateDevServer {
     address_editor: View<Editor>,
-    creating: Option<Task<Option<()>>>,
+    address_error: Option<SharedString>,
     ssh_prompt: Option<View<SshPrompt>>,
+    _creating: Option<Task<Option<()>>>,
 }
 
 impl CreateDevServer {
@@ -80,8 +78,9 @@ impl CreateDevServer {
         });
         Self {
             address_editor,
-            creating: None,
+            address_error: None,
             ssh_prompt: None,
+            _creating: None,
         }
     }
 }
@@ -333,11 +332,6 @@ impl DevServerProjects {
 
     pub fn new(cx: &mut ViewContext<Self>, workspace: WeakView<Workspace>) -> Self {
         let focus_handle = cx.focus_handle();
-        let dev_server_store = dev_server_projects::Store::global(cx);
-
-        let subscription = cx.observe(&dev_server_store, |_, _, cx| {
-            cx.notify();
-        });
 
         let mut base_style = cx.text_style();
         base_style.refine(&gpui::TextStyleRefinement {
@@ -349,9 +343,7 @@ impl DevServerProjects {
             mode: Mode::default_mode(),
             focus_handle,
             scroll_handle: ScrollHandle::new(),
-            dev_server_store,
             workspace,
-            _dev_server_subscription: subscription,
             selectable_items: Default::default(),
         }
     }
@@ -388,34 +380,22 @@ impl DevServerProjects {
     }
 
     fn create_ssh_server(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        let host = get_text(&editor, cx);
-        if host.is_empty() {
+        let input = get_text(&editor, cx);
+        if input.is_empty() {
             return;
         }
 
-        let mut host = host.trim_start_matches("ssh ");
-        let mut username: Option<String> = None;
-        let mut port: Option<u16> = None;
-
-        if let Some((u, rest)) = host.split_once('@') {
-            host = rest;
-            username = Some(u.to_string());
-        }
-        if let Some((rest, p)) = host.split_once(':') {
-            host = rest;
-            port = p.parse().ok()
-        }
-
-        if let Some((rest, p)) = host.split_once(" -p") {
-            host = rest;
-            port = p.trim().parse().ok()
-        }
-
-        let connection_options = remote::SshConnectionOptions {
-            host: host.to_string(),
-            username: username.clone(),
-            port,
-            password: None,
+        let connection_options = match SshConnectionOptions::parse_command_line(&input) {
+            Ok(c) => c,
+            Err(e) => {
+                self.mode = Mode::CreateDevServer(CreateDevServer {
+                    address_editor: editor,
+                    address_error: Some(format!("could not parse: {:?}", e).into()),
+                    ssh_prompt: None,
+                    _creating: None,
+                });
+                return;
+            }
         };
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
@@ -427,6 +407,7 @@ impl DevServerProjects {
         )
         .prompt_err("Failed to connect", cx, |_, _| None);
 
+        let address_editor = editor.clone();
         let creating = cx.spawn(move |this, mut cx| async move {
             match connection.await {
                 Some(_) => this
@@ -446,18 +427,31 @@ impl DevServerProjects {
                     .log_err(),
                 None => this
                     .update(&mut cx, |this, cx| {
-                        this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
+                        address_editor.update(cx, |this, _| {
+                            this.set_read_only(false);
+                        });
+                        this.mode = Mode::CreateDevServer(CreateDevServer {
+                            address_editor,
+                            address_error: None,
+                            ssh_prompt: None,
+                            _creating: None,
+                        });
                         cx.notify()
                     })
                     .log_err(),
             };
             None
         });
-        let mut state = CreateDevServer::new(cx);
-        state.address_editor = editor;
-        state.ssh_prompt = Some(ssh_prompt.clone());
-        state.creating = Some(creating);
-        self.mode = Mode::CreateDevServer(state);
+
+        editor.update(cx, |this, _| {
+            this.set_read_only(true);
+        });
+        self.mode = Mode::CreateDevServer(CreateDevServer {
+            address_editor: editor,
+            address_error: None,
+            ssh_prompt: Some(ssh_prompt.clone()),
+            _creating: Some(creating),
+        });
     }
 
     fn view_server_options(
@@ -557,9 +551,6 @@ impl DevServerProjects {
                     return;
                 }
 
-                state.address_editor.update(cx, |this, _| {
-                    this.set_read_only(true);
-                });
                 self.create_ssh_server(state.address_editor.clone(), cx);
             }
             Mode::EditNickname(state) => {
@@ -822,6 +813,7 @@ impl DevServerProjects {
                     port: connection_options.port,
                     projects: vec![],
                     nickname: None,
+                    args: connection_options.args.unwrap_or_default(),
                 })
         });
     }
@@ -835,10 +827,7 @@ impl DevServerProjects {
 
         state.address_editor.update(cx, |editor, cx| {
             if editor.text(cx).is_empty() {
-                editor.set_placeholder_text(
-                    "Enter the command you use to SSH into this server: e.g., ssh me@my.server",
-                    cx,
-                );
+                editor.set_placeholder_text("ssh user@example -p 2222", cx);
             }
         });
 
@@ -864,27 +853,38 @@ impl DevServerProjects {
                     .map(|this| {
                         if let Some(ssh_prompt) = ssh_prompt {
                             this.child(h_flex().w_full().child(ssh_prompt))
+                        } else if let Some(address_error) = &state.address_error {
+                            this.child(
+                                h_flex().p_2().w_full().gap_2().child(
+                                    Label::new(address_error.clone())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Error),
+                                ),
+                            )
                         } else {
-                            let color = Color::Muted.color(cx);
                             this.child(
                                 h_flex()
                                     .p_2()
                                     .w_full()
-                                    .items_center()
-                                    .justify_center()
-                                    .gap_2()
+                                    .gap_1()
                                     .child(
-                                        div().size_1p5().rounded_full().bg(color).with_animation(
-                                            "pulse-ssh-waiting-for-connection",
-                                            Animation::new(Duration::from_secs(2))
-                                                .repeat()
-                                                .with_easing(pulsating_between(0.2, 0.5)),
-                                            move |this, progress| this.bg(color.opacity(progress)),
-                                        ),
+                                        Label::new(
+                                            "Enter the command you use to SSH into this server.",
+                                        )
+                                        .color(Color::Muted)
+                                        .size(LabelSize::Small),
                                     )
                                     .child(
-                                        Label::new("Waiting for connection…")
-                                            .size(LabelSize::Small),
+                                        Button::new("learn-more", "Learn more…")
+                                            .label_size(LabelSize::Small)
+                                            .size(ButtonSize::None)
+                                            .color(Color::Accent)
+                                            .style(ButtonStyle::Transparent)
+                                            .on_click(|_, cx| {
+                                                cx.open_url(
+                                                    "https://zed.dev/docs/remote-development",
+                                                );
+                                            }),
                                     ),
                             )
                         }
@@ -996,46 +996,38 @@ impl DevServerProjects {
                     .child({
                         fn remove_ssh_server(
                             dev_servers: View<DevServerProjects>,
-                            workspace: WeakView<Workspace>,
                             index: usize,
                             connection_string: SharedString,
                             cx: &mut WindowContext<'_>,
                         ) {
-                            workspace
-                                .update(cx, |this, cx| {
-                                    struct SshServerRemoval;
-                                    let notification = format!(
-                                        "Do you really want to remove server `{}`?",
-                                        connection_string
-                                    );
-                                    this.show_toast(
-                                        Toast::new(
-                                            NotificationId::composite::<SshServerRemoval>(
-                                                connection_string.clone(),
-                                            ),
-                                            notification,
-                                        )
-                                        .on_click(
-                                            "Yes, delete it",
-                                            move |cx| {
-                                                dev_servers.update(cx, |this, cx| {
-                                                    this.delete_ssh_server(index, cx);
-                                                    this.mode = Mode::default_mode();
-                                                    cx.notify();
-                                                })
-                                            },
-                                        ),
-                                        cx,
-                                    );
-                                })
-                                .ok();
+                            let prompt_message = format!("Remove server `{}`?", connection_string);
+
+                            let confirmation = cx.prompt(
+                                PromptLevel::Warning,
+                                &prompt_message,
+                                None,
+                                &["Yes, remove it", "No, keep it"],
+                            );
+
+                            cx.spawn(|mut cx| async move {
+                                if confirmation.await.ok() == Some(0) {
+                                    dev_servers
+                                        .update(&mut cx, |this, cx| {
+                                            this.delete_ssh_server(index, cx);
+                                            this.mode = Mode::default_mode();
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
                         }
                         self.selectable_items.add_item(Box::new({
                             let connection_string = connection_string.clone();
-                            move |this, cx| {
+                            move |_, cx| {
                                 remove_ssh_server(
                                     cx.view().clone(),
-                                    this.workspace.clone(),
                                     index,
                                     connection_string.clone(),
                                     cx,
@@ -1043,16 +1035,15 @@ impl DevServerProjects {
                             }
                         }));
                         let is_selected = self.selectable_items.is_selected();
-                        ListItem::new("delete-server")
+                        ListItem::new("remove-server")
                             .selected(is_selected)
                             .inset(true)
                             .spacing(ui::ListItemSpacing::Sparse)
                             .start_slot(Icon::new(IconName::Trash).color(Color::Error))
-                            .child(Label::new("Delete Server").color(Color::Error))
-                            .on_click(cx.listener(move |this, _, cx| {
+                            .child(Label::new("Remove Server").color(Color::Error))
+                            .on_click(cx.listener(move |_, _, cx| {
                                 remove_ssh_server(
                                     cx.view().clone(),
-                                    this.workspace.clone(),
                                     index,
                                     connection_string.clone(),
                                     cx,
@@ -1113,7 +1104,6 @@ impl DevServerProjects {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let scroll_state = scroll_state.parent_view(cx.view());
-        let dev_servers = self.dev_server_store.read(cx).dev_servers();
         let ssh_connections = SshSettings::get_global(cx)
             .ssh_connections()
             .collect::<Vec<_>>();
@@ -1171,17 +1161,10 @@ impl DevServerProjects {
             )
             .into_any_element();
 
-        let server_count = format!("Servers: {}", ssh_connections.len() + dev_servers.len());
-
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
-                ModalHeader::new().child(
-                    h_flex()
-                        .items_center()
-                        .justify_between()
-                        .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall))
-                        .child(Label::new(server_count).size(LabelSize::Small)),
-                ),
+                ModalHeader::new()
+                    .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(

@@ -11,6 +11,7 @@ on:
 jobs:
   check_formatting:
     name: "Check formatting"
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
 
     steps:
@@ -29,5 +30,8 @@ jobs:
             false
           }
 
-      - name: Check spelling
-        run: script/check-spelling docs/
+      - name: Check for Typos with Typos-CLI
+        uses: crate-ci/typos@v1.24.6
+        with:
+          config: ./typos.toml
+          files: ./docs/

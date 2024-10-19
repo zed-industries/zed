@@ -14,6 +14,7 @@ on:
       - "**"
     paths-ignore:
       - "docs/**"
+      - ".github/workflows/community_*"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
@@ -26,9 +27,10 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  style:
+  migration_checks:
+    name: Check Postgres and Protobuf migrations, mergability
+    if: github.repository_owner == 'zed-industries'
     timeout-minutes: 60
-    name: Check formatting and spelling
     runs-on:
       - self-hosted
       - test
@@ -37,25 +39,16 @@ jobs:
         uses: actions/checkout@eef61447b9ff4aafe5dcd4e0bbf5d482be7e7871 # v4
         with:
           clean: false
-          fetch-depth: 0
+          fetch-depth: 0 # fetch full history
 
       - name: Remove untracked files
         run: git clean -df
 
-      - name: Check spelling
-        run: script/check-spelling
-
-      - name: Run style checks
-        uses: ./.github/actions/check_style
-
-      - name: Check unused dependencies
-        uses: bnjbvr/cargo-machete@main
-
-      - name: Check licenses are present
-        run: script/check-licenses
-
-      - name: Check license generation
-        run: script/generate-licenses /tmp/zed_licenses_output
+      - name: Find modified migrations
+        shell: bash -euxo pipefail {0}
+        run: |
+          export SQUAWK_GITHUB_TOKEN=${{ github.token }}
+          . ./script/squawk
 
       - name: Ensure fresh merge
         shell: bash -euxo pipefail {0}
@@ -77,6 +70,24 @@ jobs:
           input: "crates/proto/proto/"
           against: "https://github.com/${GITHUB_REPOSITORY}.git#branch=${BUF_BASE_BRANCH},subdir=crates/proto/proto/"
 
+  style:
+    timeout-minutes: 60
+    name: Check formatting and spelling
+    if: github.repository_owner == 'zed-industries'
+    runs-on:
+      - buildjet-8vcpu-ubuntu-2204
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+
+      - name: Run style checks
+        uses: ./.github/actions/check_style
+
+      - name: Check for typos
+        uses: crate-ci/typos@v1.24.6
+        with:
+          config: ./typos.toml
+
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
@@ -91,6 +102,14 @@ jobs:
 
       - name: cargo clippy
         run: ./script/clippy
+
+      - name: Check unused dependencies
+        uses: bnjbvr/cargo-machete@main
+
+      - name: Check licenses
+        run: |
+          script/check-licenses
+          script/generate-licenses /tmp/zed_licenses_output
 
       - name: Run tests
         uses: ./.github/actions/run_tests
@@ -248,20 +267,20 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (universal) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}.dmg
           path: target/release/Zed.dmg
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -312,7 +331,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -359,7 +378,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@604373da6381bf24206979c74d06a550515601b9 # v4
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz

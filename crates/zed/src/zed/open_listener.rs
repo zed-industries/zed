@@ -16,8 +16,9 @@ use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
-use recent_projects::open_ssh_project;
+use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
+use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -48,7 +49,7 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
             } else if url.starts_with("ssh://") {
-                this.parse_ssh_file_path(&url)?
+                this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
                 this.parse_request_path(request_path).log_err();
             } else {
@@ -65,7 +66,7 @@ impl OpenRequest {
         }
     }
 
-    fn parse_ssh_file_path(&mut self, file: &str) -> Result<()> {
+    fn parse_ssh_file_path(&mut self, file: &str, cx: &AppContext) -> Result<()> {
         let url = url::Url::parse(file)?;
         let host = url
             .host()
@@ -77,11 +78,13 @@ impl OpenRequest {
         if !self.open_paths.is_empty() {
             return Err(anyhow!("cannot open both local and ssh paths"));
         }
+        let args = SshSettings::get_global(cx).args_for(&host, port, &username);
         let connection = SshConnectionOptions {
             username,
             password,
             host,
             port,
+            args,
         };
         if let Some(ssh_connection) = &self.ssh_connection {
             if *ssh_connection != connection {
@@ -419,12 +422,25 @@ async fn open_workspaces(
                         errored = true
                     }
                 }
-                SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                SerializedWorkspaceLocation::Ssh(ssh) => {
                     let app_state = app_state.clone();
+                    let args = cx
+                        .update(|cx| {
+                            SshSettings::get_global(cx).args_for(&ssh.host, ssh.port, &ssh.user)
+                        })
+                        .ok()
+                        .flatten();
+                    let connection_options = SshConnectionOptions {
+                        args,
+                        host: ssh.host.clone(),
+                        username: ssh.user.clone(),
+                        port: ssh.port,
+                        password: None,
+                    };
                     cx.spawn(|mut cx| async move {
                         open_ssh_project(
-                            ssh_project.connection_options(),
-                            ssh_project.paths.into_iter().map(PathBuf::from).collect(),
+                            connection_options,
+                            ssh.paths.into_iter().map(PathBuf::from).collect(),
                             app_state,
                             OpenOptions::default(),
                             &mut cx,

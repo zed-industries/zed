@@ -13,8 +13,7 @@ use futures::{
         oneshot,
     },
     future::BoxFuture,
-    select_biased, AsyncReadExt as _, AsyncWriteExt as _, Future, FutureExt as _, SinkExt,
-    StreamExt as _,
+    select_biased, AsyncReadExt as _, Future, FutureExt as _, SinkExt, StreamExt as _,
 };
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SemanticVersion, Task,
@@ -61,9 +60,89 @@ pub struct SshConnectionOptions {
     pub username: Option<String>,
     pub port: Option<u16>,
     pub password: Option<String>,
+    pub args: Option<Vec<String>>,
 }
 
 impl SshConnectionOptions {
+    pub fn parse_command_line(input: &str) -> Result<Self> {
+        let input = input.trim_start_matches("ssh ");
+        let mut hostname: Option<String> = None;
+        let mut username: Option<String> = None;
+        let mut port: Option<u16> = None;
+        let mut args = Vec::new();
+
+        // disallowed: -E, -e, -F, -f, -G, -g, -M, -N, -n, -O, -q, -S, -s, -T, -t, -V, -v, -W
+        const ALLOWED_OPTS: &[&str] = &[
+            "-4", "-6", "-A", "-a", "-C", "-K", "-k", "-X", "-x", "-Y", "-y",
+        ];
+        const ALLOWED_ARGS: &[&str] = &[
+            "-B", "-b", "-c", "-D", "-I", "-i", "-J", "-L", "-l", "-m", "-o", "-P", "-p", "-R",
+            "-w",
+        ];
+
+        let mut tokens = shlex::split(input)
+            .ok_or_else(|| anyhow!("invalid input"))?
+            .into_iter();
+
+        'outer: while let Some(arg) = tokens.next() {
+            if ALLOWED_OPTS.contains(&(&arg as &str)) {
+                args.push(arg.to_string());
+                continue;
+            }
+            if arg == "-p" {
+                port = tokens.next().and_then(|arg| arg.parse().ok());
+                continue;
+            } else if let Some(p) = arg.strip_prefix("-p") {
+                port = p.parse().ok();
+                continue;
+            }
+            if arg == "-l" {
+                username = tokens.next();
+                continue;
+            } else if let Some(l) = arg.strip_prefix("-l") {
+                username = Some(l.to_string());
+                continue;
+            }
+            for a in ALLOWED_ARGS {
+                if arg == *a {
+                    args.push(arg);
+                    if let Some(next) = tokens.next() {
+                        args.push(next);
+                    }
+                    continue 'outer;
+                } else if arg.starts_with(a) {
+                    args.push(arg);
+                    continue 'outer;
+                }
+            }
+            if arg.starts_with("-") || hostname.is_some() {
+                anyhow::bail!("unsupported argument: {:?}", arg);
+            }
+            let mut input = &arg as &str;
+            if let Some((u, rest)) = input.split_once('@') {
+                input = rest;
+                username = Some(u.to_string());
+            }
+            if let Some((rest, p)) = input.split_once(':') {
+                input = rest;
+                port = p.parse().ok()
+            }
+            hostname = Some(input.to_string())
+        }
+
+        let Some(hostname) = hostname else {
+            anyhow::bail!("missing hostname");
+        };
+
+        Ok(Self {
+            host: hostname.to_string(),
+            username: username.clone(),
+            port,
+            password: None,
+            args: Some(args),
+        })
+    }
+
     pub fn ssh_url(&self) -> String {
         let mut result = String::from("ssh://");
         if let Some(username) = &self.username {
@@ -76,6 +155,10 @@ impl SshConnectionOptions {
             result.push_str(&port.to_string());
         }
         result
+    }
+
+    pub fn additional_args(&self) -> Option<&Vec<String>> {
+        self.args.as_ref()
     }
 
     fn scp_url(&self) -> String {
@@ -748,7 +831,15 @@ impl SshRemoteClient {
                                 log::warn!("ssh heartbeat: connection activity channel has been dropped. stopping.");
                                 return Ok(());
                             }
+
                             keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
+
+                            if missed_heartbeats != 0 {
+                                missed_heartbeats = 0;
+                                this.update(&mut cx, |this, mut cx| {
+                                    this.handle_heartbeat_result(missed_heartbeats, &mut cx)
+                                })?;
+                            }
                         }
                         _ = keepalive_timer => {
                             log::debug!("Sending heartbeat to server...");
@@ -761,6 +852,7 @@ impl SshRemoteClient {
                                     ping_result
                                 }
                             };
+
                             if result.is_err() {
                                 missed_heartbeats += 1;
                                 log::warn!(
@@ -829,92 +921,90 @@ impl SshRemoteClient {
         let mut child_stdout = ssh_proxy_process.stdout.take().unwrap();
         let mut child_stdin = ssh_proxy_process.stdin.take().unwrap();
 
-        let io_task = cx.background_executor().spawn(async move {
-            let mut stdin_buffer = Vec::new();
-            let mut stdout_buffer = Vec::new();
-            let mut stderr_buffer = Vec::new();
-            let mut stderr_offset = 0;
+        let mut stdin_buffer = Vec::new();
+        let mut stdout_buffer = Vec::new();
+        let mut stderr_buffer = Vec::new();
+        let mut stderr_offset = 0;
 
-            loop {
-                stdout_buffer.resize(MESSAGE_LEN_SIZE, 0);
-                stderr_buffer.resize(stderr_offset + 1024, 0);
+        let stdin_task = cx.background_executor().spawn(async move {
+            while let Some(outgoing) = outgoing_rx.next().await {
+                write_message(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
+            }
+            anyhow::Ok(())
+        });
 
-                select_biased! {
-                    outgoing = outgoing_rx.next().fuse() => {
-                        let Some(outgoing) = outgoing else {
-                            return anyhow::Ok(None);
-                        };
+        let stdout_task = cx.background_executor().spawn({
+            let mut connection_activity_tx = connection_activity_tx.clone();
+            async move {
+                loop {
+                    stdout_buffer.resize(MESSAGE_LEN_SIZE, 0);
+                    let len = child_stdout.read(&mut stdout_buffer).await?;
 
-                        write_message(&mut child_stdin, &mut stdin_buffer, outgoing).await?;
+                    if len == 0 {
+                        return anyhow::Ok(());
                     }
 
-                    result = child_stdout.read(&mut stdout_buffer).fuse() => {
-                        match result {
-                            Ok(0) => {
-                                child_stdin.close().await?;
-                                outgoing_rx.close();
-                                let status = ssh_proxy_process.status().await?;
-                                // If we don't have a code, we assume process
-                                // has been killed and treat it as non-zero exit
-                                // code
-                                return Ok(status.code().or_else(|| Some(1)));
-                            }
-                            Ok(len) => {
-                                if len < stdout_buffer.len() {
-                                    child_stdout.read_exact(&mut stdout_buffer[len..]).await?;
-                                }
-
-                                let message_len = message_len_from_buffer(&stdout_buffer);
-                                match read_message_with_len(&mut child_stdout, &mut stdout_buffer, message_len).await {
-                                    Ok(envelope) => {
-                                        connection_activity_tx.try_send(()).ok();
-                                        incoming_tx.unbounded_send(envelope).ok();
-                                    }
-                                    Err(error) => {
-                                        log::error!("error decoding message {error:?}");
-                                    }
-                                }
-                            }
-                            Err(error) => {
-                                Err(anyhow!("error reading stdout: {error:?}"))?;
-                            }
-                        }
+                    if len < MESSAGE_LEN_SIZE {
+                        child_stdout.read_exact(&mut stdout_buffer[len..]).await?;
                     }
 
-                    result = child_stderr.read(&mut stderr_buffer[stderr_offset..]).fuse() => {
-                        match result {
-                            Ok(len) => {
-                                stderr_offset += len;
-                                let mut start_ix = 0;
-                                while let Some(ix) = stderr_buffer[start_ix..stderr_offset].iter().position(|b| b == &b'\n') {
-                                    let line_ix = start_ix + ix;
-                                    let content = &stderr_buffer[start_ix..line_ix];
-                                    start_ix = line_ix + 1;
-                                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
-                                        record.log(log::logger())
-                                    } else {
-                                        eprintln!("(remote) {}", String::from_utf8_lossy(content));
-                                    }
-                                }
-                                stderr_buffer.drain(0..start_ix);
-                                stderr_offset -= start_ix;
-
-                                connection_activity_tx.try_send(()).ok();
-                            }
-                            Err(error) => {
-                                Err(anyhow!("error reading stderr: {error:?}"))?;
-                            }
-                        }
-                    }
+                    let message_len = message_len_from_buffer(&stdout_buffer);
+                    let envelope =
+                        read_message_with_len(&mut child_stdout, &mut stdout_buffer, message_len)
+                            .await?;
+                    connection_activity_tx.try_send(()).ok();
+                    incoming_tx.unbounded_send(envelope).ok();
                 }
             }
         });
 
+        let stderr_task: Task<anyhow::Result<()>> = cx.background_executor().spawn(async move {
+            loop {
+                stderr_buffer.resize(stderr_offset + 1024, 0);
+
+                let len = child_stderr
+                    .read(&mut stderr_buffer[stderr_offset..])
+                    .await?;
+
+                stderr_offset += len;
+                let mut start_ix = 0;
+                while let Some(ix) = stderr_buffer[start_ix..stderr_offset]
+                    .iter()
+                    .position(|b| b == &b'\n')
+                {
+                    let line_ix = start_ix + ix;
+                    let content = &stderr_buffer[start_ix..line_ix];
+                    start_ix = line_ix + 1;
+                    if let Ok(record) = serde_json::from_slice::<LogRecord>(content) {
+                        record.log(log::logger())
+                    } else {
+                        eprintln!("(remote) {}", String::from_utf8_lossy(content));
+                    }
+                }
+                stderr_buffer.drain(0..start_ix);
+                stderr_offset -= start_ix;
+
+                connection_activity_tx.try_send(()).ok();
+            }
+        });
+
         cx.spawn(|mut cx| async move {
-            let result = io_task.await;
+            let result = futures::select! {
+                result = stdin_task.fuse() => {
+                    result.context("stdin")
+                }
+                result = stdout_task.fuse() => {
+                    result.context("stdout")
+                }
+                result = stderr_task.fuse() => {
+                    result.context("stderr")
+                }
+            };
 
             match result {
-                Ok(Some(exit_code)) => {
+                Ok(_) => {
+                    let exit_code = ssh_proxy_process.status().await?.code().unwrap_or(1);
+
                     if let Some(error) = ProxyLaunchError::from_exit_code(exit_code) {
                         match error {
                             ProxyLaunchError::ServerNotRunning => {
@@ -932,7 +1022,6 @@ impl SshRemoteClient {
                         })?;
                     }
                 }
-                Ok(None) => {}
                 Err(error) => {
                     log::warn!("ssh io task died with error: {:?}. reconnecting...", error);
                     this.update(&mut cx, |this, cx| {
@@ -940,6 +1029,7 @@ impl SshRemoteClient {
                     })?;
                 }
             }
+
             Ok(())
         })
     }
@@ -979,16 +1069,9 @@ impl SshRemoteClient {
             SshRemoteConnection::new(connection_options, delegate.clone(), cx).await?;
 
         let platform = ssh_connection.query_platform().await?;
-        let (local_binary_path, version) = delegate.get_server_binary(platform, cx).await??;
         let remote_binary_path = delegate.remote_server_binary_path(platform, cx)?;
         ssh_connection
-            .ensure_server_binary(
-                &delegate,
-                &local_binary_path,
-                &remote_binary_path,
-                version,
-                cx,
-            )
+            .ensure_server_binary(&delegate, &remote_binary_path, platform, cx)
             .await?;
 
         let socket = ssh_connection.socket.clone();
@@ -1120,6 +1203,7 @@ impl SshRemoteConnection {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
+        use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
@@ -1186,7 +1270,15 @@ impl SshRemoteConnection {
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
             .env("SSH_ASKPASS", &askpass_script_path)
-            .args(["-N", "-o", "ControlMaster=yes", "-o"])
+            .args(connection_options.additional_args().unwrap_or(&Vec::new()))
+            .args([
+                "-N",
+                "-o",
+                "ControlPersist=no",
+                "-o",
+                "ControlMaster=yes",
+                "-o",
+            ])
             .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .spawn()?;
@@ -1227,7 +1319,10 @@ impl SshRemoteConnection {
             let mut stderr = master_process.stderr.take().unwrap();
             stderr.read_to_end(&mut output).await?;
 
-            let error_message = format!("failed to connect: {}", String::from_utf8_lossy(&output));
+            let error_message = format!(
+                "failed to connect: {}",
+                String::from_utf8_lossy(&output).trim()
+            );
             delegate.set_error(error_message.clone(), cx);
             Err(anyhow!(error_message))?;
         }
@@ -1245,11 +1340,19 @@ impl SshRemoteConnection {
     async fn ensure_server_binary(
         &self,
         delegate: &Arc<dyn SshClientDelegate>,
-        src_path: &Path,
         dst_path: &Path,
-        version: SemanticVersion,
+        platform: SshPlatform,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
+        if std::env::var("ZED_USE_CACHED_REMOTE_SERVER").is_ok() {
+            if let Ok(installed_version) =
+                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
+            {
+                log::info!("using cached server binary version {}", installed_version);
+                return Ok(());
+            }
+        }
+
         let mut dst_path_gz = dst_path.to_path_buf();
         dst_path_gz.set_extension("gz");
 
@@ -1257,8 +1360,10 @@ impl SshRemoteConnection {
             run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
         }
 
+        let (src_path, version) = delegate.get_server_binary(platform, cx).await??;
+
         let mut server_binary_exists = false;
-        if cfg!(not(debug_assertions)) {
+        if !server_binary_exists && cfg!(not(debug_assertions)) {
             if let Ok(installed_version) =
                 run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
             {
@@ -1273,19 +1378,19 @@ impl SshRemoteConnection {
             return Ok(());
         }
 
-        let src_stat = fs::metadata(src_path).await?;
+        let src_stat = fs::metadata(&src_path).await?;
         let size = src_stat.len();
         let server_mode = 0o755;
 
         let t0 = Instant::now();
-        delegate.set_status(Some("uploading remote development server"), cx);
+        delegate.set_status(Some("Uploading remote development server"), cx);
         log::info!("uploading remote development server ({}kb)", size / 1024);
-        self.upload_file(src_path, &dst_path_gz)
+        self.upload_file(&src_path, &dst_path_gz)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
 
-        delegate.set_status(Some("extracting remote development server"), cx);
+        delegate.set_status(Some("Extracting remote development server"), cx);
         run_cmd(
             self.socket
                 .ssh_command("gunzip")
@@ -1294,7 +1399,7 @@ impl SshRemoteConnection {
         )
         .await?;
 
-        delegate.set_status(Some("unzipping remote development server"), cx);
+        delegate.set_status(Some("Marking remote development server executable"), cx);
         run_cmd(
             self.socket
                 .ssh_command("chmod")
@@ -1422,19 +1527,16 @@ impl ChannelClient {
                             cx.clone(),
                         ) {
                             log::debug!("ssh message received. name:{type_name}");
-                            cx.foreground_executor().spawn(async move {
-                                match future.await {
-                                    Ok(_) => {
-                                        log::debug!("ssh message handled. name:{type_name}");
-                                    }
-                                    Err(error) => {
-                                        log::error!(
-                                            "error handling message. type:{type_name}, error:{error}",
-                                        );
-                                    }
+                            match future.await {
+                                Ok(_) => {
+                                    log::debug!("ssh message handled. name:{type_name}");
                                 }
-                            }).detach();
-
+                                Err(error) => {
+                                    log::error!(
+                                        "error handling message. type:{type_name}, error:{error}",
+                                    );
+                                }
+                            }
                         } else {
                             log::error!("unhandled ssh message name:{type_name}");
                         }

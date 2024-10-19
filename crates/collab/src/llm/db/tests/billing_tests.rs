@@ -1,10 +1,7 @@
 use crate::{
     db::UserId,
     llm::{
-        db::{
-            queries::{providers::ModelParams, usages::Usage},
-            LlmDatabase, TokenUsage,
-        },
+        db::{queries::providers::ModelParams, LlmDatabase, TokenUsage},
         FREE_TIER_MONTHLY_SPENDING_LIMIT,
     },
     test_llm_db, Cents,
@@ -45,24 +42,17 @@ async fn test_billing_limit_exceeded(db: &mut LlmDatabase) {
 
     let user_id = UserId::from_proto(123);
 
-    let max_monthly_spend = Cents::from_dollars(10);
+    let max_monthly_spend = Cents::from_dollars(11);
 
     // Record usage that brings us close to the limit but doesn't exceed it
-    // Let's say we use $9.50 worth of tokens
-    let tokens_to_use = 190_000_000; // This will cost $9.50 at $0.05 per 1 million tokens
+    // Let's say we use $10.50 worth of tokens
+    let tokens_to_use = 210_000_000; // This will cost $10.50 at $0.05 per 1 million tokens
     let usage = TokenUsage {
         input: tokens_to_use,
         input_cache_creation: 0,
         input_cache_read: 0,
         output: 0,
     };
-    let cost = Cents::new(tokens_to_use as u32 / 1_000_000 * PRICE_PER_MILLION_INPUT_TOKENS as u32);
-
-    assert_eq!(
-        cost,
-        Cents::new(950),
-        "expected the cost to be $9.50, based on the inputs, but it wasn't"
-    );
 
     // Verify that before we record any usage, there are 0 billing events
     let billing_events = db.get_billing_events().await.unwrap();
@@ -83,29 +73,9 @@ async fn test_billing_limit_exceeded(db: &mut LlmDatabase) {
 
     // Verify the recorded usage and spending
     let recorded_usage = db.get_usage(user_id, provider, model, now).await.unwrap();
-
     // Verify that we exceeded the free tier usage
-    assert!(
-        recorded_usage.spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT,
-        "Expected spending to exceed free tier limit"
-    );
-
-    assert_eq!(
-        recorded_usage,
-        Usage {
-            requests_this_minute: 1,
-            tokens_this_minute: tokens_to_use,
-            tokens_this_day: tokens_to_use,
-            tokens_this_month: TokenUsage {
-                input: tokens_to_use,
-                input_cache_creation: 0,
-                input_cache_read: 0,
-                output: 0,
-            },
-            spending_this_month: Cents::new(950),
-            lifetime_spending: Cents::new(950),
-        }
-    );
+    assert_eq!(recorded_usage.spending_this_month, Cents::new(1050));
+    assert!(recorded_usage.spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT);
 
     // Verify that there is one `billing_event` record
     let billing_events = db.get_billing_events().await.unwrap();
@@ -118,7 +88,35 @@ async fn test_billing_limit_exceeded(db: &mut LlmDatabase) {
     assert_eq!(billing_event.input_cache_read_tokens, 0);
     assert_eq!(billing_event.output_tokens, 0);
 
-    let tokens_to_exceed = 20_000_000; // This will cost $1.00 more, pushing us from $9.50 to $10.50, which is over the $10 monthly maximum limit
+    // Record usage that puts us at $20.50
+    let usage_2 = TokenUsage {
+        input: 200_000_000, // This will cost $10 more, pushing us from $10.50 to $20.50,
+        input_cache_creation: 0,
+        input_cache_read: 0,
+        output: 0,
+    };
+    db.record_usage(
+        user_id,
+        false,
+        provider,
+        model,
+        usage_2,
+        true,
+        max_monthly_spend,
+        now,
+    )
+    .await
+    .unwrap();
+
+    // Verify the updated usage and spending
+    let updated_usage = db.get_usage(user_id, provider, model, now).await.unwrap();
+    assert_eq!(updated_usage.spending_this_month, Cents::new(2050));
+
+    // Verify that there are now two billing events
+    let billing_events = db.get_billing_events().await.unwrap();
+    assert_eq!(billing_events.len(), 2);
+
+    let tokens_to_exceed = 20_000_000; // This will cost $1.00 more, pushing us from $20.50 to $21.50, which is over the $11 monthly maximum limit
     let usage_exceeding = TokenUsage {
         input: tokens_to_exceed,
         input_cache_creation: 0,
@@ -139,27 +137,12 @@ async fn test_billing_limit_exceeded(db: &mut LlmDatabase) {
     )
     .await
     .unwrap();
-
-    // Verify that there is still one billing record
-    let billing_events = db.get_billing_events().await.unwrap();
-    assert_eq!(billing_events.len(), 1);
-
     // Verify the updated usage and spending
     let updated_usage = db.get_usage(user_id, provider, model, now).await.unwrap();
-    assert_eq!(
-        updated_usage,
-        Usage {
-            requests_this_minute: 2,
-            tokens_this_minute: tokens_to_use + tokens_to_exceed,
-            tokens_this_day: tokens_to_use + tokens_to_exceed,
-            tokens_this_month: TokenUsage {
-                input: tokens_to_use + tokens_to_exceed,
-                input_cache_creation: 0,
-                input_cache_read: 0,
-                output: 0,
-            },
-            spending_this_month: Cents::new(1050),
-            lifetime_spending: Cents::new(1050),
-        }
-    );
+    assert_eq!(updated_usage.spending_this_month, Cents::new(2150));
+
+    // Verify that we never exceed the user max spending for the user
+    // and avoid charging them.
+    let billing_events = db.get_billing_events().await.unwrap();
+    assert_eq!(billing_events.len(), 2);
 }

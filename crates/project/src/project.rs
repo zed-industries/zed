@@ -3463,6 +3463,17 @@ impl Project {
         self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
+    pub fn get_permalink_to_line(
+        &self,
+        buffer: &Model<Buffer>,
+        selection: Range<u32>,
+        cx: &AppContext,
+    ) -> Task<Result<url::Url>> {
+        self.buffer_store
+            .read(cx)
+            .get_permalink_to_line(buffer, selection, cx)
+    }
+
     // RPC message handlers
 
     async fn handle_unshare_project(
@@ -3978,17 +3989,6 @@ impl Project {
         self.lsp_store
             .read(cx)
             .language_servers_for_buffer(buffer, cx)
-    }
-
-    pub fn language_server_for_buffer<'a>(
-        &'a self,
-        buffer: &'a Buffer,
-        server_id: LanguageServerId,
-        cx: &'a AppContext,
-    ) -> Option<(&'a Arc<CachedLspAdapter>, &'a Arc<LanguageServer>)> {
-        self.lsp_store
-            .read(cx)
-            .language_server_for_buffer(buffer, server_id, cx)
     }
 }
 

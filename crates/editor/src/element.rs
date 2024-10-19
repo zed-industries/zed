@@ -21,7 +21,8 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
     PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -31,7 +32,7 @@ use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
     ContentMask, Corners, CursorStyle, DispatchPhase, Edges, Element, ElementInputHandler, Entity,
-    EntityId, FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
+    FontId, GlobalElementId, Hitbox, Hsla, InteractiveElement, IntoElement, Length,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
     ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
@@ -46,7 +47,7 @@ use language::{
     ChunkRendererContext,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::{Anchor, MultiBufferPoint, MultiBufferRow};
+use multi_buffer::{Anchor, ExcerptId, ExpandExcerptDirection, MultiBufferPoint, MultiBufferRow};
 use project::{
     project_settings::{GitGutterSetting, ProjectSettings},
     ProjectPath,
@@ -1632,7 +1633,7 @@ impl EditorElement {
         let mut block_offset = 0;
         let mut found_excerpt_header = false;
         for (_, block) in snapshot.blocks_in_range(prev_line..row_range.start) {
-            if matches!(block, Block::ExcerptHeader { .. }) {
+            if matches!(block, Block::ExcerptBoundary { .. }) {
                 found_excerpt_header = true;
                 break;
             }
@@ -1649,7 +1650,7 @@ impl EditorElement {
         let mut block_height = 0;
         let mut found_excerpt_header = false;
         for (_, block) in snapshot.blocks_in_range(row_range.end..cons_line) {
-            if matches!(block, Block::ExcerptHeader { .. }) {
+            if matches!(block, Block::ExcerptBoundary { .. }) {
                 found_excerpt_header = true;
             }
             block_height += block.height();
@@ -2100,23 +2101,14 @@ impl EditorElement {
                     .into_any_element()
             }
 
-            Block::ExcerptHeader {
-                buffer,
-                range,
+            Block::ExcerptBoundary {
+                prev_excerpt,
+                next_excerpt,
+                show_excerpt_controls,
                 starts_new_buffer,
                 height,
-                id,
-                show_excerpt_controls,
                 ..
             } => {
-                let include_root = self
-                    .editor
-                    .read(cx)
-                    .project
-                    .as_ref()
-                    .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
-                    .unwrap_or_default();
-
                 #[derive(Clone)]
                 struct JumpData {
                     position: Point,
@@ -2125,233 +2117,227 @@ impl EditorElement {
                     line_offset_from_top: u32,
                 }
 
-                let jump_data = project::File::from_dyn(buffer.file()).map(|file| {
-                    let jump_path = ProjectPath {
-                        worktree_id: file.worktree_id(cx),
-                        path: file.path.clone(),
-                    };
-                    let jump_anchor = range
-                        .primary
-                        .as_ref()
-                        .map_or(range.context.start, |primary| primary.start);
-
-                    let excerpt_start = range.context.start;
-                    let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-                    let offset_from_excerpt_start = if jump_anchor == excerpt_start {
-                        0
-                    } else {
-                        let excerpt_start_row =
-                            language::ToPoint::to_point(&jump_anchor, buffer).row;
-                        jump_position.row - excerpt_start_row
-                    };
-
-                    let line_offset_from_top =
-                        block_row_start.0 + *height + offset_from_excerpt_start
-                            - snapshot
-                                .scroll_anchor
-                                .scroll_position(&snapshot.display_snapshot)
-                                .y as u32;
-
-                    JumpData {
-                        position: jump_position,
-                        anchor: jump_anchor,
-                        path: jump_path,
-                        line_offset_from_top,
-                    }
-                });
-
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
-                let element = if *starts_new_buffer {
-                    let path = buffer.resolve_file_path(cx, include_root);
-                    let mut filename = None;
-                    let mut parent_path = None;
-                    // Can't use .and_then() because `.file_name()` and `.parent()` return references :(
-                    if let Some(path) = path {
-                        filename = path.file_name().map(|f| f.to_string_lossy().to_string());
-                        parent_path = path
-                            .parent()
-                            .map(|p| SharedString::from(p.to_string_lossy().to_string() + "/"));
-                    }
+                let header_padding = px(6.0);
 
-                    let header_padding = px(6.0);
+                let mut result = v_flex().id(block_id).w_full();
 
-                    v_flex()
-                        .id(("path excerpt header", EntityId::from(block_id)))
-                        .w_full()
-                        .px(header_padding)
-                        .pt(header_padding)
-                        .child(
+                if let Some(prev_excerpt) = prev_excerpt {
+                    if *show_excerpt_controls {
+                        result = result.child(
                             h_flex()
-                                .flex_basis(Length::Definite(DefiniteLength::Fraction(0.667)))
-                                .id("path header block")
-                                .h(2. * cx.line_height())
-                                .px(gpui::px(12.))
-                                .rounded_md()
-                                .shadow_md()
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .bg(cx.theme().colors().editor_subheader_background)
-                                .justify_between()
-                                .hover(|style| style.bg(cx.theme().colors().element_hover))
-                                .child(
-                                    h_flex().gap_3().child(
-                                        h_flex()
-                                            .gap_2()
-                                            .child(
-                                                filename
-                                                    .map(SharedString::from)
-                                                    .unwrap_or_else(|| "untitled".into()),
-                                            )
-                                            .when_some(parent_path, |then, path| {
-                                                then.child(
-                                                    div()
-                                                        .child(path)
-                                                        .text_color(cx.theme().colors().text_muted),
-                                                )
-                                            }),
-                                    ),
-                                )
-                                .when_some(jump_data.clone(), |el, jump_data| {
-                                    el.child(Icon::new(IconName::ArrowUpRight))
-                                        .cursor_pointer()
-                                        .tooltip(|cx| {
-                                            Tooltip::for_action("Jump to File", &OpenExcerpts, cx)
-                                        })
-                                        .on_mouse_down(MouseButton::Left, |_, cx| {
-                                            cx.stop_propagation()
-                                        })
-                                        .on_click(cx.listener_for(&self.editor, {
-                                            move |editor, _, cx| {
-                                                editor.jump(
-                                                    jump_data.path.clone(),
-                                                    jump_data.position,
-                                                    jump_data.anchor,
-                                                    jump_data.line_offset_from_top,
-                                                    cx,
-                                                );
-                                            }
-                                        }))
-                                }),
-                        )
-                        .children(show_excerpt_controls.then(|| {
-                            h_flex()
-                                .flex_basis(Length::Definite(DefiniteLength::Fraction(0.333)))
-                                .h(1. * cx.line_height())
-                                .pt_1()
-                                .justify_end()
+                                .w(icon_offset)
+                                .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
                                 .flex_none()
-                                .w(icon_offset - header_padding)
-                                .child(
-                                    ButtonLike::new("expand-icon")
-                                        .style(ButtonStyle::Transparent)
-                                        .child(
-                                            svg()
-                                                .path(IconName::ArrowUpFromLine.path())
-                                                .size(IconSize::XSmall.rems())
-                                                .text_color(cx.theme().colors().editor_line_number)
-                                                .group("")
-                                                .hover(|style| {
-                                                    style.text_color(
-                                                        cx.theme()
-                                                            .colors()
-                                                            .editor_active_line_number,
-                                                    )
-                                                }),
-                                        )
-                                        .on_click(cx.listener_for(&self.editor, {
-                                            let id = *id;
-                                            move |editor, _, cx| {
-                                                editor.expand_excerpt(
-                                                    id,
-                                                    multi_buffer::ExpandExcerptDirection::Up,
-                                                    cx,
-                                                );
-                                            }
-                                        }))
-                                        .tooltip({
-                                            move |cx| {
-                                                Tooltip::for_action(
-                                                    "Expand Excerpt",
-                                                    &ExpandExcerpts { lines: 0 },
-                                                    cx,
-                                                )
-                                            }
-                                        }),
-                                )
-                        }))
-                } else {
-                    v_flex()
-                        .id(("excerpt header", EntityId::from(block_id)))
-                        .w_full()
-                        .h(snapshot.excerpt_header_height() as f32 * cx.line_height())
-                        .child(
+                                .justify_end()
+                                .child(self.render_expand_excerpt_button(
+                                    prev_excerpt.id,
+                                    ExpandExcerptDirection::Down,
+                                    IconName::ArrowDownFromLine,
+                                    cx,
+                                )),
+                        );
+                    }
+                }
+
+                if let Some(next_excerpt) = next_excerpt {
+                    let buffer = &next_excerpt.buffer;
+                    let range = &next_excerpt.range;
+                    let jump_data = project::File::from_dyn(buffer.file()).map(|file| {
+                        let jump_path = ProjectPath {
+                            worktree_id: file.worktree_id(cx),
+                            path: file.path.clone(),
+                        };
+                        let jump_anchor = range
+                            .primary
+                            .as_ref()
+                            .map_or(range.context.start, |primary| primary.start);
+
+                        let excerpt_start = range.context.start;
+                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
+                        let offset_from_excerpt_start = if jump_anchor == excerpt_start {
+                            0
+                        } else {
+                            let excerpt_start_row =
+                                language::ToPoint::to_point(&jump_anchor, buffer).row;
+                            jump_position.row - excerpt_start_row
+                        };
+
+                        let line_offset_from_top =
+                            block_row_start.0 + *height + offset_from_excerpt_start
+                                - snapshot
+                                    .scroll_anchor
+                                    .scroll_position(&snapshot.display_snapshot)
+                                    .y as u32;
+
+                        JumpData {
+                            position: jump_position,
+                            anchor: jump_anchor,
+                            path: jump_path,
+                            line_offset_from_top,
+                        }
+                    });
+
+                    if *starts_new_buffer {
+                        let include_root = self
+                            .editor
+                            .read(cx)
+                            .project
+                            .as_ref()
+                            .map(|project| project.read(cx).visible_worktrees(cx).count() > 1)
+                            .unwrap_or_default();
+                        let path = buffer.resolve_file_path(cx, include_root);
+                        let filename = path
+                            .as_ref()
+                            .and_then(|path| Some(path.file_name()?.to_string_lossy().to_string()));
+                        let parent_path = path.as_ref().and_then(|path| {
+                            Some(path.parent()?.to_string_lossy().to_string() + "/")
+                        });
+
+                        result = result.child(
                             div()
-                                .flex()
-                                .v_flex()
+                                .px(header_padding)
+                                .pt(header_padding)
+                                .w_full()
+                                .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
+                                .child(
+                                    h_flex()
+                                        .id("path header block")
+                                        .size_full()
+                                        .flex_basis(Length::Definite(DefiniteLength::Fraction(
+                                            0.667,
+                                        )))
+                                        .px(gpui::px(12.))
+                                        .rounded_md()
+                                        .shadow_md()
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .bg(cx.theme().colors().editor_subheader_background)
+                                        .justify_between()
+                                        .hover(|style| style.bg(cx.theme().colors().element_hover))
+                                        .child(
+                                            h_flex().gap_3().child(
+                                                h_flex()
+                                                    .gap_2()
+                                                    .child(
+                                                        filename
+                                                            .map(SharedString::from)
+                                                            .unwrap_or_else(|| "untitled".into()),
+                                                    )
+                                                    .when_some(parent_path, |then, path| {
+                                                        then.child(div().child(path).text_color(
+                                                            cx.theme().colors().text_muted,
+                                                        ))
+                                                    }),
+                                            ),
+                                        )
+                                        .when_some(jump_data, |el, jump_data| {
+                                            el.child(Icon::new(IconName::ArrowUpRight))
+                                                .cursor_pointer()
+                                                .tooltip(|cx| {
+                                                    Tooltip::for_action(
+                                                        "Jump to File",
+                                                        &OpenExcerpts,
+                                                        cx,
+                                                    )
+                                                })
+                                                .on_mouse_down(MouseButton::Left, |_, cx| {
+                                                    cx.stop_propagation()
+                                                })
+                                                .on_click(cx.listener_for(&self.editor, {
+                                                    move |editor, _, cx| {
+                                                        editor.jump(
+                                                            jump_data.path.clone(),
+                                                            jump_data.position,
+                                                            jump_data.anchor,
+                                                            jump_data.line_offset_from_top,
+                                                            cx,
+                                                        );
+                                                    }
+                                                }))
+                                        }),
+                                ),
+                        );
+                        if *show_excerpt_controls {
+                            result = result.child(
+                                h_flex()
+                                    .w(icon_offset)
+                                    .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
+                                    .flex_none()
+                                    .justify_end()
+                                    .child(self.render_expand_excerpt_button(
+                                        next_excerpt.id,
+                                        ExpandExcerptDirection::Up,
+                                        IconName::ArrowUpFromLine,
+                                        cx,
+                                    )),
+                            );
+                        }
+                    } else {
+                        result = result.child(
+                            h_flex()
+                                .id("excerpt header block")
+                                .group("excerpt-jump-action")
                                 .justify_start()
-                                .id("jump to collapsed context")
-                                .w(relative(1.0))
-                                .h_full()
+                                .w_full()
+                                .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
+                                .relative()
                                 .child(
                                     div()
-                                        .h_px()
+                                        .top(px(0.))
+                                        .absolute()
                                         .w_full()
+                                        .h_px()
                                         .bg(cx.theme().colors().border_variant)
                                         .group_hover("excerpt-jump-action", |style| {
                                             style.bg(cx.theme().colors().border)
                                         }),
-                                ),
-                        )
-                        .child(
-                            h_flex()
-                                .justify_end()
-                                .flex_none()
-                                .w(icon_offset)
-                                .h_full()
+                                )
+                                .cursor_pointer()
+                                .when_some(jump_data.clone(), |this, jump_data| {
+                                    this.on_click(cx.listener_for(&self.editor, {
+                                        let path = jump_data.path.clone();
+                                        move |editor, _, cx| {
+                                            cx.stop_propagation();
+
+                                            editor.jump(
+                                                path.clone(),
+                                                jump_data.position,
+                                                jump_data.anchor,
+                                                jump_data.line_offset_from_top,
+                                                cx,
+                                            );
+                                        }
+                                    }))
+                                    .tooltip(move |cx| {
+                                        Tooltip::for_action(
+                                            format!(
+                                                "Jump to {}:L{}",
+                                                jump_data.path.path.display(),
+                                                jump_data.position.row + 1
+                                            ),
+                                            &OpenExcerpts,
+                                            cx,
+                                        )
+                                    })
+                                })
                                 .child(
-                                    show_excerpt_controls
-                                        .then(|| {
-                                            ButtonLike::new("expand-icon")
-                                                .style(ButtonStyle::Transparent)
-                                                .child(
-                                                    svg()
-                                                        .path(IconName::ArrowUpFromLine.path())
-                                                        .size(IconSize::XSmall.rems())
-                                                        .text_color(
-                                                            cx.theme().colors().editor_line_number,
-                                                        )
-                                                        .group("")
-                                                        .hover(|style| {
-                                                            style.text_color(
-                                                                cx.theme()
-                                                                    .colors()
-                                                                    .editor_active_line_number,
-                                                            )
-                                                        }),
-                                                )
-                                                .on_click(cx.listener_for(&self.editor, {
-                                                    let id = *id;
-                                                    move |editor, _, cx| {
-                                                        editor.expand_excerpt(
-                                                        id,
-                                                        multi_buffer::ExpandExcerptDirection::Up,
-                                                        cx,
-                                                    );
-                                                    }
-                                                }))
-                                                .tooltip({
-                                                    move |cx| {
-                                                        Tooltip::for_action(
-                                                            "Expand Excerpt",
-                                                            &ExpandExcerpts { lines: 0 },
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                        })
-                                        .unwrap_or_else(|| {
+                                    h_flex()
+                                        .w(icon_offset)
+                                        .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32
+                                            * cx.line_height())
+                                        .flex_none()
+                                        .justify_end()
+                                        .child(if *show_excerpt_controls {
+                                            self.render_expand_excerpt_button(
+                                                next_excerpt.id,
+                                                ExpandExcerptDirection::Up,
+                                                IconName::ArrowUpFromLine,
+                                                cx,
+                                            )
+                                        } else {
                                             ButtonLike::new("jump-icon")
                                                 .style(ButtonStyle::Transparent)
                                                 .child(
@@ -2361,7 +2347,6 @@ impl EditorElement {
                                                         .text_color(
                                                             cx.theme().colors().border_variant,
                                                         )
-                                                        .group("excerpt-jump-action")
                                                         .group_hover(
                                                             "excerpt-jump-action",
                                                             |style| {
@@ -2371,118 +2356,13 @@ impl EditorElement {
                                                             },
                                                         ),
                                                 )
-                                                .when_some(jump_data.clone(), |this, jump_data| {
-                                                    this.on_click(cx.listener_for(&self.editor, {
-                                                        let path = jump_data.path.clone();
-                                                        move |editor, _, cx| {
-                                                            cx.stop_propagation();
-
-                                                            editor.jump(
-                                                                path.clone(),
-                                                                jump_data.position,
-                                                                jump_data.anchor,
-                                                                jump_data.line_offset_from_top,
-                                                                cx,
-                                                            );
-                                                        }
-                                                    }))
-                                                    .tooltip(move |cx| {
-                                                        Tooltip::for_action(
-                                                            format!(
-                                                                "Jump to {}:L{}",
-                                                                jump_data.path.path.display(),
-                                                                jump_data.position.row + 1
-                                                            ),
-                                                            &OpenExcerpts,
-                                                            cx,
-                                                        )
-                                                    })
-                                                })
                                         }),
                                 ),
-                        )
-                        .group("excerpt-jump-action")
-                        .cursor_pointer()
-                        .when_some(jump_data.clone(), |this, jump_data| {
-                            this.on_click(cx.listener_for(&self.editor, {
-                                let path = jump_data.path.clone();
-                                move |editor, _, cx| {
-                                    cx.stop_propagation();
+                        );
+                    }
+                }
 
-                                    editor.jump(
-                                        path.clone(),
-                                        jump_data.position,
-                                        jump_data.anchor,
-                                        jump_data.line_offset_from_top,
-                                        cx,
-                                    );
-                                }
-                            }))
-                            .tooltip(move |cx| {
-                                Tooltip::for_action(
-                                    format!(
-                                        "Jump to {}:L{}",
-                                        jump_data.path.path.display(),
-                                        jump_data.position.row + 1
-                                    ),
-                                    &OpenExcerpts,
-                                    cx,
-                                )
-                            })
-                        })
-                };
-                element.into_any()
-            }
-
-            Block::ExcerptFooter { id, .. } => {
-                let element = v_flex()
-                    .id(("excerpt footer", EntityId::from(block_id)))
-                    .w_full()
-                    .h(snapshot.excerpt_footer_height() as f32 * cx.line_height())
-                    .child(
-                        h_flex()
-                            .justify_end()
-                            .flex_none()
-                            .w(gutter_dimensions.width
-                                - (gutter_dimensions.left_padding + gutter_dimensions.margin))
-                            .h_full()
-                            .child(
-                                ButtonLike::new("expand-icon")
-                                    .style(ButtonStyle::Transparent)
-                                    .child(
-                                        svg()
-                                            .path(IconName::ArrowDownFromLine.path())
-                                            .size(IconSize::XSmall.rems())
-                                            .text_color(cx.theme().colors().editor_line_number)
-                                            .group("")
-                                            .hover(|style| {
-                                                style.text_color(
-                                                    cx.theme().colors().editor_active_line_number,
-                                                )
-                                            }),
-                                    )
-                                    .on_click(cx.listener_for(&self.editor, {
-                                        let id = *id;
-                                        move |editor, _, cx| {
-                                            editor.expand_excerpt(
-                                                id,
-                                                multi_buffer::ExpandExcerptDirection::Down,
-                                                cx,
-                                            );
-                                        }
-                                    }))
-                                    .tooltip({
-                                        move |cx| {
-                                            Tooltip::for_action(
-                                                "Expand Excerpt",
-                                                &ExpandExcerpts { lines: 0 },
-                                                cx,
-                                            )
-                                        }
-                                    }),
-                            ),
-                    );
-                element.into_any()
+                result.into_any()
             }
         };
 
@@ -2507,6 +2387,33 @@ impl EditorElement {
         }
 
         (element, final_size)
+    }
+
+    fn render_expand_excerpt_button(
+        &self,
+        excerpt_id: ExcerptId,
+        direction: ExpandExcerptDirection,
+        icon: IconName,
+        cx: &mut WindowContext,
+    ) -> ButtonLike {
+        ButtonLike::new("expand-icon")
+            .style(ButtonStyle::Transparent)
+            .child(
+                svg()
+                    .path(icon.path())
+                    .size(IconSize::XSmall.rems())
+                    .text_color(cx.theme().colors().editor_line_number)
+                    .group("")
+                    .hover(|style| style.text_color(cx.theme().colors().editor_active_line_number)),
+            )
+            .on_click(cx.listener_for(&self.editor, {
+                move |editor, _, cx| {
+                    editor.expand_excerpt(excerpt_id, direction, cx);
+                }
+            }))
+            .tooltip({
+                move |cx| Tooltip::for_action("Expand Excerpt", &ExpandExcerpts { lines: 0 }, cx)
+            })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -3367,7 +3274,7 @@ impl EditorElement {
                     let end_row_in_current_excerpt = snapshot
                         .blocks_in_range(start_row..end_row)
                         .find_map(|(start_row, block)| {
-                            if matches!(block, Block::ExcerptHeader { .. }) {
+                            if matches!(block, Block::ExcerptBoundary { .. }) {
                                 Some(start_row)
                             } else {
                                 None

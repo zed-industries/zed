@@ -292,7 +292,10 @@ message Envelope {
         Toast toast = 261;
         HideToast hide_toast = 262;
 
-        OpenServerSettings open_server_settings = 263; // current max
+        OpenServerSettings open_server_settings = 263;
+
+        GetPermalinkToLine get_permalink_to_line = 264;
+        GetPermalinkToLineResponse get_permalink_to_line_response = 265;  // current max
     }
 
     reserved 87 to 88;
@@ -1207,7 +1210,7 @@ message ResolveState {
     }
 
     message LspResolveState {
-        string value = 1;
+        optional string value = 1;
         uint64 server_id = 2;
     }
 }
@@ -1864,12 +1867,13 @@ message Entry {
     string path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
-    bool is_symlink = 6;
     bool is_ignored = 7;
     bool is_external = 8;
+    reserved 6;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
     optional uint64 size = 11;
+    optional string canonical_path = 12;
 }
 
 message RepositoryEntry {
@@ -2464,6 +2468,7 @@ message AddWorktree {
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
+    string canonicalized_path = 2;
 }
 
 message UpdateUserSettings {
@@ -2506,4 +2511,14 @@ message HideToast {
 
 message OpenServerSettings {
     uint64 project_id = 1;
+}
+
+message GetPermalinkToLine {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Range selection = 3;
+}
+
+message GetPermalinkToLineResponse {
+    string permalink = 1;
 }
