@@ -699,6 +699,57 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        assert_edits(
+            "
+                fn foo() {
+
+                }
+            "
+            .unindent(),
+            vec![
+                AssistantEditKind::InsertBefore {
+                    old_text: "
+                        fn foo() {
+                    "
+                    .unindent(),
+                    new_text: "
+                        fn bar() {
+                            // todo
+                        }
+
+                    "
+                    .unindent(),
+                    description: "implement bar".into(),
+                },
+                AssistantEditKind::Update {
+                    old_text: "
+                        fn foo() {
+
+                        }
+                    "
+                    .unindent(),
+                    new_text: "
+                        fn foo() {
+                            bar();
+                        }
+                    "
+                    .unindent(),
+                    description: "call bar in foo".into(),
+                },
+            ],
+            "
+                fn bar() {
+                    // todo
+                }
+
+                fn foo() {
+                    bar();
+                }
+            "
+            .unindent(),
+            cx,
+        );
     }
 
     #[track_caller]
