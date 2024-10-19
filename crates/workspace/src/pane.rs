@@ -1739,11 +1739,9 @@ impl Pane {
             .worktree_for_entry(entry, cx)?
             .read(cx);
         let entry = worktree.entry_for_id(entry)?;
-        let abs_path = worktree.absolutize(&entry.path).ok()?;
-        if entry.is_symlink {
-            abs_path.canonicalize().ok()
-        } else {
-            Some(abs_path)
+        match &entry.canonical_path {
+            Some(canonical_path) => Some(canonical_path.to_path_buf()),
+            None => worktree.absolutize(&entry.path).ok(),
         }
     }
 
