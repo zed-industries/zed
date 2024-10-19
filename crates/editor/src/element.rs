@@ -2233,7 +2233,7 @@ impl EditorElement {
                                                     }),
                                             ),
                                         )
-                                        .when_some(jump_data.clone(), |el, jump_data| {
+                                        .when_some(jump_data, |el, jump_data| {
                                             el.child(Icon::new(IconName::ArrowUpRight))
                                                 .cursor_pointer()
                                                 .tooltip(|cx| {
@@ -2283,9 +2283,18 @@ impl EditorElement {
                                 .justify_start()
                                 .w_full()
                                 .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
-                                .border_t_1()
-                                .border_color(cx.theme().colors().border_variant)
-                                .hover(|style| style.border_color(cx.theme().colors().border))
+                                .relative()
+                                .child(
+                                    div()
+                                        .top(px(0.))
+                                        .absolute()
+                                        .w_full()
+                                        .h_px()
+                                        .bg(cx.theme().colors().border_variant)
+                                        .group_hover("excerpt-jump-action", |style| {
+                                            style.bg(cx.theme().colors().border)
+                                        }),
+                                )
                                 .cursor_pointer()
                                 .when_some(jump_data.clone(), |this, jump_data| {
                                     this.on_click(cx.listener_for(&self.editor, {
@@ -2314,22 +2323,41 @@ impl EditorElement {
                                         )
                                     })
                                 })
-                                .child(if *show_excerpt_controls {
+                                .child(
                                     h_flex()
                                         .w(icon_offset)
                                         .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32
                                             * cx.line_height())
                                         .flex_none()
                                         .justify_end()
-                                        .child(self.render_expand_excerpt_button(
-                                            next_excerpt.id,
-                                            ExpandExcerptDirection::Up,
-                                            IconName::ArrowUpFromLine,
-                                            cx,
-                                        ))
-                                } else {
-                                    div()
-                                }),
+                                        .child(if *show_excerpt_controls {
+                                            self.render_expand_excerpt_button(
+                                                next_excerpt.id,
+                                                ExpandExcerptDirection::Up,
+                                                IconName::ArrowUpFromLine,
+                                                cx,
+                                            )
+                                        } else {
+                                            ButtonLike::new("jump-icon")
+                                                .style(ButtonStyle::Transparent)
+                                                .child(
+                                                    svg()
+                                                        .path(IconName::ArrowUpRight.path())
+                                                        .size(IconSize::XSmall.rems())
+                                                        .text_color(
+                                                            cx.theme().colors().border_variant,
+                                                        )
+                                                        .group_hover(
+                                                            "excerpt-jump-action",
+                                                            |style| {
+                                                                style.text_color(
+                                                                    cx.theme().colors().border,
+                                                                )
+                                                            },
+                                                        ),
+                                                )
+                                        }),
+                                ),
                         );
                     }
                 }
