@@ -9,7 +9,8 @@ use gpui::{
 };
 use language::{LanguageServerId, LanguageServerName};
 use lsp::{
-    notification::SetTrace, IoKind, LanguageServer, MessageType, SetTraceParams, TraceValue,
+    notification::SetTrace, IoKind, LanguageServer, MessageType, ServerCapabilities,
+    SetTraceParams, TraceValue,
 };
 use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};
@@ -107,6 +108,7 @@ struct LanguageServerState {
     rpc_state: Option<LanguageServerRpcState>,
     trace_level: TraceValue,
     log_level: MessageType,
+    capabilities: ServerCapabilities,
     io_logs_subscription: Option<lsp::Subscription>,
 }
 
@@ -176,6 +178,7 @@ pub enum LogKind {
     Trace,
     #[default]
     Logs,
+    Capabilities,
 }
 
 impl LogKind {
@@ -184,6 +187,7 @@ impl LogKind {
             LogKind::Rpc => RPC_MESSAGES,
             LogKind::Trace => SERVER_TRACE,
             LogKind::Logs => SERVER_LOGS,
+            LogKind::Capabilities => SERVER_CAPABILITIES,
         }
     }
 }
@@ -374,6 +378,7 @@ impl LogStore {
                 trace_level: TraceValue::Off,
                 log_level: MessageType::LOG,
                 io_logs_subscription: None,
+                capabilities: ServerCapabilities::default(),
             }
         });
 
@@ -384,7 +389,10 @@ impl LogStore {
             server_state.worktree_id = Some(worktree_id);
         }
 
-        if let Some(server) = server.filter(|_| server_state.io_logs_subscription.is_none()) {
+        if let Some(server) = server
+            .clone()
+            .filter(|_| server_state.io_logs_subscription.is_none())
+        {
             let io_tx = self.io_tx.clone();
             let server_id = server.server_id();
             server_state.io_logs_subscription = Some(server.on_io(move |io_kind, message| {
@@ -393,6 +401,11 @@ impl LogStore {
                     .ok();
             }));
         }
+
+        if let Some(server) = server {
+            server_state.capabilities = server.capabilities();
+        }
+
         Some(server_state)
     }
 
@@ -475,6 +488,10 @@ impl LogStore {
 
     fn server_trace(&self, server_id: LanguageServerId) -> Option<&VecDeque<TraceMessage>> {
         Some(&self.language_servers.get(&server_id)?.trace_messages)
+    }
+
+    fn server_capabilities(&self, server_id: LanguageServerId) -> Option<&ServerCapabilities> {
+        Some(&self.language_servers.get(&server_id)?.capabilities)
     }
 
     fn server_ids_for_project<'a>(
@@ -602,6 +619,9 @@ impl LspLogView {
                             LogKind::Rpc => this.show_rpc_trace_for_server(server_id, cx),
                             LogKind::Trace => this.show_trace_for_server(server_id, cx),
                             LogKind::Logs => this.show_logs_for_server(server_id, cx),
+                            LogKind::Capabilities => {
+                                this.show_capabilities_for_server(server_id, cx)
+                            }
                         }
                     } else {
                         this.current_server_id = None;
@@ -618,6 +638,7 @@ impl LspLogView {
                     LogKind::Rpc => this.show_rpc_trace_for_server(server_id, cx),
                     LogKind::Trace => this.show_trace_for_server(server_id, cx),
                     LogKind::Logs => this.show_logs_for_server(server_id, cx),
+                    LogKind::Capabilities => this.show_capabilities_for_server(server_id, cx),
                 }
             }
 
@@ -675,6 +696,33 @@ impl LspLogView {
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::multi_line(cx);
             editor.set_text(log_contents, cx);
+            editor.move_to_end(&MoveToEnd, cx);
+            editor.set_read_only(true);
+            editor.set_show_inline_completions(Some(false), cx);
+            editor
+        });
+        let editor_subscription = cx.subscribe(
+            &editor,
+            |_, _, event: &EditorEvent, cx: &mut ViewContext<'_, LspLogView>| {
+                cx.emit(event.clone())
+            },
+        );
+        let search_subscription = cx.subscribe(
+            &editor,
+            |_, _, event: &SearchEvent, cx: &mut ViewContext<'_, LspLogView>| {
+                cx.emit(event.clone())
+            },
+        );
+        (editor, vec![editor_subscription, search_subscription])
+    }
+
+    fn editor_for_capabilities(
+        capabilities: ServerCapabilities,
+        cx: &mut ViewContext<Self>,
+    ) -> (View<Editor>, Vec<Subscription>) {
+        let editor = cx.new_view(|cx| {
+            let mut editor = Editor::multi_line(cx);
+            editor.set_text(serde_json::to_string_pretty(&capabilities).unwrap(), cx);
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
             editor.set_show_inline_completions(Some(false), cx);
@@ -881,6 +929,7 @@ impl LspLogView {
             cx.notify();
         }
     }
+
     fn update_trace_level(
         &self,
         server_id: LanguageServerId,
@@ -898,6 +947,25 @@ impl LspLogView {
                 .notify::<SetTrace>(SetTraceParams { value: level })
                 .ok();
         }
+    }
+
+    fn show_capabilities_for_server(
+        &mut self,
+        server_id: LanguageServerId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let capabilities = self.log_store.read(cx).server_capabilities(server_id);
+
+        if let Some(capabilities) = capabilities {
+            self.current_server_id = Some(server_id);
+            self.active_entry_kind = LogKind::Capabilities;
+            let (editor, editor_subscriptions) =
+                Self::editor_for_capabilities(capabilities.clone(), cx);
+            self.editor = editor;
+            self.editor_subscriptions = editor_subscriptions;
+            cx.notify();
+        }
+        cx.focus(&self.focus_handle);
     }
 }
 
@@ -967,6 +1035,7 @@ impl Item for LspLogView {
                     LogKind::Rpc => new_view.show_rpc_trace_for_server(server_id, cx),
                     LogKind::Trace => new_view.show_trace_for_server(server_id, cx),
                     LogKind::Logs => new_view.show_logs_for_server(server_id, cx),
+                    LogKind::Capabilities => new_view.show_capabilities_for_server(server_id, cx),
                 }
             }
             new_view
@@ -1168,6 +1237,13 @@ impl Render for LspLogToolbarItemView {
                                     view.show_rpc_trace_for_server(row.server_id, cx);
                                 }),
                             );
+                            menu = menu.entry(
+                                SERVER_CAPABILITIES,
+                                None,
+                                cx.handler_for(&log_view, move |view, cx| {
+                                    view.show_capabilities_for_server(row.server_id, cx);
+                                }),
+                            );
                             if server_selected && row.selected_entry == LogKind::Rpc {
                                 let selected_ix = menu.select_last();
                                 debug_assert_eq!(
@@ -1317,6 +1393,7 @@ impl Render for LspLogToolbarItemView {
 const RPC_MESSAGES: &str = "RPC Messages";
 const SERVER_LOGS: &str = "Server Logs";
 const SERVER_TRACE: &str = "Server Trace";
+const SERVER_CAPABILITIES: &str = "Server Capabilities";
 
 impl Default for LspLogToolbarItemView {
     fn default() -> Self {
