@@ -25,13 +25,16 @@ use smol::{
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{paths::compare_paths, ResultExt};
+use util::{
+    paths::{compare_paths, SanitizedPathBuf},
+    ResultExt,
+};
 use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
 
 struct MatchingEntry {
-    worktree_path: Arc<Path>,
+    worktree_path: SanitizedPathBuf,
     path: ProjectPath,
     respond: oneshot::Sender<ProjectPath>,
 }
@@ -55,7 +58,7 @@ pub struct WorktreeStore {
     worktrees_reordered: bool,
     #[allow(clippy::type_complexity)]
     loading_worktrees:
-        HashMap<Arc<Path>, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
+        HashMap<SanitizedPathBuf, Shared<Task<Result<Model<Worktree>, Arc<anyhow::Error>>>>>,
     state: WorktreeStoreState,
 }
 
@@ -146,8 +149,9 @@ impl WorktreeStore {
         cx: &AppContext,
     ) -> Option<(Model<Worktree>, PathBuf)> {
         for tree in self.worktrees() {
-            if let Ok(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()) {
-                return Some((tree.clone(), relative_path.into()));
+            let abs_path = SanitizedPathBuf::from(abs_path.to_path_buf());
+            if let Ok(relative_path) = abs_path.strip_prefix(&tree.read(cx).abs_path()) {
+                return Some((tree.clone(), relative_path.to_path_buf()));
             }
         }
         None
@@ -191,7 +195,7 @@ impl WorktreeStore {
         visible: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Worktree>>> {
-        let path: Arc<Path> = abs_path.as_ref().into();
+        let path = abs_path.as_ref().to_path_buf().into();
         if !self.loading_worktrees.contains_key(&path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
@@ -331,7 +335,9 @@ impl WorktreeStore {
         let path: Arc<Path> = abs_path.as_ref().into();
         let mut paths: Vec<String> = self
             .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
+            // TODO:
+            // to_string() or to_trimmed_string()?
+            .map(|worktree| worktree.read(cx).abs_path().to_string())
             .collect();
         paths.push(path.to_string_lossy().to_string());
         let request = client.request(proto::UpdateDevServerProject {
@@ -601,7 +607,9 @@ impl WorktreeStore {
                     id: worktree.id().to_proto(),
                     root_name: worktree.root_name().into(),
                     visible: worktree.is_visible(),
-                    abs_path: worktree.abs_path().to_string_lossy().into(),
+                    // TODO:
+                    // to_string() or to_trimmed_string()?
+                    abs_path: worktree.abs_path().to_string(),
                 }
             })
             .collect()
@@ -742,7 +750,7 @@ impl WorktreeStore {
         async move {
             let abs_path = snapshot.abs_path().join(path);
             let Some(mut files) = fs
-                .read_dir(&abs_path)
+                .read_dir(abs_path.as_raw_path_buf())
                 .await
                 .with_context(|| format!("listing ignored path {abs_path:?}"))
                 .log_err()
@@ -765,6 +773,7 @@ impl WorktreeStore {
                 if metadata.is_symlink || metadata.is_fifo {
                     continue;
                 }
+                let file: SanitizedPathBuf = file.into();
                 results.push((
                     file.strip_prefix(snapshot.abs_path())?.to_path_buf(),
                     !metadata.is_dir,
@@ -828,14 +837,19 @@ impl WorktreeStore {
         let include_root = snapshots.len() > 1;
         for (snapshot, settings) in snapshots {
             let mut entries: Vec<_> = snapshot.entries(query.include_ignored(), 0).collect();
-            entries.sort_by(|a, b| compare_paths((&a.path, a.is_file()), (&b.path, b.is_file())));
+            entries.sort_by(|a, b| {
+                compare_paths(
+                    (&a.relative_path, a.is_file()),
+                    (&b.relative_path, b.is_file()),
+                )
+            });
             for entry in entries {
                 if entry.is_dir() && entry.is_ignored {
-                    if !settings.is_path_excluded(&entry.path) {
+                    if !settings.is_path_excluded(&entry.relative_path) {
                         Self::scan_ignored_dir(
                             &fs,
                             &snapshot,
-                            &entry.path,
+                            &entry.relative_path,
                             &query,
                             include_root,
                             &filter_tx,
@@ -853,10 +867,10 @@ impl WorktreeStore {
                 if query.filters_path() {
                     let matched_path = if include_root {
                         let mut full_path = PathBuf::from(snapshot.root_name());
-                        full_path.push(&entry.path);
+                        full_path.push(&entry.relative_path);
                         query.file_matches(&full_path)
                     } else {
-                        query.file_matches(&entry.path)
+                        query.file_matches(&entry.relative_path)
                     };
                     if !matched_path {
                         continue;
@@ -868,7 +882,7 @@ impl WorktreeStore {
                 if open_entries.contains(&entry.id) {
                     tx.send(ProjectPath {
                         worktree_id: snapshot.id(),
-                        path: entry.path.clone(),
+                        path: entry.relative_path.clone(),
                     })
                     .await?;
                 } else {
@@ -878,7 +892,7 @@ impl WorktreeStore {
                             worktree_path: snapshot.abs_path().clone(),
                             path: ProjectPath {
                                 worktree_id: snapshot.id(),
-                                path: entry.path.clone(),
+                                path: entry.relative_path.clone(),
                             },
                         })
                         .await?;
@@ -897,7 +911,7 @@ impl WorktreeStore {
     ) -> Result<()> {
         while let Some(mut entry) = input.next().await {
             let abs_path = entry.worktree_path.join(&entry.path.path);
-            let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
+            let Some(file) = fs.open_sync(abs_path.as_raw_path_buf()).await.log_err() else {
                 continue;
             };
             if query.detect(file).unwrap_or(false) {

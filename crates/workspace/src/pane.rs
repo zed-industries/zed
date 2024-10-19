@@ -45,7 +45,7 @@ use ui::{
     IconSize, Indicator, Label, PopoverMenu, PopoverMenuHandle, Tab, TabBar, TabPosition, Tooltip,
 };
 use ui::{v_flex, ContextMenu};
-use util::{debug_panic, maybe, truncate_and_remove_front, ResultExt};
+use util::{debug_panic, maybe, paths::SanitizedPathBuf, truncate_and_remove_front, ResultExt};
 
 /// A selected entry in e.g. project panel.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -301,7 +301,7 @@ struct NavHistoryState {
     backward_stack: VecDeque<NavigationEntry>,
     forward_stack: VecDeque<NavigationEntry>,
     closed_stack: VecDeque<NavigationEntry>,
-    paths_by_item: HashMap<EntityId, (ProjectPath, Option<PathBuf>)>,
+    paths_by_item: HashMap<EntityId, (ProjectPath, Option<SanitizedPathBuf>)>,
     pane: WeakView<Pane>,
     next_timestamp: Arc<AtomicUsize>,
 }
@@ -1739,7 +1739,11 @@ impl Pane {
             .worktree_for_entry(entry, cx)?
             .read(cx);
         let entry = worktree.entry_for_id(entry)?;
-        let abs_path = worktree.absolutize(&entry.path).ok()?;
+        let abs_path = worktree
+            .absolutize(&entry.relative_path)
+            .ok()?
+            .as_raw_path_buf()
+            .clone();
         if entry.is_symlink {
             abs_path.canonicalize().ok()
         } else {
@@ -2806,7 +2810,7 @@ impl NavHistory {
     pub fn for_each_entry(
         &self,
         cx: &AppContext,
-        mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<PathBuf>)),
+        mut f: impl FnMut(&NavigationEntry, (ProjectPath, Option<SanitizedPathBuf>)),
     ) {
         let borrowed_history = self.0.lock();
         borrowed_history
@@ -2933,7 +2937,10 @@ impl NavHistory {
             .retain(|entry| entry.item.id() != item_id);
     }
 
-    pub fn path_for_item(&self, item_id: EntityId) -> Option<(ProjectPath, Option<PathBuf>)> {
+    pub fn path_for_item(
+        &self,
+        item_id: EntityId,
+    ) -> Option<(ProjectPath, Option<SanitizedPathBuf>)> {
         self.0.lock().paths_by_item.get(&item_id).cloned()
     }
 }

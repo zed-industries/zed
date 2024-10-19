@@ -1097,7 +1097,8 @@ impl SerializableItem for Editor {
             .file()
             .map(|file| file.full_path(cx))
             .and_then(|full_path| project.read(cx).find_project_path(&full_path, cx))
-            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx));
+            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx))
+            .map(Into::into);
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();
