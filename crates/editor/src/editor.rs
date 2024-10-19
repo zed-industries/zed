@@ -6282,11 +6282,9 @@ impl Editor {
             let project_path = buffer.read(cx).project_path(cx)?;
             let project = self.project.as_ref()?.read(cx);
             let entry = project.entry_for_path(&project_path, cx)?;
-            let abs_path = project.absolute_path(&project_path, cx)?;
-            let parent = if entry.is_symlink {
-                abs_path.canonicalize().ok()?
-            } else {
-                abs_path
+            let parent = match &entry.canonical_path {
+                Some(canonical_path) => canonical_path.to_path_buf(),
+                None => project.absolute_path(&project_path, cx)?,
             }
             .parent()?
             .to_path_buf();
