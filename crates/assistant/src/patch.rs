@@ -146,12 +146,28 @@ impl ResolvedEdit {
             return false;
         }
 
-        if let Some(description) = &mut self.description {
-            if let Some(other_description) = &other.description {
+        let other_offset_range = other_range.to_offset(buffer);
+        let offset_range = range.to_offset(buffer);
+
+        // If the other range is empty at the start of this edit's range, combine the new text
+        if other_offset_range.is_empty() && other_offset_range.start == offset_range.start {
+            self.new_text = format!("{}\n{}", other.new_text, self.new_text);
+            self.range.start = other_range.start;
+
+            if let Some((description, other_description)) =
+                self.description.as_mut().zip(other.description.as_ref())
+            {
+                *description = format!("{}\n{}", other_description, description)
+            }
+        } else {
+            if let Some((description, other_description)) =
+                self.description.as_mut().zip(other.description.as_ref())
+            {
                 description.push('\n');
                 description.push_str(other_description);
             }
         }
+
         true
     }
 }
@@ -694,6 +710,73 @@ mod tests {
                     fn name(&self) -> String {
                         format!(\"{} {}\", self.first_name, self.last_name)
                     }
+                }
+            "
+            .unindent(),
+            cx,
+        );
+
+        // Ensure InsertBefore merges correctly with Update of the same text
+
+        assert_edits(
+            "
+                fn foo() {
+
+                }
+            "
+            .unindent(),
+            vec![
+                AssistantEditKind::InsertBefore {
+                    old_text: "
+                        fn foo() {"
+                        .unindent(),
+                    new_text: "
+                        fn bar() {
+                            qux();
+                        }"
+                    .unindent(),
+                    description: "implement bar".into(),
+                },
+                AssistantEditKind::Update {
+                    old_text: "
+                        fn foo() {
+
+                        }"
+                    .unindent(),
+                    new_text: "
+                        fn foo() {
+                            bar();
+                        }"
+                    .unindent(),
+                    description: "call bar in foo".into(),
+                },
+                AssistantEditKind::InsertAfter {
+                    old_text: "
+                        fn foo() {
+
+                        }
+                    "
+                    .unindent(),
+                    new_text: "
+                        fn qux() {
+                            // todo
+                        }
+                    "
+                    .unindent(),
+                    description: "implement qux".into(),
+                },
+            ],
+            "
+                fn bar() {
+                    qux();
+                }
+
+                fn foo() {
+                    bar();
+                }
+
+                fn qux() {
+                    // todo
                 }
             "
             .unindent(),
