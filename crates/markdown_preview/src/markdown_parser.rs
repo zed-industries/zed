@@ -102,6 +102,8 @@ impl<'a> MarkdownParser<'a> {
         while !self.eof() {
             if let Some(block) = self.parse_block().await {
                 self.parsed.extend(block);
+            } else {
+                self.cursor += 1;
             }
         }
         self
@@ -163,20 +165,14 @@ impl<'a> MarkdownParser<'a> {
                     let code_block = self.parse_code_block(language).await;
                     Some(vec![ParsedMarkdownElement::CodeBlock(code_block)])
                 }
-                _ => {
-                    self.cursor += 1;
-                    None
-                }
+                _ => None,
             },
             Event::Rule => {
                 let source_range = source_range.clone();
                 self.cursor += 1;
                 Some(vec![ParsedMarkdownElement::HorizontalRule(source_range)])
             }
-            _ => {
-                self.cursor += 1;
-                None
-            }
+            _ => None,
         }
     }
 
@@ -1000,6 +996,8 @@ Some other content
         - Inner
         - Inner
   2. Goodbyte
+        - Next item empty
+        -
 * Last
 ",
         )
@@ -1021,8 +1019,10 @@ Some other content
                 list_item(97..116, 3, Ordered(1), vec![p("Goodbyte", 100..108)]),
                 list_item(117..124, 4, Unordered, vec![p("Inner", 119..124)]),
                 list_item(133..140, 4, Unordered, vec![p("Inner", 135..140)]),
-                list_item(143..154, 2, Ordered(2), vec![p("Goodbyte", 146..154)]),
-                list_item(155..161, 1, Unordered, vec![p("Last", 157..161)]),
+                list_item(143..159, 2, Ordered(2), vec![p("Goodbyte", 146..154)]),
+                list_item(160..180, 3, Unordered, vec![p("Next item empty", 165..180)]),
+                list_item(186..190, 3, Unordered, vec![]),
+                list_item(191..197, 1, Unordered, vec![p("Last", 193..197)]),
             ]
         );
     }
