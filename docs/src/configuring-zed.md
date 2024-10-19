@@ -153,7 +153,7 @@ Extensions that provide language servers may also provide default settings for t
 
 - Description: The name of a font to use for rendering text in the editor.
 - Setting: `buffer_font_family`
-- Default: `Zed Plex Mono`
+- Default: `IBM Plex Mono`
 
 **Options**
 
@@ -2326,7 +2326,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
   "soft_wrap": "none",
 
   "buffer_font_size": 18,
-  "buffer_font_family": "Zed Plex Mono",
+  "buffer_font_family": "IBM Plex Mono",
 
   "autosave": "on_focus_change",
   "format_on_save": "off",
