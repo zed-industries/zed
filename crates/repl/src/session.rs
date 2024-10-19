@@ -17,8 +17,7 @@ use editor::{
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{
-    div, prelude::*, EntityId, EventEmitter, Model, Render, Subscription, Task, View, ViewContext,
-    WeakView,
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -149,23 +148,21 @@ impl EditorBlock {
                 .w(text_line_height)
                 .h(text_line_height)
                 .child(
-                    IconButton::new(
-                        ("close_output_area", EntityId::from(cx.block_id)),
-                        IconName::Close,
-                    )
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::text("Close output area", cx))
-                    .on_click(move |_, cx| {
-                        if let BlockId::Custom(block_id) = block_id {
-                            (on_close)(block_id, cx)
-                        }
-                    }),
+                    IconButton::new("close_output_area", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::Compact)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Close output area", cx))
+                        .on_click(move |_, cx| {
+                            if let BlockId::Custom(block_id) = block_id {
+                                (on_close)(block_id, cx)
+                            }
+                        }),
                 );
 
             div()
+                .id(cx.block_id)
                 .flex()
                 .items_start()
                 .min_h(text_line_height)

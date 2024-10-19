@@ -14751,7 +14751,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14900,14 +14900,6 @@ dependencies = [
 name = "zed_uiua"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_vue"
-version = "0.1.1"
-dependencies = [
- "serde",
  "zed_extension_api 0.1.0",
 ]
 

@@ -10,9 +10,7 @@ Both use:
 - Tree Sitter: [tree-sitter/tree-sitter-java](https://github.com/tree-sitter/tree-sitter-java)
 - Language Server: [eclipse-jdtls/eclipse.jdt.ls](https://github.com/eclipse-jdtls/eclipse.jdt.ls)
 
-## Pre-requisites
-
-### Install OpenJDK
+## Install OpenJDK
 
 You will need to install a Java runtime (OpenJDK).
 
@@ -23,30 +21,19 @@ You will need to install a Java runtime (OpenJDK).
 
 Or manually download and install [OpenJDK 23](https://jdk.java.net/23/).
 
-### (Optional) Install JDTLS
-
-If you are using Java with Eclipse JDTLS, you can skip this section as it will automatically download a binary for you.
-
-If you are using Zed Java you need to install your own copy of Eclipse JDT Language Server (`eclipse.jdt.ls`).
-
-- MacOS: `brew install jdtls`
-- Arch: [`jdtls` from AUR](https://aur.archlinux.org/packages/jdtls)
-
-Or manually download install:
-
-- [JDTLS Milestone Builds](http://download.eclipse.org/jdtls/milestones/) (updated every two weeks)
-- [JDTLS Snapshot Builds](https://download.eclipse.org/jdtls/snapshots/) (frequent updates)
-
 ## Extension Install
 
 You can install either by opening {#action zed::Extensions}({#kb zed::Extensions}) and searching for `java`.
+
 We recommend you install one or the other and not both.
 
 ## Settings / Initialization Options
 
-See [JDTLS Language Server Settings & Capabilities](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Language-Server-Settings-&-Capabilities) for a complete list of settings.
+Both extensions will automatically download the language server, see: [Manual JDTLS Install](#manual-jdts-install) below if you'd prefer to manage that yourself.
 
-Add the following to your Zed Settings by launching {#action zed::OpenSettings}({#kb zed::OpenSettings}).
+For available `initialization_options` please see the [Initialize Request section of the Eclipse.jdt.ls Wiki](https://github.com/eclipse-jdtls/eclipse.jdt.ls/wiki/Running-the-JAVA-LS-server-from-the-command-line#initialize-request).
+
+You can add these customizations to your Zed Settings by launching {#action zed::OpenSettings}({#kb zed::OpenSettings}) or by using a `.zed/setting.json` inside your project.
 
 ### Zed Java Settings
 
@@ -54,7 +41,10 @@ Add the following to your Zed Settings by launching {#action zed::OpenSettings}(
 {
   "lsp": {
     "jdtls": {
-      "settings": {},
+      "settings": {
+        "version": "1.40.0", // jdtls version to download and use
+        "classpath": "/path/to/classes.jar:/path/to/more/classes/"
+      },
       "initialization_options": {}
     }
   }
@@ -74,35 +64,7 @@ Add the following to your Zed Settings by launching {#action zed::OpenSettings}(
 }
 ```
 
-## See also
-
-- [Zed Java Readme](https://github.com/zed-extensions/java)
-- [Java with Eclipse JDTLS Readme](https://github.com/ABckh/zed-java-eclipse-jdtls)
-
-## Support
-
-If you have issues with either of these plugins, please open issues on their respective repositories:
-
-- [Zed Java Issues](https://github.com/zed-extensions/java/issues)
-- [Java with Eclipse JDTLS Issues](https://github.com/ABckh/zed-java-eclipse-jdtls/issues)
-
 ## Example Configs
-
-### Zed Java Classpath
-
-You can optionally configure the class path that JDTLS uses with:
-
-```json
-{
-  "lsp": {
-    "jdtls": {
-      "settings": {
-        "classpath": "/path/to/classes.jar:/path/to/more/classes/"
-      }
-    }
-  }
-}
-```
 
 ### Zed Java Initialization Options
 
@@ -204,3 +166,27 @@ For example, to enable [Lombok Support](https://github.com/redhat-developer/vsco
   }
 }
 ```
+
+## Manual JDTLS Install
+
+If you prefer, you can install JDTLS yourself and both extensions can be configured to use that instead.
+
+- MacOS: `brew install jdtls`
+- Arch: [`jdtls` from AUR](https://aur.archlinux.org/packages/jdtls)
+
+Or manually download install:
+
+- [JDTLS Milestone Builds](http://download.eclipse.org/jdtls/milestones/) (updated every two weeks)
+- [JDTLS Snapshot Builds](https://download.eclipse.org/jdtls/snapshots/) (frequent updates)
+
+## See also
+
+- [Zed Java Readme](https://github.com/zed-extensions/java)
+- [Java with Eclipse JDTLS Readme](https://github.com/ABckh/zed-java-eclipse-jdtls)
+
+## Support
+
+If you have issues with either of these plugins, please open issues on their respective repositories:
+
+- [Zed Java Issues](https://github.com/zed-extensions/java/issues)
+- [Java with Eclipse JDTLS Issues](https://github.com/ABckh/zed-java-eclipse-jdtls/issues)
