@@ -659,7 +659,7 @@ impl Database {
                                 seconds: db_entry.mtime_seconds as u64,
                                 nanos: db_entry.mtime_nanos as u32,
                             }),
-                            is_symlink: db_entry.is_symlink,
+                            canonical_path: db_entry.canonical_path,
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
                             git_status: db_entry.git_status.map(|status| status as i32),
