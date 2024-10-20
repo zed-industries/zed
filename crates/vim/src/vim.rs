@@ -6,6 +6,8 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
+mod helix_normal;
+mod helix_visual;
 mod indent;
 mod insert;
 mod mode_indicator;
@@ -17,8 +19,6 @@ mod rewrap;
 mod state;
 mod surrounds;
 mod visual;
-mod helix_normal;
-mod helix_visual;
 
 use anyhow::Result;
 use collections::HashMap;
