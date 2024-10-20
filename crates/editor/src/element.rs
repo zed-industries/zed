@@ -1245,7 +1245,12 @@ impl EditorElement {
                         bounds.lower_left().y - self.style.scrollbar_width,
                     ),
                     point(
-                        bounds.lower_right().x - self.style.scrollbar_width,
+                        bounds.lower_right().x
+                            - if axes.vertical {
+                                self.style.scrollbar_width
+                            } else {
+                                px(0.)
+                            },
                         bounds.lower_right().y,
                     ),
                 )
