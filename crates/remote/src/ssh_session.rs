@@ -22,7 +22,9 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use rpc::{
-    proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
+    proto::{
+        self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage, SSH_PEER_ID,
+    },
     AnyProtoClient, EntityMessageSubscriber, ProtoClient, ProtoMessageHandlerSet, RpcError,
 };
 use smol::{
@@ -297,10 +299,12 @@ impl ChannelForwarder {
             loop {
                 select_biased! {
                     _ = quit_rx.next().fuse() => {
+                        println!("quit");
                         break;
                     },
                     incoming_envelope = proxy_incoming_rx.next().fuse() => {
                         if let Some(envelope) = incoming_envelope {
+                            println!("incoming {}", envelope.id);
                             if incoming_tx.send(envelope).await.is_err() {
                                 break;
                             }
@@ -311,6 +315,7 @@ impl ChannelForwarder {
                     }
                     outgoing_envelope = outgoing_rx.next().fuse() => {
                         if let Some(envelope) = outgoing_envelope {
+                            println!("outgoing {}", envelope.id);
                             if proxy_outgoing_tx.send(envelope).await.is_err() {
                                 break;
                             }
@@ -708,7 +713,10 @@ impl SshRemoteClient {
 
             let connection_options = ssh_connection.connection_options();
 
-            let (incoming_tx, outgoing_rx) = forwarder.into_channels().await;
+            let (incoming_tx, mut outgoing_rx) = forwarder.into_channels().await;
+            while let Ok(Some(msg)) = outgoing_rx.try_next() {
+                dbg!("flushing msg {}", msg.id);
+            }
             let (forwarder, proxy_incoming_tx, proxy_outgoing_rx) =
                 ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
             let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
@@ -974,7 +982,7 @@ impl SshRemoteClient {
             }
         });
 
-        cx.spawn(|mut cx| async move {
+        cx.spawn(|cx| async move {
             let result = futures::select! {
                 result = stdin_task.fuse() => {
                     result.context("stdin")
@@ -1063,11 +1071,16 @@ impl SshRemoteClient {
         reconnect: bool,
         connection_options: SshConnectionOptions,
         proxy_incoming_tx: UnboundedSender<Envelope>,
-        proxy_outgoing_rx: UnboundedReceiver<Envelope>,
+        mut proxy_outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<(Box<dyn SshRemoteProcess>, Task<Result<i32>>)> {
+        if reconnect {
+            while let Ok(Some(msg)) = proxy_outgoing_rx.try_next() {
+                println!("dropping {}", msg.id);
+            }
+        }
         #[cfg(any(test, feature = "test-support"))]
         if let Some(fake) = fake::SshRemoteConnection::new(&connection_options) {
             let io_task = fake::SshRemoteConnection::multiplex(
@@ -1168,11 +1181,13 @@ impl SshRemoteClient {
 
         let port = self.connection_options().port.unwrap();
 
+        println!("disconnecting...");
         let disconnect =
             cx.update_global(|c: &mut fake::GlobalConnections, _cx| c.take(port).into_channels());
         cx.spawn(|mut cx| async move {
-            let (input_rx, output_tx) = disconnect.await;
-            let (forwarder, _, _) = ChannelForwarder::new(input_rx, output_tx, &mut cx);
+            let (input_tx, output_rx) = disconnect.await;
+            println!("disconnected...");
+            let (forwarder, _, _) = ChannelForwarder::new(input_tx, output_rx, &mut cx);
             cx.update_global(|c: &mut fake::GlobalConnections, _cx| c.replace(port, forwarder))
                 .unwrap()
         })
@@ -1591,6 +1606,8 @@ impl ChannelClient {
             async move {
                 let peer_id = PeerId { owner_id: 0, id: 0 };
                 while let Some(incoming) = incoming_rx.next().await {
+                    let type_name =build_typed_envelope(peer_id, Instant::now(), incoming.clone()).map(|e| e.payload_type_name()).unwrap_or("Error");
+                    println!("{} received  type={} id={}, ack_id={:?}", name, type_name, incoming.id, incoming.ack_id);
                     let Some(this) = this.upgrade() else {
                         return anyhow::Ok(());
                     };
@@ -1603,14 +1620,19 @@ impl ChannelClient {
                     if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) =
                         &incoming.payload
                     {
+                        log::debug!("{name}:ssh message received. name:FlushBufferedMessages");
                         {
                             let buffer = this.buffer.lock();
                             for envelope in buffer.iter() {
+                                let type_name = build_typed_envelope(peer_id, Instant::now(), envelope.clone()).map(|e| e.payload_type_name()).unwrap_or("Error");
+                                println!("{} sent(resync) type={} id={:?} ack_id={:?}", name, type_name, envelope.id, envelope.ack_id);
                                 this.outgoing_tx.unbounded_send(envelope.clone()).ok();
                             }
                         }
                         let mut envelope = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
                         envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+                        let type_name = build_typed_envelope(peer_id, Instant::now(), envelope.clone()).map(|e| e.payload_type_name()).unwrap_or("Error");
+                        println!("{} sent(resync) type={} id={:?} ack_id={:?}", name, type_name, envelope.id, envelope.ack_id);
                         this.outgoing_tx.unbounded_send(envelope).ok();
                         continue;
                     }
@@ -1699,6 +1721,14 @@ impl ChannelClient {
             async {
                 self.request(proto::FlushBufferedMessages {}).await?;
                 for envelope in self.buffer.lock().iter() {
+                    let type_name =
+                        build_typed_envelope(SSH_PEER_ID, Instant::now(), envelope.clone())
+                            .map(|e| e.payload_type_name())
+                            .unwrap_or("Error");
+                    println!(
+                        "client sent(resync) type={} id={:?} ack_id={:?}",
+                        type_name, envelope.id, envelope.ack_id
+                    );
                     self.outgoing_tx.unbounded_send(envelope.clone()).ok();
                 }
                 Ok(())
@@ -1764,6 +1794,13 @@ impl ChannelClient {
     pub fn send_buffered(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.ack_id = Some(self.max_received.load(SeqCst));
         self.buffer.lock().push_back(envelope.clone());
+        let type_name = build_typed_envelope(SSH_PEER_ID, Instant::now(), envelope.clone())
+            .map(|e| e.payload_type_name())
+            .unwrap_or("Error");
+        println!(
+            "sent(buffered) type={} id={:?} ack_id={:?}",
+            type_name, envelope.id, envelope.ack_id
+        );
         self.outgoing_tx.unbounded_send(envelope)?;
         Ok(())
     }
