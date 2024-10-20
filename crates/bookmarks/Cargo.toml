@@ -1,0 +1,28 @@
+[package]
+name = "bookmarks"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/bookmarks.rs"
+doctest = false
+
+[dependencies]
+collections.workspace = true
+editor.workspace = true
+language.workspace = true
+menu.workspace = true
+gpui.workspace = true
+picker.workspace = true
+project.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+text.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true

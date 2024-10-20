@@ -1779,6 +1779,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "bookmarks"
+version = "0.1.0"
+dependencies = [
+ "collections",
+ "editor",
+ "gpui",
+ "language",
+ "menu",
+ "picker",
+ "project",
+ "serde",
+ "serde_json",
+ "text",
+ "ui",
+ "util",
+ "workspace",
+]
+
+[[package]]
 name = "borsh"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14597,6 +14616,7 @@ dependencies = [
  "audio",
  "auto_update",
  "backtrace",
+ "bookmarks",
  "breadcrumbs",
  "call",
  "channel",
