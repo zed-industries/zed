@@ -496,6 +496,38 @@ List of `string` values
 
 `boolean` values
 
+### Axis
+
+- Description: When the show option permits it, which axes should show scrollbars.
+- Setting: `axis`
+- Default: `xy`
+
+**Options**
+
+1. Show both the horizontal and vertical scrollbars
+
+```json
+"scrollbar": {
+  "axis": "xy"
+}
+```
+
+2. Only show the vertical scrollbar
+
+```json
+"scrollbar": {
+  "axis": "y"
+}
+```
+
+3. Only show the horizontal scrollbar
+
+```json
+"scrollbar": {
+  "axis": "x"
+}
+```
+
 ## Editor Tab Bar
 
 - Description: Settings related to the editor's tab bar.

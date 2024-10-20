@@ -67,9 +67,6 @@ pub enum Axis {
     Horizontal,
 }
 
-// I highly doubt this is what Zed would want in their
-// repository, but for organization purposes, we'll use it.
-// There's probably an alternative, maybe `Point`?
 #[derive(Debug, Clone)]
 pub struct AxisPair<T: Clone> {
     pub vertical: T,
