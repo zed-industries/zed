@@ -2007,13 +2007,14 @@ impl ContextEditor {
                             })
                             .map(|(command, error_message)| BlockProperties {
                                 style: BlockStyle::Fixed,
-                                position: Anchor {
-                                    buffer_id: Some(buffer_id),
-                                    excerpt_id,
-                                    text_anchor: command.source_range.start,
+                                placement: BlockPlacement::Below {
+                                    position: Anchor {
+                                        buffer_id: Some(buffer_id),
+                                        excerpt_id,
+                                        text_anchor: command.source_range.start,
+                                    },
                                 },
                                 height: 1,
-                                disposition: BlockDisposition::Below,
                                 render: slash_command_error_block_renderer(error_message),
                                 priority: 0,
                             }),
@@ -2240,11 +2241,12 @@ impl ContextEditor {
                 } else {
                     let block_ids = editor.insert_blocks(
                         [BlockProperties {
-                            position: patch_start,
+                            placement: BlockLinePlacement::Below {
+                                position: patch_start,
+                            },
                             height: path_count as u32 + 1,
                             style: BlockStyle::Flex,
                             render: render_block,
-                            disposition: BlockDisposition::Below,
                             priority: 0,
                         }],
                         None,
@@ -2729,12 +2731,13 @@ impl ContextEditor {
                 })
             };
             let create_block_properties = |message: &Message| BlockProperties {
-                position: buffer
-                    .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
-                    .unwrap(),
+                placement: BlockLinePlacement::Above {
+                    position: buffer
+                        .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
+                        .unwrap(),
+                },
                 height: 2,
                 style: BlockStyle::Sticky,
-                disposition: BlockDisposition::Above,
                 priority: usize::MAX,
                 render: render_block(MessageMetadata::from(message)),
             };
@@ -3370,7 +3373,7 @@ impl ContextEditor {
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
                     let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
-                        position: anchor,
+                        placement: BlockLinePlacement::Above { position: anchor },
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
                         render: Box::new(move |cx| {
@@ -3391,8 +3394,6 @@ impl ContextEditor {
                                 )
                                 .into_any_element()
                         }),
-
-                        disposition: BlockDisposition::Above,
                         priority: 0,
                     })
                 })

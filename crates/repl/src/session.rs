@@ -90,12 +90,13 @@ impl EditorBlock {
 
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
-                position: code_range.end,
+                placement: BlockLinePlacement::Below {
+                    position: code_range.end,
+                },
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: 1,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
-                disposition: BlockDisposition::Below,
                 priority: 0,
             };
 

@@ -6295,9 +6295,9 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        display_map::{BlockDisposition, BlockProperties},
+        display_map::BlockProperties,
         editor_tests::{init_test, update_test_language_settings},
-        Editor, MultiBuffer,
+        BlockLinePlacement, Editor, MultiBuffer,
     };
     use gpui::{TestAppContext, VisualTestContext};
     use language::language_settings;
@@ -6551,9 +6551,10 @@ mod tests {
                 editor.insert_blocks(
                     [BlockProperties {
                         style: BlockStyle::Fixed,
-                        disposition: BlockDisposition::Above,
+                        placement: BlockLinePlacement::Above {
+                            position: Anchor::min(),
+                        },
                         height: 3,
-                        position: Anchor::min(),
                         render: Box::new(|cx| div().h(3. * cx.line_height()).into_any()),
                         priority: 0,
                     }],
