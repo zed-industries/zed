@@ -273,25 +273,24 @@ impl DapStore {
                 merge_json_value_into(args.configuration, &mut request_args);
             }
 
-            let transport_params = adapter.connect(&binary, &mut cx).await.log_err()?;
+            let mut client = DebugAdapterClient::new(client_id, request_args, config, adapter);
 
-            let client = DebugAdapterClient::new(
-                client_id,
-                adapter.id(),
-                request_args,
-                config,
-                transport_params,
-                move |message, cx| {
-                    dap_store
-                        .update(cx, |_, cx| {
-                            cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
-                        })
-                        .log_err();
-                },
-                &mut cx,
-            )
-            .await
-            .log_err()?;
+            client
+                .start(
+                    &binary,
+                    move |message, cx| {
+                        dap_store
+                            .update(cx, |_, cx| {
+                                cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
+                            })
+                            .log_err();
+                    },
+                    &mut cx,
+                )
+                .await
+                .log_err()?;
+
+            let client = Arc::new(client);
 
             this.update(&mut cx, |store, cx| {
                 let handle = store
@@ -509,7 +508,7 @@ impl DapStore {
 
         cx.spawn(|this, mut cx| async move {
             client
-                .respond(Message::Response(Response {
+                .send_message(Message::Response(Response {
                     seq,
                     request_seq: seq,
                     success: true,
@@ -539,7 +538,7 @@ impl DapStore {
         cx.spawn(|_, _| async move {
             if success {
                 client
-                    .respond(Message::Response(Response {
+                    .send_message(Message::Response(Response {
                         seq,
                         request_seq: seq,
                         success: true,
@@ -552,7 +551,7 @@ impl DapStore {
                     .await
             } else {
                 client
-                    .respond(Message::Response(Response {
+                    .send_message(Message::Response(Response {
                         seq,
                         request_seq: seq,
                         success: false,

@@ -1,5 +1,6 @@
 use std::ffi::OsString;
 
+use dap::transport::{StdioTransport, TcpTransport, Transport};
 use serde_json::Value;
 use task::DebugAdapterConfig;
 
@@ -24,16 +25,10 @@ impl DebugAdapter for CustomDebugAdapter {
         DebugAdapterName(Self::ADAPTER_NAME.into())
     }
 
-    async fn connect(
-        &self,
-        adapter_binary: &DebugAdapterBinary,
-        cx: &mut AsyncAppContext,
-    ) -> Result<TransportParams> {
+    fn transport(&self) -> Box<dyn Transport> {
         match &self.custom_args.connection {
-            DebugConnectionType::STDIO => create_stdio_client(adapter_binary),
-            DebugConnectionType::TCP(tcp_host) => {
-                create_tcp_client(tcp_host.clone(), adapter_binary, cx).await
-            }
+            DebugConnectionType::STDIO => Box::new(StdioTransport::new()),
+            DebugConnectionType::TCP(tcp_host) => Box::new(TcpTransport::new(tcp_host.clone())),
         }
     }
 

@@ -19,8 +19,8 @@ pub struct TCPHost {
     pub port: Option<u16>,
     /// The host that the debug adapter is listening too
     pub host: Option<Ipv4Addr>,
-    /// The delay in ms between starting and connecting to the debug adapter
-    pub delay: Option<u64>,
+    /// The max amount of time to connect to a tcp DAP before returning an error
+    pub timeout: Option<u64>,
 }
 
 /// Represents the type that will determine which request to call on the debug adapter

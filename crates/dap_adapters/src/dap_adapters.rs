@@ -12,14 +12,7 @@ use python::PythonDebugAdapter;
 
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use dap::{
-    adapters::{
-        create_stdio_client, create_tcp_client, DapDelegate, DebugAdapter, DebugAdapterBinary,
-        DebugAdapterName,
-    },
-    client::TransportParams,
-};
-use gpui::AsyncAppContext;
+use dap::adapters::{DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName};
 use http_client::github::latest_github_release;
 use serde_json::{json, Value};
 use smol::{
