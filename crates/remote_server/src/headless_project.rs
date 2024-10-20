@@ -159,6 +159,7 @@ impl HeadlessProject {
         client.add_request_handler(cx.weak_model(), Self::handle_remove_worktree);
 
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_find_search_candidates);
         client.add_model_request_handler(Self::handle_open_server_settings);
 
@@ -352,6 +353,32 @@ impl HeadlessProject {
                     cx,
                 )
             });
+            anyhow::Ok((buffer_store, buffer))
+        })??;
+
+        let buffer = buffer.await?;
+        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
+        buffer_store.update(&mut cx, |buffer_store, cx| {
+            buffer_store
+                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .detach_and_log_err(cx);
+        })?;
+
+        Ok(proto::OpenBufferResponse {
+            buffer_id: buffer_id.to_proto(),
+        })
+    }
+
+    pub async fn handle_open_new_buffer(
+        this: Model<Self>,
+        _message: TypedEnvelope<proto::OpenNewBuffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
+            let buffer_store = this.buffer_store.clone();
+            let buffer = this
+                .buffer_store
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx));
             anyhow::Ok((buffer_store, buffer))
         })??;
 

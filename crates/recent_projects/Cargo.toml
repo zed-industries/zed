@@ -22,6 +22,7 @@ file_finder.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 log.workspace = true
 menu.workspace = true
 ordered-float.workspace = true

@@ -412,6 +412,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "pretty_assertions",
  "project",
  "proto",
  "rand 0.8.5",
@@ -3353,7 +3354,6 @@ dependencies = [
  "http_client",
  "log",
  "node_runtime",
- "parking_lot",
  "schemars",
  "serde",
  "serde_json",
@@ -8551,6 +8551,7 @@ dependencies = [
  "terminal",
  "text",
  "unindent",
+ "url",
  "util",
  "which 6.0.3",
  "windows 0.58.0",
@@ -9053,6 +9054,7 @@ dependencies = [
  "futures 0.3.30",
  "fuzzy",
  "gpui",
+ "itertools 0.13.0",
  "language",
  "log",
  "menu",
@@ -9196,6 +9198,7 @@ name = "remote"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "collections",
  "fs",
  "futures 0.3.30",
@@ -9227,6 +9230,8 @@ dependencies = [
  "env_logger",
  "fs",
  "futures 0.3.30",
+ "git",
+ "git_hosting_providers",
  "gpui",
  "http_client",
  "language",
@@ -9378,6 +9383,7 @@ dependencies = [
  "system-configuration 0.6.1",
  "tokio",
  "tokio-rustls 0.26.0",
+ "tokio-socks",
  "tokio-util",
  "tower-service",
  "url",
@@ -12078,6 +12084,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -14818,7 +14825,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14943,13 +14950,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_svelte"
-version = "0.2.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_terraform"
 version = "0.1.1"
 dependencies = [
@@ -14974,14 +14974,6 @@ dependencies = [
 name = "zed_uiua"
 version = "0.0.1"
 dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_vue"
-version = "0.1.0"
-dependencies = [
- "serde",
  "zed_extension_api 0.1.0",
 ]
 

@@ -13,6 +13,7 @@ use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Subscription, Task, View, ViewContext, WeakView,
 };
+use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
@@ -247,8 +248,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::Local(paths, order) => order
                         .order()
                         .iter()
-                        .filter_map(|i| paths.paths().get(*i))
-                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .zip(paths.paths().iter())
+                        .sorted_by_key(|(i, _)| *i)
+                        .map(|(_, path)| path.compact().to_string_lossy().into_owned())
                         .collect::<Vec<_>>()
                         .join(""),
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
@@ -447,8 +449,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 order
                     .order()
                     .iter()
-                    .filter_map(|i| paths.paths().get(*i).cloned())
-                    .map(|path| path.compact())
+                    .zip(paths.paths().iter())
+                    .sorted_by_key(|(i, _)| **i)
+                    .map(|(_, path)| path.compact())
                     .collect(),
             ),
             SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),

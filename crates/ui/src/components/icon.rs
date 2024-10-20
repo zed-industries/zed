@@ -181,6 +181,7 @@ pub enum IconName {
     DebugLogBreakpoint,
     DatabaseZap,
     Delete,
+    Diff,
     Disconnected,
     Download,
     Ellipsis,

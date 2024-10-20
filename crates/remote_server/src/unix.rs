@@ -5,12 +5,14 @@ use client::ProxySettings;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
+use git::GitHostingProviderRegistry;
 use gpui::{AppContext, Context as _, ModelContext, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
+
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -212,19 +214,27 @@ fn start_server(
 
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
+
+            let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
+            cx.background_executor().spawn(async move {
+                while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
+                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                        break;
+                    }
+                }
+            }).detach();
+
             loop {
+
                 select_biased! {
                     _ = app_quit_rx.next().fuse() => {
                         return anyhow::Ok(());
                     }
 
-                    stdin_message = read_message(&mut stdin_stream, &mut input_buffer).fuse() => {
-                        let message = match stdin_message {
-                            Ok(message) => message,
-                            Err(error) => {
-                                log::warn!("error reading message on stdin: {}. exiting.", error);
-                                break;
-                            }
+                    stdin_message = stdin_msg_rx.next().fuse() => {
+                        let Some(message) = stdin_message else {
+                            log::warn!("error reading message on stdin. exiting.");
+                            break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
                             log::error!("failed to send message to application: {:?}. exiting.", error);
@@ -269,7 +279,7 @@ fn start_server(
     })
     .detach();
 
-    ChannelClient::new(incoming_rx, outgoing_tx, cx)
+    ChannelClient::new(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -313,6 +323,8 @@ pub fn execute_run(
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
     log::info!("starting headless gpui app");
+
+    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
         HeadlessProject::init(cx);
@@ -321,6 +333,9 @@ pub fn execute_run(
         let session = start_server(listeners, log_rx, cx);
 
         client::init_settings(cx);
+
+        GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
+        git_hosting_providers::init(cx);
 
         let project = cx.new_model(|cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));

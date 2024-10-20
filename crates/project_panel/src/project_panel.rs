@@ -91,7 +91,6 @@ struct EditState {
     entry_id: ProjectEntryId,
     is_new_entry: bool,
     is_dir: bool,
-    is_symlink: bool,
     depth: usize,
     processing_filename: Option<String>,
 }
@@ -987,7 +986,6 @@ impl ProjectPanel {
                 is_new_entry: true,
                 is_dir,
                 processing_filename: None,
-                is_symlink: false,
                 depth: 0,
             });
             self.filename_editor.update(cx, |editor, cx| {
@@ -1027,7 +1025,6 @@ impl ProjectPanel {
                         is_new_entry: false,
                         is_dir: entry.is_dir(),
                         processing_filename: None,
-                        is_symlink: entry.is_symlink,
                         depth: 0,
                     });
                     let file_name = entry
@@ -1533,16 +1530,15 @@ impl ProjectPanel {
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            let abs_path = worktree.abs_path().join(&entry.path);
+            let abs_path = match &entry.canonical_path {
+                Some(canonical_path) => Some(canonical_path.to_path_buf()),
+                None => worktree.absolutize(&entry.path).ok(),
+            };
+
             let working_directory = if entry.is_dir() {
-                Some(abs_path)
+                abs_path
             } else {
-                if entry.is_symlink {
-                    abs_path.canonicalize().ok()
-                } else {
-                    Some(abs_path)
-                }
-                .and_then(|path| Some(path.parent()?.to_path_buf()))
+                abs_path.and_then(|path| Some(path.parent()?.to_path_buf()))
             };
             if let Some(working_directory) = working_directory {
                 cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
@@ -1830,7 +1826,6 @@ impl ProjectPanel {
                         .unwrap_or_default();
                     if let Some(edit_state) = &mut self.edit_state {
                         if edit_state.entry_id == entry.id {
-                            edit_state.is_symlink = entry.is_symlink;
                             edit_state.depth = depth;
                         }
                     }
@@ -1861,7 +1856,6 @@ impl ProjectPanel {
                         is_private: false,
                         git_status: entry.git_status,
                         canonical_path: entry.canonical_path.clone(),
-                        is_symlink: entry.is_symlink,
                         char_bag: entry.char_bag,
                         is_fifo: entry.is_fifo,
                     });
@@ -1920,7 +1914,7 @@ impl ProjectPanel {
                 let width_estimate = item_width_estimate(
                     depth,
                     path.to_string_lossy().chars().count(),
-                    entry.is_symlink,
+                    entry.canonical_path.is_some(),
                 );
 
                 match max_width_item.as_mut() {
@@ -2701,7 +2695,6 @@ impl ProjectPanel {
                 .cursor_default()
                 .when(self.width.is_some(), |this| {
                     this.children(Scrollbar::horizontal(
-                        //percentage as f32..end_offset as f32,
                         self.horizontal_scrollbar_state.clone(),
                     ))
                 }),
@@ -2918,7 +2911,9 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(cx))
-                .children(self.render_horizontal_scrollbar(cx))
+                .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
+                    this.pb_4().child(scrollbar)
+                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()

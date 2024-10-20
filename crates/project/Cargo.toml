@@ -71,6 +71,7 @@ snippet_provider.workspace = true
 terminal.workspace = true
 text.workspace = true
 util.workspace = true
+url.workspace = true
 which.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]

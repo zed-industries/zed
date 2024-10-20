@@ -11,26 +11,27 @@ use crate::{
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
-    ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory, DeployPromptLibrary,
-    InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
+    Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
+    ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
+    DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
+    Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
+    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use assistant_tool::ToolRegistry;
-use client::{proto, Client, Status};
+use client::{proto, zed_urls, Client, Status};
 use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease, CreaseMetadata,
-        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
+        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease,
+        CreaseMetadata, CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
-    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
-    Anchor, Editor, EditorEvent, ExcerptRange, MultiBuffer, RowExt, ToOffset as _, ToPoint,
+    scroll::{Autoscroll, AutoscrollStrategy},
+    Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
+    ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
@@ -38,15 +39,14 @@ use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
     AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    Context as _, Empty, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
-    RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, View, VisualContext, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
-    language_settings::SoftWrap, BufferSnapshot, Capability, LanguageRegistry, LspAdapterDelegate,
-    ToOffset,
+    language_settings::SoftWrap, BufferSnapshot, LanguageRegistry, LspAdapterDelegate, ToOffset,
 };
 use language_model::{
     provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
@@ -65,7 +65,6 @@ use smol::stream::StreamExt;
 use std::{
     borrow::Cow,
     cmp,
-    collections::hash_map,
     ops::{ControlFlow, Range},
     path::PathBuf,
     sync::Arc,
@@ -1444,61 +1443,16 @@ struct ScrollPosition {
     cursor: Anchor,
 }
 
-struct WorkflowStepViewState {
-    header_block_id: CustomBlockId,
-    header_crease_id: CreaseId,
-    footer_block_id: Option<CustomBlockId>,
-    footer_crease_id: Option<CreaseId>,
-    assist: Option<WorkflowAssist>,
-    resolution: Option<Arc<Result<WorkflowStepResolution>>>,
+struct PatchViewState {
+    footer_block_id: CustomBlockId,
+    crease_id: CreaseId,
+    editor: Option<PatchEditorState>,
+    update_task: Option<Task<()>>,
 }
 
-impl WorkflowStepViewState {
-    fn status(&self, cx: &AppContext) -> WorkflowStepStatus {
-        if let Some(assist) = &self.assist {
-            match assist.status(cx) {
-                WorkflowAssistStatus::Idle => WorkflowStepStatus::Idle,
-                WorkflowAssistStatus::Pending => WorkflowStepStatus::Pending,
-                WorkflowAssistStatus::Done => WorkflowStepStatus::Done,
-                WorkflowAssistStatus::Confirmed => WorkflowStepStatus::Confirmed,
-            }
-        } else if let Some(resolution) = self.resolution.as_deref() {
-            match resolution {
-                Err(err) => WorkflowStepStatus::Error(err),
-                Ok(_) => WorkflowStepStatus::Idle,
-            }
-        } else {
-            WorkflowStepStatus::Resolving
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-enum WorkflowStepStatus<'a> {
-    Resolving,
-    Error(&'a anyhow::Error),
-    Idle,
-    Pending,
-    Done,
-    Confirmed,
-}
-
-impl<'a> WorkflowStepStatus<'a> {
-    pub(crate) fn is_confirmed(&self) -> bool {
-        matches!(self, Self::Confirmed)
-    }
-}
-
-#[derive(Debug, Eq, PartialEq)]
-struct ActiveWorkflowStep {
-    range: Range<language::Anchor>,
-    resolved: bool,
-}
-
-struct WorkflowAssist {
-    editor: WeakView<Editor>,
-    editor_was_open: bool,
-    assist_ids: Vec<InlineAssistId>,
+struct PatchEditorState {
+    editor: WeakView<ProposedChangesEditor>,
+    opened_patch: AssistantPatch,
 }
 
 type MessageHeader = MessageMetadata;
@@ -1525,8 +1479,8 @@ pub struct ContextEditor {
     pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
-    workflow_steps: HashMap<Range<language::Anchor>, WorkflowStepViewState>,
-    active_workflow_step: Option<ActiveWorkflowStep>,
+    patches: HashMap<Range<language::Anchor>, PatchViewState>,
+    active_patch: Option<Range<language::Anchor>>,
     assistant_panel: WeakView<AssistantPanel>,
     last_error: Option<AssistError>,
     show_accept_terms: bool,
@@ -1580,7 +1534,7 @@ impl ContextEditor {
         ];
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
-        let edit_step_ranges = context.read(cx).workflow_step_ranges().collect::<Vec<_>>();
+        let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let mut this = Self {
             context,
             editor,
@@ -1596,8 +1550,8 @@ impl ContextEditor {
             pending_slash_command_blocks: HashMap::default(),
             pending_tool_use_creases: HashMap::default(),
             _subscriptions,
-            workflow_steps: HashMap::default(),
-            active_workflow_step: None,
+            patches: HashMap::default(),
+            active_patch: None,
             assistant_panel,
             last_error: None,
             show_accept_terms: false,
@@ -1607,7 +1561,7 @@ impl ContextEditor {
         this.update_message_headers(cx);
         this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, false, cx);
-        this.workflow_steps_updated(&Vec::new(), &edit_step_ranges, cx);
+        this.patches_updated(&Vec::new(), &patch_ranges, cx);
         this
     }
 
@@ -1642,134 +1596,28 @@ impl ContextEditor {
             return;
         }
 
-        if !self.apply_active_workflow_step(cx) {
-            self.last_error = None;
-            self.send_to_model(cx);
-            cx.notify();
+        if self.focus_active_patch(cx) {
+            return;
         }
+
+        self.last_error = None;
+        self.send_to_model(cx);
+        cx.notify();
     }
 
-    fn apply_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        self.show_workflow_step(range.clone(), cx);
-
-        if let Some(workflow_step) = self.workflow_steps.get(&range) {
-            if let Some(assist) = workflow_step.assist.as_ref() {
-                let assist_ids = assist.assist_ids.clone();
-                cx.spawn(|this, mut cx| async move {
-                    for assist_id in assist_ids {
-                        let mut receiver = this.update(&mut cx, |_, cx| {
-                            cx.window_context().defer(move |cx| {
-                                InlineAssistant::update_global(cx, |assistant, cx| {
-                                    assistant.start_assist(assist_id, cx);
-                                })
-                            });
-                            InlineAssistant::update_global(cx, |assistant, _| {
-                                assistant.observe_assist(assist_id)
-                            })
-                        })?;
-                        while !receiver.borrow().is_done() {
-                            let _ = receiver.changed().await;
-                        }
-                    }
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
-            }
-        }
-    }
-
-    fn apply_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) -> bool {
-        let Some((range, step)) = self.active_workflow_step() else {
-            return false;
-        };
-
-        if let Some(assist) = step.assist.as_ref() {
-            match assist.status(cx) {
-                WorkflowAssistStatus::Pending => {}
-                WorkflowAssistStatus::Confirmed => return false,
-                WorkflowAssistStatus::Done => self.confirm_workflow_step(range, cx),
-                WorkflowAssistStatus::Idle => self.apply_workflow_step(range, cx),
-            }
-        } else {
-            match step.resolution.as_deref() {
-                Some(Ok(_)) => self.apply_workflow_step(range, cx),
-                Some(Err(_)) => self.resolve_workflow_step(range, cx),
-                None => {}
+    fn focus_active_patch(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        if let Some((_range, patch)) = self.active_patch() {
+            if let Some(editor) = patch
+                .editor
+                .as_ref()
+                .and_then(|state| state.editor.upgrade())
+            {
+                cx.focus_view(&editor);
+                return true;
             }
         }
 
-        true
-    }
-
-    fn resolve_workflow_step(
-        &mut self,
-        range: Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.context
-            .update(cx, |context, cx| context.resolve_workflow_step(range, cx));
-    }
-
-    fn stop_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps.get(&range) {
-            if let Some(assist) = workflow_step.assist.as_ref() {
-                let assist_ids = assist.assist_ids.clone();
-                cx.window_context().defer(|cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist_ids {
-                            assistant.stop_assist(assist_id, cx);
-                        }
-                    })
-                });
-            }
-        }
-    }
-
-    fn undo_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps.get_mut(&range) {
-            if let Some(assist) = workflow_step.assist.take() {
-                cx.window_context().defer(|cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist.assist_ids {
-                            assistant.undo_assist(assist_id, cx);
-                        }
-                    })
-                });
-            }
-        }
-    }
-
-    fn confirm_workflow_step(
-        &mut self,
-        range: Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(workflow_step) = self.workflow_steps.get(&range) {
-            if let Some(assist) = workflow_step.assist.as_ref() {
-                let assist_ids = assist.assist_ids.clone();
-                cx.window_context().defer(move |cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist_ids {
-                            assistant.finish_assist(assist_id, false, cx);
-                        }
-                    })
-                });
-            }
-        }
-    }
-
-    fn reject_workflow_step(&mut self, range: Range<language::Anchor>, cx: &mut ViewContext<Self>) {
-        if let Some(workflow_step) = self.workflow_steps.get_mut(&range) {
-            if let Some(assist) = workflow_step.assist.take() {
-                cx.window_context().defer(move |cx| {
-                    InlineAssistant::update_global(cx, |assistant, cx| {
-                        for assist_id in assist.assist_ids {
-                            assistant.finish_assist(assist_id, true, cx);
-                        }
-                    })
-                });
-            }
-        }
+        false
     }
 
     fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
@@ -1802,19 +1650,6 @@ impl ContextEditor {
             return;
         }
 
-        if let Some((range, active_step)) = self.active_workflow_step() {
-            match active_step.status(cx) {
-                WorkflowStepStatus::Pending => {
-                    self.stop_workflow_step(range, cx);
-                    return;
-                }
-                WorkflowStepStatus::Done => {
-                    self.reject_workflow_step(range, cx);
-                    return;
-                }
-                _ => {}
-            }
-        }
         cx.propagate();
     }
 
@@ -2068,8 +1903,8 @@ impl ContextEditor {
                     );
                 });
             }
-            ContextEvent::WorkflowStepsUpdated { removed, updated } => {
-                self.workflow_steps_updated(removed, updated, cx);
+            ContextEvent::PatchesUpdated { removed, updated } => {
+                self.patches_updated(removed, updated, cx);
             }
             ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
@@ -2309,7 +2144,7 @@ impl ContextEditor {
         }
     }
 
-    fn workflow_steps_updated(
+    fn patches_updated(
         &mut self,
         removed: &Vec<Range<text::Anchor>>,
         updated: &Vec<Range<text::Anchor>>,
@@ -2320,218 +2155,141 @@ impl ContextEditor {
         let mut removed_block_ids = HashSet::default();
         let mut editors_to_close = Vec::new();
         for range in removed {
-            if let Some(state) = self.workflow_steps.remove(range) {
-                editors_to_close.extend(self.hide_workflow_step(range.clone(), cx));
-                removed_block_ids.insert(state.header_block_id);
-                removed_crease_ids.push(state.header_crease_id);
-                removed_block_ids.extend(state.footer_block_id);
-                removed_crease_ids.extend(state.footer_crease_id);
+            if let Some(state) = self.patches.remove(range) {
+                editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
+                removed_block_ids.insert(state.footer_block_id);
+                removed_crease_ids.push(state.crease_id);
             }
-        }
-
-        for range in updated {
-            editors_to_close.extend(self.hide_workflow_step(range.clone(), cx));
         }
 
         self.editor.update(cx, |editor, cx| {
             let snapshot = editor.snapshot(cx);
             let multibuffer = &snapshot.buffer_snapshot;
-            let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
+            let (&excerpt_id, _, _) = multibuffer.as_singleton().unwrap();
 
+            let mut replaced_blocks = HashMap::default();
             for range in updated {
-                let Some(step) = self.context.read(cx).workflow_step_for_range(&range, cx) else {
+                let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
                     continue;
                 };
 
-                let resolution = step.resolution.clone();
-                let header_start = step.range.start;
-                let header_end = if buffer.contains_str_at(step.leading_tags_end, "\n") {
-                    buffer.anchor_before(step.leading_tags_end.to_offset(&buffer) + 1)
-                } else {
-                    step.leading_tags_end
+                let path_count = patch.path_count();
+                let patch_start = multibuffer
+                    .anchor_in_excerpt(excerpt_id, patch.range.start)
+                    .unwrap();
+                let patch_end = multibuffer
+                    .anchor_in_excerpt(excerpt_id, patch.range.end)
+                    .unwrap();
+                let render_block: RenderBlock = Box::new({
+                    let this = this.clone();
+                    let patch_range = range.clone();
+                    move |cx: &mut BlockContext<'_, '_>| {
+                        let max_width = cx.max_width;
+                        let gutter_width = cx.gutter_dimensions.full_width();
+                        let block_id = cx.block_id;
+                        this.update(&mut **cx, |this, cx| {
+                            this.render_patch_footer(
+                                patch_range.clone(),
+                                max_width,
+                                gutter_width,
+                                block_id,
+                                cx,
+                            )
+                        })
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| Empty.into_any())
+                    }
+                });
+
+                let header_placeholder = FoldPlaceholder {
+                    render: {
+                        let this = this.clone();
+                        let patch_range = range.clone();
+                        Arc::new(move |fold_id, _range, cx| {
+                            this.update(cx, |this, cx| {
+                                this.render_patch_header(patch_range.clone(), fold_id, cx)
+                            })
+                            .ok()
+                            .flatten()
+                            .unwrap_or_else(|| Empty.into_any())
+                        })
+                    },
+                    constrain_width: false,
+                    merge_adjacent: false,
                 };
-                let header_range = multibuffer
-                    .anchor_in_excerpt(excerpt_id, header_start)
-                    .unwrap()
-                    ..multibuffer
-                        .anchor_in_excerpt(excerpt_id, header_end)
-                        .unwrap();
-                let footer_range = step.trailing_tag_start.map(|start| {
-                    let mut step_range_end = step.range.end.to_offset(&buffer);
-                    if buffer.contains_str_at(step_range_end, "\n") {
-                        // Only include the newline if it belongs to the same message.
-                        let messages = self
-                            .context
-                            .read(cx)
-                            .messages_for_offsets([step_range_end, step_range_end + 1], cx);
-                        if messages.len() == 1 {
-                            step_range_end += 1;
+
+                let should_refold;
+                if let Some(state) = self.patches.get_mut(&range) {
+                    replaced_blocks.insert(state.footer_block_id, render_block);
+                    if let Some(editor_state) = &state.editor {
+                        if editor_state.opened_patch != patch {
+                            state.update_task = Some({
+                                let this = this.clone();
+                                cx.spawn(|_, cx| async move {
+                                    Self::update_patch_editor(this.clone(), patch, cx)
+                                        .await
+                                        .log_err();
+                                })
+                            });
                         }
                     }
 
-                    let end = buffer.anchor_before(step_range_end);
-                    multibuffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                        ..multibuffer.anchor_in_excerpt(excerpt_id, end).unwrap()
-                });
-
-                let block_ids = editor.insert_blocks(
-                    [BlockProperties {
-                        position: header_range.start,
-                        height: 1,
-                        style: BlockStyle::Flex,
-                        render: Box::new({
-                            let this = this.clone();
-                            let range = step.range.clone();
-                            move |cx| {
-                                let block_id = cx.block_id;
-                                let max_width = cx.max_width;
-                                let gutter_width = cx.gutter_dimensions.full_width();
-                                this.update(&mut **cx, |this, cx| {
-                                    this.render_workflow_step_header(
-                                        range.clone(),
-                                        max_width,
-                                        gutter_width,
-                                        block_id,
-                                        cx,
-                                    )
-                                })
-                                .ok()
-                                .flatten()
-                                .unwrap_or_else(|| Empty.into_any())
-                            }
-                        }),
-                        disposition: BlockDisposition::Above,
-                        priority: 0,
-                    }]
-                    .into_iter()
-                    .chain(footer_range.as_ref().map(|footer_range| {
-                        return BlockProperties {
-                            position: footer_range.end,
-                            height: 1,
+                    should_refold =
+                        snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
+                } else {
+                    let block_ids = editor.insert_blocks(
+                        [BlockProperties {
+                            position: patch_start,
+                            height: path_count as u32 + 1,
                             style: BlockStyle::Flex,
-                            render: Box::new({
-                                let this = this.clone();
-                                let range = step.range.clone();
-                                move |cx| {
-                                    let max_width = cx.max_width;
-                                    let gutter_width = cx.gutter_dimensions.full_width();
-                                    this.update(&mut **cx, |this, cx| {
-                                        this.render_workflow_step_footer(
-                                            range.clone(),
-                                            max_width,
-                                            gutter_width,
-                                            cx,
-                                        )
-                                    })
-                                    .ok()
-                                    .flatten()
-                                    .unwrap_or_else(|| Empty.into_any())
-                                }
-                            }),
+                            render: render_block,
                             disposition: BlockDisposition::Below,
                             priority: 0,
-                        };
-                    })),
-                    None,
-                    cx,
-                );
+                        }],
+                        None,
+                        cx,
+                    );
 
-                let header_placeholder = FoldPlaceholder {
-                    render: Arc::new(move |_, _crease_range, _cx| Empty.into_any()),
-                    constrain_width: false,
-                    merge_adjacent: false,
-                };
-                let footer_placeholder = FoldPlaceholder {
-                    render: render_fold_icon_button(
-                        cx.view().downgrade(),
-                        IconName::Code,
-                        "Edits".into(),
-                    ),
-                    constrain_width: false,
-                    merge_adjacent: false,
-                };
-
-                let new_crease_ids = editor.insert_creases(
-                    [Crease::new(
-                        header_range.clone(),
-                        header_placeholder.clone(),
-                        fold_toggle("step-header"),
-                        |_, _, _| Empty.into_any_element(),
-                    )]
-                    .into_iter()
-                    .chain(footer_range.clone().map(|footer_range| {
-                        Crease::new(
-                            footer_range,
-                            footer_placeholder.clone(),
-                            |row, is_folded, fold, cx| {
-                                if is_folded {
-                                    Empty.into_any_element()
-                                } else {
-                                    fold_toggle("step-footer")(row, is_folded, fold, cx)
-                                }
-                            },
+                    let new_crease_ids = editor.insert_creases(
+                        [Crease::new(
+                            patch_start..patch_end,
+                            header_placeholder.clone(),
+                            fold_toggle("patch-header"),
                             |_, _, _| Empty.into_any_element(),
-                        )
-                    })),
-                    cx,
-                );
+                        )],
+                        cx,
+                    );
 
-                let state = WorkflowStepViewState {
-                    header_block_id: block_ids[0],
-                    header_crease_id: new_crease_ids[0],
-                    footer_block_id: block_ids.get(1).copied(),
-                    footer_crease_id: new_crease_ids.get(1).copied(),
-                    resolution,
-                    assist: None,
-                };
+                    self.patches.insert(
+                        range.clone(),
+                        PatchViewState {
+                            footer_block_id: block_ids[0],
+                            crease_id: new_crease_ids[0],
+                            editor: None,
+                            update_task: None,
+                        },
+                    );
 
-                let mut folds_to_insert = [(header_range.clone(), header_placeholder)]
-                    .into_iter()
-                    .chain(
-                        footer_range
-                            .clone()
-                            .map(|range| (range, footer_placeholder)),
-                    )
-                    .collect::<Vec<_>>();
-
-                match self.workflow_steps.entry(range.clone()) {
-                    hash_map::Entry::Vacant(entry) => {
-                        entry.insert(state);
-                    }
-                    hash_map::Entry::Occupied(mut entry) => {
-                        let entry = entry.get_mut();
-                        removed_block_ids.insert(entry.header_block_id);
-                        removed_crease_ids.push(entry.header_crease_id);
-                        removed_block_ids.extend(entry.footer_block_id);
-                        removed_crease_ids.extend(entry.footer_crease_id);
-                        folds_to_insert.retain(|(range, _)| snapshot.intersects_fold(range.start));
-                        *entry = state;
-                    }
+                    should_refold = true;
                 }
 
-                editor.unfold_ranges(
-                    [header_range.clone()]
-                        .into_iter()
-                        .chain(footer_range.clone()),
-                    true,
-                    false,
-                    cx,
-                );
-
-                if !folds_to_insert.is_empty() {
-                    editor.fold_ranges(folds_to_insert, false, cx);
+                if should_refold {
+                    editor.unfold_ranges([patch_start..patch_end], true, false, cx);
+                    editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
                 }
             }
 
             editor.remove_creases(removed_crease_ids, cx);
             editor.remove_blocks(removed_block_ids, None, cx);
+            editor.replace_blocks(replaced_blocks, None, cx);
         });
 
-        for (editor, editor_was_open) in editors_to_close {
-            self.close_workflow_editor(cx, editor, editor_was_open);
+        for editor in editors_to_close {
+            self.close_patch_editor(editor, cx);
         }
 
-        self.update_active_workflow_step(cx);
+        self.update_active_patch(cx);
     }
 
     fn insert_slash_command_output_sections(
@@ -2604,87 +2362,75 @@ impl ContextEditor {
             }
             EditorEvent::SelectionsChanged { .. } => {
                 self.scroll_position = self.cursor_scroll_position(cx);
-                self.update_active_workflow_step(cx);
+                self.update_active_patch(cx);
             }
             _ => {}
         }
         cx.emit(event.clone());
     }
 
-    fn active_workflow_step(&self) -> Option<(Range<text::Anchor>, &WorkflowStepViewState)> {
-        let step = self.active_workflow_step.as_ref()?;
-        Some((step.range.clone(), self.workflow_steps.get(&step.range)?))
+    fn active_patch(&self) -> Option<(Range<text::Anchor>, &PatchViewState)> {
+        let patch = self.active_patch.as_ref()?;
+        Some((patch.clone(), self.patches.get(&patch)?))
     }
 
-    fn update_active_workflow_step(&mut self, cx: &mut ViewContext<Self>) {
-        let newest_cursor = self.editor.read(cx).selections.newest::<usize>(cx).head();
+    fn update_active_patch(&mut self, cx: &mut ViewContext<Self>) {
+        let newest_cursor = self.editor.read(cx).selections.newest::<Point>(cx).head();
         let context = self.context.read(cx);
 
-        let new_step = context
-            .workflow_step_containing(newest_cursor, cx)
-            .map(|step| ActiveWorkflowStep {
-                resolved: step.resolution.is_some(),
-                range: step.range.clone(),
-            });
+        let new_patch = context.patch_containing(newest_cursor, cx).cloned();
 
-        if new_step.as_ref() != self.active_workflow_step.as_ref() {
-            let mut old_editor = None;
-            let mut old_editor_was_open = None;
-            if let Some(old_step) = self.active_workflow_step.take() {
-                (old_editor, old_editor_was_open) =
-                    self.hide_workflow_step(old_step.range, cx).unzip();
+        if new_patch.as_ref().map(|p| &p.range) == self.active_patch.as_ref() {
+            return;
+        }
+
+        if let Some(old_patch_range) = self.active_patch.take() {
+            if let Some(patch_state) = self.patches.get_mut(&old_patch_range) {
+                if let Some(state) = patch_state.editor.take() {
+                    if let Some(editor) = state.editor.upgrade() {
+                        self.close_patch_editor(editor, cx);
+                    }
+                }
             }
+        }
 
-            let mut new_editor = None;
-            if let Some(new_step) = new_step {
-                new_editor = self.show_workflow_step(new_step.range.clone(), cx);
-                self.active_workflow_step = Some(new_step);
-            }
+        if let Some(new_patch) = new_patch {
+            self.active_patch = Some(new_patch.range.clone());
 
-            if new_editor != old_editor {
-                if let Some((old_editor, old_editor_was_open)) = old_editor.zip(old_editor_was_open)
-                {
-                    self.close_workflow_editor(cx, old_editor, old_editor_was_open)
+            if let Some(patch_state) = self.patches.get_mut(&new_patch.range) {
+                let mut editor = None;
+                if let Some(state) = &patch_state.editor {
+                    if let Some(opened_editor) = state.editor.upgrade() {
+                        editor = Some(opened_editor);
+                    }
+                }
+
+                if let Some(editor) = editor {
+                    self.workspace
+                        .update(cx, |workspace, cx| {
+                            workspace.activate_item(&editor, true, false, cx);
+                        })
+                        .ok();
+                } else {
+                    patch_state.update_task = Some(cx.spawn(move |this, cx| async move {
+                        Self::open_patch_editor(this, new_patch, cx).await.log_err();
+                    }));
                 }
             }
         }
     }
 
-    fn hide_workflow_step(
+    fn close_patch_editor(
         &mut self,
-        step_range: Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<(View<Editor>, bool)> {
-        if let Some(step) = self.workflow_steps.get_mut(&step_range) {
-            let assist = step.assist.as_ref()?;
-            let editor = assist.editor.upgrade()?;
-
-            if matches!(step.status(cx), WorkflowStepStatus::Idle) {
-                let assist = step.assist.take().unwrap();
-                InlineAssistant::update_global(cx, |assistant, cx| {
-                    for assist_id in assist.assist_ids {
-                        assistant.finish_assist(assist_id, true, cx)
-                    }
-                });
-                return Some((editor, assist.editor_was_open));
-            }
-        }
-
-        None
-    }
-
-    fn close_workflow_editor(
-        &mut self,
+        editor: View<ProposedChangesEditor>,
         cx: &mut ViewContext<ContextEditor>,
-        editor: View<Editor>,
-        editor_was_open: bool,
     ) {
         self.workspace
             .update(cx, |workspace, cx| {
                 if let Some(pane) = workspace.pane_for(&editor) {
                     pane.update(cx, |pane, cx| {
                         let item_id = editor.entity_id();
-                        if !editor_was_open && !editor.read(cx).is_focused(cx) {
+                        if !editor.read(cx).focus_handle(cx).is_focused(cx) {
                             pane.close_item_by_id(item_id, SaveIntent::Skip, cx)
                                 .detach_and_log_err(cx);
                         }
@@ -2694,190 +2440,94 @@ impl ContextEditor {
             .ok();
     }
 
-    fn show_workflow_step(
-        &mut self,
-        step_range: Range<language::Anchor>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<Editor>> {
-        let step = self.workflow_steps.get_mut(&step_range)?;
+    async fn open_patch_editor(
+        this: WeakView<Self>,
+        patch: AssistantPatch,
+        mut cx: AsyncWindowContext,
+    ) -> Result<()> {
+        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
-        let mut editor_to_return = None;
-        let mut scroll_to_assist_id = None;
-        match step.status(cx) {
-            WorkflowStepStatus::Idle => {
-                if let Some(assist) = step.assist.as_ref() {
-                    scroll_to_assist_id = assist.assist_ids.first().copied();
-                } else if let Some(Ok(resolved)) = step.resolution.clone().as_deref() {
-                    step.assist = Self::open_assists_for_step(
-                        &resolved,
-                        &self.project,
-                        &self.assistant_panel,
-                        &self.workspace,
-                        cx,
-                    );
-                    editor_to_return = step
-                        .assist
-                        .as_ref()
-                        .and_then(|assist| assist.editor.upgrade());
-                }
-            }
-            WorkflowStepStatus::Pending => {
-                if let Some(assist) = step.assist.as_ref() {
-                    let assistant = InlineAssistant::global(cx);
-                    scroll_to_assist_id = assist
-                        .assist_ids
-                        .iter()
-                        .copied()
-                        .find(|assist_id| assistant.assist_status(*assist_id, cx).is_pending());
-                }
-            }
-            WorkflowStepStatus::Done => {
-                if let Some(assist) = step.assist.as_ref() {
-                    scroll_to_assist_id = assist.assist_ids.first().copied();
-                }
-            }
-            _ => {}
-        }
-
-        if let Some(assist_id) = scroll_to_assist_id {
-            if let Some(assist_editor) = step
-                .assist
-                .as_ref()
-                .and_then(|assists| assists.editor.upgrade())
-            {
-                editor_to_return = Some(assist_editor.clone());
-                self.workspace
-                    .update(cx, |workspace, cx| {
-                        workspace.activate_item(&assist_editor, false, false, cx);
+        let editor = cx.new_view(|cx| {
+            let editor = ProposedChangesEditor::new(
+                patch.title.clone(),
+                resolved_patch
+                    .edit_groups
+                    .iter()
+                    .map(|(buffer, groups)| ProposedChangeLocation {
+                        buffer: buffer.clone(),
+                        ranges: groups
+                            .iter()
+                            .map(|group| group.context_range.clone())
+                            .collect(),
                     })
-                    .ok();
-                InlineAssistant::update_global(cx, |assistant, cx| {
-                    assistant.scroll_to_assist(assist_id, cx)
+                    .collect(),
+                Some(project.clone()),
+                cx,
+            );
+            resolved_patch.apply(&editor, cx);
+            editor
+        })?;
+
+        this.update(&mut cx, |this, cx| {
+            if let Some(patch_state) = this.patches.get_mut(&patch.range) {
+                patch_state.editor = Some(PatchEditorState {
+                    editor: editor.downgrade(),
+                    opened_patch: patch,
                 });
+                patch_state.update_task.take();
             }
-        }
 
-        editor_to_return
-    }
-
-    fn open_assists_for_step(
-        resolved_step: &WorkflowStepResolution,
-        project: &Model<Project>,
-        assistant_panel: &WeakView<AssistantPanel>,
-        workspace: &WeakView<Workspace>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<WorkflowAssist> {
-        let assistant_panel = assistant_panel.upgrade()?;
-        if resolved_step.suggestion_groups.is_empty() {
-            return None;
-        }
-
-        let editor;
-        let mut editor_was_open = false;
-        let mut suggestion_groups = Vec::new();
-        if resolved_step.suggestion_groups.len() == 1
-            && resolved_step
-                .suggestion_groups
-                .values()
-                .next()
-                .unwrap()
-                .len()
-                == 1
-        {
-            // If there's only one buffer and one suggestion group, open it directly
-            let (buffer, groups) = resolved_step.suggestion_groups.iter().next().unwrap();
-            let group = groups.into_iter().next().unwrap();
-            editor = workspace
-                .update(cx, |workspace, cx| {
-                    let active_pane = workspace.active_pane().clone();
-                    editor_was_open =
-                        workspace.is_project_item_open::<Editor>(&active_pane, buffer, cx);
-                    workspace.open_project_item::<Editor>(
-                        active_pane,
-                        buffer.clone(),
-                        false,
-                        false,
-                        cx,
-                    )
-                })
-                .log_err()?;
-            let (&excerpt_id, _, _) = editor
-                .read(cx)
-                .buffer()
-                .read(cx)
-                .read(cx)
-                .as_singleton()
-                .unwrap();
-
-            // Scroll the editor to the suggested assist
-            editor.update(cx, |editor, cx| {
-                let multibuffer = editor.buffer().read(cx).snapshot(cx);
-                let (&excerpt_id, _, buffer) = multibuffer.as_singleton().unwrap();
-                let anchor = if group.context_range.start.to_offset(buffer) == 0 {
-                    Anchor::min()
-                } else {
-                    multibuffer
-                        .anchor_in_excerpt(excerpt_id, group.context_range.start)
-                        .unwrap()
-                };
-
-                editor.set_scroll_anchor(
-                    ScrollAnchor {
-                        offset: gpui::Point::default(),
-                        anchor,
-                    },
-                    cx,
-                );
-            });
-
-            suggestion_groups.push((excerpt_id, group));
-        } else {
-            // If there are multiple buffers or suggestion groups, create a multibuffer
-            let multibuffer = cx.new_model(|cx| {
-                let mut multibuffer =
-                    MultiBuffer::new(Capability::ReadWrite).with_title(resolved_step.title.clone());
-                for (buffer, groups) in &resolved_step.suggestion_groups {
-                    let excerpt_ids = multibuffer.push_excerpts(
-                        buffer.clone(),
-                        groups.iter().map(|suggestion_group| ExcerptRange {
-                            context: suggestion_group.context_range.clone(),
-                            primary: None,
-                        }),
-                        cx,
-                    );
-                    suggestion_groups.extend(excerpt_ids.into_iter().zip(groups));
-                }
-                multibuffer
-            });
-
-            editor = cx.new_view(|cx| {
-                Editor::for_multibuffer(multibuffer, Some(project.clone()), true, cx)
-            });
-            workspace
+            this.workspace
                 .update(cx, |workspace, cx| {
                     workspace.add_item_to_active_pane(Box::new(editor.clone()), None, false, cx)
                 })
-                .log_err()?;
-        }
+                .log_err();
+        })?;
 
-        let mut assist_ids = Vec::new();
-        for (excerpt_id, suggestion_group) in suggestion_groups {
-            for suggestion in &suggestion_group.suggestions {
-                assist_ids.extend(suggestion.show(
-                    &editor,
-                    excerpt_id,
-                    workspace,
-                    &assistant_panel,
-                    cx,
-                ));
+        Ok(())
+    }
+
+    async fn update_patch_editor(
+        this: WeakView<Self>,
+        patch: AssistantPatch,
+        mut cx: AsyncWindowContext,
+    ) -> Result<()> {
+        let project = this.update(&mut cx, |this, _| this.project.clone())?;
+        let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
+        this.update(&mut cx, |this, cx| {
+            let patch_state = this.patches.get_mut(&patch.range)?;
+
+            let locations = resolved_patch
+                .edit_groups
+                .iter()
+                .map(|(buffer, groups)| ProposedChangeLocation {
+                    buffer: buffer.clone(),
+                    ranges: groups
+                        .iter()
+                        .map(|group| group.context_range.clone())
+                        .collect(),
+                })
+                .collect();
+
+            if let Some(state) = &mut patch_state.editor {
+                if let Some(editor) = state.editor.upgrade() {
+                    editor.update(cx, |editor, cx| {
+                        editor.set_title(patch.title.clone(), cx);
+                        editor.reset_locations(locations, cx);
+                        resolved_patch.apply(editor, cx);
+                    });
+
+                    state.opened_patch = patch;
+                } else {
+                    patch_state.editor.take();
+                }
             }
-        }
+            patch_state.update_task.take();
 
-        Some(WorkflowAssist {
-            assist_ids,
-            editor: editor.downgrade(),
-            editor_was_open,
-        })
+            Some(())
+        })?;
+        Ok(())
     }
 
     fn handle_editor_search_event(
@@ -3782,394 +3432,91 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn render_workflow_step_header(
+    fn render_patch_header(
         &self,
+        range: Range<text::Anchor>,
+        _id: FoldId,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<AnyElement> {
+        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
+        let theme = cx.theme().clone();
+        Some(
+            h_flex()
+                .px_1()
+                .py_0p5()
+                .border_b_1()
+                .border_color(theme.status().info_border)
+                .gap_1()
+                .child(Icon::new(IconName::Diff).size(IconSize::Small))
+                .child(Label::new(patch.title.clone()).size(LabelSize::Small))
+                .into_any(),
+        )
+    }
+
+    fn render_patch_footer(
+        &mut self,
         range: Range<text::Anchor>,
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
-        let step_state = self.workflow_steps.get(&range)?;
-        let status = step_state.status(cx);
-        let this = cx.view().downgrade();
+        let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
+        let (excerpt_id, _buffer_id, _) = snapshot.buffer_snapshot.as_singleton().unwrap();
+        let excerpt_id = *excerpt_id;
+        let anchor = snapshot
+            .buffer_snapshot
+            .anchor_in_excerpt(excerpt_id, range.start)
+            .unwrap();
 
-        let theme = cx.theme().status();
-        let is_confirmed = status.is_confirmed();
-        let border_color = if is_confirmed {
-            theme.ignored_border
-        } else {
-            theme.info_border
-        };
-
-        let editor = self.editor.read(cx);
-        let focus_handle = editor.focus_handle(cx);
-        let snapshot = editor
-            .buffer()
-            .read(cx)
-            .as_singleton()?
-            .read(cx)
-            .text_snapshot();
-        let start_offset = range.start.to_offset(&snapshot);
-        let parent_message = self
-            .context
-            .read(cx)
-            .messages_for_offsets([start_offset], cx);
-        debug_assert_eq!(parent_message.len(), 1);
-        let parent_message = parent_message.first()?;
-
-        let step_index = self
-            .workflow_steps
-            .keys()
-            .filter(|workflow_step_range| {
-                workflow_step_range
-                    .start
-                    .cmp(&parent_message.anchor_range.start, &snapshot)
-                    .is_ge()
-                    && workflow_step_range.end.cmp(&range.end, &snapshot).is_le()
-            })
-            .count();
-
-        let step_label = Label::new(format!("Step {step_index}")).size(LabelSize::Small);
-
-        let step_label = if is_confirmed {
-            h_flex()
-                .items_center()
-                .gap_2()
-                .child(step_label.strikethrough(true).color(Color::Muted))
-                .child(
-                    Icon::new(IconName::Check)
-                        .size(IconSize::Small)
-                        .color(Color::Created),
-                )
-        } else {
-            div().child(step_label)
-        };
-
-        Some(
-            v_flex()
-                .w(max_width)
-                .pl(gutter_width)
-                .child(
-                    h_flex()
-                        .w_full()
-                        .h_8()
-                        .border_b_1()
-                        .border_color(border_color)
-                        .items_center()
-                        .justify_between()
-                        .gap_2()
-                        .child(h_flex().justify_start().gap_2().child(step_label))
-                        .child(h_flex().w_full().justify_end().child(
-                            Self::render_workflow_step_status(
-                                status,
-                                range.clone(),
-                                focus_handle.clone(),
-                                this.clone(),
-                                id,
-                            ),
-                        )),
-                )
-                // todo!("do we wanna keep this?")
-                // .children(edit_paths.iter().map(|path| {
-                //     h_flex()
-                //         .gap_1()
-                //         .child(Icon::new(IconName::File))
-                //         .child(Label::new(path.clone()))
-                // }))
-                .into_any(),
-        )
-    }
-
-    fn render_workflow_step_footer(
-        &self,
-        step_range: Range<text::Anchor>,
-        max_width: Pixels,
-        gutter_width: Pixels,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement> {
-        let step = self.workflow_steps.get(&step_range)?;
-        let current_status = step.status(cx);
-        let theme = cx.theme().status();
-        let border_color = if current_status.is_confirmed() {
-            theme.ignored_border
-        } else {
-            theme.info_border
-        };
-        Some(
-            v_flex()
-                .w(max_width)
-                .pt_1()
-                .pl(gutter_width)
-                .child(h_flex().h(px(1.)).bg(border_color))
-                .into_any(),
-        )
-    }
-
-    fn render_workflow_step_status(
-        status: WorkflowStepStatus,
-        step_range: Range<language::Anchor>,
-        focus_handle: FocusHandle,
-        editor: WeakView<ContextEditor>,
-        id: BlockId,
-    ) -> AnyElement {
-        let id = EntityId::from(id).as_u64();
-        fn display_keybind_in_tooltip(
-            step_range: &Range<language::Anchor>,
-            editor: &WeakView<ContextEditor>,
-            cx: &mut WindowContext<'_>,
-        ) -> bool {
-            editor
-                .update(cx, |this, _| {
-                    this.active_workflow_step
-                        .as_ref()
-                        .map(|step| &step.range == step_range)
-                })
-                .ok()
-                .flatten()
-                .unwrap_or_default()
+        if !snapshot.intersects_fold(anchor) {
+            return None;
         }
 
-        match status {
-            WorkflowStepStatus::Error(error) => {
-                let error = error.to_string();
-                h_flex()
-                    .gap_2()
-                    .child(
-                        div()
-                            .id("step-resolution-failure")
-                            .child(
-                                Label::new("Step Resolution Failed")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Error),
-                            )
-                            .tooltip(move |cx| Tooltip::text(error.clone(), cx)),
-                    )
-                    .child(
-                        Button::new(("transform", id), "Retry")
-                            .icon(IconName::Update)
-                            .icon_position(IconPosition::Start)
-                            .icon_size(IconSize::Small)
-                            .label_size(LabelSize::Small)
-                            .on_click({
-                                let editor = editor.clone();
-                                let step_range = step_range.clone();
-                                move |_, cx| {
-                                    editor
-                                        .update(cx, |this, cx| {
-                                            this.resolve_workflow_step(step_range.clone(), cx)
-                                        })
-                                        .ok();
-                                }
-                            }),
-                    )
-                    .into_any()
-            }
-            WorkflowStepStatus::Idle | WorkflowStepStatus::Resolving { .. } => {
-                Button::new(("transform", id), "Transform")
-                    .icon(IconName::SparkleAlt)
-                    .icon_position(IconPosition::Start)
-                    .icon_size(IconSize::Small)
-                    .label_size(LabelSize::Small)
-                    .style(ButtonStyle::Tinted(TintColor::Accent))
-                    .tooltip({
-                        let step_range = step_range.clone();
-                        let editor = editor.clone();
-                        move |cx| {
-                            cx.new_view(|cx| {
-                                let tooltip = Tooltip::new("Transform");
-                                if display_keybind_in_tooltip(&step_range, &editor, cx) {
-                                    tooltip.key_binding(KeyBinding::for_action_in(
-                                        &Assist,
-                                        &focus_handle,
-                                        cx,
-                                    ))
-                                } else {
-                                    tooltip
-                                }
-                            })
-                            .into()
-                        }
-                    })
-                    .on_click({
-                        let editor = editor.clone();
-                        let step_range = step_range.clone();
-                        let is_idle = matches!(status, WorkflowStepStatus::Idle);
-                        move |_, cx| {
-                            if is_idle {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.apply_workflow_step(step_range.clone(), cx)
-                                    })
-                                    .ok();
-                            }
-                        }
-                    })
-                    .map(|this| {
-                        if let WorkflowStepStatus::Resolving = &status {
-                            this.with_animation(
-                                ("resolving-suggestion-animation", id),
+        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
+        let paths = patch
+            .paths()
+            .map(|p| SharedString::from(p.to_string()))
+            .collect::<BTreeSet<_>>();
+
+        Some(
+            v_flex()
+                .id(id)
+                .pl(gutter_width)
+                .w(max_width)
+                .py_2()
+                .cursor(CursorStyle::PointingHand)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.editor.update(cx, |editor, cx| {
+                        editor.change_selections(None, cx, |selections| {
+                            selections.select_ranges(vec![anchor..anchor]);
+                        });
+                    });
+                    this.focus_active_patch(cx);
+                }))
+                .children(paths.into_iter().map(|path| {
+                    h_flex()
+                        .pl_1()
+                        .gap_1()
+                        .child(Icon::new(IconName::File).size(IconSize::Small))
+                        .child(Label::new(path).size(LabelSize::Small))
+                }))
+                .when(patch.status == AssistantPatchStatus::Pending, |div| {
+                    div.child(
+                        Label::new("Generating")
+                            .color(Color::Muted)
+                            .size(LabelSize::Small)
+                            .with_animation(
+                                "pulsating-label",
                                 Animation::new(Duration::from_secs(2))
                                     .repeat()
-                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                    .with_easing(pulsating_between(0.4, 1.)),
                                 |label, delta| label.alpha(delta),
-                            )
-                            .into_any_element()
-                        } else {
-                            this.into_any_element()
-                        }
-                    })
-            }
-            WorkflowStepStatus::Pending => h_flex()
-                .items_center()
-                .gap_2()
-                .child(
-                    Label::new("Applying...")
-                        .size(LabelSize::Small)
-                        .with_animation(
-                            ("applying-step-transformation-label", id),
-                            Animation::new(Duration::from_secs(2))
-                                .repeat()
-                                .with_easing(pulsating_between(0.4, 0.8)),
-                            |label, delta| label.alpha(delta),
-                        ),
-                )
-                .child(
-                    IconButton::new(("stop-transformation", id), IconName::Stop)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Error)
-                        .style(ButtonStyle::Subtle)
-                        .tooltip({
-                            let step_range = step_range.clone();
-                            let editor = editor.clone();
-                            move |cx| {
-                                cx.new_view(|cx| {
-                                    let tooltip = Tooltip::new("Stop Transformation");
-                                    if display_keybind_in_tooltip(&step_range, &editor, cx) {
-                                        tooltip.key_binding(KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                    } else {
-                                        tooltip
-                                    }
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.stop_workflow_step(step_range.clone(), cx)
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
-            WorkflowStepStatus::Done => h_flex()
-                .gap_1()
-                .child(
-                    IconButton::new(("stop-transformation", id), IconName::Close)
-                        .icon_size(IconSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Negative))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |cx| {
-                                cx.new_view(|cx| {
-                                    let tooltip = Tooltip::new("Reject Transformation");
-                                    if display_keybind_in_tooltip(&step_range, &editor, cx) {
-                                        tooltip.key_binding(KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                    } else {
-                                        tooltip
-                                    }
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.reject_workflow_step(step_range.clone(), cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .child(
-                    Button::new(("confirm-workflow-step", id), "Accept")
-                        .icon(IconName::Check)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::Small)
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Tinted(TintColor::Positive))
-                        .tooltip({
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |cx| {
-                                cx.new_view(|cx| {
-                                    let tooltip = Tooltip::new("Accept Transformation");
-                                    if display_keybind_in_tooltip(&step_range, &editor, cx) {
-                                        tooltip.key_binding(KeyBinding::for_action_in(
-                                            &Assist,
-                                            &focus_handle,
-                                            cx,
-                                        ))
-                                    } else {
-                                        tooltip
-                                    }
-                                })
-                                .into()
-                            }
-                        })
-                        .on_click({
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.confirm_workflow_step(step_range.clone(), cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
-            WorkflowStepStatus::Confirmed => h_flex()
-                .child(
-                    Button::new(("revert-workflow-step", id), "Undo")
-                        .style(ButtonStyle::Filled)
-                        .icon(Some(IconName::Undo))
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::Small)
-                        .label_size(LabelSize::Small)
-                        .on_click({
-                            let editor = editor.clone();
-                            let step_range = step_range.clone();
-                            move |_, cx| {
-                                editor
-                                    .update(cx, |this, cx| {
-                                        this.undo_workflow_step(step_range.clone(), cx);
-                                    })
-                                    .ok();
-                            }
-                        }),
-                )
-                .into_any_element(),
-        }
+                            ),
+                    )
+                })
+                .into_any(),
+        )
     }
 
     fn render_notice(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
@@ -4259,17 +3606,6 @@ impl ContextEditor {
 
     fn render_send_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
-        let button_text = match self.active_workflow_step() {
-            Some((_, step)) => match step.status(cx) {
-                WorkflowStepStatus::Error(_) => "Retry Step Resolution",
-                WorkflowStepStatus::Resolving => "Transform",
-                WorkflowStepStatus::Idle => "Transform",
-                WorkflowStepStatus::Pending => "Applying...",
-                WorkflowStepStatus::Done => "Accept",
-                WorkflowStepStatus::Confirmed => "Send",
-            },
-            None => "Send",
-        };
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
@@ -4309,7 +3645,7 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new(button_text))
+            .child(Label::new("Send"))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
@@ -4347,7 +3683,6 @@ impl ContextEditor {
 
     fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
-        const ACCOUNT_URL: &str = "https://zed.dev/account";
 
         v_flex()
             .gap_0p5()
@@ -4372,7 +3707,7 @@ impl ContextEditor {
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
                         |this, _, cx| {
                             this.last_error = None;
-                            cx.open_url(ACCOUNT_URL);
+                            cx.open_url(&zed_urls::account_url(cx));
                             cx.notify();
                         },
                     )))
@@ -4388,7 +3723,6 @@ impl ContextEditor {
 
     fn render_max_monthly_spend_reached_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
-        const ACCOUNT_URL: &str = "https://zed.dev/account";
 
         v_flex()
             .gap_0p5()
@@ -4414,7 +3748,7 @@ impl ContextEditor {
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
                             cx.listener(|this, _, cx| {
                                 this.last_error = None;
-                                cx.open_url(ACCOUNT_URL);
+                                cx.open_url(&zed_urls::account_url(cx));
                                 cx.notify();
                             }),
                         ),
@@ -5224,33 +4558,6 @@ pub enum WorkflowAssistStatus {
     Confirmed,
     Done,
     Idle,
-}
-
-impl WorkflowAssist {
-    pub fn status(&self, cx: &AppContext) -> WorkflowAssistStatus {
-        let assistant = InlineAssistant::global(cx);
-        if self
-            .assist_ids
-            .iter()
-            .any(|assist_id| assistant.assist_status(*assist_id, cx).is_pending())
-        {
-            WorkflowAssistStatus::Pending
-        } else if self
-            .assist_ids
-            .iter()
-            .all(|assist_id| assistant.assist_status(*assist_id, cx).is_confirmed())
-        {
-            WorkflowAssistStatus::Confirmed
-        } else if self
-            .assist_ids
-            .iter()
-            .all(|assist_id| assistant.assist_status(*assist_id, cx).is_done())
-        {
-            WorkflowAssistStatus::Done
-        } else {
-            WorkflowAssistStatus::Idle
-        }
-    }
 }
 
 impl Render for ContextHistory {

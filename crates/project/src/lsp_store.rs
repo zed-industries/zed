@@ -6069,6 +6069,16 @@ impl LspStore {
                                         );
                                     })?;
                                 }
+                                "textDocument/rename" => {
+                                    this.update(&mut cx, |this, _| {
+                                        if let Some(server) = this.language_server_for_id(server_id)
+                                        {
+                                            server.update_capabilities(|capabilities| {
+                                                capabilities.rename_provider = None
+                                            })
+                                        }
+                                    })?;
+                                }
                                 "textDocument/rangeFormatting" => {
                                     this.update(&mut cx, |this, _| {
                                         if let Some(server) = this.language_server_for_id(server_id)

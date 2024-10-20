@@ -1498,13 +1498,13 @@ List of `integer` column numbers
         "directories": [".env", "env", ".venv", "venv"],
         "activate_script": "default"
       }
-    }
+    },
     "env": {},
     "font_family": null,
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
-    "option_as_meta": true,
+    "option_as_meta": false,
     "button": false,
     "shell": {},
     "toolbar": {
@@ -1732,7 +1732,7 @@ See Buffer Font Features
 
 - Description: Re-interprets the option keys to act like a 'meta' key, like in Emacs.
 - Setting: `option_as_meta`
-- Default: `true`
+- Default: `false`
 
 **Options**
 

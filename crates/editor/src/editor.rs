@@ -48,7 +48,6 @@ mod signature_help;
 pub mod test;
 
 use ::git::diff::DiffHunkStatus;
-use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
 pub(crate) use actions::*;
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
@@ -74,12 +73,12 @@ use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, uniform_list, Action, AnyElement,
     AppContext, AsyncWindowContext, AvailableSpace, BackgroundExecutor, Bounds, ClickEvent,
-    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, EntityId, EventEmitter,
-    FocusHandle, FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla,
-    InteractiveText, KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement,
-    Pixels, Render, SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task,
-    TextStyle, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
-    ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    ClipboardEntry, ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle,
+    FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
+    KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
+    SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
+    UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
+    VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -103,7 +102,7 @@ use language::{
 use linked_editing_ranges::refresh_linked_ranges;
 use project::dap_store::BreakpointEditAction;
 pub use proposed_changes_editor::{
-    ProposedChangesBuffer, ProposedChangesEditor, ProposedChangesEditorToolbar,
+    ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use similar::{ChangeTag, TextDiff};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
@@ -174,7 +173,7 @@ use workspace::{Item as WorkspaceItem, OpenInTerminal, OpenTerminal, TabBarSetti
 use crate::hover_links::find_url;
 use crate::signature_help::{SignatureHelpHiddenBy, SignatureHelpState};
 
-pub const FILE_HEADER_HEIGHT: u32 = 1;
+pub const FILE_HEADER_HEIGHT: u32 = 2;
 pub const MULTI_BUFFER_EXCERPT_HEADER_HEIGHT: u32 = 1;
 pub const MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT: u32 = 1;
 pub const DEFAULT_MULTIBUFFER_CONTEXT: u32 = 2;
@@ -650,7 +649,6 @@ pub struct Editor {
     /// Otherwise it represents the point that the breakpoint will be shown
     pub gutter_breakpoint_indicator: Option<DisplayPoint>,
     previous_search_ranges: Option<Arc<[Range<Anchor>]>>,
-    file_header_size: u32,
     breadcrumb_header: Option<String>,
     focused_block: Option<FocusedBlock>,
     next_scroll_position: NextScrollCursorCenterTopBottom,
@@ -1856,7 +1854,6 @@ impl Editor {
             }),
             merge_adjacent: true,
         };
-        let file_header_size = if show_excerpt_controls { 3 } else { 2 };
         let display_map = cx.new_model(|cx| {
             DisplayMap::new(
                 buffer.clone(),
@@ -1864,7 +1861,7 @@ impl Editor {
                 font_size,
                 None,
                 show_excerpt_controls,
-                file_header_size,
+                FILE_HEADER_HEIGHT,
                 MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
                 MULTI_BUFFER_EXCERPT_FOOTER_HEIGHT,
                 fold_placeholder,
@@ -2053,7 +2050,6 @@ impl Editor {
                 .restore_unsaved_buffers,
             blame: None,
             blame_subscription: None,
-            file_header_size,
             tasks: Default::default(),
             dap_store,
             gutter_breakpoint_indicator: None,
@@ -6538,11 +6534,9 @@ impl Editor {
             let project_path = buffer.read(cx).project_path(cx)?;
             let project = self.project.as_ref()?.read(cx);
             let entry = project.entry_for_path(&project_path, cx)?;
-            let abs_path = project.absolute_path(&project_path, cx)?;
-            let parent = if entry.is_symlink {
-                abs_path.canonicalize().ok()?
-            } else {
-                abs_path
+            let parent = match &entry.canonical_path {
+                Some(canonical_path) => canonical_path.to_path_buf(),
+                None => project.absolute_path(&project_path, cx)?,
             }
             .parent()?
             .to_path_buf();
@@ -11887,11 +11881,8 @@ impl Editor {
         snapshot.line_len(buffer_row) == 0
     }
 
-    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Result<url::Url> {
-        let (path, selection, repo) = maybe!({
-            let project_handle = self.project.as_ref()?.clone();
-            let project = project_handle.read(cx);
-
+    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<url::Url>> {
+        let buffer_and_selection = maybe!({
             let selection = self.selections.newest::<Point>(cx);
             let selection_range = selection.range();
 
@@ -11915,64 +11906,58 @@ impl Editor {
                 (buffer.clone(), selection)
             };
 
-            let path = buffer
-                .read(cx)
-                .file()?
-                .as_local()?
-                .path()
-                .to_str()?
-                .to_string();
-            let repo = project.get_repo(&buffer.read(cx).project_path(cx)?, cx)?;
-            Some((path, selection, repo))
+            Some((buffer, selection))
+        });
+
+        let Some((buffer, selection)) = buffer_and_selection else {
+            return Task::ready(Err(anyhow!("failed to determine buffer and selection")));
+        };
+
+        let Some(project) = self.project.as_ref() else {
+            return Task::ready(Err(anyhow!("editor does not have project")));
+        };
+
+        project.update(cx, |project, cx| {
+            project.get_permalink_to_line(&buffer, selection, cx)
         })
-        .ok_or_else(|| anyhow!("unable to open git repository"))?;
-
-        const REMOTE_NAME: &str = "origin";
-        let origin_url = repo
-            .remote_url(REMOTE_NAME)
-            .ok_or_else(|| anyhow!("remote \"{REMOTE_NAME}\" not found"))?;
-        let sha = repo
-            .head_sha()
-            .ok_or_else(|| anyhow!("failed to read HEAD SHA"))?;
-
-        let (provider, remote) =
-            parse_git_remote_url(GitHostingProviderRegistry::default_global(cx), &origin_url)
-                .ok_or_else(|| anyhow!("failed to parse Git remote URL"))?;
-
-        Ok(provider.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: &sha,
-                path: &path,
-                selection: Some(selection),
-            },
-        ))
     }
 
     pub fn copy_permalink_to_line(&mut self, _: &CopyPermalinkToLine, cx: &mut ViewContext<Self>) {
-        let permalink = self.get_permalink_to_line(cx);
+        let permalink_task = self.get_permalink_to_line(cx);
+        let workspace = self.workspace();
 
-        match permalink {
-            Ok(permalink) => {
-                cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
-            }
-            Err(err) => {
-                let message = format!("Failed to copy permalink: {err}");
-
-                Err::<(), anyhow::Error>(err).log_err();
-
-                if let Some(workspace) = self.workspace() {
-                    workspace.update(cx, |workspace, cx| {
-                        struct CopyPermalinkToLine;
-
-                        workspace.show_toast(
-                            Toast::new(NotificationId::unique::<CopyPermalinkToLine>(), message),
-                            cx,
-                        )
+        cx.spawn(|_, mut cx| async move {
+            match permalink_task.await {
+                Ok(permalink) => {
+                    cx.update(|cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
                     })
+                    .ok();
+                }
+                Err(err) => {
+                    let message = format!("Failed to copy permalink: {err}");
+
+                    Err::<(), anyhow::Error>(err).log_err();
+
+                    if let Some(workspace) = workspace {
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                struct CopyPermalinkToLine;
+
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<CopyPermalinkToLine>(),
+                                        message,
+                                    ),
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
                 }
             }
-        }
+        })
+        .detach();
     }
 
     pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
@@ -11985,29 +11970,41 @@ impl Editor {
     }
 
     pub fn open_permalink_to_line(&mut self, _: &OpenPermalinkToLine, cx: &mut ViewContext<Self>) {
-        let permalink = self.get_permalink_to_line(cx);
+        let permalink_task = self.get_permalink_to_line(cx);
+        let workspace = self.workspace();
 
-        match permalink {
-            Ok(permalink) => {
-                cx.open_url(permalink.as_ref());
-            }
-            Err(err) => {
-                let message = format!("Failed to open permalink: {err}");
-
-                Err::<(), anyhow::Error>(err).log_err();
-
-                if let Some(workspace) = self.workspace() {
-                    workspace.update(cx, |workspace, cx| {
-                        struct OpenPermalinkToLine;
-
-                        workspace.show_toast(
-                            Toast::new(NotificationId::unique::<OpenPermalinkToLine>(), message),
-                            cx,
-                        )
+        cx.spawn(|_, mut cx| async move {
+            match permalink_task.await {
+                Ok(permalink) => {
+                    cx.update(|cx| {
+                        cx.open_url(permalink.as_ref());
                     })
+                    .ok();
+                }
+                Err(err) => {
+                    let message = format!("Failed to open permalink: {err}");
+
+                    Err::<(), anyhow::Error>(err).log_err();
+
+                    if let Some(workspace) = workspace {
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                struct OpenPermalinkToLine;
+
+                                workspace.show_toast(
+                                    Toast::new(
+                                        NotificationId::unique::<OpenPermalinkToLine>(),
+                                        message,
+                                    ),
+                                    cx,
+                                )
+                            })
+                            .ok();
+                    }
                 }
             }
-        }
+        })
+        .detach();
     }
 
     /// Adds a row highlight for the given range. If a row has multiple highlights, the
@@ -12760,10 +12757,15 @@ impl Editor {
 
         let proposed_changes_buffers = new_selections_by_buffer
             .into_iter()
-            .map(|(buffer, ranges)| ProposedChangesBuffer { buffer, ranges })
+            .map(|(buffer, ranges)| ProposedChangeLocation { buffer, ranges })
             .collect::<Vec<_>>();
         let proposed_changes_editor = cx.new_view(|cx| {
-            ProposedChangesEditor::new(proposed_changes_buffers, self.project.clone(), cx)
+            ProposedChangesEditor::new(
+                "Proposed changes",
+                proposed_changes_buffers,
+                self.project.clone(),
+                cx,
+            )
         });
 
         cx.window_context().defer(move |cx| {
@@ -13200,7 +13202,7 @@ impl Editor {
     }
 
     pub fn file_header_size(&self) -> u32 {
-        self.file_header_size
+        FILE_HEADER_HEIGHT
     }
 
     pub fn revert(
@@ -14512,7 +14514,7 @@ pub fn diagnostic_block_renderer(
 
         let multi_line_diagnostic = diagnostic.message.contains('\n');
 
-        let buttons = |diagnostic: &Diagnostic, block_id: BlockId| {
+        let buttons = |diagnostic: &Diagnostic| {
             if multi_line_diagnostic {
                 v_flex()
             } else {
@@ -14520,7 +14522,7 @@ pub fn diagnostic_block_renderer(
             }
             .when(allow_closing, |div| {
                 div.children(diagnostic.is_primary.then(|| {
-                    IconButton::new(("close-block", EntityId::from(block_id)), IconName::XCircle)
+                    IconButton::new("close-block", IconName::XCircle)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::Compact)
                         .style(ButtonStyle::Transparent)
@@ -14530,7 +14532,7 @@ pub fn diagnostic_block_renderer(
                 }))
             })
             .child(
-                IconButton::new(("copy-block", EntityId::from(block_id)), IconName::Copy)
+                IconButton::new("copy-block", IconName::Copy)
                     .icon_color(Color::Muted)
                     .size(ButtonSize::Compact)
                     .style(ButtonStyle::Transparent)
@@ -14545,7 +14547,7 @@ pub fn diagnostic_block_renderer(
             )
         };
 
-        let icon_size = buttons(&diagnostic, cx.block_id)
+        let icon_size = buttons(&diagnostic)
             .into_any_element()
             .layout_as_root(AvailableSpace::min_size(), cx);
 
@@ -14562,7 +14564,7 @@ pub fn diagnostic_block_renderer(
                     .w(cx.anchor_x - cx.gutter_dimensions.width - icon_size.width)
                     .flex_shrink(),
             )
-            .child(buttons(&diagnostic, cx.block_id))
+            .child(buttons(&diagnostic))
             .child(div().flex().flex_shrink_0().child(
                 StyledText::new(text_without_backticks.clone()).with_highlights(
                     &text_style,
