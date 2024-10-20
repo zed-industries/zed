@@ -696,10 +696,6 @@ impl EditorElement {
             scroll_delta.y = scale_vertical_mouse_autoscroll_delta(event.position.y - bottom);
         }
 
-        // Not entirely sure what this is for, experimenting with this
-        // For now, the `horizontal_scroll_margin` is in `scroll_margin_x`
-        let horizontal_margin = position_map.line_height.min(text_bounds.size.width / 3.0);
-
         // We need horizontal width of text
         let style = editor.style.clone().unwrap_or_default();
         let font_id = cx.text_system().resolve_font(&style.text.font());
@@ -713,12 +709,10 @@ impl EditorElement {
 
         let scroll_margin_x = EditorSettings::get_global(cx).horizontal_scroll_margin;
 
-        // Testing bounds for scroll
-        // [TODO] Add a configuration setting for this
         let scroll_space: Pixels = scroll_margin_x * em_width;
 
-        let left = text_bounds.origin.x + horizontal_margin + scroll_space;
-        let right = text_bounds.upper_right().x - horizontal_margin - scroll_space;
+        let left = text_bounds.origin.x + scroll_space;
+        let right = text_bounds.upper_right().x - scroll_space;
 
         if event.position.x < left {
             scroll_delta.x = -scale_horizontal_mouse_autoscroll_delta(left - event.position.x);
@@ -6124,7 +6118,6 @@ impl ScrollbarLayout {
             )
         };
 
-        // TODO: Correct this for text_unit_size
         let row_to_y = |row: DisplayRow| row.as_f32() * self.text_unit_size;
         let mut pixel_ranges = row_ranges
             .into_iter()
