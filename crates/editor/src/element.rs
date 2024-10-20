@@ -3682,32 +3682,16 @@ impl EditorElement {
     fn paint_scrollbars(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         let (scrollbar_x, scrollbar_y) = layout.scrollbars_layout.as_xy();
 
-        let scrollbar_hitboxes = (
-            scrollbar_x.as_ref().map(|x| x.hitbox.clone()),
-            scrollbar_y.as_ref().map(|y| y.hitbox.clone()),
-        );
+        if let Some(scrollbar_layout) = scrollbar_x {
+            let hitbox = scrollbar_layout.hitbox.clone();
+            let text_unit_size = scrollbar_layout.text_unit_size;
+            let visible_range = scrollbar_layout.visible_range.clone();
+            let thumb_bounds = scrollbar_layout.thumb_bounds();
 
-        let text_unit_sizes = (
-            scrollbar_x.as_ref().map(|x| x.text_unit_size),
-            scrollbar_y.as_ref().map(|y| y.text_unit_size),
-        );
-
-        let visible_ranges = (
-            scrollbar_x.as_ref().map(|x| x.visible_range.clone()),
-            scrollbar_y.as_ref().map(|y| y.visible_range.clone()),
-        );
-
-        let thumb_bounds = (
-            scrollbar_x.as_ref().map(|x| x.thumb_bounds()),
-            scrollbar_y.as_ref().map(|y| y.thumb_bounds()),
-        );
-
-        if let Some((scrollbar_layout_x, thumb_bounds_x)) = scrollbar_x.as_ref().zip(thumb_bounds.0)
-        {
-            if scrollbar_layout_x.visible {
-                cx.paint_layer(scrollbar_layout_x.hitbox.bounds, |cx| {
+            if scrollbar_layout.visible {
+                cx.paint_layer(hitbox.bounds, |cx| {
                     cx.paint_quad(quad(
-                        scrollbar_layout_x.hitbox.bounds,
+                        hitbox.bounds,
                         Corners::default(),
                         cx.theme().colors().scrollbar_track_background,
                         Edges {
@@ -3720,7 +3704,7 @@ impl EditorElement {
                     ));
 
                     cx.paint_quad(quad(
-                        thumb_bounds_x,
+                        thumb_bounds,
                         Corners::default(),
                         cx.theme().colors().scrollbar_thumb_background,
                         Edges {
@@ -3734,24 +3718,19 @@ impl EditorElement {
                 })
             }
 
-            cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout_x.hitbox);
+            cx.set_cursor_style(CursorStyle::Arrow, &hitbox);
 
             cx.on_mouse_event({
                 let editor = self.editor.clone();
 
-                let hitbox = scrollbar_hitboxes.0.clone();
-                let text_unit_size = text_unit_sizes.0.clone();
+                // there may be a way to avoid this clone
+                let hitbox = hitbox.clone();
 
                 let mut mouse_position = cx.mouse_position();
                 move |event: &MouseMoveEvent, phase, cx| {
                     if phase == DispatchPhase::Capture {
                         return;
                     }
-
-                    let Some(ref hitbox) = hitbox else { return };
-                    let Some(text_unit_size) = text_unit_size else {
-                        return;
-                    };
 
                     editor.update(cx, |editor, cx| {
                         if event.pressed_button == Some(MouseButton::Left)
@@ -3814,23 +3793,7 @@ impl EditorElement {
                 cx.on_mouse_event({
                     let editor = self.editor.clone();
 
-                    let hitbox = scrollbar_hitboxes.0.clone();
-                    let thumb_bounds = thumb_bounds.0.clone();
-                    let text_unit_size = text_unit_sizes.0.clone();
-                    let text_unit_range = visible_ranges.0.clone();
-
                     move |event: &MouseDownEvent, phase, cx| {
-                        let Some(ref hitbox) = hitbox else { return };
-                        let Some(thumb_bounds) = thumb_bounds else {
-                            return;
-                        };
-                        let Some(text_unit_size) = text_unit_size else {
-                            return;
-                        };
-                        let Some(ref text_unit_range) = text_unit_range else {
-                            return;
-                        };
-
                         if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
                             return;
                         }
@@ -3847,7 +3810,7 @@ impl EditorElement {
                                 let center_row =
                                     ((x - hitbox.left()) / text_unit_size).round() as u32;
                                 let top_row = center_row.saturating_sub(
-                                    (text_unit_range.end - text_unit_range.start) as u32 / 2,
+                                    (visible_range.end - visible_range.start) as u32 / 2,
                                 );
                                 let mut position = editor.scroll_position(cx);
                                 position.x = top_row as f32;
@@ -3863,12 +3826,16 @@ impl EditorElement {
             }
         }
 
-        if let Some((scrollbar_layout_y, thumb_bounds_y)) = scrollbar_y.as_ref().zip(thumb_bounds.1)
-        {
-            if scrollbar_layout_y.visible {
-                cx.paint_layer(scrollbar_layout_y.hitbox.bounds, |cx| {
+        if let Some(scrollbar_layout) = scrollbar_y {
+            let hitbox = scrollbar_layout.hitbox.clone();
+            let text_unit_size = scrollbar_layout.text_unit_size;
+            let visible_range = scrollbar_layout.visible_range.clone();
+            let thumb_bounds = scrollbar_layout.thumb_bounds();
+
+            if scrollbar_layout.visible {
+                cx.paint_layer(hitbox.bounds, |cx| {
                     cx.paint_quad(quad(
-                        scrollbar_layout_y.hitbox.bounds,
+                        hitbox.bounds,
                         Corners::default(),
                         cx.theme().colors().scrollbar_track_background,
                         Edges {
@@ -3881,19 +3848,19 @@ impl EditorElement {
                     ));
 
                     let fast_markers =
-                        self.collect_fast_scrollbar_markers(layout, &scrollbar_layout_y, cx);
+                        self.collect_fast_scrollbar_markers(layout, &scrollbar_layout, cx);
                     // Refresh slow scrollbar markers in the background. Below, we paint whatever markers have already been computed.
-                    self.refresh_slow_scrollbar_markers(layout, &scrollbar_layout_y, cx);
+                    self.refresh_slow_scrollbar_markers(layout, &scrollbar_layout, cx);
 
                     let markers = self.editor.read(cx).scrollbar_marker_state.markers.clone();
                     for marker in markers.iter().chain(&fast_markers) {
                         let mut marker = marker.clone();
-                        marker.bounds.origin += scrollbar_layout_y.hitbox.origin;
+                        marker.bounds.origin += hitbox.origin;
                         cx.paint_quad(marker);
                     }
 
                     cx.paint_quad(quad(
-                        thumb_bounds_y,
+                        thumb_bounds,
                         Corners::default(),
                         cx.theme().colors().scrollbar_thumb_background,
                         Edges {
@@ -3907,24 +3874,18 @@ impl EditorElement {
                 });
             }
 
-            cx.set_cursor_style(CursorStyle::Arrow, &scrollbar_layout_y.hitbox);
+            cx.set_cursor_style(CursorStyle::Arrow, &hitbox);
 
             cx.on_mouse_event({
                 let editor = self.editor.clone();
 
-                let hitbox = scrollbar_hitboxes.1.clone();
-                let text_unit_size = text_unit_sizes.1.clone();
+                let hitbox = hitbox.clone();
 
                 let mut mouse_position = cx.mouse_position();
                 move |event: &MouseMoveEvent, phase, cx| {
                     if phase == DispatchPhase::Capture {
                         return;
                     }
-
-                    let Some(ref hitbox) = hitbox else { return };
-                    let Some(text_unit_size) = text_unit_size else {
-                        return;
-                    };
 
                     editor.update(cx, |editor, cx| {
                         if event.pressed_button == Some(MouseButton::Left)
@@ -3983,23 +3944,7 @@ impl EditorElement {
                 cx.on_mouse_event({
                     let editor = self.editor.clone();
 
-                    let hitbox = scrollbar_hitboxes.1.clone();
-                    let thumb_bounds = thumb_bounds.1.clone();
-                    let text_unit_size = text_unit_sizes.1.clone();
-                    let text_unit_range = visible_ranges.1.clone();
-
                     move |event: &MouseDownEvent, phase, cx| {
-                        let Some(ref hitbox) = hitbox else { return };
-                        let Some(thumb_bounds) = thumb_bounds else {
-                            return;
-                        };
-                        let Some(text_unit_size) = text_unit_size else {
-                            return;
-                        };
-                        let Some(ref text_unit_range) = text_unit_range else {
-                            return;
-                        };
-
                         if phase == DispatchPhase::Capture || !hitbox.is_hovered(cx) {
                             return;
                         }
@@ -4016,7 +3961,7 @@ impl EditorElement {
                                 let center_row =
                                     ((y - hitbox.top()) / text_unit_size).round() as u32;
                                 let top_row = center_row.saturating_sub(
-                                    (text_unit_range.end - text_unit_range.start) as u32 / 2,
+                                    (visible_range.end - visible_range.start) as u32 / 2,
                                 );
                                 let mut position = editor.scroll_position(cx);
                                 position.y = top_row as f32;
