@@ -464,7 +464,12 @@ impl SettingsObserver {
                         )
                         .unwrap(),
                 );
-                (settings_dir, LocalSettingsKind::Tasks)
+                (
+                    // Debug task file name has to be unique because it will overwrite tasks
+                    // from .zed/tasks.json file if it is not (It was also being overwritten too)
+                    Arc::from(settings_dir.join("debug").as_path()),
+                    LocalSettingsKind::Tasks,
+                )
             } else {
                 continue;
             };
