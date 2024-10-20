@@ -14,7 +14,7 @@ use futures::{
         oneshot,
     },
     future::BoxFuture,
-    select_biased, AsyncReadExt as _, Future, FutureExt as _, SinkExt, StreamExt as _,
+    select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SemanticVersion, Task,
@@ -22,9 +22,7 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use rpc::{
-    proto::{
-        self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage, SSH_PEER_ID,
-    },
+    proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
     AnyProtoClient, EntityMessageSubscriber, ProtoClient, ProtoMessageHandlerSet, RpcError,
 };
 use smol::{
@@ -40,7 +38,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU32, Ordering::SeqCst},
-        Arc,
+        Arc, Weak,
     },
     time::{Duration, Instant},
 };
@@ -279,72 +277,6 @@ async fn run_cmd(command: &mut process::Command) -> Result<String> {
     }
 }
 
-pub struct ChannelForwarder {
-    quit_tx: UnboundedSender<()>,
-    forwarding_task: Task<(UnboundedSender<Envelope>, UnboundedReceiver<Envelope>)>,
-}
-
-impl ChannelForwarder {
-    fn new(
-        mut incoming_tx: UnboundedSender<Envelope>,
-        mut outgoing_rx: UnboundedReceiver<Envelope>,
-        cx: &AsyncAppContext,
-    ) -> (Self, UnboundedSender<Envelope>, UnboundedReceiver<Envelope>) {
-        let (quit_tx, mut quit_rx) = mpsc::unbounded::<()>();
-
-        let (proxy_incoming_tx, mut proxy_incoming_rx) = mpsc::unbounded::<Envelope>();
-        let (mut proxy_outgoing_tx, proxy_outgoing_rx) = mpsc::unbounded::<Envelope>();
-
-        let forwarding_task = cx.background_executor().spawn(async move {
-            loop {
-                select_biased! {
-                    _ = quit_rx.next().fuse() => {
-                        println!("quit");
-                        break;
-                    },
-                    incoming_envelope = proxy_incoming_rx.next().fuse() => {
-                        if let Some(envelope) = incoming_envelope {
-                            println!("incoming {}", envelope.id);
-                            if incoming_tx.send(envelope).await.is_err() {
-                                break;
-                            }
-
-                        } else {
-                            break;
-                        }
-                    }
-                    outgoing_envelope = outgoing_rx.next().fuse() => {
-                        if let Some(envelope) = outgoing_envelope {
-                            println!("outgoing {}", envelope.id);
-                            if proxy_outgoing_tx.send(envelope).await.is_err() {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            (incoming_tx, outgoing_rx)
-        });
-
-        (
-            Self {
-                forwarding_task,
-                quit_tx,
-            },
-            proxy_incoming_tx,
-            proxy_outgoing_rx,
-        )
-    }
-
-    async fn into_channels(mut self) -> (UnboundedSender<Envelope>, UnboundedReceiver<Envelope>) {
-        let _ = self.quit_tx.send(()).await;
-        self.forwarding_task.await
-    }
-}
-
 const MAX_MISSED_HEARTBEATS: usize = 5;
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(5);
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -356,7 +288,6 @@ enum State {
     Connected {
         ssh_connection: Box<dyn SshRemoteProcess>,
         delegate: Arc<dyn SshClientDelegate>,
-        forwarder: ChannelForwarder,
 
         multiplex_task: Task<Result<()>>,
         heartbeat_task: Task<Result<()>>,
@@ -366,7 +297,6 @@ enum State {
 
         ssh_connection: Box<dyn SshRemoteProcess>,
         delegate: Arc<dyn SshClientDelegate>,
-        forwarder: ChannelForwarder,
 
         multiplex_task: Task<Result<()>>,
         heartbeat_task: Task<Result<()>>,
@@ -375,7 +305,6 @@ enum State {
     ReconnectFailed {
         ssh_connection: Box<dyn SshRemoteProcess>,
         delegate: Arc<dyn SshClientDelegate>,
-        forwarder: ChannelForwarder,
 
         error: anyhow::Error,
         attempts: usize,
@@ -437,14 +366,12 @@ impl State {
             Self::HeartbeatMissed {
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
                 ..
             } => Self::Connected {
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
             },
@@ -457,14 +384,12 @@ impl State {
             Self::Connected {
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
             } => Self::HeartbeatMissed {
                 missed_heartbeats: 1,
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
             },
@@ -472,14 +397,12 @@ impl State {
                 missed_heartbeats,
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
             } => Self::HeartbeatMissed {
                 missed_heartbeats: missed_heartbeats + 1,
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
             },
@@ -546,15 +469,12 @@ impl SshRemoteClient {
                 state: Arc::new(Mutex::new(Some(State::Connecting))),
             })?;
 
-            let (proxy, proxy_incoming_tx, proxy_outgoing_rx) =
-                ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
-
             let (ssh_connection, io_task) = Self::establish_connection(
                 unique_identifier,
                 false,
                 connection_options,
-                proxy_incoming_tx,
-                proxy_outgoing_rx,
+                incoming_tx,
+                outgoing_rx,
                 connection_activity_tx,
                 delegate.clone(),
                 &mut cx,
@@ -575,7 +495,6 @@ impl SshRemoteClient {
                 *this.state.lock() = Some(State::Connected {
                     ssh_connection,
                     delegate,
-                    forwarder: proxy,
                     multiplex_task,
                     heartbeat_task,
                 });
@@ -597,7 +516,6 @@ impl SshRemoteClient {
             heartbeat_task,
             ssh_connection,
             delegate,
-            forwarder,
         } = state
         else {
             return None;
@@ -621,7 +539,6 @@ impl SshRemoteClient {
             drop(heartbeat_task);
             drop(ssh_connection);
             drop(delegate);
-            drop(forwarder);
         })
     }
 
@@ -643,33 +560,30 @@ impl SshRemoteClient {
         }
 
         let state = lock.take().unwrap();
-        let (attempts, mut ssh_connection, delegate, forwarder) = match state {
+        let (attempts, mut ssh_connection, delegate) = match state {
             State::Connected {
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
             }
             | State::HeartbeatMissed {
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task,
                 ..
             } => {
                 drop(multiplex_task);
                 drop(heartbeat_task);
-                (0, ssh_connection, delegate, forwarder)
+                (0, ssh_connection, delegate)
             }
             State::ReconnectFailed {
                 attempts,
                 ssh_connection,
                 delegate,
-                forwarder,
                 ..
-            } => (attempts, ssh_connection, delegate, forwarder),
+            } => (attempts, ssh_connection, delegate),
             State::Connecting
             | State::Reconnecting
             | State::ReconnectExhausted
@@ -696,37 +610,36 @@ impl SshRemoteClient {
         let client = self.client.clone();
         let reconnect_task = cx.spawn(|this, mut cx| async move {
             macro_rules! failed {
-                ($error:expr, $attempts:expr, $ssh_connection:expr, $delegate:expr, $forwarder:expr) => {
+                ($error:expr, $attempts:expr, $ssh_connection:expr, $delegate:expr) => {
                     return State::ReconnectFailed {
                         error: anyhow!($error),
                         attempts: $attempts,
                         ssh_connection: $ssh_connection,
                         delegate: $delegate,
-                        forwarder: $forwarder,
                     };
                 };
             }
 
-            if let Err(error) = ssh_connection.kill().await.context("Failed to kill ssh process") {
-                failed!(error, attempts, ssh_connection, delegate, forwarder);
+            if let Err(error) = ssh_connection
+                .kill()
+                .await
+                .context("Failed to kill ssh process")
+            {
+                failed!(error, attempts, ssh_connection, delegate);
             };
 
             let connection_options = ssh_connection.connection_options();
 
-            let (incoming_tx, mut outgoing_rx) = forwarder.into_channels().await;
-            while let Ok(Some(msg)) = outgoing_rx.try_next() {
-                dbg!("flushing msg {}", msg.id);
-            }
-            let (forwarder, proxy_incoming_tx, proxy_outgoing_rx) =
-                ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx);
+            let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
+            let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
             let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
             let (ssh_connection, io_task) = match Self::establish_connection(
                 identifier,
                 true,
                 connection_options,
-                proxy_incoming_tx,
-                proxy_outgoing_rx,
+                incoming_tx,
+                outgoing_rx,
                 connection_activity_tx,
                 delegate.clone(),
                 &mut cx,
@@ -735,20 +648,20 @@ impl SshRemoteClient {
             {
                 Ok((ssh_connection, ssh_process)) => (ssh_connection, ssh_process),
                 Err(error) => {
-                    failed!(error, attempts, ssh_connection, delegate, forwarder);
+                    failed!(error, attempts, ssh_connection, delegate);
                 }
             };
 
             let multiplex_task = Self::monitor(this.clone(), io_task, &cx);
+            client.reconnect(incoming_rx, outgoing_tx, &cx);
 
             if let Err(error) = client.resync(HEARTBEAT_TIMEOUT).await {
-                failed!(error, attempts, ssh_connection, delegate, forwarder);
+                failed!(error, attempts, ssh_connection, delegate);
             };
 
             State::Connected {
                 ssh_connection,
                 delegate,
-                forwarder,
                 multiplex_task,
                 heartbeat_task: Self::heartbeat(this.clone(), connection_activity_rx, &mut cx),
             }
@@ -982,7 +895,7 @@ impl SshRemoteClient {
             }
         });
 
-        cx.spawn(|cx| async move {
+        cx.spawn(|_| async move {
             let result = futures::select! {
                 result = stdin_task.fuse() => {
                     result.context("stdin")
@@ -1070,23 +983,18 @@ impl SshRemoteClient {
         unique_identifier: String,
         reconnect: bool,
         connection_options: SshConnectionOptions,
-        proxy_incoming_tx: UnboundedSender<Envelope>,
-        mut proxy_outgoing_rx: UnboundedReceiver<Envelope>,
+        incoming_tx: UnboundedSender<Envelope>,
+        outgoing_rx: UnboundedReceiver<Envelope>,
         connection_activity_tx: Sender<()>,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<(Box<dyn SshRemoteProcess>, Task<Result<i32>>)> {
-        if reconnect {
-            while let Ok(Some(msg)) = proxy_outgoing_rx.try_next() {
-                println!("dropping {}", msg.id);
-            }
-        }
         #[cfg(any(test, feature = "test-support"))]
         if let Some(fake) = fake::SshRemoteConnection::new(&connection_options) {
             let io_task = fake::SshRemoteConnection::multiplex(
                 fake.connection_options(),
-                proxy_incoming_tx,
-                proxy_outgoing_rx,
+                incoming_tx,
+                outgoing_rx,
                 connection_activity_tx,
                 cx,
             )
@@ -1130,8 +1038,8 @@ impl SshRemoteClient {
 
         let io_task = Self::multiplex(
             ssh_proxy_process,
-            proxy_incoming_tx,
-            proxy_outgoing_rx,
+            incoming_tx,
+            outgoing_rx,
             connection_activity_tx,
             &cx,
         );
@@ -1176,53 +1084,41 @@ impl SshRemoteClient {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn simulate_disconnect(&self, cx: &mut AppContext) -> Task<()> {
-        use gpui::BorrowAppContext;
-
+    pub fn simulate_disconnect(&self, client_cx: &mut AppContext) -> Task<()> {
         let port = self.connection_options().port.unwrap();
+        client_cx.spawn(|cx| async move {
+            let (channel, server_cx) = cx
+                .update_global(|c: &mut fake::ServerConnections, _| c.get(port))
+                .unwrap();
 
-        println!("disconnecting...");
-        let disconnect =
-            cx.update_global(|c: &mut fake::GlobalConnections, _cx| c.take(port).into_channels());
-        cx.spawn(|mut cx| async move {
-            let (input_tx, output_rx) = disconnect.await;
-            println!("disconnected...");
-            let (forwarder, _, _) = ChannelForwarder::new(input_tx, output_rx, &mut cx);
-            cx.update_global(|c: &mut fake::GlobalConnections, _cx| c.replace(port, forwarder))
-                .unwrap()
+            let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+            let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+            channel.reconnect(incoming_rx, outgoing_tx, &server_cx);
         })
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn fake_server(
+        client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (ChannelForwarder, Arc<ChannelClient>) {
-        server_cx.update(|cx| {
-            let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
-            let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-
-            // We use the forwarder on the server side (in production we only use one on the client side)
-            // the idea is that we can simulate a disconnect/reconnect by just messing with the forwarder.
-            let (forwarder, _, _) =
-                ChannelForwarder::new(incoming_tx, outgoing_rx, &mut cx.to_async());
-
-            let client = ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server");
-            (forwarder, client)
-        })
+    ) -> (u16, Arc<ChannelClient>) {
+        use gpui::BorrowAppContext;
+        let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+        let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+        let server_client =
+            server_cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server"));
+        let port = client_cx.update(|cx| {
+            cx.update_default_global(|c: &mut fake::ServerConnections, _| {
+                c.push(server_client.clone(), server_cx.to_async())
+            })
+        });
+        (port, server_client)
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn fake_client(
-        forwarder: ChannelForwarder,
-        client_cx: &mut gpui::TestAppContext,
-    ) -> Model<Self> {
-        use gpui::BorrowAppContext;
+    pub async fn fake_client(port: u16, client_cx: &mut gpui::TestAppContext) -> Model<Self> {
         client_cx
             .update(|cx| {
-                let port = cx.update_default_global(|c: &mut fake::GlobalConnections, _cx| {
-                    c.push(forwarder)
-                });
-
                 Self::new(
                     "fake".to_string(),
                     SshConnectionOptions {
@@ -1567,11 +1463,13 @@ type ResponseChannels = Mutex<HashMap<MessageId, oneshot::Sender<(Envelope, ones
 
 pub struct ChannelClient {
     next_message_id: AtomicU32,
-    outgoing_tx: mpsc::UnboundedSender<Envelope>,
+    outgoing_tx: Mutex<mpsc::UnboundedSender<Envelope>>,
     buffer: Mutex<VecDeque<Envelope>>,
     response_channels: ResponseChannels,
     message_handlers: Mutex<ProtoMessageHandlerSet>,
     max_received: AtomicU32,
+    name: &'static str,
+    task: Mutex<Task<Result<()>>>,
 }
 
 impl ChannelClient {
@@ -1581,33 +1479,31 @@ impl ChannelClient {
         cx: &AppContext,
         name: &'static str,
     ) -> Arc<Self> {
-        let this = Arc::new(Self {
-            outgoing_tx,
+        Arc::new_cyclic(|this| Self {
+            outgoing_tx: Mutex::new(outgoing_tx),
             next_message_id: AtomicU32::new(0),
             max_received: AtomicU32::new(0),
             response_channels: ResponseChannels::default(),
             message_handlers: Default::default(),
             buffer: Mutex::new(VecDeque::new()),
-        });
-
-        Self::start_handling_messages(this.clone(), incoming_rx, cx, name);
-
-        this
+            name,
+            task: Mutex::new(Self::start_handling_messages(
+                this.clone(),
+                incoming_rx,
+                &cx.to_async(),
+            )),
+        })
     }
 
     fn start_handling_messages(
-        this: Arc<Self>,
+        this: Weak<Self>,
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
-        cx: &AppContext,
-        name: &'static str,
-    ) {
+        cx: &AsyncAppContext,
+    ) -> Task<Result<()>> {
         cx.spawn(|cx| {
-            let this = Arc::downgrade(&this);
             async move {
                 let peer_id = PeerId { owner_id: 0, id: 0 };
                 while let Some(incoming) = incoming_rx.next().await {
-                    let type_name =build_typed_envelope(peer_id, Instant::now(), incoming.clone()).map(|e| e.payload_type_name()).unwrap_or("Error");
-                    println!("{} received  type={} id={}, ack_id={:?}", name, type_name, incoming.id, incoming.ack_id);
                     let Some(this) = this.upgrade() else {
                         return anyhow::Ok(());
                     };
@@ -1620,20 +1516,16 @@ impl ChannelClient {
                     if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) =
                         &incoming.payload
                     {
-                        log::debug!("{name}:ssh message received. name:FlushBufferedMessages");
+                        log::debug!("{}:ssh message received. name:FlushBufferedMessages", this.name);
                         {
                             let buffer = this.buffer.lock();
                             for envelope in buffer.iter() {
-                                let type_name = build_typed_envelope(peer_id, Instant::now(), envelope.clone()).map(|e| e.payload_type_name()).unwrap_or("Error");
-                                println!("{} sent(resync) type={} id={:?} ack_id={:?}", name, type_name, envelope.id, envelope.ack_id);
-                                this.outgoing_tx.unbounded_send(envelope.clone()).ok();
+                                this.outgoing_tx.lock().unbounded_send(envelope.clone()).ok();
                             }
                         }
                         let mut envelope = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
                         envelope.id = this.next_message_id.fetch_add(1, SeqCst);
-                        let type_name = build_typed_envelope(peer_id, Instant::now(), envelope.clone()).map(|e| e.payload_type_name()).unwrap_or("Error");
-                        println!("{} sent(resync) type={} id={:?} ack_id={:?}", name, type_name, envelope.id, envelope.ack_id);
-                        this.outgoing_tx.unbounded_send(envelope).ok();
+                        this.outgoing_tx.lock().unbounded_send(envelope).ok();
                         continue;
                     }
 
@@ -1659,28 +1551,37 @@ impl ChannelClient {
                             this.clone().into(),
                             cx.clone(),
                         ) {
-                            log::debug!("{name}:ssh message received. name:{type_name}");
-                            // cx.foreground_executor().spawn(async move {
+                            log::debug!("{}:ssh message received. name:{type_name}", this.name);
+                            cx.foreground_executor().spawn(async move {
                                 match future.await {
                                     Ok(_) => {
-                                        log::debug!("{name}:ssh message handled. name:{type_name}");
+                                        log::debug!("{}:ssh message handled. name:{type_name}", this.name);
                                     }
                                     Err(error) => {
                                         log::error!(
-                                            "{name}:error handling message. type:{type_name}, error:{error}",
+                                            "{}:error handling message. type:{type_name}, error:{error}", this.name,
                                         );
                                     }
                                 }
-                            // }).detach()
+                            }).detach()
                         } else {
-                            log::error!("{name}:unhandled ssh message name:{type_name}");
+                            log::error!("{}:unhandled ssh message name:{type_name}", this.name);
                         }
                     }
                 }
                 anyhow::Ok(())
             }
         })
-        .detach();
+    }
+
+    pub fn reconnect(
+        self: &Arc<Self>,
+        incoming_rx: UnboundedReceiver<Envelope>,
+        outgoing_tx: UnboundedSender<Envelope>,
+        cx: &AsyncAppContext,
+    ) {
+        *self.outgoing_tx.lock() = outgoing_tx;
+        *self.task.lock() = Self::start_handling_messages(Arc::downgrade(self), incoming_rx, cx);
     }
 
     pub fn subscribe_to_entity<E: 'static>(&self, remote_id: u64, entity: &Model<E>) {
@@ -1721,15 +1622,10 @@ impl ChannelClient {
             async {
                 self.request(proto::FlushBufferedMessages {}).await?;
                 for envelope in self.buffer.lock().iter() {
-                    let type_name =
-                        build_typed_envelope(SSH_PEER_ID, Instant::now(), envelope.clone())
-                            .map(|e| e.payload_type_name())
-                            .unwrap_or("Error");
-                    println!(
-                        "client sent(resync) type={} id={:?} ack_id={:?}",
-                        type_name, envelope.id, envelope.ack_id
-                    );
-                    self.outgoing_tx.unbounded_send(envelope.clone()).ok();
+                    self.outgoing_tx
+                        .lock()
+                        .unbounded_send(envelope.clone())
+                        .ok();
                 }
                 Ok(())
             },
@@ -1794,14 +1690,9 @@ impl ChannelClient {
     pub fn send_buffered(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.ack_id = Some(self.max_received.load(SeqCst));
         self.buffer.lock().push_back(envelope.clone());
-        let type_name = build_typed_envelope(SSH_PEER_ID, Instant::now(), envelope.clone())
-            .map(|e| e.payload_type_name())
-            .unwrap_or("Error");
-        println!(
-            "sent(buffered) type={} id={:?} ack_id={:?}",
-            type_name, envelope.id, envelope.ack_id
-        );
-        self.outgoing_tx.unbounded_send(envelope)?;
+        // ignore errors on send (happen while we're reconnecting)
+        // assume that the global "disconnected" overlay is sufficient.
+        self.outgoing_tx.lock().unbounded_send(envelope).ok();
         Ok(())
     }
 }
@@ -1834,7 +1725,7 @@ impl ProtoClient for ChannelClient {
 
 #[cfg(any(test, feature = "test-support"))]
 mod fake {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
 
     use anyhow::Result;
     use async_trait::async_trait;
@@ -1849,7 +1740,7 @@ mod fake {
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelForwarder, SshClientDelegate, SshConnectionOptions, SshPlatform, SshRemoteProcess,
+        ChannelClient, SshClientDelegate, SshConnectionOptions, SshPlatform, SshRemoteProcess,
     };
 
     pub(super) struct SshRemoteConnection {
@@ -1869,47 +1760,41 @@ mod fake {
         }
         pub(super) async fn multiplex(
             connection_options: SshConnectionOptions,
-            mut client_tx: mpsc::UnboundedSender<Envelope>,
-            mut client_rx: mpsc::UnboundedReceiver<Envelope>,
+            mut client_incoming_tx: mpsc::UnboundedSender<Envelope>,
+            mut client_outgoing_rx: mpsc::UnboundedReceiver<Envelope>,
             mut connection_activity_tx: Sender<()>,
             cx: &mut AsyncAppContext,
         ) -> Task<Result<i32>> {
-            let (server_tx, server_rx) = cx
+            let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
+            let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
+
+            let (channel, server_cx) = cx
                 .update(|cx| {
-                    cx.update_global(|conns: &mut GlobalConnections, _| {
-                        conns.take(connection_options.port.unwrap())
+                    cx.update_global(|conns: &mut ServerConnections, _| {
+                        conns.get(connection_options.port.unwrap())
                     })
                 })
-                .unwrap()
-                .into_channels()
-                .await;
+                .unwrap();
+            channel.reconnect(server_incoming_rx, server_outgoing_tx, &server_cx);
 
-            let (forwarder, mut proxy_tx, mut proxy_rx) =
-                ChannelForwarder::new(server_tx, server_rx, cx);
-
-            cx.update(|cx| {
-                cx.update_global(|conns: &mut GlobalConnections, _| {
-                    conns.replace(connection_options.port.unwrap(), forwarder)
-                })
-            })
-            .unwrap();
+            // send to proxy_tx to get to the server.
+            // receive from
 
             cx.background_executor().spawn(async move {
                 loop {
                     select_biased! {
-                        server_to_client = proxy_rx.next().fuse() => {
+                        server_to_client = server_outgoing_rx.next().fuse() => {
                             let Some(server_to_client) = server_to_client else {
                                 return Ok(1)
                             };
                             connection_activity_tx.try_send(()).ok();
-                            client_tx.send(server_to_client).await.ok();
+                            client_incoming_tx.send(server_to_client).await.ok();
                         }
-                        client_to_server = client_rx.next().fuse() => {
+                        client_to_server = client_outgoing_rx.next().fuse() => {
                             let Some(client_to_server) = client_to_server else {
                                 return Ok(1)
                             };
-                            proxy_tx.send(client_to_server).await.ok();
-
+                            server_incoming_tx.send(client_to_server).await.ok();
                         }
                     }
                 }
@@ -1933,31 +1818,20 @@ mod fake {
     }
 
     #[derive(Default)]
-    pub(super) struct GlobalConnections(Vec<Option<ChannelForwarder>>);
-    impl Global for GlobalConnections {}
+    pub(super) struct ServerConnections(Vec<(Arc<ChannelClient>, AsyncAppContext)>);
+    impl Global for ServerConnections {}
 
-    impl GlobalConnections {
-        pub(super) fn push(&mut self, forwarder: ChannelForwarder) -> u16 {
-            self.0.push(Some(forwarder));
+    impl ServerConnections {
+        pub(super) fn push(&mut self, server: Arc<ChannelClient>, cx: AsyncAppContext) -> u16 {
+            self.0.push((server.clone(), cx));
             self.0.len() as u16 - 1
         }
 
-        pub(super) fn take(&mut self, port: u16) -> ChannelForwarder {
+        pub(super) fn get(&mut self, port: u16) -> (Arc<ChannelClient>, AsyncAppContext) {
             self.0
-                .get_mut(port as usize)
+                .get(port as usize)
                 .expect("no fake server for port")
-                .take()
-                .expect("fake server is already borrowed")
-        }
-        pub(super) fn replace(&mut self, port: u16, forwarder: ChannelForwarder) {
-            let ret = self
-                .0
-                .get_mut(port as usize)
-                .expect("no fake server for port")
-                .replace(forwarder);
-            if ret.is_some() {
-                panic!("fake server is already replaced");
-            }
+                .clone()
         }
     }
 
