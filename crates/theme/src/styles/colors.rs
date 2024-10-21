@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{Hsla, WindowBackgroundAppearance};
 use refineable::Refineable;
 use std::sync::Arc;

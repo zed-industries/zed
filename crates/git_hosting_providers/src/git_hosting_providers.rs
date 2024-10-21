@@ -8,7 +8,7 @@ use gpui::AppContext;
 pub use crate::providers::*;
 
 /// Initializes the Git hosting providers.
-pub fn init(cx: &mut AppContext) {
+pub fn init(cx: &AppContext) {
     let provider_registry = GitHostingProviderRegistry::global(cx);
 
     // The providers are stored in a `BTreeMap`, so insertion order matters.

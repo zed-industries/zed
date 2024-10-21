@@ -179,7 +179,7 @@ impl SnippetProvider {
     }
 
     /// Add directory to be watched for content changes
-    fn watch_directory(&mut self, path: &Path, cx: &mut ModelContext<Self>) {
+    fn watch_directory(&mut self, path: &Path, cx: &ModelContext<Self>) {
         let path: Arc<Path> = Arc::from(path);
 
         self.watch_tasks.push(cx.spawn(|this, mut cx| async move {

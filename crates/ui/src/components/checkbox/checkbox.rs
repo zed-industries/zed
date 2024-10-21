@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
 
 use crate::prelude::*;

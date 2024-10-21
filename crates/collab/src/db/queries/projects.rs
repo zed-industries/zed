@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use util::ResultExt;
 
 use super::*;
@@ -316,7 +317,7 @@ impl Database {
                         inode: ActiveValue::set(entry.inode as i64),
                         mtime_seconds: ActiveValue::set(mtime.seconds as i64),
                         mtime_nanos: ActiveValue::set(mtime.nanos as i32),
-                        is_symlink: ActiveValue::set(entry.is_symlink),
+                        canonical_path: ActiveValue::set(entry.canonical_path.clone()),
                         is_ignored: ActiveValue::set(entry.is_ignored),
                         is_external: ActiveValue::set(entry.is_external),
                         git_status: ActiveValue::set(entry.git_status.map(|status| status as i64)),
@@ -337,7 +338,7 @@ impl Database {
                         worktree_entry::Column::Inode,
                         worktree_entry::Column::MtimeSeconds,
                         worktree_entry::Column::MtimeNanos,
-                        worktree_entry::Column::IsSymlink,
+                        worktree_entry::Column::CanonicalPath,
                         worktree_entry::Column::IsIgnored,
                         worktree_entry::Column::GitStatus,
                         worktree_entry::Column::ScanId,
@@ -527,6 +528,12 @@ impl Database {
         connection: ConnectionId,
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
         let project_id = ProjectId::from_proto(update.project_id);
+        let kind = match update.kind {
+            Some(kind) => proto::LocalSettingsKind::from_i32(kind)
+                .with_context(|| format!("unknown worktree settings kind: {kind}"))?,
+            None => proto::LocalSettingsKind::Settings,
+        };
+        let kind = LocalSettingsKind::from_proto(kind);
         self.project_transaction(project_id, |tx| async move {
             // Ensure the update comes from the host.
             let project = project::Entity::find_by_id(project_id)
@@ -543,6 +550,7 @@ impl Database {
                     worktree_id: ActiveValue::Set(update.worktree_id as i64),
                     path: ActiveValue::Set(update.path.clone()),
                     content: ActiveValue::Set(content.clone()),
+                    kind: ActiveValue::Set(kind),
                 })
                 .on_conflict(
                     OnConflict::columns([
@@ -727,7 +735,7 @@ impl Database {
                             seconds: db_entry.mtime_seconds as u64,
                             nanos: db_entry.mtime_nanos as u32,
                         }),
-                        is_symlink: db_entry.is_symlink,
+                        canonical_path: db_entry.canonical_path,
                         is_ignored: db_entry.is_ignored,
                         is_external: db_entry.is_external,
                         git_status: db_entry.git_status.map(|status| status as i32),
@@ -800,6 +808,7 @@ impl Database {
                     worktree.settings_files.push(WorktreeSettingsFile {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
+                        kind: db_settings_file.kind,
                     });
                 }
             }
@@ -829,6 +838,7 @@ impl Database {
                 .map(|language_server| proto::LanguageServer {
                     id: language_server.id as u64,
                     name: language_server.name,
+                    worktree_id: None,
                 })
                 .collect(),
             dev_server_project_id: project.dev_server_project_id,

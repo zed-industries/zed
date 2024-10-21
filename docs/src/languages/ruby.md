@@ -1,6 +1,6 @@
 # Ruby
 
-Ruby support is available through the [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby).
+Ruby support is available through the [Ruby extension](https://github.com/zed-extensions/ruby).
 
 - Tree-sitters:
   - [tree-sitter-ruby](https://github.com/tree-sitter/tree-sitter-ruby)
@@ -25,7 +25,7 @@ In addition to these two language servers, Zed also supports [rubocop](https://g
 
 ## Configuring a language server
 
-The [Ruby extension](https://github.com/zed-industries/zed/tree/main/extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
+The [Ruby extension](https://github.com/zed-extensions/ruby) offers both `solargraph` and `ruby-lsp` language server support.
 
 ### Using `solargraph`
 

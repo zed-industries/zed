@@ -8,7 +8,7 @@ use gpui::{
     View, ViewContext, VisualContext, WeakView,
 };
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
-use project::{Project, TaskSourceKind};
+use project::{task_store::TaskStore, TaskSourceKind};
 use task::{ResolvedTask, TaskContext, TaskId, TaskTemplate};
 use ui::{
     div, h_flex, v_flex, ActiveTheme, Button, ButtonCommon, ButtonSize, Clickable, Color,
@@ -63,7 +63,7 @@ impl_actions!(task, [Rerun, Spawn]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
-    project: Model<Project>,
+    task_store: Model<TaskStore>,
     candidates: Option<Vec<(TaskSourceKind, ResolvedTask)>>,
     last_used_candidate_index: Option<usize>,
     divider_index: Option<usize>,
@@ -77,12 +77,12 @@ pub(crate) struct TasksModalDelegate {
 
 impl TasksModalDelegate {
     fn new(
-        project: Model<Project>,
+        task_store: Model<TaskStore>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
     ) -> Self {
         Self {
-            project,
+            task_store,
             workspace,
             candidates: None,
             matches: Vec::new(),
@@ -124,11 +124,11 @@ impl TasksModalDelegate {
         // it doesn't make sense to requery the inventory for new candidates, as that's potentially costly and more often than not it should just return back
         // the original list without a removed entry.
         candidates.remove(ix);
-        self.project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, _| {
+        if let Some(inventory) = self.task_store.read(cx).task_inventory().cloned() {
+            inventory.update(cx, |inventory, _| {
                 inventory.delete_previously_used(&task.id);
             })
-        });
+        };
     }
 }
 
@@ -139,14 +139,14 @@ pub(crate) struct TasksModal {
 
 impl TasksModal {
     pub(crate) fn new(
-        project: Model<Project>,
+        task_store: Model<TaskStore>,
         task_context: TaskContext,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
             Picker::uniform_list(
-                TasksModalDelegate::new(project, task_context, workspace),
+                TasksModalDelegate::new(task_store, task_context, workspace),
                 cx,
             )
         });
@@ -204,80 +204,50 @@ impl PickerDelegate for TasksModalDelegate {
         cx: &mut ViewContext<picker::Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(move |picker, mut cx| async move {
-            let Some(candidates_task) = picker
+            let Some(candidates) = picker
                 .update(&mut cx, |picker, cx| {
                     match &mut picker.delegate.candidates {
-                        Some(candidates) => {
-                            Task::ready(Ok(string_match_candidates(candidates.iter())))
-                        }
+                        Some(candidates) => string_match_candidates(candidates.iter()),
                         None => {
                             let Ok((worktree, location)) =
                                 picker.delegate.workspace.update(cx, |workspace, cx| {
                                     active_item_selection_properties(workspace, cx)
                                 })
                             else {
-                                return Task::ready(Ok(Vec::new()));
+                                return Vec::new();
+                            };
+                            let Some(task_inventory) = picker
+                                .delegate
+                                .task_store
+                                .read(cx)
+                                .task_inventory()
+                                .cloned()
+                            else {
+                                return Vec::new();
                             };
 
-                            let resolved_task =
-                                picker.delegate.project.update(cx, |project, cx| {
-                                    let ssh_connection_string = project.ssh_connection_string(cx);
-                                    if project.is_via_collab() && ssh_connection_string.is_none() {
-                                        Task::ready((Vec::new(), Vec::new()))
-                                    } else {
-                                        let remote_templates = if project.is_local() {
-                                            None
-                                        } else {
-                                            project
-                                                .remote_id()
-                                                .filter(|_| ssh_connection_string.is_some())
-                                                .map(|project_id| {
-                                                    project.query_remote_task_templates(
-                                                        project_id,
-                                                        worktree,
-                                                        location.as_ref(),
-                                                        cx,
-                                                    )
-                                                })
-                                        };
-                                        project
-                                            .task_inventory()
-                                            .read(cx)
-                                            .used_and_current_resolved_tasks(
-                                                remote_templates,
-                                                worktree,
-                                                location,
-                                                &picker.delegate.task_context,
-                                                cx,
-                                            )
-                                    }
-                                });
-                            cx.spawn(|picker, mut cx| async move {
-                                let (used, current) = resolved_task.await;
-                                picker.update(&mut cx, |picker, _| {
-                                    picker.delegate.last_used_candidate_index = if used.is_empty() {
-                                        None
-                                    } else {
-                                        Some(used.len() - 1)
-                                    };
+                            let (used, current) =
+                                task_inventory.read(cx).used_and_current_resolved_tasks(
+                                    worktree,
+                                    location,
+                                    &picker.delegate.task_context,
+                                    cx,
+                                );
+                            picker.delegate.last_used_candidate_index = if used.is_empty() {
+                                None
+                            } else {
+                                Some(used.len() - 1)
+                            };
 
-                                    let mut new_candidates = used;
-                                    new_candidates.extend(current);
-                                    let match_candidates =
-                                        string_match_candidates(new_candidates.iter());
-                                    let _ = picker.delegate.candidates.insert(new_candidates);
-                                    match_candidates
-                                })
-                            })
+                            let mut new_candidates = used;
+                            new_candidates.extend(current);
+                            let match_candidates = string_match_candidates(new_candidates.iter());
+                            let _ = picker.delegate.candidates.insert(new_candidates);
+                            match_candidates
                         }
                     }
                 })
                 .ok()
-            else {
-                return;
-            };
-            let Some(candidates): Option<Vec<StringMatchCandidate>> =
-                candidates_task.await.log_err()
             else {
                 return;
             };
@@ -414,13 +384,6 @@ impl PickerDelegate for TasksModalDelegate {
                 .start_slot::<Icon>(icon)
                 .end_slot::<AnyElement>(history_run_icon)
                 .spacing(ListItemSpacing::Sparse)
-                // .map(|this| {
-                //     if Some(ix) <= self.divider_index {
-                //         this.start_slot(Icon::new(IconName::HistoryRerun).size(IconSize::Small))
-                //     } else {
-                //         this.start_slot(v_flex().flex_none().size(IconSize::Small.rems()))
-                //     }
-                // })
                 .when_some(tooltip_label, |list_item, item_label| {
                     list_item.tooltip(move |_| item_label.clone())
                 })
@@ -492,9 +455,9 @@ impl PickerDelegate for TasksModalDelegate {
         let is_recent_selected = self.divider_index >= Some(self.selected_index);
         let current_modifiers = cx.modifiers();
         let left_button = if self
-            .project
+            .task_store
             .read(cx)
-            .task_inventory()
+            .task_inventory()?
             .read(cx)
             .last_scheduled_task(None)
             .is_some()
@@ -646,6 +609,20 @@ mod tests {
             "",
             "Initial query should be empty"
         );
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            Vec::<String>::new(),
+            "With no global tasks and no open item, no tasks should be listed"
+        );
+        drop(tasks_picker);
+
+        let _ = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/dir/a.ts"), true, cx)
+            })
+            .await
+            .unwrap();
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
             vec!["another one", "example task"],
@@ -951,8 +928,9 @@ mod tests {
         let tasks_picker = open_spawn_tasks(&workspace, cx);
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["TypeScript task from file /dir/a1.ts", "TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
-            "After spawning the task and getting it into the history, it should be up in the sort as recently used"
+            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            "After spawning the task and getting it into the history, it should be up in the sort as recently used.
+            Tasks with the same labels and context are deduplicated."
         );
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);
@@ -1035,10 +1013,12 @@ mod tests {
                 .unwrap()
         });
         project.update(cx, |project, cx| {
-            project.task_inventory().update(cx, |inventory, _| {
-                let (kind, task) = scheduled_task;
-                inventory.task_scheduled(kind, task);
-            })
+            if let Some(task_inventory) = project.task_store().read(cx).task_inventory().cloned() {
+                task_inventory.update(cx, |inventory, _| {
+                    let (kind, task) = scheduled_task;
+                    inventory.task_scheduled(kind, task);
+                });
+            }
         });
         tasks_picker.update(cx, |_, cx| {
             cx.emit(DismissEvent);

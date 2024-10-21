@@ -545,10 +545,10 @@ impl Vim {
                 if self.operator_stack.is_empty() {
                     CursorShape::Block
                 } else {
-                    CursorShape::Underscore
+                    CursorShape::Underline
                 }
             }
-            Mode::Replace => CursorShape::Underscore,
+            Mode::Replace => CursorShape::Underline,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
@@ -1080,9 +1080,14 @@ impl Settings for VimModeSetting {
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(Self(sources.user.copied().flatten().unwrap_or(
-            sources.default.ok_or_else(Self::missing_default)?,
-        )))
+        Ok(Self(
+            sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        ))
     }
 }
 

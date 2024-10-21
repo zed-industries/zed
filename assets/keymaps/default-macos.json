@@ -395,6 +395,7 @@
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-cmd-o": ["projects::OpenRecent", {"create_new_window": true }],
       "alt-cmd-o": "projects::OpenRecent",
+      "ctrl-cmd-o": "projects::OpenRemote",
       "alt-cmd-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
       "cmd-s": "workspace::Save",
@@ -440,7 +441,12 @@
       "cmd-k shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "cmd-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "cmd-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
-      "cmd-shift-x": "zed::Extensions",
+      "cmd-shift-x": "zed::Extensions"
+    }
+  },
+  {
+    "context": "Workspace && !Terminal",
+    "bindings": {
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
@@ -673,7 +679,8 @@
       "cmd-home": "terminal::ScrollToTop",
       "cmd-end": "terminal::ScrollToBottom",
       "shift-home": "terminal::ScrollToTop",
-      "shift-end": "terminal::ScrollToBottom"
+      "shift-end": "terminal::ScrollToBottom",
+      "ctrl-shift-space": "terminal::ToggleViMode"
     }
   }
 ]

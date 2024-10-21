@@ -52,7 +52,6 @@ members = [
     "crates/indexed_docs",
     "crates/inline_completion_button",
     "crates/install_cli",
-    "crates/isahc_http_client",
     "crates/journal",
     "crates/language",
     "crates/language_model",
@@ -88,6 +87,7 @@ members = [
     "crates/remote",
     "crates/remote_server",
     "crates/repl",
+    "crates/reqwest_client",
     "crates/rich_text",
     "crates/rope",
     "crates/rpc",
@@ -122,6 +122,7 @@ members = [
     "crates/ui",
     "crates/ui_input",
     "crates/ui_macros",
+    "crates/reqwest_client",
     "crates/util",
     "crates/vcs_menu",
     "crates/vim",
@@ -144,7 +145,6 @@ members = [
     "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
-    "extensions/gleam",
     "extensions/glsl",
     "extensions/haskell",
     "extensions/html",
@@ -153,17 +153,15 @@ members = [
     "extensions/php",
     "extensions/perplexity",
     "extensions/prisma",
+    "extensions/proto",
     "extensions/purescript",
     "extensions/ruff",
-    "extensions/ruby",
     "extensions/slash-commands-example",
     "extensions/snippets",
-    "extensions/svelte",
     "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
     "extensions/uiua",
-    "extensions/vue",
     "extensions/zig",
 
     #
@@ -175,6 +173,7 @@ members = [
 default-members = ["crates/zed"]
 
 [workspace.dependencies]
+
 #
 # Workspace member crates
 #
@@ -218,9 +217,8 @@ git = { path = "crates/git" }
 git_hosting_providers = { path = "crates/git_hosting_providers" }
 go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
-gpui = { path = "crates/gpui" }
+gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
 gpui_macros = { path = "crates/gpui_macros" }
-handlebars = "4.3"
 headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
@@ -228,7 +226,6 @@ image_viewer = { path = "crates/image_viewer" }
 indexed_docs = { path = "crates/indexed_docs" }
 inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
-isahc_http_client = { path = "crates/isahc_http_client" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
 language_model = { path = "crates/language_model" }
@@ -265,6 +262,7 @@ release_channel = { path = "crates/release_channel" }
 remote = { path = "crates/remote" }
 remote_server = { path = "crates/remote_server" }
 repl = { path = "crates/repl" }
+reqwest_client = { path = "crates/reqwest_client" }
 rich_text = { path = "crates/rich_text" }
 rope = { path = "crates/rope" }
 rpc = { path = "crates/rpc" }
@@ -318,6 +316,7 @@ any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
 ashpd = "0.9.1"
+async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
 async-fs = "1.6"
@@ -325,7 +324,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.23"
+async-tungstenite = "0.24"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
@@ -334,6 +333,7 @@ blade-graphics = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb
 blade-macros = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blade-util = { git = "https://github.com/kvark/blade", rev = "e142a3a5e678eb6a13e642ad8401b1f3aa38e969" }
 blake3 = "1.5.3"
+bytes = "1.0"
 cargo_metadata = "0.18"
 cargo_toml = "0.20"
 chrono = { version = "0.4", features = ["serde"] }
@@ -347,6 +347,7 @@ ctor = "0.2.6"
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
+ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
@@ -356,18 +357,15 @@ futures-batch = "0.6.1"
 futures-lite = "1.13"
 git2 = { version = "0.19", default-features = false }
 globset = "0.4"
+handlebars = "4.3"
 heed = { version = "0.20.1", features = ["read-txn-no-tls"] }
 hex = "0.4.3"
-hyper = "0.14"
 html5ever = "0.27.0"
+hyper = "0.14"
 ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "1.6.2", features = ["serde"] }
 indoc = "2"
-# We explicitly disable http2 support in isahc.
-isahc = { version = "1.7.2", default-features = false, features = [
-    "text-decoding",
-] }
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
 libc = "0.2"
@@ -382,9 +380,9 @@ ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 pathdiff = "0.2"
-profiling = "1"
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = "1.3.0"
+profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
@@ -392,6 +390,14 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = [
+    "charset",
+    "http2",
+    "macos-system-configuration",
+    "rustls-tls-native-roots",
+    "socks",
+    "stream",
+] }
 rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
@@ -418,6 +424,7 @@ similar = "1.3"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
 smol = "1.2"
+sqlformat = "0.2"
 strsim = "0.11"
 strum = { version = "0.25.0", features = ["derive"] }
 subtle = "2.5.0"
@@ -435,7 +442,7 @@ time = { version = "0.3", features = [
 ] }
 tiny_http = "0.8"
 toml = "0.8"
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1" }
 tower-http = "0.4.4"
 tree-sitter = { version = "0.23", features = ["wasm"] }
 tree-sitter-bash = "0.23"
@@ -448,19 +455,19 @@ tree-sitter-go = "0.23"
 tree-sitter-go-mod = { git = "https://github.com/zed-industries/tree-sitter-go-mod", rev = "a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
+tree-sitter-diff = "0.1.0"
 tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.23"
 tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "4cfa6aad6b75052a5077c80fd934757d9267d81b" }
-protols-tree-sitter-proto = { git = "https://github.com/zed-industries/tree-sitter-proto", rev = "0848bd30a64be48772e15fbb9d5ba8c0cc5772ad" }
 tree-sitter-python = "0.23"
 tree-sitter-regex = "0.23"
 tree-sitter-ruby = "0.23"
 tree-sitter-rust = "0.23"
 tree-sitter-typescript = "0.23"
-tree-sitter-yaml =  { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
-unindent = "0.1.7"
+tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
+unindent = "0.1.7"
 unicode-segmentation = "1.10"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
@@ -476,9 +483,11 @@ wasmtime = { version = "24", default-features = false, features = [
 wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
+zstd = "0.11"
 
 [workspace.dependencies.async-stripe]
-version = "0.39"
+git = "https://github.com/zed-industries/async-stripe"
+rev = "3672dd4efb7181aa597bf580bf5a2f5d23db6735"
 default-features = false
 features = [
     "runtime-tokio-hyper-rustls",

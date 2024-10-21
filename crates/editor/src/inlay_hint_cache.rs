@@ -591,21 +591,13 @@ impl InlayHintCache {
                     drop(guard);
                     cx.spawn(|editor, mut cx| async move {
                         let resolved_hint_task = editor.update(&mut cx, |editor, cx| {
-                            editor
-                                .buffer()
-                                .read(cx)
-                                .buffer(buffer_id)
-                                .and_then(|buffer| {
-                                    let project = editor.project.as_ref()?;
-                                    Some(project.update(cx, |project, cx| {
-                                        project.resolve_inlay_hint(
-                                            hint_to_resolve,
-                                            buffer,
-                                            server_id,
-                                            cx,
-                                        )
-                                    }))
-                                })
+                            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
+                            editor.semantics_provider.as_ref()?.resolve_inlay_hint(
+                                hint_to_resolve,
+                                buffer,
+                                server_id,
+                                cx,
+                            )
                         })?;
                         if let Some(resolved_hint_task) = resolved_hint_task {
                             let mut resolved_hint =
@@ -895,11 +887,13 @@ fn fetch_and_update_hints(
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(|editor, mut cx| async move {
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-        let (lsp_request_limiter, multi_buffer_snapshot) = editor.update(&mut cx, |editor, cx| {
-            let multi_buffer_snapshot  = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-            let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
-            (lsp_request_limiter, multi_buffer_snapshot)
-        })?;
+        let (lsp_request_limiter, multi_buffer_snapshot) =
+            editor.update(&mut cx, |editor, cx| {
+                let multi_buffer_snapshot =
+                    editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+                let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
+                (lsp_request_limiter, multi_buffer_snapshot)
+            })?;
 
         let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
             (None, false)
@@ -909,12 +903,15 @@ fn fetch_and_update_hints(
                 None => (Some(lsp_request_limiter.acquire().await), true),
             }
         };
-        let fetch_range_to_log =
-            fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
+        let fetch_range_to_log = fetch_range.start.to_point(&buffer_snapshot)
+            ..fetch_range.end.to_point(&buffer_snapshot);
         let inlay_hints_fetch_task = editor
             .update(&mut cx, |editor, cx| {
                 if got_throttled {
-                    let query_not_around_visible_range = match editor.excerpts_for_inlay_hints_query(None, cx).remove(&query.excerpt_id) {
+                    let query_not_around_visible_range = match editor
+                        .excerpts_for_inlay_hints_query(None, cx)
+                        .remove(&query.excerpt_id)
+                    {
                         Some((_, _, current_visible_range)) => {
                             let visible_offset_length = current_visible_range.len();
                             let double_visible_range = current_visible_range
@@ -928,11 +925,11 @@ fn fetch_and_update_hints(
                                 .contains(&fetch_range.start.to_offset(&buffer_snapshot))
                                 && !double_visible_range
                                     .contains(&fetch_range.end.to_offset(&buffer_snapshot))
-                        },
+                        }
                         None => true,
                     };
                     if query_not_around_visible_range {
-                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                        // log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
                         if let Some(task_ranges) = editor
                             .inlay_hint_cache
                             .update_tasks
@@ -943,16 +940,12 @@ fn fetch_and_update_hints(
                         return None;
                     }
                 }
+
+                let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
                 editor
-                    .buffer()
-                    .read(cx)
-                    .buffer(query.buffer_id)
-                    .and_then(|buffer| {
-                        let project = editor.project.as_ref()?;
-                        Some(project.update(cx, |project, cx| {
-                            project.inlay_hints(buffer, fetch_range.clone(), cx)
-                        }))
-                    })
+                    .semantics_provider
+                    .as_ref()?
+                    .inlay_hints(buffer, fetch_range.clone(), cx)
             })
             .ok()
             .flatten();
@@ -1004,12 +997,12 @@ fn fetch_and_update_hints(
             })
             .await;
         if let Some(new_update) = new_update {
-            log::debug!(
-                "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
-                new_update.remove_from_visible.len(),
-                new_update.remove_from_cache.len(),
-                new_update.add_to_cache.len()
-            );
+            // log::debug!(
+            //     "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
+            //     new_update.remove_from_visible.len(),
+            //     new_update.remove_from_cache.len(),
+            //     new_update.add_to_cache.len()
+            // );
             log::trace!("New update: {new_update:?}");
             editor
                 .update(&mut cx, |editor, cx| {

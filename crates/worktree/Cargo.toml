@@ -56,4 +56,5 @@ gpui = { workspace = true, features = ["test-support"] }
 http_client.workspace = true
 pretty_assertions.workspace = true
 rand.workspace = true
+rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }

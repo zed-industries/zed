@@ -9,19 +9,21 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [features]
-test-support = []
+test-support = [
+    "tree-sitter"
+]
 load-grammars = [
     "tree-sitter-bash",
     "tree-sitter-c",
     "tree-sitter-cpp",
     "tree-sitter-css",
+    "tree-sitter-diff",
     "tree-sitter-go",
     "tree-sitter-go-mod",
     "tree-sitter-gowork",
     "tree-sitter-jsdoc",
     "tree-sitter-json",
     "tree-sitter-md",
-    "protols-tree-sitter-proto",
     "tree-sitter-python",
     "tree-sitter-regex",
     "tree-sitter-rust",
@@ -46,7 +48,6 @@ lsp.workspace = true
 node_runtime.workspace = true
 paths.workspace = true
 project.workspace = true
-protols-tree-sitter-proto = { workspace = true, optional = true }
 regex.workspace = true
 rope.workspace = true
 rust-embed.workspace = true
@@ -61,6 +62,7 @@ tree-sitter-bash = { workspace = true, optional = true }
 tree-sitter-c = { workspace = true, optional = true }
 tree-sitter-cpp = { workspace = true, optional = true }
 tree-sitter-css = { workspace = true, optional = true }
+tree-sitter-diff = { workspace = true, optional = true }
 tree-sitter-go = { workspace = true, optional = true }
 tree-sitter-go-mod = { workspace = true, optional = true }
 tree-sitter-gowork = { workspace = true, optional = true }
@@ -75,6 +77,7 @@ tree-sitter-yaml = { workspace = true, optional = true }
 util.workspace = true
 
 [dev-dependencies]
+tree-sitter.workspace = true
 text.workspace = true
 theme = { workspace = true, features = ["test-support"] }
 unindent.workspace = true

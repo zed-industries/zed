@@ -1,8 +1,8 @@
 mod project_panel_settings;
-mod scrollbar;
+
 use client::{ErrorCode, ErrorExt};
-use scrollbar::ProjectPanelScrollbar;
 use settings::{Settings, SettingsStore};
+use ui::{Scrollbar, ScrollbarState};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
@@ -14,12 +14,11 @@ use file_icons::FileIcons;
 
 use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, BTreeSet, HashMap};
-use core::f32;
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
     Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
@@ -35,12 +34,11 @@ use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
-    cell::{Cell, OnceCell},
+    cell::OnceCell,
     collections::HashSet,
     ffi::OsStr,
     ops::Range,
     path::{Path, PathBuf},
-    rc::Rc,
     sync::Arc,
     time::Duration,
 };
@@ -63,8 +61,8 @@ const NEW_ENTRY_ID: ProjectEntryId = ProjectEntryId::MAX;
 pub struct ProjectPanel {
     project: Model<Project>,
     fs: Arc<dyn Fs>,
-    scroll_handle: UniformListScrollHandle,
     focus_handle: FocusHandle,
+    scroll_handle: UniformListScrollHandle,
     visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
     /// Maps from leaf project entry ID to the currently selected ancestor.
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
@@ -86,8 +84,8 @@ pub struct ProjectPanel {
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     show_scrollbar: bool,
-    vertical_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
-    horizontal_scrollbar_drag_thumb_offset: Rc<Cell<Option<f32>>>,
+    vertical_scrollbar_state: ScrollbarState,
+    horizontal_scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
 }
@@ -98,7 +96,6 @@ struct EditState {
     entry_id: ProjectEntryId,
     is_new_entry: bool,
     is_dir: bool,
-    is_symlink: bool,
     depth: usize,
     processing_filename: Option<String>,
 }
@@ -301,10 +298,10 @@ impl ProjectPanel {
             })
             .detach();
 
+            let scroll_handle = UniformListScrollHandle::new();
             let mut this = Self {
                 project: project.clone(),
                 fs: workspace.app_state().fs.clone(),
-                scroll_handle: UniformListScrollHandle::new(),
                 focus_handle,
                 visible_entries: Default::default(),
                 ancestors: Default::default(),
@@ -324,9 +321,12 @@ impl ProjectPanel {
                 pending_serialization: Task::ready(None),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
-                vertical_scrollbar_drag_thumb_offset: Default::default(),
-                horizontal_scrollbar_drag_thumb_offset: Default::default(),
+                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(cx.view()),
+                horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(cx.view()),
                 max_width_item_index: None,
+                scroll_handle,
             };
             this.update_visible_entries(None, cx);
 
@@ -348,16 +348,17 @@ impl ProjectPanel {
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
 
-                                project_panel.update(cx, |this, _| {
-                                    if !mark_selected {
-                                        this.marked_entries.clear();
-                                    }
-                                    this.marked_entries.insert(SelectedEntry {
-                                        worktree_id,
-                                        entry_id
-                                    });
-                                }).ok();
+                            project_panel.update(cx, |this, _| {
+                                if !mark_selected {
+                                    this.marked_entries.clear();
+                                }
+                                this.marked_entries.insert(SelectedEntry {
+                                    worktree_id,
+                                    entry_id
+                                });
+                            }).ok();
 
+                            let is_via_ssh = project.read(cx).is_via_ssh();
 
                             workspace
                                 .open_path_preview(
@@ -372,7 +373,11 @@ impl ProjectPanel {
                                 )
                                 .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
                                     match e.error_code() {
-                                        ErrorCode::Disconnected => Some("Disconnected from remote project".to_string()),
+                                        ErrorCode::Disconnected => if is_via_ssh {
+                                            Some("Disconnected from SSH host".to_string())
+                                        } else {
+                                            Some("Disconnected from remote project".to_string())
+                                        },
                                         ErrorCode::UnsharedItem => Some(format!(
                                             "{} is not shared by the host. This could be because it has been marked as `private`",
                                             file_path.display()
@@ -497,7 +502,7 @@ impl ProjectPanel {
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let worktree_id = worktree.id();
-            let is_read_only = project.is_read_only();
+            let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
             let is_local = project.is_local();
 
@@ -889,9 +894,10 @@ impl ProjectPanel {
 
                             if is_dir {
                                 project_panel.project.update(cx, |_, cx| {
-                                    cx.emit(project::Event::Notification(format!(
-                                        "Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel"
-                                    )))
+                                    cx.emit(project::Event::Toast {
+                                        notification_id: "excluded-directory".into(),
+                                        message: format!("Created an excluded directory at {abs_path:?}.\nAlter `file_scan_exclusions` in the settings to show it in the panel")
+                                    })
                                 });
                                 None
                             } else {
@@ -995,7 +1001,6 @@ impl ProjectPanel {
                 is_new_entry: true,
                 is_dir,
                 processing_filename: None,
-                is_symlink: false,
                 depth: 0,
             });
             self.filename_editor.update(cx, |editor, cx| {
@@ -1035,7 +1040,6 @@ impl ProjectPanel {
                         is_new_entry: false,
                         is_dir: entry.is_dir(),
                         processing_filename: None,
-                        is_symlink: entry.is_symlink,
                         depth: 0,
                     });
                     let file_name = entry
@@ -1541,16 +1545,15 @@ impl ProjectPanel {
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            let abs_path = worktree.abs_path().join(&entry.path);
+            let abs_path = match &entry.canonical_path {
+                Some(canonical_path) => Some(canonical_path.to_path_buf()),
+                None => worktree.absolutize(&entry.path).ok(),
+            };
+
             let working_directory = if entry.is_dir() {
-                Some(abs_path)
+                abs_path
             } else {
-                if entry.is_symlink {
-                    abs_path.canonicalize().ok()
-                } else {
-                    Some(abs_path)
-                }
-                .and_then(|path| Some(path.parent()?.to_path_buf()))
+                abs_path.and_then(|path| Some(path.parent()?.to_path_buf()))
             };
             if let Some(working_directory) = working_directory {
                 cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
@@ -1839,7 +1842,6 @@ impl ProjectPanel {
                         .unwrap_or_default();
                     if let Some(edit_state) = &mut self.edit_state {
                         if edit_state.entry_id == entry.id {
-                            edit_state.is_symlink = entry.is_symlink;
                             edit_state.depth = depth;
                         }
                     }
@@ -1870,7 +1872,6 @@ impl ProjectPanel {
                         is_private: false,
                         git_status: entry.git_status,
                         canonical_path: entry.canonical_path.clone(),
-                        is_symlink: entry.is_symlink,
                         char_bag: entry.char_bag,
                         is_fifo: entry.is_fifo,
                     });
@@ -1921,17 +1922,15 @@ impl ProjectPanel {
                                     Some(Arc::<Path>::from(full_path.join(suffix)))
                                 })
                         })
+                        .or_else(|| entry.path.file_name().map(Path::new).map(Arc::from))
                         .unwrap_or_else(|| entry.path.clone());
-                    let depth = path
-                        .strip_prefix(worktree_abs_path)
-                        .map(|suffix| suffix.components().count())
-                        .unwrap_or_default();
+                    let depth = path.components().count();
                     (depth, path)
                 };
                 let width_estimate = item_width_estimate(
                     depth,
                     path.to_string_lossy().chars().count(),
-                    entry.is_symlink,
+                    entry.canonical_path.is_some(),
                 );
 
                 match max_width_item.as_mut() {
@@ -2517,71 +2516,62 @@ impl ProjectPanel {
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
-                            h_flex().h_6().map(|this| {
+                            h_flex().h_6().map(|mut this| {
                                 if let Some(folded_ancestors) =
                                     is_active.then(|| self.ancestors.get(&entry_id)).flatten()
                                 {
-                                    let Some(part_to_highlight) = Path::new(&file_name)
-                                        .ancestors()
-                                        .nth(folded_ancestors.current_ancestor_depth)
-                                    else {
-                                        return this;
-                                    };
+                                    let components = Path::new(&file_name)
+                                        .components()
+                                        .map(|comp| {
+                                            let comp_str =
+                                                comp.as_os_str().to_string_lossy().into_owned();
+                                            comp_str
+                                        })
+                                        .collect::<Vec<_>>();
+                                    let components_len = components.len();
+                                    let active_index = components_len
+                                        - 1
+                                        - folded_ancestors.current_ancestor_depth;
+                                    const DELIMITER: SharedString =
+                                        SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
+                                    for (index, component) in components.into_iter().enumerate() {
+                                        if index != 0 {
+                                            this = this.child(
+                                                Label::new(DELIMITER.clone())
+                                                    .single_line()
+                                                    .color(filename_text_color),
+                                            );
+                                        }
+                                        let id = SharedString::from(format!(
+                                            "project_panel_path_component_{}_{index}",
+                                            entry_id.to_usize()
+                                        ));
+                                        let label = div()
+                                            .id(id)
+                                            .on_click(cx.listener(move |this, _, cx| {
+                                                if index != active_index {
+                                                    if let Some(folds) =
+                                                        this.ancestors.get_mut(&entry_id)
+                                                    {
+                                                        folds.current_ancestor_depth =
+                                                            components_len - 1 - index;
+                                                        cx.notify();
+                                                    }
+                                                }
+                                            }))
+                                            .child(
+                                                Label::new(component)
+                                                    .single_line()
+                                                    .color(filename_text_color)
+                                                    .when(index == active_index, |this| {
+                                                        this.underline(true)
+                                                    }),
+                                            );
 
-                                    let suffix = Path::new(&file_name)
-                                        .strip_prefix(part_to_highlight)
-                                        .ok()
-                                        .filter(|suffix| !suffix.as_os_str().is_empty());
-                                    let prefix = part_to_highlight
-                                        .parent()
-                                        .filter(|prefix| !prefix.as_os_str().is_empty());
-                                    let Some(part_to_highlight) = part_to_highlight
-                                        .file_name()
-                                        .and_then(|name| name.to_str().map(String::from))
-                                    else {
-                                        return this;
-                                    };
+                                        this = this.child(label);
+                                    }
 
-                                    this.children(prefix.and_then(|prefix| {
-                                        Some(
-                                            h_flex()
-                                                .child(
-                                                    Label::new(prefix.to_str().map(String::from)?)
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                )
-                                                .child(
-                                                    Label::new(std::path::MAIN_SEPARATOR_STR)
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                ),
-                                        )
-                                    }))
-                                    .child(
-                                        Label::new(part_to_highlight)
-                                            .single_line()
-                                            .color(filename_text_color)
-                                            .underline(true),
-                                    )
-                                    .children(
-                                        suffix.and_then(|suffix| {
-                                            Some(
-                                                h_flex()
-                                                    .child(
-                                                        Label::new(std::path::MAIN_SEPARATOR_STR)
-                                                            .single_line()
-                                                            .color(filename_text_color),
-                                                    )
-                                                    .child(
-                                                        Label::new(
-                                                            suffix.to_str().map(String::from)?,
-                                                        )
-                                                        .single_line()
-                                                        .color(filename_text_color),
-                                                    ),
-                                            )
-                                        }),
-                                    )
+                                    this
                                 } else {
                                     this.child(
                                         Label::new(file_name)
@@ -2694,37 +2684,11 @@ impl ProjectPanel {
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx) {
-            return None;
-        }
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let total_list_length = scroll_handle
-            .last_item_size
-            .filter(|_| {
-                self.show_scrollbar || self.vertical_scrollbar_drag_thumb_offset.get().is_some()
-            })?
-            .contents
-            .height
-            .0 as f64;
-        let current_offset = scroll_handle.base_handle.offset().y.0.min(0.).abs() as f64;
-        let mut percentage = current_offset / total_list_length;
-        let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.height.0 as f64)
-            / total_list_length;
-        // Uniform scroll handle might briefly report an offset greater than the length of a list;
-        // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
-        let overshoot = (end_offset - 1.).clamp(0., 1.);
-        if overshoot > 0. {
-            percentage -= overshoot;
-        }
-        const MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT: f64 = 0.005;
-        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT > 1.0 || end_offset > total_list_length
+        if !Self::should_show_scrollbar(cx)
+            || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
         {
             return None;
         }
-        if total_list_length < scroll_handle.base_handle.bounds().size.height.0 as f64 {
-            return None;
-        }
-        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_HEIGHT, 1.);
         Some(
             div()
                 .occlude()
@@ -2742,7 +2706,7 @@ impl ProjectPanel {
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|this, _, cx| {
-                        if this.vertical_scrollbar_drag_thumb_offset.get().is_none()
+                        if !this.vertical_scrollbar_state.is_dragging()
                             && !this.focus_handle.contains_focused(cx)
                         {
                             this.hide_scrollbar(cx);
@@ -2762,48 +2726,20 @@ impl ProjectPanel {
                 .bottom_1()
                 .w(px(12.))
                 .cursor_default()
-                .child(ProjectPanelScrollbar::vertical(
-                    percentage as f32..end_offset as f32,
-                    self.scroll_handle.clone(),
-                    self.vertical_scrollbar_drag_thumb_offset.clone(),
-                    cx.view().entity_id(),
+                .children(Scrollbar::vertical(
+                    // percentage as f32..end_offset as f32,
+                    self.vertical_scrollbar_state.clone(),
                 )),
         )
     }
 
     fn render_horizontal_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx) {
-            return None;
-        }
-        let scroll_handle = self.scroll_handle.0.borrow();
-        let longest_item_width = scroll_handle
-            .last_item_size
-            .filter(|_| {
-                self.show_scrollbar || self.horizontal_scrollbar_drag_thumb_offset.get().is_some()
-            })
-            .filter(|size| size.contents.width > size.item.width)?
-            .contents
-            .width
-            .0 as f64;
-        let current_offset = scroll_handle.base_handle.offset().x.0.min(0.).abs() as f64;
-        let mut percentage = current_offset / longest_item_width;
-        let end_offset = (current_offset + scroll_handle.base_handle.bounds().size.width.0 as f64)
-            / longest_item_width;
-        // Uniform scroll handle might briefly report an offset greater than the length of a list;
-        // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
-        let overshoot = (end_offset - 1.).clamp(0., 1.);
-        if overshoot > 0. {
-            percentage -= overshoot;
-        }
-        const MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH: f64 = 0.005;
-        if percentage + MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH > 1.0 || end_offset > longest_item_width
+        if !Self::should_show_scrollbar(cx)
+            || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
         {
             return None;
         }
-        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
-            return None;
-        }
-        let end_offset = end_offset.clamp(percentage + MINIMUM_SCROLLBAR_PERCENTAGE_WIDTH, 1.);
+
         Some(
             div()
                 .occlude()
@@ -2821,7 +2757,7 @@ impl ProjectPanel {
                 .on_mouse_up(
                     MouseButton::Left,
                     cx.listener(|this, _, cx| {
-                        if this.horizontal_scrollbar_drag_thumb_offset.get().is_none()
+                        if !this.horizontal_scrollbar_state.is_dragging()
                             && !this.focus_handle.contains_focused(cx)
                         {
                             this.hide_scrollbar(cx);
@@ -2842,11 +2778,8 @@ impl ProjectPanel {
                 .h(px(12.))
                 .cursor_default()
                 .when(self.width.is_some(), |this| {
-                    this.child(ProjectPanelScrollbar::horizontal(
-                        percentage as f32..end_offset as f32,
-                        self.scroll_handle.clone(),
-                        self.horizontal_scrollbar_drag_thumb_offset.clone(),
-                        cx.view().entity_id(),
+                    this.children(Scrollbar::horizontal(
+                        self.horizontal_scrollbar_state.clone(),
                     ))
                 }),
         )
@@ -3059,7 +2992,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
-                .when(!project.is_read_only(), |el| {
+                .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
                         .on_action(cx.listener(Self::rename))
@@ -3216,7 +3149,9 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(cx))
-                .children(self.render_horizontal_scrollbar(cx))
+                .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
+                    this.pb_4().child(scrollbar)
+                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()

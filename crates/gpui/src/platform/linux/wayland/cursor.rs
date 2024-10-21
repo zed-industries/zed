@@ -11,7 +11,6 @@ pub(crate) struct Cursor {
     theme_name: Option<String>,
     surface: WlSurface,
     size: u32,
-    scale: u32,
     shm: WlShm,
     connection: Connection,
 }
@@ -24,7 +23,7 @@ impl Drop for Cursor {
 }
 
 impl Cursor {
-    pub fn new(connection: &Connection, globals: &Globals, size: u32, scale: u32) -> Self {
+    pub fn new(connection: &Connection, globals: &Globals, size: u32) -> Self {
         Self {
             theme: CursorTheme::load(&connection, globals.shm.clone(), size).log_err(),
             theme_name: None,
@@ -32,7 +31,6 @@ impl Cursor {
             shm: globals.shm.clone(),
             connection: connection.clone(),
             size,
-            scale,
         }
     }
 
@@ -40,18 +38,14 @@ impl Cursor {
         if let Some(size) = size {
             self.size = size;
         }
-        if let Some(theme) = CursorTheme::load_from_name(
-            &self.connection,
-            self.shm.clone(),
-            theme_name,
-            self.size * self.scale,
-        )
-        .log_err()
+        if let Some(theme) =
+            CursorTheme::load_from_name(&self.connection, self.shm.clone(), theme_name, self.size)
+                .log_err()
         {
             self.theme = Some(theme);
             self.theme_name = Some(theme_name.to_string());
         } else if let Some(theme) =
-            CursorTheme::load(&self.connection, self.shm.clone(), self.size * self.scale).log_err()
+            CursorTheme::load(&self.connection, self.shm.clone(), self.size).log_err()
         {
             self.theme = Some(theme);
             self.theme_name = None;
@@ -97,22 +91,9 @@ impl Cursor {
                 let (width, height) = buffer.dimensions();
                 let (hot_x, hot_y) = buffer.hotspot();
 
-                let scaled_width = width / self.scale;
-                let scaled_height = height / self.scale;
-                let scaled_hot_x = hot_x / self.scale;
-                let scaled_hot_y = hot_y / self.scale;
-
-                self.surface.set_buffer_scale(self.scale as i32);
-
-                wl_pointer.set_cursor(
-                    serial_id,
-                    Some(&self.surface),
-                    scaled_hot_x as i32,
-                    scaled_hot_y as i32,
-                );
+                wl_pointer.set_cursor(serial_id, Some(&self.surface), hot_x as i32, hot_y as i32);
                 self.surface.attach(Some(&buffer), 0, 0);
-                self.surface
-                    .damage(0, 0, scaled_width as i32, scaled_height as i32);
+                self.surface.damage(0, 0, width as i32, height as i32);
                 self.surface.commit();
             }
         } else {

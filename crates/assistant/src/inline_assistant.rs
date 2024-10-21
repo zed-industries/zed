@@ -50,6 +50,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
@@ -81,31 +82,11 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    assist_observations: HashMap<
-        InlineAssistId,
-        (
-            async_watch::Sender<AssistStatus>,
-            async_watch::Receiver<AssistStatus>,
-        ),
-    >,
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
-}
-
-pub enum AssistStatus {
-    Idle,
-    Started,
-    Stopped,
-    Finished,
-}
-
-impl AssistStatus {
-    pub fn is_done(&self) -> bool {
-        matches!(self, Self::Stopped | Self::Finished)
-    }
 }
 
 impl Global for InlineAssistant {}
@@ -122,7 +103,6 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
-            assist_observations: HashMap::default(),
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
@@ -209,18 +189,6 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
-        if let Some(telemetry) = self.telemetry.as_ref() {
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                telemetry.report_assistant_event(
-                    None,
-                    telemetry_events::AssistantKind::Inline,
-                    telemetry_events::AssistantPhase::Invoked,
-                    model.telemetry_id(),
-                    None,
-                    None,
-                );
-            }
-        }
         let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
 
         let mut selections = Vec::<Selection<Point>>::new();
@@ -267,6 +235,21 @@ impl InlineAssistant {
                 text_anchor: buffer.anchor_after(buffer_range.end),
             };
             codegen_ranges.push(start..end);
+
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                    telemetry.report_assistant_event(AssistantEvent {
+                        conversation_id: None,
+                        kind: AssistantKind::Inline,
+                        phase: AssistantPhase::Invoked,
+                        model: model.telemetry_id(),
+                        model_provider: model.provider_id().to_string(),
+                        response_latency: None,
+                        error_message: None,
+                        language_name: buffer.language().map(|language| language.name().to_proto()),
+                    });
+                }
+            }
         }
 
         let assist_group_id = self.next_assist_group_id.post_inc();
@@ -761,23 +744,34 @@ impl InlineAssistant {
     }
 
     pub fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
-        if let Some(telemetry) = self.telemetry.as_ref() {
-            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                telemetry.report_assistant_event(
-                    None,
-                    telemetry_events::AssistantKind::Inline,
-                    if undo {
-                        telemetry_events::AssistantPhase::Rejected
-                    } else {
-                        telemetry_events::AssistantPhase::Accepted
-                    },
-                    model.telemetry_id(),
-                    None,
-                    None,
-                );
-            }
-        }
         if let Some(assist) = self.assists.get(&assist_id) {
+            if let Some(telemetry) = self.telemetry.as_ref() {
+                if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                    let language_name = assist.editor.upgrade().and_then(|editor| {
+                        let multibuffer = editor.read(cx).buffer().read(cx);
+                        let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
+                        ranges
+                            .first()
+                            .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                            .map(|language| language.name())
+                    });
+                    telemetry.report_assistant_event(AssistantEvent {
+                        conversation_id: None,
+                        kind: AssistantKind::Inline,
+                        phase: if undo {
+                            AssistantPhase::Rejected
+                        } else {
+                            AssistantPhase::Accepted
+                        },
+                        model: model.telemetry_id(),
+                        model_provider: model.provider_id().to_string(),
+                        response_latency: None,
+                        error_message: None,
+                        language_name: language_name.map(|name| name.to_proto()),
+                    });
+                }
+            }
+
             let assist_group_id = assist.group_id;
             if self.assist_groups[&assist_group_id].linked {
                 for assist_id in self.unlink_assist_group(assist_group_id, cx) {
@@ -820,17 +814,6 @@ impl InlineAssistant {
                     .insert(assist_id, confirmed_alternative);
             }
         }
-
-        // Remove the assist from the status updates map
-        self.assist_observations.remove(&assist_id);
-    }
-
-    pub fn undo_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
-        let Some(codegen) = self.confirmed_assists.remove(&assist_id) else {
-            return false;
-        };
-        codegen.update(cx, |this, cx| this.undo(cx));
-        true
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -1024,10 +1007,6 @@ impl InlineAssistant {
                 codegen.start(user_prompt, assistant_panel_context, cx)
             })
             .log_err();
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Started).ok();
-        }
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -1038,25 +1017,6 @@ impl InlineAssistant {
         };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Stopped).ok();
-        }
-    }
-
-    pub fn assist_status(&self, assist_id: InlineAssistId, cx: &AppContext) -> InlineAssistStatus {
-        if let Some(assist) = self.assists.get(&assist_id) {
-            match assist.codegen.read(cx).status(cx) {
-                CodegenStatus::Idle => InlineAssistStatus::Idle,
-                CodegenStatus::Pending => InlineAssistStatus::Pending,
-                CodegenStatus::Done => InlineAssistStatus::Done,
-                CodegenStatus::Error(_) => InlineAssistStatus::Error,
-            }
-        } else if self.confirmed_assists.contains_key(&assist_id) {
-            InlineAssistStatus::Confirmed
-        } else {
-            InlineAssistStatus::Canceled
-        }
     }
 
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
@@ -1241,42 +1201,6 @@ impl InlineAssistant {
                 .into_iter()
                 .collect();
         })
-    }
-
-    pub fn observe_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-    ) -> async_watch::Receiver<AssistStatus> {
-        if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
-            rx.clone()
-        } else {
-            let (tx, rx) = async_watch::channel(AssistStatus::Idle);
-            self.assist_observations.insert(assist_id, (tx, rx.clone()));
-            rx
-        }
-    }
-}
-
-pub enum InlineAssistStatus {
-    Idle,
-    Pending,
-    Done,
-    Error,
-    Confirmed,
-    Canceled,
-}
-
-impl InlineAssistStatus {
-    pub(crate) fn is_pending(&self) -> bool {
-        matches!(self, Self::Pending)
-    }
-
-    pub(crate) fn is_confirmed(&self) -> bool {
-        matches!(self, Self::Confirmed)
-    }
-
-    pub(crate) fn is_done(&self) -> bool {
-        matches!(self, Self::Done)
     }
 }
 
@@ -2263,7 +2187,7 @@ impl InlineAssist {
                                             struct InlineAssistantError;
 
                                             let id =
-                                                NotificationId::identified::<InlineAssistantError>(
+                                                NotificationId::composite::<InlineAssistantError>(
                                                     assist_id.0,
                                                 );
 
@@ -2275,8 +2199,6 @@ impl InlineAssist {
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
-                            } else if let Some(tx) = this.assist_observations.get(&assist_id) {
-                                tx.0.send(AssistStatus::Finished).ok();
                             }
                         }
                     })
@@ -2706,6 +2628,7 @@ impl CodegenAlternative {
         self.edit_position = Some(self.range.start.bias_right(&self.snapshot));
 
         let telemetry_id = model.telemetry_id();
+        let provider_id = model.provider_id();
         let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
             if user_prompt.trim().to_lowercase() == "delete" {
                 async { Ok(stream::empty().boxed()) }.boxed_local()
@@ -2716,7 +2639,7 @@ impl CodegenAlternative {
                     .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
                 async move { Ok(chunks.await?.boxed()) }.boxed_local()
             };
-        self.handle_stream(telemetry_id, chunks, cx);
+        self.handle_stream(telemetry_id, provider_id.to_string(), chunks, cx);
         Ok(())
     }
 
@@ -2780,6 +2703,7 @@ impl CodegenAlternative {
     pub fn handle_stream(
         &mut self,
         model_telemetry_id: String,
+        model_provider_id: String,
         stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
         cx: &mut ModelContext<Self>,
     ) {
@@ -2810,6 +2734,15 @@ impl CodegenAlternative {
         }
 
         let telemetry = self.telemetry.clone();
+        let language_name = {
+            let multibuffer = self.buffer.read(cx);
+            let ranges = multibuffer.range_to_buffer_ranges(self.range.clone(), cx);
+            ranges
+                .first()
+                .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                .map(|language| language.name())
+        };
+
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         let mut edit_start = self.range.start.to_offset(&snapshot);
@@ -2920,14 +2853,16 @@ impl CodegenAlternative {
                             let error_message =
                                 result.as_ref().err().map(|error| error.to_string());
                             if let Some(telemetry) = telemetry {
-                                telemetry.report_assistant_event(
-                                    None,
-                                    telemetry_events::AssistantKind::Inline,
-                                    telemetry_events::AssistantPhase::Response,
-                                    model_telemetry_id,
+                                telemetry.report_assistant_event(AssistantEvent {
+                                    conversation_id: None,
+                                    kind: AssistantKind::Inline,
+                                    phase: AssistantPhase::Response,
+                                    model: model_telemetry_id,
+                                    model_provider: model_provider_id.to_string(),
                                     response_latency,
                                     error_message,
-                                );
+                                    language_name: language_name.map(|name| name.to_proto()),
+                                });
                             }
 
                             result?;
@@ -3540,6 +3475,7 @@ mod tests {
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
+                String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3610,6 +3546,7 @@ mod tests {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
+                String::new(),
                 String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
@@ -3685,6 +3622,7 @@ mod tests {
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
+                String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3758,6 +3696,7 @@ mod tests {
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
                 String::new(),
+                String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,
             )
@@ -3820,6 +3759,7 @@ mod tests {
         let (chunks_tx, chunks_rx) = mpsc::unbounded();
         codegen.update(cx, |codegen, cx| {
             codegen.handle_stream(
+                String::new(),
                 String::new(),
                 future::ready(Ok(chunks_rx.map(Ok).boxed())),
                 cx,

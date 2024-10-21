@@ -12,6 +12,7 @@ message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
+    optional uint32 ack_id = 266;
 
     oneof payload {
         Hello hello = 4;
@@ -245,8 +246,6 @@ message Envelope {
 
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
-        TaskTemplatesResponse task_templates_response = 205;
-        TaskTemplates task_templates = 206;
 
         LinkedEditingRange linked_editing_range = 209;
         LinkedEditingRangeResponse linked_editing_range_response = 210;
@@ -271,6 +270,7 @@ message Envelope {
 
         GetLlmToken get_llm_token = 235;
         GetLlmTokenResponse get_llm_token_response = 236;
+        RefreshLlmToken refresh_llm_token = 259;
 
         LspExtSwitchSourceHeader lsp_ext_switch_source_header = 241;
         LspExtSwitchSourceHeaderResponse lsp_ext_switch_source_header_response = 242;
@@ -282,12 +282,29 @@ message Envelope {
         UpdateUserSettings update_user_settings = 246;
 
         CheckFileExists check_file_exists = 255;
-        CheckFileExistsResponse check_file_exists_response = 256; // current max
+        CheckFileExistsResponse check_file_exists_response = 256;
+
+        ShutdownRemoteServer shutdown_remote_server = 257;
+
+        RemoveWorktree remove_worktree = 258;
+
+        LanguageServerLog language_server_log = 260;
+
+        Toast toast = 261;
+        HideToast hide_toast = 262;
+
+        OpenServerSettings open_server_settings = 263;
+
+        GetPermalinkToLine get_permalink_to_line = 264;
+        GetPermalinkToLineResponse get_permalink_to_line_response = 265;
+
+        FlushBufferedMessages flush_buffered_messages = 267;
     }
 
     reserved 87 to 88;
     reserved 158 to 161;
     reserved 166 to 169;
+    reserved 205 to 206;
     reserved 224 to 229;
     reserved 247 to 254;
 }
@@ -642,6 +659,13 @@ message UpdateWorktreeSettings {
     uint64 worktree_id = 2;
     string path = 3;
     optional string content = 4;
+    optional LocalSettingsKind kind = 5;
+}
+
+enum LocalSettingsKind {
+    Settings = 0;
+    Tasks = 1;
+    Editorconfig = 2;
 }
 
 message CreateProjectEntry {
@@ -1189,7 +1213,7 @@ message ResolveState {
     }
 
     message LspResolveState {
-        string value = 1;
+        optional string value = 1;
         uint64 server_id = 2;
     }
 }
@@ -1283,6 +1307,7 @@ message LamportTimestamp {
 message LanguageServer {
     uint64 id = 1;
     string name = 2;
+    optional uint64 worktree_id = 3;
 }
 
 message StartLanguageServer {
@@ -1335,6 +1360,20 @@ message LspWorkEnd {
 message LspDiskBasedDiagnosticsUpdating {}
 
 message LspDiskBasedDiagnosticsUpdated {}
+
+message LanguageServerLog {
+    uint64 project_id = 1;
+    uint64 language_server_id = 2;
+    oneof log_type {
+        uint32 log_message_type = 3;
+        LspLogTrace log_trace = 4;
+    }
+    string message = 5;
+}
+
+message LspLogTrace {
+    optional string message = 1;
+}
 
 message UpdateChannels {
     repeated Channel channels = 1;
@@ -1831,12 +1870,13 @@ message Entry {
     string path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
-    bool is_symlink = 6;
     bool is_ignored = 7;
     bool is_external = 8;
+    reserved 6;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
     optional uint64 size = 11;
+    optional string canonical_path = 12;
 }
 
 message RepositoryEntry {
@@ -2251,41 +2291,13 @@ message GetSupermavenApiKeyResponse {
 message TaskContextForLocation {
     uint64 project_id = 1;
     Location location = 2;
+    map<string, string> task_variables = 3;
 }
 
 message TaskContext {
     optional string cwd = 1;
     map<string, string> task_variables = 2;
     map<string, string> project_env = 3;
-}
-
-message TaskTemplates {
-    uint64 project_id = 1;
-    optional Location location = 2;
-    optional uint64 worktree_id = 3;
-}
-
-message TaskTemplatesResponse {
-    repeated TemplatePair templates = 1;
-}
-
-message TemplatePair {
-    TaskSourceKind kind = 1;
-    TaskTemplate template = 2;
-}
-
-message TaskTemplate {
-    string label = 1;
-    string command = 2;
-    repeated string args = 3;
-    map<string, string> env = 4;
-    optional string cwd = 5;
-    bool use_new_terminal = 6;
-    bool allow_concurrent_runs = 7;
-    RevealStrategy reveal = 8;
-    HideStrategy hide = 10;
-    repeated string tags = 9;
-    Shell shell = 11;
 }
 
 message Shell {
@@ -2312,32 +2324,6 @@ enum HideStrategy {
     HideAlways = 0;
     HideNever = 1;
     HideOnSuccess = 2;
-}
-
-message TaskSourceKind {
-    oneof kind {
-        UserInput user_input = 1;
-        Worktree worktree = 2;
-        AbsPath abs_path = 3;
-        Language language = 4;
-    }
-
-    message UserInput {}
-
-    message Worktree {
-        uint64 id = 1;
-        string abs_path = 2;
-        string id_base = 3;
-    }
-
-    message AbsPath {
-        string id_base = 1;
-        string abs_path = 2;
-    }
-
-    message Language {
-        string name = 1;
-    }
 }
 
 message ContextMessageStatus {
@@ -2473,20 +2459,30 @@ message GetLlmTokenResponse {
     string token = 1;
 }
 
+message RefreshLlmToken {}
+
 // Remote FS
 
 message AddWorktree {
     uint64 project_id = 2;
     string path = 1;
+    bool visible = 3;
 }
 
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
+    string canonicalized_path = 2;
 }
 
 message UpdateUserSettings {
     uint64 project_id = 1;
     string content = 2;
+    optional Kind kind = 3;
+
+    enum Kind {
+        Settings = 0;
+        Tasks = 1;
+    }
 }
 
 message CheckFileExists {
@@ -2498,3 +2494,37 @@ message CheckFileExistsResponse {
     bool exists = 1;
     string path = 2;
 }
+
+message ShutdownRemoteServer {}
+
+message RemoveWorktree {
+    uint64 worktree_id = 1;
+}
+
+message Toast {
+    uint64 project_id = 1;
+    string notification_id = 2;
+    string message = 3;
+}
+
+message HideToast {
+    uint64 project_id = 1;
+    string notification_id = 2;
+}
+
+message OpenServerSettings {
+    uint64 project_id = 1;
+}
+
+message GetPermalinkToLine {
+    uint64 project_id = 1;
+    uint64 buffer_id = 2;
+    Range selection = 3;
+}
+
+message GetPermalinkToLineResponse {
+    string permalink = 1;
+}
+
+message FlushBufferedMessages {}
+message FlushBufferedMessagesResponse {}

@@ -78,10 +78,10 @@ CREATE TABLE "worktree_entries" (
     "id" INTEGER NOT NULL,
     "is_dir" BOOL NOT NULL,
     "path" VARCHAR NOT NULL,
+    "canonical_path" TEXT,
     "inode" INTEGER NOT NULL,
     "mtime_seconds" INTEGER NOT NULL,
     "mtime_nanos" INTEGER NOT NULL,
-    "is_symlink" BOOL NOT NULL,
     "is_external" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,
@@ -112,6 +112,7 @@ CREATE TABLE "worktree_settings_files" (
     "worktree_id" INTEGER NOT NULL,
     "path" VARCHAR NOT NULL,
     "content" TEXT,
+    "kind" VARCHAR,
     PRIMARY KEY(project_id, worktree_id, path),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
@@ -420,6 +421,15 @@ CREATE TABLE dev_server_projects (
     dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
     paths TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS billing_preferences (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL
+);
+
+CREATE UNIQUE INDEX "uix_billing_preferences_on_user_id" ON billing_preferences (user_id);
 
 CREATE TABLE IF NOT EXISTS billing_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -289,7 +289,6 @@ impl ProjectSearch {
                     .await;
 
                 this.update(&mut cx, |this, cx| {
-                    this.no_results = Some(false);
                     this.match_ranges.extend(match_ranges);
                     cx.notify();
                 })
@@ -297,6 +296,9 @@ impl ProjectSearch {
             }
 
             this.update(&mut cx, |this, cx| {
+                if !this.match_ranges.is_empty() {
+                    this.no_results = Some(false);
+                }
                 this.limit_reached = limit_reached;
                 this.pending_search.take();
                 cx.notify();
@@ -1634,7 +1636,7 @@ impl Render for ProjectSearchBar {
                             let focus_handle = focus_handle.clone();
                             move |cx| {
                                 Tooltip::for_action_in(
-                                    "Toggle replace",
+                                    "Toggle Replace",
                                     &ToggleReplace,
                                     &focus_handle,
                                     cx,
