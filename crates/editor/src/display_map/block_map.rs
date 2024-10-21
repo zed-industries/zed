@@ -631,10 +631,12 @@ impl BlockMap {
                     },
                     &(),
                 );
+                dbg!(new_transforms.summary());
             }
 
             old_end = WrapRow(old_end.0.min(old_row_count));
             new_end = WrapRow(new_end.0.min(new_row_count));
+            dbg!(new_end);
 
             // Insert an isomorphic transform after the final block.
             let extent_after_last_block = new_end.0 - new_transforms.summary().input_rows;
@@ -1960,11 +1962,13 @@ mod tests {
         let text = "line1\nline2\nline3\nline4\nline5";
 
         let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_subscription = buffer.update(cx, |buffer, _cx| buffer.subscribe());
         let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
-        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
-        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
-        let (_wrap_map, wraps_snapshot) =
+        let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let tab_size = 1.try_into().unwrap();
+        let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, tab_size);
+        let (wrap_map, wraps_snapshot) =
             cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1, 0);
 
@@ -1973,15 +1977,55 @@ mod tests {
             style: BlockStyle::Fixed,
             placement: BlockPlacement::Replace(
                 buffer_snapshot.anchor_after(Point::new(1, 3))
-                    ..buffer_snapshot.anchor_before(Point::new(2, 1)),
+                    ..buffer_snapshot.anchor_before(Point::new(3, 1)),
             ),
-            height: 3,
+            height: 4,
             render: Box::new(|_| div().into_any()),
             priority: 0,
         }]);
 
-        let snapshot = block_map.read(wraps_snapshot, Default::default());
-        assert_eq!(snapshot.text(), "line1\n\n\n\nline4\nline5");
+        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
+        assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
+
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit([(Point::new(2, 0)..Point::new(3, 0), "")], None, cx);
+            buffer.snapshot(cx)
+        });
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(
+            buffer_snapshot.clone(),
+            buffer_subscription.consume().into_inner(),
+        );
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+        assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
+
+        println!("===================");
+        let buffer_snapshot = buffer.update(cx, |buffer, cx| {
+            buffer.edit(
+                [(
+                    Point::new(1, 5)..Point::new(1, 5),
+                    "line 6\nline7\nline 8\nline 9\n",
+                )],
+                None,
+                cx,
+            );
+            buffer.snapshot(cx)
+        });
+        let (inlay_snapshot, inlay_edits) = inlay_map.sync(
+            buffer_snapshot.clone(),
+            buffer_subscription.consume().into_inner(),
+        );
+        let (fold_snapshot, fold_edits) = fold_map.read(inlay_snapshot, inlay_edits);
+        let (tab_snapshot, tab_edits) = tab_map.sync(fold_snapshot, fold_edits, tab_size);
+        let (wraps_snapshot, wrap_edits) = wrap_map.update(cx, |wrap_map, cx| {
+            wrap_map.sync(tab_snapshot, tab_edits, cx)
+        });
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
+        assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
     }
 
     #[gpui::test(iterations = 100)]
