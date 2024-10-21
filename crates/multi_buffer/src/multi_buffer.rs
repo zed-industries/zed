@@ -2463,7 +2463,11 @@ impl MultiBufferSnapshot {
     }
 
     pub fn max_buffer_row(&self) -> MultiBufferRow {
-        self.excerpts.summary().max_buffer_row
+        if self.singleton {
+            self.excerpts.summary().max_buffer_row
+        } else {
+            MultiBufferRow(self.max_point().row)
+        }
     }
 
     pub fn clip_offset(&self, offset: usize, bias: Bias) -> usize {
