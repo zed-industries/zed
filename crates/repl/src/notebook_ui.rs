@@ -13,6 +13,11 @@ use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 actions!(notebook, [OpenNotebook]);
 
 const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
+const SMALL_SPACING_SIZE: f32 = 8.0;
+const MEDIUM_SPACING_SIZE: f32 = 12.0;
+const LARGE_SPACING_SIZE: f32 = 16.0;
+const GUTTER_WIDTH: f32 = 19.0;
+const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -191,22 +196,13 @@ impl RenderOnce for NotebookCodeCell {
             .items_start()
             .gap(Spacing::Large.rems(cx))
             .child(
-                v_flex()
+                div()
+                    .relative()
                     .h_full()
-                    .w(px(19.))
-                    .gap(Spacing::Large.rems(cx))
+                    .w(px(GUTTER_WIDTH))
                     .child(
                         div()
-                            .flex()
-                            .flex_none()
-                            .size(px(19.))
-                            .items_center()
-                            .justify_center()
-                            .child(IconButton::new("run", IconName::Play)),
-                    )
-                    .child(
-                        div()
-                            .w(px(19.))
+                            .w(px(GUTTER_WIDTH))
                             .flex()
                             .flex_none()
                             .justify_center()
@@ -218,6 +214,20 @@ impl RenderOnce for NotebookCodeCell {
                                     .h_full()
                                     .bg(cx.theme().colors().border),
                             ),
+                    )
+                    .child(
+                        div()
+                            .absolute()
+                            .top(px(CODE_BLOCK_INSET - 2.0))
+                            .left_0()
+                            .flex()
+                            .flex_none()
+                            .w(px(GUTTER_WIDTH))
+                            .h(px(GUTTER_WIDTH + 12.0))
+                            .items_center()
+                            .justify_center()
+                            .bg(cx.theme().colors().tab_bar_background)
+                            .child(IconButton::new("run", IconName::Play)),
                     ),
             )
             .child(
@@ -230,6 +240,8 @@ impl RenderOnce for NotebookCodeCell {
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .bg(cx.theme().colors().editor_background)
+                    .font_buffer(cx)
+                    .text_size(TextSize::Editor.rems(cx))
                     .child("Code cell"),
             )
     }
@@ -252,7 +264,7 @@ impl RenderOnce for NotebookMarkdownCell {
             .gap(Spacing::Large.rems(cx))
             .child(
                 div()
-                    .w(px(19.))
+                    .w(px(GUTTER_WIDTH))
                     .flex()
                     .flex_none()
                     .justify_center()
@@ -269,7 +281,7 @@ impl RenderOnce for NotebookMarkdownCell {
                 v_flex()
                     .w_full()
                     .max_w(px(MAX_TEXT_BLOCK_WIDTH))
-                    .px(px(3.))
+                    .px(px(CODE_BLOCK_INSET))
                     .child(Headline::new("Population Data from CSV").size(HeadlineSize::Large))
                     .child("This notebook reads sample population data from `data/atlantis.csv` and plots it using matplotlib. Edit `data/atlantis.csv` and re-run this cell to see how the plots change!"),
             )
