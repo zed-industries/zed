@@ -418,7 +418,7 @@ impl Editor {
                             h_flex()
                                 .px_6()
                                 .size_full()
-                                .justify_between()
+                                .justify_end()
                                 .child(
                                     h_flex()
                                         .gap_1()
