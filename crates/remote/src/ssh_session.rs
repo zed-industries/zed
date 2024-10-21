@@ -1202,7 +1202,7 @@ impl SshRemoteConnection {
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
 
-        delegate.set_status(Some("connecting"), cx);
+        delegate.set_status(Some("Connecting"), cx);
 
         let url = connection_options.ssh_url();
         let temp_dir = tempfile::Builder::new()
