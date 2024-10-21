@@ -121,6 +121,7 @@ impl Render for ApplicationMenu {
                             Box::new(zed_actions::OpenLicenses),
                         )
                         .separator()
+                        .action("Close Window", Box::new(workspace::CloseWindow))
                         .action("Quit", Box::new(zed_actions::Quit))
                 })
                 .into()
