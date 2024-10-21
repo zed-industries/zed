@@ -506,6 +506,11 @@ impl ProjectDiagnosticsEditor {
                         BlockPlacement::Below((excerpt_id, text_anchor)) => BlockPlacement::Below(
                             excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
                         ),
+                        BlockPlacement::Replace(_) => {
+                            unreachable!(
+                                "no Replace block should have been pushed to blocks_to_add"
+                            )
+                        }
                     };
                     Some(BlockProperties {
                         placement,

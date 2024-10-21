@@ -83,6 +83,7 @@ pub type RenderBlock = Box<dyn Send + FnMut(&mut BlockContext) -> AnyElement>;
 pub enum BlockPlacement<T> {
     Above(T),
     Below(T),
+    Replace(Range<T>),
 }
 
 impl<T> BlockPlacement<T> {
@@ -90,6 +91,7 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
+            BlockPlacement::Replace(range) => &range.start,
         }
     }
 
@@ -97,6 +99,7 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => position,
             BlockPlacement::Below(position) => position,
+            BlockPlacement::Replace(range) => &range.end,
         }
     }
 
@@ -104,13 +107,15 @@ impl<T> BlockPlacement<T> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(position),
             BlockPlacement::Below(position) => BlockPlacement::Below(position),
+            BlockPlacement::Replace(range) => BlockPlacement::Replace(&range.start..&range.end),
         }
     }
 
-    pub fn map<R>(self, f: impl FnOnce(T) -> R) -> BlockPlacement<R> {
+    pub fn map<R>(self, mut f: impl FnMut(T) -> R) -> BlockPlacement<R> {
         match self {
             BlockPlacement::Above(position) => BlockPlacement::Above(f(position)),
             BlockPlacement::Below(position) => BlockPlacement::Below(f(position)),
+            BlockPlacement::Replace(range) => BlockPlacement::Replace(f(range.start)..f(range.end)),
         }
     }
 }
@@ -119,13 +124,49 @@ impl BlockPlacement<Anchor> {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
         self.start()
             .cmp(other.start(), buffer)
-            .then_with(|| self.end().cmp(other.end(), buffer))
+            .then_with(|| other.end().cmp(self.end(), buffer))
             .then_with(|| match (self, other) {
                 (BlockPlacement::Above(_), BlockPlacement::Above(_))
-                | (BlockPlacement::Below(_), BlockPlacement::Below(_)) => Ordering::Equal,
+                | (BlockPlacement::Below(_), BlockPlacement::Below(_))
+                | (BlockPlacement::Replace(_), BlockPlacement::Replace(_)) => Ordering::Equal,
                 (BlockPlacement::Above(_), _) => Ordering::Less,
                 (BlockPlacement::Below(_), _) => Ordering::Greater,
+                (BlockPlacement::Replace(_), BlockPlacement::Above(_)) => Ordering::Greater,
+                (BlockPlacement::Replace(_), BlockPlacement::Below(_)) => Ordering::Less,
             })
+    }
+
+    fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
+        let buffer_snapshot = wrap_snapshot.buffer_snapshot();
+        match self {
+            BlockPlacement::Above(position) => {
+                let mut position = position.to_point(buffer_snapshot);
+                position.column = 0;
+                let wrap_row = WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
+                Some(BlockPlacement::Above(wrap_row))
+            }
+            BlockPlacement::Below(position) => {
+                let mut position = position.to_point(buffer_snapshot);
+                position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
+                let wrap_row = WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
+                Some(BlockPlacement::Below(wrap_row))
+            }
+            BlockPlacement::Replace(range) => {
+                let mut start = range.start.to_point(buffer_snapshot);
+                let mut end = range.end.to_point(buffer_snapshot);
+                if start == end {
+                    None
+                } else {
+                    start.column = 0;
+                    let start_wrap_row =
+                        WrapRow(wrap_snapshot.make_wrap_point(start, Bias::Left).row());
+                    end.column = buffer_snapshot.line_len(MultiBufferRow(end.row));
+                    let end_wrap_row =
+                        WrapRow(wrap_snapshot.make_wrap_point(end, Bias::Left).row());
+                    Some(BlockPlacement::Replace(start_wrap_row..end_wrap_row))
+                }
+            }
+        }
     }
 }
 
@@ -133,12 +174,15 @@ impl Ord for BlockPlacement<WrapRow> {
     fn cmp(&self, other: &Self) -> Ordering {
         self.start()
             .cmp(other.start())
-            .then_with(|| self.end().cmp(other.end()))
+            .then_with(|| other.end().cmp(self.end()))
             .then_with(|| match (self, other) {
                 (BlockPlacement::Above(_), BlockPlacement::Above(_))
-                | (BlockPlacement::Below(_), BlockPlacement::Below(_)) => Ordering::Equal,
+                | (BlockPlacement::Below(_), BlockPlacement::Below(_))
+                | (BlockPlacement::Replace(_), BlockPlacement::Replace(_)) => Ordering::Equal,
                 (BlockPlacement::Above(_), _) => Ordering::Less,
                 (BlockPlacement::Below(_), _) => Ordering::Greater,
+                (BlockPlacement::Replace(_), BlockPlacement::Above(_)) => Ordering::Greater,
+                (BlockPlacement::Replace(_), BlockPlacement::Below(_)) => Ordering::Less,
             })
     }
 }
@@ -416,11 +460,11 @@ impl BlockMap {
 
         while let Some(edit) = edits.next() {
             // Preserve any old transforms that precede this edit.
-            let old_start = WrapRow(edit.old.start);
-            let new_start = WrapRow(edit.new.start);
+            let mut old_start = WrapRow(edit.old.start);
+            let mut new_start = WrapRow(edit.new.start);
             new_transforms.append(cursor.slice(&old_start, Bias::Left, &()), &());
             if let Some(transform) = cursor.item() {
-                if transform.is_isomorphic() && old_start == cursor.end(&()) {
+                if transform.summary.input_rows > 0 && old_start == cursor.end(&()) {
                     new_transforms.push(transform.clone(), &());
                     cursor.next(&());
                     while let Some(transform) = cursor.item() {
@@ -434,9 +478,25 @@ impl BlockMap {
                 }
             }
 
-            // Preserve any portion of an old transform that precedes this edit.
-            let extent_before_edit = old_start.0 - cursor.start().0;
-            push_isomorphic(&mut new_transforms, extent_before_edit);
+            let mut skip_blocks_above_start = false;
+            let transform = cursor.item().unwrap();
+            let rows_before_edits = old_start.0 - cursor.start().0;
+            if rows_before_edits > 0 {
+                if transform.block.is_none() {
+                    // Preserve any portion of the old isomorphic transform that precedes this edit.
+                    push_isomorphic(&mut new_transforms, rows_before_edits);
+                } else {
+                    // We landed within a block that replaces some lines, so we
+                    // extend the edit to start at the beginning of the
+                    // replacement.
+                    debug_assert!(transform.summary.input_rows > 0);
+                    old_start.0 -= rows_before_edits;
+                    new_start.0 -= rows_before_edits;
+                    // The blocks *above* it are already in the new transforms, so
+                    // we don't need to re-insert them when querying blocks.
+                    skip_blocks_above_start = true;
+                }
+            }
 
             // Skip over any old transforms that intersect this edit.
             let mut old_end = WrapRow(edit.old.end);
@@ -511,27 +571,16 @@ impl BlockMap {
             last_block_ix = end_block_ix;
 
             debug_assert!(blocks_in_edit.is_empty());
-            blocks_in_edit.extend(self.custom_blocks[start_block_ix..end_block_ix].iter().map(
-                |block| {
-                    let placement = match &block.placement {
-                        BlockPlacement::Above(position) => {
-                            let mut position = position.to_point(buffer);
-                            position.column = 0;
-                            let wrap_row =
-                                WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
-                            BlockPlacement::Above(wrap_row)
-                        }
-                        BlockPlacement::Below(position) => {
-                            let mut position = position.to_point(buffer);
-                            position.column = buffer.line_len(MultiBufferRow(position.row));
-                            let wrap_row =
-                                WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
-                            BlockPlacement::Below(wrap_row)
-                        }
-                    };
-                    (placement, Block::Custom(block.clone()))
-                },
-            ));
+            blocks_in_edit.extend(
+                self.custom_blocks[start_block_ix..end_block_ix]
+                    .iter()
+                    .filter_map(|block| {
+                        Some((
+                            block.placement.to_wrap_row(wrap_snapshot)?,
+                            Block::Custom(block.clone()),
+                        ))
+                    }),
+            );
 
             if buffer.show_headers() {
                 blocks_in_edit.extend(BlockMap::header_and_footer_blocks(
@@ -546,10 +595,18 @@ impl BlockMap {
             }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
+            if skip_blocks_above_start {
+                blocks_in_edit
+                    .retain(|(placement, _)| *placement != BlockPlacement::Above(old_start));
+            }
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
             for (block_placement, block) in blocks_in_edit.drain(..) {
+                let mut summary = TransformSummary {
+                    input_rows: 0,
+                    output_rows: block.height(),
+                };
                 match block_placement {
                     BlockPlacement::Above(position) => {
                         let extent_before_block = position.0 - new_transforms.summary().input_rows;
@@ -560,8 +617,20 @@ impl BlockMap {
                             (position.0 + 1) - new_transforms.summary().input_rows;
                         push_isomorphic(&mut new_transforms, extent_before_block);
                     }
+                    BlockPlacement::Replace(range) => {
+                        let extent_before_block =
+                            range.start.0 - new_transforms.summary().input_rows;
+                        push_isomorphic(&mut new_transforms, extent_before_block);
+                        summary.input_rows = range.end.0 - range.start.0 + 1;
+                    }
                 }
-                new_transforms.push(Transform::block(block), &());
+                new_transforms.push(
+                    Transform {
+                        summary,
+                        block: Some(block),
+                    },
+                    &(),
+                );
             }
 
             old_end = WrapRow(old_end.0.min(old_row_count));
@@ -692,19 +761,19 @@ fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32) {
         return;
     }
 
-    let mut extent = Some(rows);
+    let mut merged = false;
     tree.update_last(
         |last_transform| {
-            if last_transform.is_isomorphic() {
-                let extent = extent.take().unwrap();
-                last_transform.summary.input_rows += extent;
-                last_transform.summary.output_rows += extent;
+            if last_transform.block.is_none() {
+                last_transform.summary.input_rows += rows;
+                last_transform.summary.output_rows += rows;
+                merged = true;
             }
         },
         &(),
     );
-    if let Some(extent) = extent {
-        tree.push(Transform::isomorphic(extent), &());
+    if !merged {
+        tree.push(Transform::isomorphic(rows), &());
     }
 }
 
@@ -961,7 +1030,7 @@ impl BlockSnapshot {
             cursor.seek(&BlockRow(rows.end), Bias::Right, &());
             let overshoot = if cursor
                 .item()
-                .map_or(false, |transform| transform.is_isomorphic())
+                .map_or(false, |transform| transform.block.is_none())
             {
                 rows.end - cursor.start().0 .0
             } else {
@@ -973,7 +1042,7 @@ impl BlockSnapshot {
             cursor.seek(&BlockRow(rows.start), Bias::Right, &());
             let overshoot = if cursor
                 .item()
-                .map_or(false, |transform| transform.is_isomorphic())
+                .map_or(false, |transform| transform.block.is_none())
             {
                 rows.start - cursor.start().0 .0
             } else {
@@ -999,7 +1068,10 @@ impl BlockSnapshot {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&start_row, Bias::Right, &());
         let (output_start, input_start) = cursor.start();
-        let overshoot = if cursor.item().map_or(false, |t| t.is_isomorphic()) {
+        let overshoot = if cursor
+            .item()
+            .map_or(false, |transform| transform.block.is_none())
+        {
             start_row.0 - output_start.0
         } else {
             0
@@ -1126,7 +1198,7 @@ impl BlockSnapshot {
 
         loop {
             if let Some(transform) = cursor.item() {
-                if transform.is_isomorphic() {
+                if transform.block.is_none() {
                     let (output_start_row, input_start_row) = cursor.start();
                     let (output_end_row, input_end_row) = cursor.end(&());
                     let output_start = Point::new(output_start_row.0, 0);
@@ -1167,7 +1239,8 @@ impl BlockSnapshot {
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         if let Some(transform) = cursor.item() {
-            debug_assert!(transform.is_isomorphic());
+            let todo = (); // introduce a new bias parameter.
+                           // debug_assert!(transform.block.is_none());
         } else {
             return self.max_point();
         }
@@ -1215,20 +1288,6 @@ impl Transform {
             },
             block: None,
         }
-    }
-
-    fn block(block: Block) -> Self {
-        Self {
-            summary: TransformSummary {
-                input_rows: 0,
-                output_rows: block.height(),
-            },
-            block: Some(block),
-        }
-    }
-
-    fn is_isomorphic(&self) -> bool {
-        self.block.is_none()
     }
 }
 
@@ -1415,17 +1474,11 @@ impl CustomBlock {
     }
 
     pub fn start(&self) -> Anchor {
-        match &self.placement {
-            BlockPlacement::Above(position) => *position,
-            BlockPlacement::Below(position) => *position,
-        }
+        *self.placement.start()
     }
 
     pub fn end(&self) -> Anchor {
-        match &self.placement {
-            BlockPlacement::Above(position) => *position,
-            BlockPlacement::Below(position) => *position,
-        }
+        *self.placement.end()
     }
 
     pub fn style(&self) -> BlockStyle {
@@ -2036,24 +2089,11 @@ mod tests {
             log::info!("blocks text: {:?}", blocks_snapshot.text());
 
             let mut expected_blocks = Vec::new();
-            expected_blocks.extend(block_map.custom_blocks.iter().map(|block| {
-                let placement = match &block.placement {
-                    BlockPlacement::Above(position) => {
-                        let mut position = position.to_point(&buffer_snapshot);
-                        position.column = 0;
-                        let wrap_row =
-                            WrapRow(wraps_snapshot.make_wrap_point(position, Bias::Left).row());
-                        BlockPlacement::Above(wrap_row)
-                    }
-                    BlockPlacement::Below(position) => {
-                        let mut position = position.to_point(&buffer_snapshot);
-                        position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
-                        let wrap_row =
-                            WrapRow(wraps_snapshot.make_wrap_point(position, Bias::Left).row());
-                        BlockPlacement::Below(wrap_row)
-                    }
-                };
-                (placement, Block::Custom(block.clone()))
+            expected_blocks.extend(block_map.custom_blocks.iter().filter_map(|block| {
+                Some((
+                    block.placement.to_wrap_row(&wraps_snapshot)?,
+                    Block::Custom(block.clone()),
+                ))
             }));
 
             // Note that this needs to be synced with the related section in BlockMap::sync
