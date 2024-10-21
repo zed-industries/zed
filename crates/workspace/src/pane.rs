@@ -251,6 +251,7 @@ pub struct Pane {
     ),
     focus_handle: FocusHandle,
     items: Vec<Box<dyn ItemHandle>>,
+    opened_items: HashMap<EntityId, ProjectEntryId>,
     activation_history: Vec<ActivationHistoryEntry>,
     next_activation_timestamp: Arc<AtomicUsize>,
     zoomed: bool,
@@ -363,6 +364,7 @@ impl Pane {
             alternate_file_items: (None, None),
             focus_handle,
             items: Vec::new(),
+            opened_items: Default::default(),
             activation_history: Vec::new(),
             next_activation_timestamp: next_timestamp.clone(),
             was_focused: false,
@@ -822,6 +824,7 @@ impl Pane {
             if let Some(&entry_id) = item.project_entry_ids(cx).first() {
                 let project = self.project.read(cx);
                 if let Some(project_path) = project.path_for_entry(entry_id, cx) {
+                    self.opened_items.insert(item.item_id(), entry_id);
                     let abs_path = project.absolute_path(&project_path, cx);
                     self.nav_history
                         .0
@@ -1689,16 +1692,23 @@ impl Pane {
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Pane>,
     ) -> Option<()> {
-        let (item_index_to_delete, item_id) = self.items().enumerate().find_map(|(i, item)| {
+        let item_id =
+            self.opened_items
+                .iter()
+                .find_map(|(k, v)| if v == &entry_id { Some(*k) } else { None });
+        if let Some(item_id) = item_id {
+            self.opened_items.remove(&item_id);
+            self.nav_history.remove_item(item_id);
+        }
+        let item_index_to_delete = self.items().enumerate().find_map(|(i, item)| {
             if item.is_singleton(cx) && item.project_entry_ids(cx).as_slice() == [entry_id] {
-                Some((i, item.item_id()))
+                Some(i)
             } else {
                 None
             }
         })?;
 
         self.remove_item(item_index_to_delete, false, true, cx);
-        self.nav_history.remove_item(item_id);
 
         Some(())
     }
