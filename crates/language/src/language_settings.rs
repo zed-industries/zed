@@ -1079,7 +1079,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     );
     merge(&mut settings.linked_edits, src.linked_edits);
     merge(&mut settings.tasks, src.tasks.clone());
-    settings.toolchain = src.toolchain.clone();
+    if let Some(toolchain) = src.toolchain.clone() {
+        settings.toolchain = Some(toolchain);
+    }
+
     merge(
         &mut settings.preferred_line_length,
         src.preferred_line_length,

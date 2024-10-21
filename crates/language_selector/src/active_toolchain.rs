@@ -6,6 +6,7 @@ use gpui::{
     ViewContext, WeakView,
 };
 use language::{language_settings::all_language_settings, File, Toolchain, ToolchainLister};
+use settings::SettingsStore;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -18,6 +19,7 @@ pub struct ActiveToolchain {
     active_file: Option<Arc<dyn File>>,
     _observe_active_editor: Option<Subscription>,
     _observe_language_changes: Subscription,
+    _observe_setting_changes: Subscription,
     _update_toolchain_task: Task<Option<()>>,
 }
 
@@ -33,6 +35,9 @@ impl ActiveToolchain {
             _observe_language_changes: cx.observe(&view, |this, _, cx| {
                 this._update_toolchain_task = Self::spawn_tracker_task(cx);
             }),
+            _observe_setting_changes: cx.observe_global::<SettingsStore>(|this, cx| {
+                this._update_toolchain_task = Self::spawn_tracker_task(cx);
+            }),
             _update_toolchain_task: Self::spawn_tracker_task(cx),
         }
     }
@@ -46,8 +51,8 @@ impl ActiveToolchain {
                 .flatten()?;
             let toolchain = Self::active_toolchain(lister, active_file, cx.clone()).await?;
             let _ = this.update(&mut cx, |this, cx| {
-                dbg!(&toolchain.label);
                 this.active_toolchain = Some(toolchain);
+
                 cx.notify();
             });
             Some(())
@@ -76,10 +81,8 @@ impl ActiveToolchain {
         let language = toolchain.language_name();
         let settings_for = cx
             .update(|cx| {
-                all_language_settings(Some(&file), cx)
-                    .language(Some(&language))
-                    .toolchain
-                    .clone()
+                let all_settings = all_language_settings(Some(&file), cx);
+                all_settings.language(Some(&language)).toolchain.clone()
             })
             .ok()
             .flatten();
@@ -121,6 +124,7 @@ impl StatusItemView for ActiveToolchain {
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
+            self.active_toolchain.take();
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_lister));
             self.update_lister(editor, cx);
         } else {
