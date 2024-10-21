@@ -4,8 +4,8 @@ use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
 use language::LanguageServerName;
 use paths::{
-    local_settings_file_relative_path, local_tasks_file_relative_path,
-    local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
+    local_debug_file_relative_path, local_settings_file_relative_path,
+    local_tasks_file_relative_path, local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
@@ -19,7 +19,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use task::{TaskTemplates, VsCodeTaskFile};
+use task::{DebugTaskFile, TaskTemplates, VsCodeTaskFile};
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -468,6 +468,23 @@ impl SettingsObserver {
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Tasks)
+            } else if path.ends_with(local_debug_file_relative_path()) {
+                let settings_dir = Arc::<Path>::from(
+                    path.ancestors()
+                        .nth(
+                            local_debug_file_relative_path()
+                                .components()
+                                .count()
+                                .saturating_sub(1),
+                        )
+                        .unwrap(),
+                );
+                (
+                    // Debug task file name has to be unique because it will overwrite tasks
+                    // from .zed/tasks.json file if it is not (It was also being overwritten too)
+                    Arc::from(settings_dir.join("debug").as_path()),
+                    LocalSettingsKind::Tasks,
+                )
             } else if path.ends_with(EDITORCONFIG_NAME) {
                 let Some(settings_dir) = path.parent().map(Arc::from) else {
                     continue;
@@ -511,6 +528,21 @@ impl SettingsObserver {
                                     serde_json::to_string(&zed_tasks).with_context(|| {
                                         format!(
                                             "serializing Zed tasks into JSON, file {abs_path:?}"
+                                        )
+                                    })
+                                } else if abs_path.ends_with(local_debug_file_relative_path()) {
+                                    let debug_tasks_content = parse_json_with_comments::<DebugTaskFile>(&content).with_context(|| {
+                                        format!("Parsing Zed debug tasks, file {abs_path:?}")
+                                    })?;
+
+                                    let zed_debug_tasks = TaskTemplates::try_from(debug_tasks_content)
+                                        .with_context(|| {
+                                            format!("Converting zed debugger tasks into Zed tasks, file {abs_path:?}")
+                                        })?;
+
+                                    serde_json::to_string(&zed_debug_tasks).with_context(|| {
+                                        format!(
+                                            "serializing Zed debug tasks into JSON, file {abs_path:?}"
                                         )
                                     })
                                 } else {

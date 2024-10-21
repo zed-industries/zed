@@ -1114,6 +1114,13 @@
   //   }
   // ]
   "ssh_connections": null,
+
+  "debugger": {
+    "stepping_granularity": "line",
+    "save_breakpoints": true,
+    "button": true
+  },
+
   // Configures the Context Server Protocol binaries
   //
   // Examples:

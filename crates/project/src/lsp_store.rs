@@ -1,5 +1,6 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    dap_store::DapStore,
     deserialize_code_actions,
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -141,6 +142,7 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
+    dap_store: Model<DapStore>,
     prettier_store: Model<PrettierStore>,
     current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
     last_formatting_failure: Option<String>,
@@ -870,6 +872,7 @@ impl LspStore {
     pub fn new_local(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
+        dap_store: Model<DapStore>,
         prettier_store: Model<PrettierStore>,
         environment: Model<ProjectEnvironment>,
         languages: Arc<LanguageRegistry>,
@@ -898,6 +901,7 @@ impl LspStore {
                 buffers_being_formatted: Default::default(),
                 last_formatting_failure: None,
                 prettier_store,
+                dap_store,
                 environment,
                 http_client,
                 fs,
@@ -1102,6 +1106,14 @@ impl LspStore {
 
         self.register_buffer_with_language_servers(buffer, cx);
         cx.observe_release(buffer, |this, buffer, cx| {
+            if let Some(lsp_store) = this.as_local_mut() {
+                if let Some(project_path) = buffer.project_path(cx) {
+                    lsp_store.dap_store.update(cx, |store, _cx| {
+                        store.sync_open_breakpoints_to_closed_breakpoints(&project_path, buffer);
+                    });
+                };
+            }
+
             if let Some(file) = File::from_dyn(buffer.file()) {
                 if file.is_local() {
                     let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
