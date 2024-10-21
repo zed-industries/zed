@@ -5,7 +5,7 @@
 //! elements with uniform height.
 
 use crate::{
-    point, px, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
+    point, size, AnyElement, AvailableSpace, Bounds, ContentMask, Element, ElementId,
     GlobalElementId, Hitbox, InteractiveElement, Interactivity, IntoElement, IsZero, LayoutId,
     ListSizingBehavior, Pixels, Render, ScrollHandle, Size, StyleRefinement, Styled, View,
     ViewContext, WindowContext,
@@ -324,7 +324,15 @@ impl Element for UniformList {
                         }
 
                         let bounds = Bounds::new(
-                            padded_bounds.origin + point(px(0.), scroll_offset.y + padding.top),
+                            padded_bounds.origin
+                                + point(
+                                    if can_scroll_horizontally {
+                                        scroll_offset.x + padding.left
+                                    } else {
+                                        scroll_offset.x
+                                    },
+                                    scroll_offset.y + padding.top,
+                                ),
                             padded_bounds.size,
                         );
                         for decoration in &self.decorations {
