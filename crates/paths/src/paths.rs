@@ -319,3 +319,6 @@ pub fn local_vscode_launch_file_relative_path() -> &'static Path {
     static LOCAL_VSCODE_LAUNCH_FILE_RELATIVE_PATH: OnceLock<&Path> = OnceLock::new();
     LOCAL_VSCODE_LAUNCH_FILE_RELATIVE_PATH.get_or_init(|| Path::new(".vscode/launch.json"))
 }
+
+/// A default editorconfig file name to use when resolving project settings.
+pub const EDITORCONFIG_NAME: &str = ".editorconfig";

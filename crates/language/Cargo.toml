@@ -30,6 +30,7 @@ async-trait.workspace = true
 async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
+ec4rs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true

@@ -402,8 +402,11 @@ impl ExtensionImports for WasmState {
                 cx.update(|cx| match category.as_str() {
                     "language" => {
                         let key = key.map(|k| LanguageName::new(&k));
-                        let settings =
-                            AllLanguageSettings::get(location, cx).language(key.as_ref());
+                        let settings = AllLanguageSettings::get(location, cx).language(
+                            location,
+                            key.as_ref(),
+                            cx,
+                        );
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
                         })?)

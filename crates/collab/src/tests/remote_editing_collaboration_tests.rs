@@ -3,7 +3,7 @@ use call::ActiveCall;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
 use http_client::BlockedHttpClient;
-use language::{language_settings::all_language_settings, LanguageRegistry};
+use language::{language_settings::language_settings, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::ProjectPath;
 use remote::SshRemoteClient;
@@ -135,9 +135,7 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.read(|cx| {
         let file = buffer_b.read(cx).file();
         assert_eq!(
-            all_language_settings(file, cx)
-                .language(Some(&("Rust".into())))
-                .language_servers,
+            language_settings(Some("Rust".into()), file, cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });

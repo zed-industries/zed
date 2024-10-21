@@ -2237,7 +2237,7 @@ fn join_project_internal(
                     worktree_id: worktree.id,
                     path: settings_file.path,
                     content: Some(settings_file.content),
-                    kind: Some(proto::update_user_settings::Kind::Settings.into()),
+                    kind: Some(settings_file.kind.to_proto() as i32),
                 },
             )?;
         }
