@@ -291,6 +291,12 @@ pub enum IconName {
     ZedXCopilot,
 }
 
+impl From<IconName> for Icon {
+    fn from(icon: IconName) -> Self {
+        Icon::new(icon)
+    }
+}
+
 #[derive(IntoElement)]
 pub struct Icon {
     path: SharedString,
