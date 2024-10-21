@@ -84,6 +84,7 @@ impl Render for TitleBar {
         } else {
             cx.theme().colors().title_bar_background
         };
+        let workspace = self.workspace.clone();
 
         h_flex()
             .id("titlebar")
@@ -144,6 +145,18 @@ impl Render for TitleBar {
                             .gap_1()
                             .pr_1()
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                            .child(Button::new("open-notebook", "Open Notebook").on_click(
+                                cx.listener(move |_, _, cx| {
+                                    let workspace = workspace.clone();
+                                    // TODO: This def is not the right way to do this
+                                    if let Some(workspace) = workspace.clone().upgrade() {
+                                        repl::notebook_ui::Notebook::open(workspace, cx)
+                                            .detach_and_log_err(cx);
+                                    } else {
+                                        println!("title_bar: Workspace is not available");
+                                    }
+                                }),
+                            ))
                             .children(self.render_call_controls(cx))
                             .map(|el| {
                                 let status = self.client.status();

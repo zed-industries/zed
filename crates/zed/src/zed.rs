@@ -3502,6 +3502,7 @@ mod tests {
                 app_state.client.telemetry().clone(),
                 cx,
             );
+            repl::notebook_ui::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);

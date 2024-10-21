@@ -1,6 +1,7 @@
 mod components;
 mod jupyter_settings;
 mod kernels;
+pub mod notebook_ui;
 mod outputs;
 mod repl_editor;
 mod repl_sessions_ui;
