@@ -3054,8 +3054,8 @@ impl Render for ProjectPanel {
                             items
                         }
                     })
-                    .when(indent_guides, |this| {
-                        this.with_decoration(
+                    .when(indent_guides, |list| {
+                        list.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
                                 px(indent_size),
@@ -3102,6 +3102,7 @@ impl Render for ProjectPanel {
                                 move |this, params, cx| {
                                     const LEFT_OFFSET: f32 = 14.;
                                     const PADDING_Y: f32 = 4.;
+                                    const HITBOX_OVERDRAW: f32 = 3.;
 
                                     let active_indent_guide_index =
                                         this.find_active_indent_guide(&params.indent_guides, cx);
@@ -3119,22 +3120,34 @@ impl Render for ProjectPanel {
                                             } else {
                                                 px(PADDING_Y)
                                             };
-                                            ui::RenderedIndentGuide {
-                                                bounds: Bounds::new(
-                                                    point(
-                                                        px(layout.offset.x as f32) * indent_size
-                                                            + px(LEFT_OFFSET),
-                                                        px(layout.offset.y as f32) * item_height
-                                                            + offset,
-                                                    ),
-                                                    size(
-                                                        px(1.),
-                                                        px(layout.length as f32) * item_height
-                                                            - px(offset.0 * 2.),
-                                                    ),
+                                            let bounds = Bounds::new(
+                                                point(
+                                                    px(layout.offset.x as f32) * indent_size
+                                                        + px(LEFT_OFFSET),
+                                                    px(layout.offset.y as f32) * item_height
+                                                        + offset,
                                                 ),
+                                                size(
+                                                    px(1.),
+                                                    px(layout.length as f32) * item_height
+                                                        - px(offset.0 * 2.),
+                                                ),
+                                            );
+                                            ui::RenderedIndentGuide {
+                                                bounds,
                                                 layout,
                                                 is_active: Some(idx) == active_indent_guide_index,
+                                                hitbox: Some(Bounds::new(
+                                                    point(
+                                                        bounds.origin.x - px(HITBOX_OVERDRAW),
+                                                        bounds.origin.y,
+                                                    ),
+                                                    size(
+                                                        bounds.size.width
+                                                            + px(2. * HITBOX_OVERDRAW),
+                                                        bounds.size.height,
+                                                    ),
+                                                )),
                                             }
                                         })
                                         .collect()

@@ -83,6 +83,7 @@ pub struct RenderedIndentGuide {
     pub bounds: Bounds<Pixels>,
     pub layout: IndentGuideLayout,
     pub is_active: bool,
+    pub hitbox: Option<Bounds<Pixels>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Hash)]
@@ -135,11 +136,15 @@ mod uniform_list {
                         ),
                         layout,
                         is_active: false,
+                        hitbox: None,
                     })
                     .collect()
             };
             for guide in &mut indent_guides {
                 guide.bounds.origin += bounds.origin;
+                if let Some(hitbox) = guide.hitbox.as_mut() {
+                    hitbox.origin += bounds.origin;
+                }
             }
 
             let indent_guides = IndentGuidesElement {
@@ -186,7 +191,7 @@ mod uniform_list {
         ) -> Self::PrepaintState {
             let mut hitboxes = SmallVec::<[Hitbox; 16]>::new();
             for guide in self.indent_guides.as_ref().iter() {
-                hitboxes.push(cx.insert_hitbox(guide.bounds, true));
+                hitboxes.push(cx.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), true));
             }
             Self::PrepaintState { hitboxes }
         }
@@ -230,15 +235,16 @@ mod uniform_list {
 
             for (i, hitbox) in prepaint.hitboxes.iter().enumerate() {
                 cx.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
+                let indent_guide = &self.indent_guides[i];
                 let fill_color = if hitbox.is_hovered(cx) {
                     self.colors.hovered
-                } else if self.indent_guides[i].is_active {
+                } else if indent_guide.is_active {
                     self.colors.active
                 } else {
                     self.colors.default
                 };
 
-                cx.paint_quad(fill(hitbox.bounds, fill_color));
+                cx.paint_quad(fill(indent_guide.bounds, fill_color));
             }
         }
     }
