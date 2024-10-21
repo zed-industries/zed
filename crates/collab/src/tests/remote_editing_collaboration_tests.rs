@@ -3,7 +3,7 @@ use call::ActiveCall;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
 use http_client::BlockedHttpClient;
-use language::{language_settings::all_language_settings, LanguageRegistry};
+use language::{language_settings::language_settings, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::ProjectPath;
 use remote::SshRemoteClient;
@@ -26,7 +26,7 @@ async fn test_sharing_an_ssh_remote_project(
         .await;
 
     // Set up project on remote FS
-    let (client_ssh, server_ssh) = SshRemoteClient::fake(cx_a, server_cx);
+    let (port, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -67,6 +67,7 @@ async fn test_sharing_an_ssh_remote_project(
         )
     });
 
+    let client_ssh = SshRemoteClient::fake_client(port, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project("/code/project1", client_ssh, cx_a)
         .await;
@@ -134,9 +135,7 @@ async fn test_sharing_an_ssh_remote_project(
     cx_b.read(|cx| {
         let file = buffer_b.read(cx).file();
         assert_eq!(
-            all_language_settings(file, cx)
-                .language(Some(&("Rust".into())))
-                .language_servers,
+            language_settings(Some("Rust".into()), file, cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
