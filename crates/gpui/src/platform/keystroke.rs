@@ -146,7 +146,7 @@ impl Keystroke {
                 "space" => Some(" ".into()),
                 "tab" => Some("\t".into()),
                 "enter" => Some("\n".into()),
-                key if !is_printable_key(key) => None,
+                key if !is_printable_key(key) || key.is_empty() => None,
                 key => {
                     if self.modifiers.shift {
                         Some(key.to_uppercase())
@@ -161,12 +161,39 @@ impl Keystroke {
 }
 
 fn is_printable_key(key: &str) -> bool {
-    match key {
-        "up" | "down" | "left" | "right" | "pageup" | "pagedown" | "home" | "end" | "delete"
-        | "escape" | "backspace" | "f1" | "f2" | "f3" | "f4" | "f5" | "f6" | "f7" | "f8" | "f9"
-        | "f10" | "f11" | "f12" => false,
-        _ => true,
-    }
+    !matches!(
+        key,
+        "f1" | "f2"
+            | "f3"
+            | "f4"
+            | "f5"
+            | "f6"
+            | "f7"
+            | "f8"
+            | "f9"
+            | "f10"
+            | "f11"
+            | "f12"
+            | "f13"
+            | "f14"
+            | "f15"
+            | "f16"
+            | "f17"
+            | "f18"
+            | "f19"
+            | "backspace"
+            | "delete"
+            | "left"
+            | "right"
+            | "up"
+            | "down"
+            | "pageup"
+            | "pagedown"
+            | "insert"
+            | "home"
+            | "end"
+            | "escape"
+    )
 }
 
 impl std::fmt::Display for Keystroke {
@@ -249,12 +276,12 @@ impl Modifiers {
     pub fn secondary(&self) -> bool {
         #[cfg(target_os = "macos")]
         {
-            return self.platform;
+            self.platform
         }
 
         #[cfg(not(target_os = "macos"))]
         {
-            return self.control;
+            self.control
         }
     }
 

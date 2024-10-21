@@ -4,6 +4,11 @@ use theme::{ThemeSettings, UiDensity};
 
 use crate::{rems_from_px, BASE_REM_SIZE_IN_PX};
 
+/// A dynamic spacing system that adjusts spacing based on
+/// [UiDensity].
+///
+/// When possible, [Spacing] should be used over manual
+/// or built-in spacing values in places dynamic spacing is needed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Spacing {
     /// No spacing
@@ -38,6 +43,7 @@ pub enum Spacing {
 }
 
 impl Spacing {
+    /// Returns the spacing's scaling ratio in pixels.
     pub fn spacing_ratio(self, cx: &WindowContext) -> f32 {
         match ThemeSettings::get_global(cx).ui_density {
             UiDensity::Compact => match self {
@@ -73,10 +79,12 @@ impl Spacing {
         }
     }
 
+    /// Returns the spacing's value in rems.
     pub fn rems(self, cx: &WindowContext) -> Rems {
         rems(self.spacing_ratio(cx))
     }
 
+    /// Returns the spacing's value in pixels.
     pub fn px(self, cx: &WindowContext) -> Pixels {
         let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size.into();
 
@@ -84,10 +92,14 @@ impl Spacing {
     }
 }
 
-pub fn user_spacing_style(cx: &WindowContext) -> UiDensity {
+fn user_spacing_style(cx: &WindowContext) -> UiDensity {
     ThemeSettings::get_global(cx).ui_density
 }
 
+/// Returns a custom spacing value based on the current [`UiDensity`].
+///
+/// If you use this, talk to @iamnbutler and let me know what you're doing
+/// that needs custom spacing– I'd love to understand so we can extend the system further and remove the need for this.
 pub fn custom_spacing(cx: &WindowContext, size: f32) -> Rems {
     rems_from_px(size * user_spacing_style(cx).spacing_ratio())
 }

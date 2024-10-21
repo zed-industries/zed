@@ -65,6 +65,12 @@ pub struct ConfirmCompletion {
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct ComposeCompletion {
+    #[serde(default)]
+    pub item_ix: Option<usize>,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
@@ -132,15 +138,34 @@ pub struct ShowCompletions {
     pub(super) trigger: Option<String>,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct HandleInput(pub String);
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToNextWordEnd {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct DeleteToPreviousWordStart {
+    #[serde(default)]
+    pub ignore_newlines: bool,
+}
+
 impl_actions!(
     editor,
     [
+        ComposeCompletion,
         ConfirmCodeAction,
         ConfirmCompletion,
+        DeleteToNextWordEnd,
+        DeleteToPreviousWordStart,
         ExpandExcerpts,
-        ExpandExcerptsUp,
         ExpandExcerptsDown,
+        ExpandExcerptsUp,
         FoldAt,
+        HandleInput,
         MoveDownByLines,
         MovePageDown,
         MovePageUp,
@@ -163,11 +188,12 @@ impl_actions!(
 gpui::actions!(
     editor,
     [
-        AcceptPartialCopilotSuggestion,
         AcceptInlineCompletion,
+        AcceptPartialCopilotSuggestion,
         AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
+        ApplyDiffHunk,
         Backspace,
         Cancel,
         CancelLanguageServerWork,
@@ -185,6 +211,7 @@ gpui::actions!(
         ConvertToUpperCamelCase,
         ConvertToUpperCase,
         Copy,
+        CopyFileLocation,
         CopyHighlightJson,
         CopyPath,
         CopyPermalinkToLine,
@@ -196,9 +223,7 @@ gpui::actions!(
         DeleteToBeginningOfLine,
         DeleteToEndOfLine,
         DeleteToNextSubwordEnd,
-        DeleteToNextWordEnd,
         DeleteToPreviousSubwordStart,
-        DeleteToPreviousWordStart,
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,
@@ -206,8 +231,15 @@ gpui::actions!(
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
+        FoldAll,
+        FoldRecursive,
         FoldSelectedRanges,
+        ToggleFold,
+        ToggleFoldRecursive,
         Format,
+        FormatSelections,
+        GoToDeclaration,
+        GoToDeclarationSplit,
         GoToDefinition,
         GoToDefinitionSplit,
         GoToDiagnostic,
@@ -247,6 +279,8 @@ gpui::actions!(
         NextScreen,
         OpenExcerpts,
         OpenExcerptsSplit,
+        OpenProposedChangesEditor,
+        OpenFile,
         OpenPermalinkToLine,
         OpenUrl,
         Outdent,
@@ -260,17 +294,23 @@ gpui::actions!(
         RestartLanguageServer,
         RevealInFileManager,
         ReverseLines,
+        RevertFile,
+        ReloadFile,
         RevertSelectedHunks,
+        Rewrap,
         ScrollCursorBottom,
         ScrollCursorCenter,
+        ScrollCursorCenterTopBottom,
         ScrollCursorTop,
         SelectAll,
         SelectAllMatches,
         SelectDown,
-        SelectLargerSyntaxNode,
         SelectEnclosingSymbol,
+        SelectLargerSyntaxNode,
         SelectLeft,
         SelectLine,
+        SelectPageDown,
+        SelectPageUp,
         SelectRight,
         SelectSmallerSyntaxNode,
         SelectToBeginning,
@@ -282,8 +322,6 @@ gpui::actions!(
         SelectToPreviousWordStart,
         SelectToStartOfParagraph,
         SelectUp,
-        SelectPageDown,
-        SelectPageUp,
         ShowCharacterPalette,
         ShowInlineCompletion,
         ShowSignatureHelp,
@@ -291,22 +329,27 @@ gpui::actions!(
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
         SplitSelectionIntoLines,
+        SwitchSourceHeader,
         Tab,
         TabPrev,
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,
-        ToggleSelectionMenu,
         ToggleHunkDiff,
-        ToggleInlayHints,
-        ToggleLineNumbers,
         ToggleIndentGuides,
+        ToggleInlayHints,
+        ToggleInlineCompletions,
+        ToggleLineNumbers,
+        ToggleRelativeLineNumbers,
+        ToggleSelectionMenu,
         ToggleSoftWrap,
         ToggleTabBar,
         Transpose,
         Undo,
         UndoSelection,
+        UnfoldAll,
         UnfoldLines,
+        UnfoldRecursive,
         UniqueLinesCaseInsensitive,
         UniqueLinesCaseSensitive,
     ]

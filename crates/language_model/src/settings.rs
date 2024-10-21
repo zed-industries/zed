@@ -7,14 +7,17 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
 
-use crate::provider::{
-    self,
-    anthropic::AnthropicSettings,
-    cloud::{self, ZedDotDevSettings},
-    copilot_chat::CopilotChatSettings,
-    google::GoogleSettings,
-    ollama::OllamaSettings,
-    open_ai::OpenAiSettings,
+use crate::{
+    provider::{
+        self,
+        anthropic::AnthropicSettings,
+        cloud::{self, ZedDotDevSettings},
+        copilot_chat::CopilotChatSettings,
+        google::GoogleSettings,
+        ollama::OllamaSettings,
+        open_ai::OpenAiSettings,
+    },
+    LanguageModelCacheConfiguration,
 };
 
 /// Initializes the language model settings.
@@ -91,12 +94,26 @@ impl AnthropicSettingsContent {
                             .filter_map(|model| match model {
                                 anthropic::Model::Custom {
                                     name,
+                                    display_name,
                                     max_tokens,
                                     tool_override,
+                                    cache_configuration,
+                                    max_output_tokens,
+                                    default_temperature,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
+                                    display_name,
                                     max_tokens,
                                     tool_override,
+                                    cache_configuration: cache_configuration.as_ref().map(
+                                        |config| LanguageModelCacheConfiguration {
+                                            max_cache_anchors: config.max_cache_anchors,
+                                            should_speculate: config.should_speculate,
+                                            min_total_token: config.min_total_token,
+                                        },
+                                    ),
+                                    max_output_tokens,
+                                    default_temperature,
                                 }),
                                 _ => None,
                             })
@@ -137,6 +154,7 @@ pub struct AnthropicSettingsContentV1 {
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
     pub low_speed_timeout_in_seconds: Option<u64>,
+    pub available_models: Option<Vec<provider::ollama::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -157,9 +175,19 @@ impl OpenAiSettingsContent {
                         models
                             .into_iter()
                             .filter_map(|model| match model {
-                                open_ai::Model::Custom { name, max_tokens } => {
-                                    Some(provider::open_ai::AvailableModel { name, max_tokens })
-                                }
+                                open_ai::Model::Custom {
+                                    name,
+                                    display_name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                    max_completion_tokens,
+                                } => Some(provider::open_ai::AvailableModel {
+                                    name,
+                                    max_tokens,
+                                    max_output_tokens,
+                                    display_name,
+                                    max_completion_tokens,
+                                }),
                                 _ => None,
                             })
                             .collect()
@@ -205,6 +233,7 @@ pub struct GoogleSettingsContent {
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct ZedDotDevSettingsContent {
     available_models: Option<Vec<cloud::AvailableModel>>,
+    pub low_speed_timeout_in_seconds: Option<u64>,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -255,6 +284,9 @@ impl settings::Settings for AllLanguageModelSettings {
                 anthropic.as_ref().and_then(|s| s.available_models.clone()),
             );
 
+            // Ollama
+            let ollama = value.ollama.clone();
+
             merge(
                 &mut settings.ollama.api_url,
                 value.ollama.as_ref().and_then(|s| s.api_url.clone()),
@@ -267,6 +299,10 @@ impl settings::Settings for AllLanguageModelSettings {
                 settings.ollama.low_speed_timeout =
                     Some(Duration::from_secs(low_speed_timeout_in_seconds));
             }
+            merge(
+                &mut settings.ollama.available_models,
+                ollama.as_ref().and_then(|s| s.available_models.clone()),
+            );
 
             // OpenAI
             let (openai, upgraded) = match value.openai.clone().map(|s| s.upgrade()) {
@@ -300,6 +336,14 @@ impl settings::Settings for AllLanguageModelSettings {
                     .as_ref()
                     .and_then(|s| s.available_models.clone()),
             );
+            if let Some(low_speed_timeout_in_seconds) = value
+                .zed_dot_dev
+                .as_ref()
+                .and_then(|s| s.low_speed_timeout_in_seconds)
+            {
+                settings.zed_dot_dev.low_speed_timeout =
+                    Some(Duration::from_secs(low_speed_timeout_in_seconds));
+            }
 
             merge(
                 &mut settings.google.api_url,

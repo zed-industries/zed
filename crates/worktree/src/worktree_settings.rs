@@ -16,12 +16,12 @@ pub struct WorktreeSettings {
 impl WorktreeSettings {
     pub fn is_path_private(&self, path: &Path) -> bool {
         path.ancestors()
-            .any(|ancestor| self.private_files.is_match(&ancestor))
+            .any(|ancestor| self.private_files.is_match(ancestor))
     }
 
     pub fn is_path_excluded(&self, path: &Path) -> bool {
         path.ancestors()
-            .any(|ancestor| self.file_scan_exclusions.is_match(&ancestor))
+            .any(|ancestor| self.file_scan_exclusions.is_match(ancestor))
     }
 }
 

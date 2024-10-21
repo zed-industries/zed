@@ -116,12 +116,14 @@ impl GoToLine {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
-                let anchor = snapshot.buffer_snapshot.anchor_before(point);
+                let start = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
+                let end = start + Point::new(1, 0);
+                let start = snapshot.buffer_snapshot.anchor_before(start);
+                let end = snapshot.buffer_snapshot.anchor_after(end);
                 active_editor.clear_row_highlights::<GoToLineRowHighlights>();
                 active_editor.highlight_rows::<GoToLineRowHighlights>(
-                    anchor..=anchor,
-                    Some(cx.theme().colors().editor_highlighted_line_background),
+                    start..end,
+                    cx.theme().colors().editor_highlighted_line_background,
                     true,
                     cx,
                 );
@@ -221,6 +223,8 @@ impl Render for GoToLine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cursor_position::{CursorPosition, SelectionStats};
+    use editor::actions::SelectAll;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
     use project::{FakeFs, Project};
@@ -242,13 +246,13 @@ mod tests {
                         field_1: i32,  // display line 3
                         field_2: i32,  // display line 4
                     }                  // display line 5
-                                       // display line 7
-                    struct Another {   // display line 8
-                        field_1: i32,  // display line 9
-                        field_2: i32,  // display line 10
-                        field_3: i32,  // display line 11
-                        field_4: i32,  // display line 12
-                    }                  // display line 13
+                                       // display line 6
+                    struct Another {   // display line 7
+                        field_1: i32,  // display line 8
+                        field_2: i32,  // display line 9
+                        field_3: i32,  // display line 10
+                        field_4: i32,  // display line 11
+                    }                  // display line 12
                 "}
             }),
         )
@@ -333,6 +337,83 @@ mod tests {
         );
         // On confirm, should place the caret on the highlighted row.
         assert_single_caret_at_row(&editor, expected_highlighted_row, cx);
+    }
+
+    #[gpui::test]
+    async fn test_unicode_characters_selection(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "a.rs": "ēlo"
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        workspace.update(cx, |workspace, cx| {
+            let cursor_position = cx.new_view(|_| CursorPosition::new(workspace));
+            workspace.status_bar().update(cx, |status_bar, cx| {
+                status_bar.add_right_item(cursor_position, cx);
+            });
+        });
+
+        let worktree_id = workspace.update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        });
+        let _buffer = project
+            .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+            .await
+            .unwrap();
+        let editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "a.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                &SelectionStats {
+                    lines: 0,
+                    characters: 0,
+                    selections: 1,
+                },
+                workspace
+                    .status_bar()
+                    .read(cx)
+                    .item_of_type::<CursorPosition>()
+                    .expect("missing cursor position item")
+                    .read(cx)
+                    .selection_stats(),
+                "No selections should be initially"
+            );
+        });
+        editor.update(cx, |editor, cx| editor.select_all(&SelectAll, cx));
+        workspace.update(cx, |workspace, cx| {
+            assert_eq!(
+                &SelectionStats {
+                    lines: 1,
+                    characters: 3,
+                    selections: 1,
+                },
+                workspace
+                    .status_bar()
+                    .read(cx)
+                    .item_of_type::<CursorPosition>()
+                    .expect("missing cursor position item")
+                    .read(cx)
+                    .selection_stats(),
+                "After selecting a text with multibyte unicode characters, the character count should be correct"
+            );
+        });
     }
 
     fn open_go_to_line_view(

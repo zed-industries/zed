@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use gpui::{StyleRefinement, WindowContext};
 
 use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
@@ -154,6 +156,25 @@ impl LabelCommon for Label {
     /// ```
     fn italic(mut self, italic: bool) -> Self {
         self.base = self.base.italic(italic);
+        self
+    }
+
+    /// Sets the alpha property of the color of label.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::prelude::*;
+    ///
+    /// let my_label = Label::new("Hello, World!").alpha(0.5);
+    /// ```
+    fn alpha(mut self, alpha: f32) -> Self {
+        self.base = self.base.alpha(alpha);
+        self
+    }
+
+    fn underline(mut self, underline: bool) -> Self {
+        self.base = self.base.underline(underline);
         self
     }
 }

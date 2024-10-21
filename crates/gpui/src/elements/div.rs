@@ -1314,16 +1314,14 @@ impl Interactivity {
                 // If there's an explicit focus handle we're tracking, use that. Otherwise
                 // create a new handle and store it in the element state, which lives for as
                 // as frames contain an element with this id.
-                if self.focusable {
-                    if self.tracked_focus_handle.is_none() {
-                        if let Some(element_state) = element_state.as_mut() {
-                            self.tracked_focus_handle = Some(
-                                element_state
-                                    .focus_handle
-                                    .get_or_insert_with(|| cx.focus_handle())
-                                    .clone(),
-                            );
-                        }
+                if self.focusable && self.tracked_focus_handle.is_none() {
+                    if let Some(element_state) = element_state.as_mut() {
+                        self.tracked_focus_handle = Some(
+                            element_state
+                                .focus_handle
+                                .get_or_insert_with(|| cx.focus_handle())
+                                .clone(),
+                        );
                     }
                 }
 
@@ -1336,7 +1334,7 @@ impl Interactivity {
                         self.scroll_offset = Some(
                             element_state
                                 .scroll_offset
-                                .get_or_insert_with(|| Rc::default())
+                                .get_or_insert_with(Rc::default)
                                 .clone(),
                         );
                     }
@@ -1360,7 +1358,7 @@ impl Interactivity {
     ) -> R {
         self.content_size = content_size;
         if let Some(focus_handle) = self.tracked_focus_handle.as_ref() {
-            cx.set_focus_handle(&focus_handle);
+            cx.set_focus_handle(focus_handle);
         }
         cx.with_optional_element_state::<InteractiveElementState, _>(
             global_id,
@@ -1420,7 +1418,7 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &mut self,
+        &self,
         bounds: Bounds<Pixels>,
         style: &Style,
         cx: &mut WindowContext,
@@ -1500,35 +1498,44 @@ impl Interactivity {
                     return ((), element_state);
                 }
 
-                style.paint(bounds, cx, |cx: &mut WindowContext| {
-                    cx.with_text_style(style.text_style().cloned(), |cx| {
-                        cx.with_content_mask(style.overflow_mask(bounds, cx.rem_size()), |cx| {
-                            if let Some(hitbox) = hitbox {
-                                #[cfg(debug_assertions)]
-                                self.paint_debug_info(global_id, hitbox, &style, cx);
+                cx.with_element_opacity(style.opacity, |cx| {
+                    style.paint(bounds, cx, |cx: &mut WindowContext| {
+                        cx.with_text_style(style.text_style().cloned(), |cx| {
+                            cx.with_content_mask(
+                                style.overflow_mask(bounds, cx.rem_size()),
+                                |cx| {
+                                    if let Some(hitbox) = hitbox {
+                                        #[cfg(debug_assertions)]
+                                        self.paint_debug_info(global_id, hitbox, &style, cx);
 
-                                if !cx.has_active_drag() {
-                                    if let Some(mouse_cursor) = style.mouse_cursor {
-                                        cx.set_cursor_style(mouse_cursor, hitbox);
+                                        if !cx.has_active_drag() {
+                                            if let Some(mouse_cursor) = style.mouse_cursor {
+                                                cx.set_cursor_style(mouse_cursor, hitbox);
+                                            }
+                                        }
+
+                                        if let Some(group) = self.group.clone() {
+                                            GroupHitboxes::push(group, hitbox.id, cx);
+                                        }
+
+                                        self.paint_mouse_listeners(
+                                            hitbox,
+                                            element_state.as_mut(),
+                                            cx,
+                                        );
+                                        self.paint_scroll_listener(hitbox, &style, cx);
                                     }
-                                }
 
-                                if let Some(group) = self.group.clone() {
-                                    GroupHitboxes::push(group, hitbox.id, cx);
-                                }
+                                    self.paint_keyboard_listeners(cx);
+                                    f(&style, cx);
 
-                                self.paint_mouse_listeners(hitbox, element_state.as_mut(), cx);
-                                self.paint_scroll_listener(hitbox, &style, cx);
-                            }
-
-                            self.paint_keyboard_listeners(cx);
-                            f(&style, cx);
-
-                            if hitbox.is_some() {
-                                if let Some(group) = self.group.as_ref() {
-                                    GroupHitboxes::pop(group, cx);
-                                }
-                            }
+                                    if hitbox.is_some() {
+                                        if let Some(group) = self.group.as_ref() {
+                                            GroupHitboxes::pop(group, cx);
+                                        }
+                                    }
+                                },
+                            );
                         });
                     });
                 });
@@ -1540,7 +1547,7 @@ impl Interactivity {
 
     #[cfg(debug_assertions)]
     fn paint_debug_info(
-        &mut self,
+        &self,
         global_id: Option<&GlobalElementId>,
         hitbox: &Hitbox,
         style: &Style,
@@ -1940,10 +1947,10 @@ impl Interactivity {
                         let tooltip_is_hovered =
                             tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
 
-                        if !tooltip_is_hoverable || !tooltip_is_hovered {
-                            if active_tooltip.borrow_mut().take().is_some() {
-                                cx.refresh();
-                            }
+                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
+                            && active_tooltip.borrow_mut().take().is_some()
+                        {
+                            cx.refresh();
                         }
                     }
                 });
@@ -1954,10 +1961,10 @@ impl Interactivity {
                     move |_: &ScrollWheelEvent, _, cx| {
                         let tooltip_is_hovered =
                             tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
-                        if !tooltip_is_hoverable || !tooltip_is_hovered {
-                            if active_tooltip.borrow_mut().take().is_some() {
-                                cx.refresh();
-                            }
+                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
+                            && active_tooltip.borrow_mut().take().is_some()
+                        {
+                            cx.refresh();
                         }
                     }
                 })
@@ -2050,6 +2057,7 @@ impl Interactivity {
     fn paint_scroll_listener(&self, hitbox: &Hitbox, style: &Style, cx: &mut WindowContext) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
+            let allow_concurrent_scroll = style.allow_concurrent_scroll;
             let line_height = cx.line_height();
             let hitbox = hitbox.clone();
             cx.on_mouse_event(move |event: &ScrollWheelEvent, phase, cx| {
@@ -2058,27 +2066,31 @@ impl Interactivity {
                     let old_scroll_offset = *scroll_offset;
                     let delta = event.delta.pixel_delta(line_height);
 
+                    let mut delta_x = Pixels::ZERO;
                     if overflow.x == Overflow::Scroll {
-                        let mut delta_x = Pixels::ZERO;
                         if !delta.x.is_zero() {
                             delta_x = delta.x;
                         } else if overflow.y != Overflow::Scroll {
                             delta_x = delta.y;
                         }
-
-                        scroll_offset.x += delta_x;
                     }
-
+                    let mut delta_y = Pixels::ZERO;
                     if overflow.y == Overflow::Scroll {
-                        let mut delta_y = Pixels::ZERO;
                         if !delta.y.is_zero() {
                             delta_y = delta.y;
                         } else if overflow.x != Overflow::Scroll {
                             delta_y = delta.x;
                         }
-
-                        scroll_offset.y += delta_y;
                     }
+                    if !allow_concurrent_scroll && !delta_x.is_zero() && !delta_y.is_zero() {
+                        if delta_x.abs() > delta_y.abs() {
+                            delta_y = Pixels::ZERO;
+                        } else {
+                            delta_x = Pixels::ZERO;
+                        }
+                    }
+                    scroll_offset.y += delta_y;
+                    scroll_offset.x += delta_x;
 
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
@@ -2562,5 +2574,10 @@ impl ScrollHandle {
     /// Set the logical scroll top, based on a child index and a pixel offset.
     pub fn set_logical_scroll_top(&self, ix: usize, px: Pixels) {
         self.0.borrow_mut().requested_scroll_top = Some((ix, px));
+    }
+
+    /// Get the count of children for scrollable item.
+    pub fn children_count(&self) -> usize {
+        self.0.borrow().child_bounds.len()
     }
 }

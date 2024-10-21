@@ -130,7 +130,7 @@ impl Keymap {
             })
             .collect();
 
-        return (bindings, is_pending.unwrap_or_default());
+        (bindings, is_pending.unwrap_or_default())
     }
 
     /// Check if the given binding is enabled, given a certain key context.

@@ -171,7 +171,7 @@ pub fn parse_git_remote_url(
         .into_iter()
         .find_map(|provider| {
             provider
-                .parse_remote_url(&url)
+                .parse_remote_url(url)
                 .map(|parsed_remote| (provider, parsed_remote))
         })
 }

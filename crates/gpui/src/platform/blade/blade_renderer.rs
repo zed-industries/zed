@@ -21,7 +21,8 @@ use std::{mem, sync::Arc};
 const MAX_FRAME_TIME_MS: u32 = 10000;
 
 #[cfg(target_os = "macos")]
-pub type Context = ();
+#[derive(Clone, Default)]
+pub struct Context {}
 #[cfg(target_os = "macos")]
 pub type Renderer = BladeRenderer;
 
@@ -335,6 +336,17 @@ impl BladePipelines {
             }),
         }
     }
+
+    fn destroy(&mut self, gpu: &gpu::Context) {
+        gpu.destroy_render_pipeline(&mut self.quads);
+        gpu.destroy_render_pipeline(&mut self.shadows);
+        gpu.destroy_render_pipeline(&mut self.path_rasterization);
+        gpu.destroy_render_pipeline(&mut self.paths);
+        gpu.destroy_render_pipeline(&mut self.underlines);
+        gpu.destroy_render_pipeline(&mut self.mono_sprites);
+        gpu.destroy_render_pipeline(&mut self.poly_sprites);
+        gpu.destroy_render_pipeline(&mut self.surfaces);
+    }
 }
 
 pub struct BladeSurfaceConfig {
@@ -437,12 +449,13 @@ impl BladeRenderer {
             self.wait_for_gpu();
             self.surface_config.transparent = transparent;
             let surface_info = self.gpu.resize(self.surface_config);
+            self.pipelines.destroy(&self.gpu);
             self.pipelines = BladePipelines::new(&self.gpu, surface_info);
             self.alpha_mode = surface_info.alpha;
         }
     }
 
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
+    #[cfg_attr(any(target_os = "macos", feature = "wayland"), allow(dead_code))]
     pub fn viewport_size(&self) -> gpu::Extent {
         self.surface_config.size
     }
@@ -480,7 +493,11 @@ impl BladeRenderer {
         let mut vertices_by_texture_id = HashMap::default();
 
         for path in paths {
-            let clipped_bounds = path.bounds.intersect(&path.content_mask.bounds);
+            let clipped_bounds = path
+                .bounds
+                .intersect(&path.content_mask.bounds)
+                .map_origin(|origin| origin.floor())
+                .map_size(|size| size.ceil());
             let tile = self.atlas.allocate_for_rendering(
                 clipped_bounds.size.map(Into::into),
                 AtlasTextureKind::Path,
@@ -533,8 +550,10 @@ impl BladeRenderer {
     pub fn destroy(&mut self) {
         self.wait_for_gpu();
         self.atlas.destroy();
+        self.gpu.destroy_sampler(self.atlas_sampler);
         self.instance_belt.destroy(&self.gpu);
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
+        self.pipelines.destroy(&self.gpu);
     }
 
     pub fn draw(&mut self, scene: &Scene) {

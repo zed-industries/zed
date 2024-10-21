@@ -41,7 +41,7 @@ impl PromptHandle {
                 sender.send(e.0).ok();
                 cx.window.prompt.take();
                 if let Some(previous_focus) = &previous_focus {
-                    cx.focus(&previous_focus);
+                    cx.focus(previous_focus);
                 }
             }
         })

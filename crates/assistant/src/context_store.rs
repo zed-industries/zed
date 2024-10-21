@@ -1,6 +1,6 @@
 use crate::{
-    Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
-    SavedContextMetadata,
+    prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
+    SavedContext, SavedContextMetadata,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
@@ -15,6 +15,7 @@ use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
+use rpc::AnyProtoClient;
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -25,7 +26,7 @@ use std::{
 };
 use util::{ResultExt, TryFutureExt};
 
-pub fn init(client: &Arc<Client>) {
+pub fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ContextStore::handle_advertise_contexts);
     client.add_model_request_handler(ContextStore::handle_open_context);
     client.add_model_request_handler(ContextStore::handle_create_context);
@@ -52,6 +53,7 @@ pub struct ContextStore {
     project_is_shared: bool,
     client_subscription: Option<client::Subscription>,
     _project_subscriptions: Vec<gpui::Subscription>,
+    prompt_builder: Arc<PromptBuilder>,
 }
 
 pub enum ContextStoreEvent {
@@ -82,7 +84,11 @@ impl ContextHandle {
 }
 
 impl ContextStore {
-    pub fn new(project: Model<Project>, cx: &mut AppContext) -> Task<Result<Model<Self>>> {
+    pub fn new(
+        project: Model<Project>,
+        prompt_builder: Arc<PromptBuilder>,
+        cx: &mut AppContext,
+    ) -> Task<Result<Model<Self>>> {
         let fs = project.read(cx).fs().clone();
         let languages = project.read(cx).languages().clone();
         let telemetry = project.read(cx).client().telemetry().clone();
@@ -117,6 +123,7 @@ impl ContextStore {
                     project_is_shared: false,
                     client: project.read(cx).client(),
                     project: project.clone(),
+                    prompt_builder,
                 };
                 this.handle_project_changed(project, cx);
                 this.synchronize_contexts(cx);
@@ -155,7 +162,7 @@ impl ContextStore {
     ) -> Result<proto::OpenContextResponse> {
         let context_id = ContextId::from_proto(envelope.payload.context_id);
         let operations = this.update(&mut cx, |this, cx| {
-            if this.project.read(cx).is_remote() {
+            if this.project.read(cx).is_via_collab() {
                 return Err(anyhow!("only the host contexts can be opened"));
             }
 
@@ -184,7 +191,7 @@ impl ContextStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::CreateContextResponse> {
         let (context_id, operations) = this.update(&mut cx, |this, cx| {
-            if this.project.read(cx).is_remote() {
+            if this.project.read(cx).is_via_collab() {
                 return Err(anyhow!("can only create contexts as the host"));
             }
 
@@ -216,7 +223,7 @@ impl ContextStore {
             if let Some(context) = this.loaded_context_for_id(&context_id, cx) {
                 let operation_proto = envelope.payload.operation.context("invalid operation")?;
                 let operation = ContextOperation::from_proto(operation_proto)?;
-                context.update(cx, |context, cx| context.apply_ops([operation], cx))?;
+                context.update(cx, |context, cx| context.apply_ops([operation], cx));
             }
             Ok(())
         })?
@@ -228,7 +235,7 @@ impl ContextStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::SynchronizeContextsResponse> {
         this.update(&mut cx, |this, cx| {
-            if this.project.read(cx).is_remote() {
+            if this.project.read(cx).is_via_collab() {
                 return Err(anyhow!("only the host can synchronize contexts"));
             }
 
@@ -330,7 +337,13 @@ impl ContextStore {
 
     pub fn create(&mut self, cx: &mut ModelContext<Self>) -> Model<Context> {
         let context = cx.new_model(|cx| {
-            Context::local(self.languages.clone(), Some(self.telemetry.clone()), cx)
+            Context::local(
+                self.languages.clone(),
+                Some(self.project.clone()),
+                Some(self.telemetry.clone()),
+                self.prompt_builder.clone(),
+                cx,
+            )
         });
         self.register_context(&context, cx);
         context
@@ -344,14 +357,13 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local() {
-            return Task::ready(Err(anyhow!("cannot create remote contexts as the host")));
-        }
 
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
+        let project = self.project.clone();
         let telemetry = self.telemetry.clone();
+        let prompt_builder = self.prompt_builder.clone();
         let request = self.client.request(proto::CreateContext { project_id });
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
@@ -363,6 +375,8 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    prompt_builder,
+                    Some(project),
                     Some(telemetry),
                     cx,
                 )
@@ -373,11 +387,11 @@ impl ContextStore {
                     context_proto
                         .operations
                         .into_iter()
-                        .map(|op| ContextOperation::from_proto(op))
+                        .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context
@@ -401,6 +415,7 @@ impl ContextStore {
 
         let fs = self.fs.clone();
         let languages = self.languages.clone();
+        let project = self.project.clone();
         let telemetry = self.telemetry.clone();
         let load = cx.background_executor().spawn({
             let path = path.clone();
@@ -409,11 +424,20 @@ impl ContextStore {
                 SavedContext::from_json(&saved_context)
             }
         });
+        let prompt_builder = self.prompt_builder.clone();
 
         cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
             let context = cx.new_model(|cx| {
-                Context::deserialize(saved_context, path.clone(), languages, Some(telemetry), cx)
+                Context::deserialize(
+                    saved_context,
+                    path.clone(),
+                    languages,
+                    prompt_builder,
+                    Some(project),
+                    Some(telemetry),
+                    cx,
+                )
             })?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_path(&path, cx) {
@@ -461,9 +485,6 @@ impl ContextStore {
         let Some(project_id) = project.remote_id() else {
             return Task::ready(Err(anyhow!("project was not remote")));
         };
-        if project.is_local() {
-            return Task::ready(Err(anyhow!("cannot open remote contexts as the host")));
-        }
 
         if let Some(context) = self.loaded_context_for_id(&context_id, cx) {
             return Task::ready(Ok(context));
@@ -472,11 +493,13 @@ impl ContextStore {
         let replica_id = project.replica_id();
         let capability = project.capability();
         let language_registry = self.languages.clone();
+        let project = self.project.clone();
         let telemetry = self.telemetry.clone();
         let request = self.client.request(proto::OpenContext {
             project_id,
             context_id: context_id.to_proto(),
         });
+        let prompt_builder = self.prompt_builder.clone();
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
             let context_proto = response.context.context("invalid context")?;
@@ -486,6 +509,8 @@ impl ContextStore {
                     replica_id,
                     capability,
                     language_registry,
+                    prompt_builder,
+                    Some(project),
                     Some(telemetry),
                     cx,
                 )
@@ -496,11 +521,11 @@ impl ContextStore {
                     context_proto
                         .operations
                         .into_iter()
-                        .map(|op| ContextOperation::from_proto(op))
+                        .map(ContextOperation::from_proto)
                         .collect::<Result<Vec<_>>>()
                 })
                 .await?;
-            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))??;
+            context.update(&mut cx, |context, cx| context.apply_ops(operations, cx))?;
             this.update(&mut cx, |this, cx| {
                 if let Some(existing_context) = this.loaded_context_for_id(&context_id, cx) {
                     existing_context
@@ -559,7 +584,7 @@ impl ContextStore {
         };
 
         // For now, only the host can advertise their open contexts.
-        if self.project.read(cx).is_remote() {
+        if self.project.read(cx).is_via_collab() {
             return;
         }
 

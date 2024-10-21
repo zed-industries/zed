@@ -16,30 +16,27 @@ pub fn init(cx: &mut AppContext) {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct NotificationId {
-    /// A [`TypeId`] used to uniquely identify this notification.
-    type_id: TypeId,
-    /// A supplementary ID used to distinguish between multiple
-    /// notifications that have the same [`type_id`](Self::type_id);
-    id: Option<ElementId>,
+pub enum NotificationId {
+    Unique(TypeId),
+    Composite(TypeId, ElementId),
+    Named(SharedString),
 }
 
 impl NotificationId {
     /// Returns a unique [`NotificationId`] for the given type.
     pub fn unique<T: 'static>() -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            id: None,
-        }
+        Self::Unique(TypeId::of::<T>())
     }
 
     /// Returns a [`NotificationId`] for the given type that is also identified
     /// by the provided ID.
-    pub fn identified<T: 'static>(id: impl Into<ElementId>) -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            id: Some(id.into()),
-        }
+    pub fn composite<T: 'static>(id: impl Into<ElementId>) -> Self {
+        Self::Composite(TypeId::of::<T>(), id.into())
+    }
+
+    /// Builds a `NotificationId` out of the given string.
+    pub fn named(id: SharedString) -> Self {
+        Self::Named(id)
     }
 }
 
@@ -311,15 +308,11 @@ impl Render for LanguageServerPrompt {
                                                 .mt(px(-2.0))
                                                 .map(|icon| {
                                                     if severity == DiagnosticSeverity::ERROR {
-                                                        icon.path(
-                                                            IconName::ExclamationTriangle.path(),
-                                                        )
-                                                        .text_color(Color::Error.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Error.color(cx))
                                                     } else {
-                                                        icon.path(
-                                                            IconName::ExclamationTriangle.path(),
-                                                        )
-                                                        .text_color(Color::Warning.color(cx))
+                                                        icon.path(IconName::Warning.path())
+                                                            .text_color(Color::Warning.color(cx))
                                                     }
                                                 })
                                         }),
@@ -342,7 +335,7 @@ impl Render for LanguageServerPrompt {
                                         .on_click({
                                             let message = request.message.clone();
                                             move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new(
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
                                                     message.clone(),
                                                 ))
                                             }
@@ -421,7 +414,7 @@ impl Render for ErrorMessagePrompt {
                                     .mr_2()
                                     .mt(px(-2.0))
                                     .map(|icon| {
-                                        icon.path(IconName::ExclamationTriangle.path())
+                                        icon.path(IconName::Warning.path())
                                             .text_color(Color::Error.color(cx))
                                     }),
                             )
@@ -657,14 +650,14 @@ where
             if let Err(err) = result.as_ref() {
                 log::error!("{err:?}");
                 if let Ok(prompt) = cx.update(|cx| {
-                    let detail = f(&err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
+                    let detail = f(err, cx).unwrap_or_else(|| format!("{err}. Please try again."));
                     cx.prompt(PromptLevel::Critical, &msg, Some(&detail), &["Ok"])
                 }) {
                     prompt.await.ok();
                 }
                 return None;
             }
-            return Some(result.unwrap());
+            Some(result.unwrap())
         })
     }
 

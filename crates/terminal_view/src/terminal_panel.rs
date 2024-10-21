@@ -5,7 +5,7 @@ use collections::{HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnyView, AppContext, AsyncWindowContext, DismissEvent, Entity, EventEmitter,
+    actions, Action, AnchorCorner, AnyView, AppContext, AsyncWindowContext, Entity, EventEmitter,
     ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ParentElement, Pixels, Render,
     Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -20,7 +20,7 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    h_flex, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton, IconSize, Selectable,
+    h_flex, ButtonCommon, Clickable, ContextMenu, IconButton, IconSize, PopoverMenu, Selectable,
     Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
@@ -33,6 +33,7 @@ use workspace::{
 };
 
 use anyhow::Result;
+use zed_actions::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
@@ -68,7 +69,8 @@ pub struct TerminalPanel {
     _subscriptions: Vec<Subscription>,
     deferred_tasks: HashMap<TaskId, Task<()>>,
     enabled: bool,
-    additional_tab_bar_buttons: Vec<AnyView>,
+    assistant_enabled: bool,
+    assistant_tab_bar_button: Option<AnyView>,
 }
 
 impl TerminalPanel {
@@ -142,7 +144,7 @@ impl TerminalPanel {
             cx.subscribe(&pane, Self::handle_pane_event),
         ];
         let project = workspace.project().read(cx);
-        let enabled = project.is_local() || project.supports_remote_terminal(cx);
+        let enabled = project.supports_terminal(cx);
         let this = Self {
             pane,
             fs: workspace.app_state().fs.clone(),
@@ -154,66 +156,72 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             _subscriptions: subscriptions,
             enabled,
-            additional_tab_bar_buttons: Vec::new(),
+            assistant_enabled: false,
+            assistant_tab_bar_button: None,
         };
         this.apply_tab_bar_buttons(cx);
         this
     }
 
-    pub fn register_tab_bar_button(
-        &mut self,
-        button: impl Into<AnyView>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        self.additional_tab_bar_buttons.push(button.into());
+    pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+        self.assistant_enabled = enabled;
+        if enabled {
+            let focus_handle = self
+                .pane
+                .read(cx)
+                .active_item()
+                .map(|item| item.focus_handle(cx))
+                .unwrap_or(self.focus_handle(cx));
+            self.assistant_tab_bar_button = Some(
+                cx.new_view(move |_| InlineAssistTabBarButton { focus_handle })
+                    .into(),
+            );
+        } else {
+            self.assistant_tab_bar_button = None;
+        }
         self.apply_tab_bar_buttons(cx);
     }
 
     fn apply_tab_bar_buttons(&self, cx: &mut ViewContext<Self>) {
-        let additional_buttons = self.additional_tab_bar_buttons.clone();
+        let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         self.pane.update(cx, |pane, cx| {
             pane.set_render_tab_bar_buttons(cx, move |pane, cx| {
-                if !pane.has_focus(cx) {
-                    return None;
+                if !pane.has_focus(cx) && !pane.context_menu_focused(cx) {
+                    return (None, None);
                 }
-                h_flex()
+                let focus_handle = pane.focus_handle(cx);
+                let right_children = h_flex()
                     .gap_2()
-                    .children(additional_buttons.clone())
+                    .children(assistant_tab_bar_button.clone())
                     .child(
-                        IconButton::new("plus", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener(|pane, _, cx| {
-                                let focus_handle = pane.focus_handle(cx);
+                        PopoverMenu::new("terminal-tab-bar-popover-menu")
+                            .trigger(
+                                IconButton::new("plus", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("New...", cx)),
+                            )
+                            .anchor(AnchorCorner::TopRight)
+                            .with_handle(pane.new_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                let focus_handle = focus_handle.clone();
                                 let menu = ContextMenu::build(cx, |menu, _| {
-                                    menu.action(
-                                        "New Terminal",
-                                        workspace::NewTerminal.boxed_clone(),
-                                    )
-                                    .entry(
-                                        "Spawn task",
-                                        Some(tasks_ui::Spawn::modal().boxed_clone()),
-                                        move |cx| {
-                                            // We want the focus to go back to terminal panel once task modal is dismissed,
-                                            // hence we focus that first. Otherwise, we'd end up without a focused element, as
-                                            // context menu will be gone the moment we spawn the modal.
-                                            cx.focus(&focus_handle);
-                                            cx.dispatch_action(
-                                                tasks_ui::Spawn::modal().boxed_clone(),
-                                            );
-                                        },
-                                    )
+                                    menu.context(focus_handle.clone())
+                                        .action(
+                                            "New Terminal",
+                                            workspace::NewTerminal.boxed_clone(),
+                                        )
+                                        // We want the focus to go back to terminal panel once task modal is dismissed,
+                                        // hence we focus that first. Otherwise, we'd end up without a focused element, as
+                                        // context menu will be gone the moment we spawn the modal.
+                                        .action(
+                                            "Spawn task",
+                                            tasks_ui::Spawn::modal().boxed_clone(),
+                                        )
                                 });
-                                cx.subscribe(&menu, |pane, _, _: &DismissEvent, _| {
-                                    pane.new_item_menu = None;
-                                })
-                                .detach();
-                                pane.new_item_menu = Some(menu);
-                            }))
-                            .tooltip(|cx| Tooltip::text("New...", cx)),
+
+                                Some(menu)
+                            }),
                     )
-                    .when_some(pane.new_item_menu.as_ref(), |el, new_item_menu| {
-                        el.child(Pane::render_menu_overlay(new_item_menu))
-                    })
                     .child({
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
@@ -232,7 +240,8 @@ impl TerminalPanel {
                             })
                     })
                     .into_any_element()
-                    .into()
+                    .into();
+                (None, right_children)
             });
         });
     }
@@ -347,7 +356,7 @@ impl TerminalPanel {
         match event {
             pane::Event::ActivateItem { .. } => self.serialize(cx),
             pane::Event::RemovedItem { .. } => self.serialize(cx),
-            pane::Event::Remove => cx.emit(PanelEvent::Close),
+            pane::Event::Remove { .. } => cx.emit(PanelEvent::Close),
             pane::Event::ZoomIn => cx.emit(PanelEvent::ZoomIn),
             pane::Event::ZoomOut => cx.emit(PanelEvent::ZoomOut),
 
@@ -386,7 +395,21 @@ impl TerminalPanel {
         let mut spawn_task = spawn_in_terminal.clone();
         // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
         let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
-            Shell::System => retrieve_system_shell().map(|shell| (shell, Vec::new())),
+            Shell::System => {
+                match self
+                    .workspace
+                    .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
+                {
+                    Ok(local) => {
+                        if local {
+                            retrieve_system_shell().map(|shell| (shell, Vec::new()))
+                        } else {
+                            Some(("\"${SHELL:-sh}\"".to_string(), Vec::new()))
+                        }
+                    }
+                    Err(_no_window_e) => return,
+                }
+            }
             Shell::Program(shell) => Some((shell, Vec::new())),
             Shell::WithArguments { program, args } => Some((program, args)),
         }) else {
@@ -397,7 +420,7 @@ impl TerminalPanel {
 
         #[cfg(not(target_os = "windows"))]
         {
-            spawn_task.command_label = format!("{shell} -i -c `{}`", spawn_task.command_label);
+            spawn_task.command_label = format!("{shell} -i -c '{}'", spawn_task.command_label);
         }
         #[cfg(target_os = "windows")]
         {
@@ -405,14 +428,14 @@ impl TerminalPanel {
 
             match windows_shell_type {
                 WindowsShellType::Powershell => {
-                    spawn_task.command_label = format!("{shell} -C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} -C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Cmd => {
-                    spawn_task.command_label = format!("{shell} /C `{}`", spawn_task.command_label)
+                    spawn_task.command_label = format!("{shell} /C '{}'", spawn_task.command_label)
                 }
                 WindowsShellType::Other => {
                     spawn_task.command_label =
-                        format!("{shell} -i -c `{}`", spawn_task.command_label)
+                        format!("{shell} -i -c '{}'", spawn_task.command_label)
                 }
             }
         }
@@ -690,6 +713,10 @@ impl TerminalPanel {
     fn has_no_terminals(&self, cx: &WindowContext) -> bool {
         self.pane.read(cx).items_len() == 0 && self.pending_terminals_to_add == 0
     }
+
+    pub fn assistant_enabled(&self) -> bool {
+        self.assistant_enabled
+    }
 }
 
 async fn wait_for_terminals_tasks(
@@ -782,9 +809,9 @@ impl Panel for TerminalPanel {
         let settings = TerminalSettings::get_global(cx);
         match self.position(cx) {
             DockPosition::Left | DockPosition::Right => {
-                self.width.unwrap_or_else(|| settings.default_width)
+                self.width.unwrap_or(settings.default_width)
             }
-            DockPosition::Bottom => self.height.unwrap_or_else(|| settings.default_height),
+            DockPosition::Bottom => self.height.unwrap_or(settings.default_height),
         }
     }
 
@@ -855,6 +882,24 @@ impl Panel for TerminalPanel {
     }
 }
 
+struct InlineAssistTabBarButton {
+    focus_handle: FocusHandle,
+}
+
+impl Render for InlineAssistTabBarButton {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle.clone();
+        IconButton::new("terminal_inline_assistant", IconName::ZedAssistant)
+            .icon_size(IconSize::Small)
+            .on_click(cx.listener(|_, _, cx| {
+                cx.dispatch_action(InlineAssist::default().boxed_clone());
+            }))
+            .tooltip(move |cx| {
+                Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
+            })
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct SerializedTerminalPanel {
     items: Vec<u64>,
@@ -869,9 +914,9 @@ fn retrieve_system_shell() -> Option<String> {
         use anyhow::Context;
         use util::ResultExt;
 
-        return std::env::var("SHELL")
+        std::env::var("SHELL")
             .context("Error finding SHELL in env.")
-            .log_err();
+            .log_err()
     }
     // `alacritty_terminal` uses this as default on Windows. See:
     // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
@@ -890,7 +935,11 @@ fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> Str
 
 #[cfg(target_os = "windows")]
 fn to_windows_shell_type(shell: &str) -> WindowsShellType {
-    if shell == "powershell" || shell.ends_with("powershell.exe") {
+    if shell == "powershell"
+        || shell.ends_with("powershell.exe")
+        || shell == "pwsh"
+        || shell.ends_with("pwsh.exe")
+    {
         WindowsShellType::Powershell
     } else if shell == "cmd" || shell.ends_with("cmd.exe") {
         WindowsShellType::Cmd

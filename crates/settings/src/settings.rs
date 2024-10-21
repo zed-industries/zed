@@ -6,14 +6,50 @@ mod settings_store;
 
 use gpui::AppContext;
 use rust_embed::RustEmbed;
-use std::{borrow::Cow, str};
+use std::{borrow::Cow, fmt, str};
 use util::asset_str;
 
 pub use editable_setting_control::*;
 pub use json_schema::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
-pub use settings_store::{Settings, SettingsLocation, SettingsSources, SettingsStore};
+pub use settings_store::{
+    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
+    SettingsSources, SettingsStore,
+};
+
+#[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
+pub struct WorktreeId(usize);
+
+impl From<WorktreeId> for usize {
+    fn from(value: WorktreeId) -> Self {
+        value.0
+    }
+}
+
+impl WorktreeId {
+    pub fn from_usize(handle_id: usize) -> Self {
+        Self(handle_id)
+    }
+
+    pub fn from_proto(id: u64) -> Self {
+        Self(id as usize)
+    }
+
+    pub fn to_proto(&self) -> u64 {
+        self.0 as u64
+    }
+
+    pub fn to_usize(&self) -> usize {
+        self.0
+    }
+}
+
+impl fmt::Display for WorktreeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
 
 #[derive(RustEmbed)]
 #[folder = "../../assets"]
@@ -52,7 +88,11 @@ pub fn initial_user_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_user_settings.json")
 }
 
-pub fn initial_local_settings_content() -> Cow<'static, str> {
+pub fn initial_server_settings_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_server_settings.json")
+}
+
+pub fn initial_project_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_local_settings.json")
 }
 

@@ -1,6 +1,6 @@
 # Zed on Linux
 
-For most people we recommend using the script on the [download](/download) page to install Zed:
+For most people we recommend using the script on the [download](https://zed.dev/download) page to install Zed:
 
 ```sh
 curl -f https://zed.dev/install.sh | sh
@@ -12,14 +12,20 @@ We also offer a preview build of Zed which receives updates about a week ahead o
 curl -f https://zed.dev/install.sh | ZED_CHANNEL=preview sh
 ```
 
-The Zed installed by the script does not work on systems that:
+The Zed installed by the script works best on systems that:
 
-- have no Vulkan compatible GPU available (for example Linux on an M-series macBook)
-- have no system-wide glibc (for example on NixOS or Alpine by default)
-- have a glibc older than version 2.29 (for example Amazon Linux 2 or Ubuntu 18 and earlier)
-- use an architecture other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+- have a Vulkan compatible GPU available (for example Linux on an M-series macBook)
+- have a system-wide glibc (NixOS and Alpine do not by default)
+  - x86_64 (Intel/AMD): glibc version >= 2.31 (Ubuntu 20 and newer)
+  - aarch64 (ARM): glibc version >= 2.35 (Ubuntu 22 and newer)
 
 Both Nix and Alpine have third-party Zed packages available (though they are currently a few weeks out of date). If you'd like to use our builds they do work if you install a glibc compatibility layer. On NixOS you can try [nix-ld](https://github.com/Mic92/nix-ld), and on Alpine [gcompat](https://wiki.alpinelinux.org/wiki/Running_glibc_programs).
+
+You will need to build from source for:
+
+- architectures other than 64-bit Intel or 64-bit ARM (for example a 32-bit or RISC-V machine)
+- Redhat Enterprise Linux 8.x, Rocky Linux 8, AlmaLinux 8, Amazon Linux 2 on all architectures
+- Redhat Enterprise Linux 9.x, Rocky Linux 9.3, AlmaLinux 8, Amazon Linux 2023 on aarch64 (x86_x64 OK)
 
 ## Other ways to install Zed on Linux
 
@@ -33,7 +39,7 @@ There are several third-party Zed packages for various Linux distributions and p
 - Arch: [`zed`](https://archlinux.org/packages/extra/x86_64/zed/)
 - Arch (AUR): [`zed-git`](https://aur.archlinux.org/packages/zed-git), [`zed-preview`](https://aur.archlinux.org/packages/zed-preview), [`zed-preview-bin`](https://aur.archlinux.org/packages/zed-preview-bin)
 - Alpine: `zed` ([aarch64](https://pkgs.alpinelinux.org/package/edge/testing/aarch64/zed)) ([x86_64](https://pkgs.alpinelinux.org/package/edge/testing/x86_64/zed))
-- Nix: `zed-editor` ([stable](https://search.nixos.org/packages?show=zed-editor)), ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
+- Nix: `zed-editor` ([unstable](https://search.nixos.org/packages?channel=unstable&show=zed-editor))
 - Fedora/Ultramarine (Terra): [`zed`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/stable), [`zed-preview`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/preview), [`zed-nightly`](https://github.com/terrapkg/packages/tree/frawhide/anda/devs/zed/nightly)
 - Solus: [`zed`](https://github.com/getsolus/packages/tree/main/packages/z/zed)
 - Parabola: [`zed`](https://www.parabola.nu/packages/extra/x86_64/zed/)
@@ -109,23 +115,33 @@ If you are using Mesa, and want more control over which GPU is selected you can 
 
 If you are using `amdvlk` you may find that zed only opens when run with `sudo $(which zed)`. To fix this, remove the `amdvlk` and `lib32-amdvlk` packages and install mesa/vulkan instead. ([#14141](https://github.com/zed-industries/zed/issues/14141).
 
+If you have a discrete GPU and you are using [PRIME](https://wiki.archlinux.org/title/PRIME) you may be able to configure Zed to work by setting `/etc/prime-discrete` to 'on'.
+
 For more information, the [Arch guide to Vulkan](https://wiki.archlinux.org/title/Vulkan) has some good steps that translate well to most distributions.
 
 If Vulkan is configured correctly, and Zed is still slow for you, please [file an issue](https://github.com/zed-industries/zed) with as much information as possible.
 
 ### I can't open any files
 
-### Zed isn't remembering my login
-
 ### Clicking links isn't working
 
-All of these features are provided by XDG desktop portals, specifically:
+These features are provided by XDG desktop portals, specifically:
 
 - `org.freedesktop.portal.FileChooser`
 - `org.freedesktop.portal.OpenURI`
-- `org.freedesktop.portal.Secret`, or `org.freedesktop.Secrets`
 
-Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives. `KDE` doesn't implement the secret portal, installing `gnome-keyring` may solve this.
+Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives.
+
+### Zed isn't remembering my API keys
+
+### Zed isn't remembering my login
+
+These feature also requires XDG desktop portals, specifically:
+
+- `org.freedesktop.portal.Secret` or
+- `org.freedesktop.Secrets`
+
+Zed needs a place to securely store secrets such as your Zed login cookie or your OpenAI API Keys and we use a system provided keychain to do this. Examples of packages that provide this are `gnome-keyring`, `KWallet` and `keepassxc` among others.
 
 ### Could not start inotify
 
@@ -137,3 +153,20 @@ If you are seeing "too many open files" then first try `sysctl fs.inotify`.
 - You should see that `max_user_watches` is 8000 or higher (you can change the limit with `sudo sysctl fs.inotify.max_user_watches=64000`). Zed needs one watch per directory in all your open projects + one per git repository + a handful more for settings, themes, keymaps, extensions.
 
 It is also possible that you are running out of file descriptors. You can check the limits with `ulimit` and update them by editing `/etc/security/limits.conf`.
+
+### FIPS Mode OpenSSL internal error {#fips}
+
+If your machine is running in FIPS mode (`cat /proc/sys/crypto/fips_enabled` is set to `1`) Zed may fail to start and output the following when launched with `zed --foreground`:
+
+```
+crypto/fips/fips.c:154: OpenSSL internal error: FATAL FIPS SELFTEST FAILURE
+```
+
+As a workaround, remove the bundled `libssl` and `libcrypto` libraries from the `zed.app/lib` directory:
+
+```
+rm ~/.local/zed.app/lib/libssl.so.1.1
+rm ~/.local/zed.app/lib/libcrypto.so.1.1
+```
+
+This will force zed to fallback to the system `libssl` and `libcrypto` libraries.

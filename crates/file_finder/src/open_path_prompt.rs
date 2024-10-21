@@ -1,7 +1,7 @@
 use futures::channel::oneshot;
 use fuzzy::StringMatchCandidate;
 use picker::{Picker, PickerDelegate};
-use project::{compare_paths, DirectoryLister};
+use project::DirectoryLister;
 use std::{
     path::{Path, PathBuf},
     sync::{
@@ -11,7 +11,7 @@ use std::{
 };
 use ui::{prelude::*, LabelLike, ListItemSpacing};
 use ui::{ListItem, ViewContext};
-use util::maybe;
+use util::{maybe, paths::compare_paths};
 use workspace::Workspace;
 
 pub(crate) struct OpenPathPrompt;
@@ -24,6 +24,20 @@ pub struct OpenPathDelegate {
     matches: Vec<usize>,
     cancel_flag: Arc<AtomicBool>,
     should_dismiss: bool,
+}
+
+impl OpenPathDelegate {
+    pub fn new(tx: oneshot::Sender<Option<Vec<PathBuf>>>, lister: DirectoryLister) -> Self {
+        Self {
+            tx: Some(tx),
+            lister,
+            selected_index: 0,
+            directory_state: None,
+            matches: Vec::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            should_dismiss: true,
+        }
+    }
 }
 
 struct DirectoryState {
@@ -48,15 +62,7 @@ impl OpenPathPrompt {
         cx: &mut ViewContext<Workspace>,
     ) {
         workspace.toggle_modal(cx, |cx| {
-            let delegate = OpenPathDelegate {
-                tx: Some(tx),
-                lister: lister.clone(),
-                selected_index: 0,
-                directory_state: None,
-                matches: Vec::new(),
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                should_dismiss: true,
-            };
+            let delegate = OpenPathDelegate::new(tx, lister.clone());
 
             let picker = Picker::uniform_list(delegate, cx).width(rems(34.));
             let query = lister.default_query(cx);
@@ -181,7 +187,7 @@ impl PickerDelegate for OpenPathDelegate {
             }
 
             let matches = fuzzy::match_strings(
-                &match_candidates.as_slice(),
+                match_candidates.as_slice(),
                 &suffix,
                 false,
                 100,
@@ -236,7 +242,12 @@ impl PickerDelegate for OpenPathDelegate {
         let Some(candidate) = directory_state.match_candidates.get(*m) else {
             return;
         };
-        let result = Path::new(&directory_state.path).join(&candidate.string);
+        let result = Path::new(
+            self.lister
+                .resolve_tilde(&directory_state.path, cx)
+                .as_ref(),
+        )
+        .join(&candidate.string);
         if let Some(tx) = self.tx.take() {
             tx.send(Some(vec![result])).ok();
         }

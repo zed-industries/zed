@@ -4,9 +4,9 @@ use crate::{
     platform::blade::{BladeRenderer, BladeSurfaceConfig},
     px, size, AnyWindowHandle, Bounds, Decorations, DevicePixels, ForegroundExecutor, GPUSpecs,
     Modifiers, Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler,
-    PlatformWindow, Point, PromptLevel, ResizeEdge, Scene, Size, Tiling, WindowAppearance,
-    WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind, WindowParams,
-    X11ClientStatePtr,
+    PlatformWindow, Point, PromptLevel, ResizeEdge, ScaledPixels, Scene, Size, Tiling,
+    WindowAppearance, WindowBackgroundAppearance, WindowBounds, WindowDecorations, WindowKind,
+    WindowParams, X11ClientStatePtr,
 };
 
 use blade_graphics as gpu;
@@ -29,10 +29,27 @@ use std::{
     sync::Arc,
 };
 
-use super::{X11Display, XINPUT_MASTER_DEVICE};
+use super::{X11Display, XINPUT_ALL_DEVICES, XINPUT_ALL_DEVICE_GROUPS};
 x11rb::atom_manager! {
     pub XcbAtoms: AtomsCookie {
+        XA_ATOM,
+        XdndAware,
+        XdndStatus,
+        XdndEnter,
+        XdndLeave,
+        XdndPosition,
+        XdndSelection,
+        XdndDrop,
+        XdndFinished,
+        XdndTypeList,
+        XdndActionCopy,
+        TextUriList: b"text/uri-list",
         UTF8_STRING,
+        TEXT,
+        STRING,
+        TEXT_PLAIN_UTF8: b"text/plain;charset=utf-8",
+        TEXT_PLAIN: b"text/plain",
+        XDND_DATA,
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
@@ -458,13 +475,26 @@ impl X11WindowState {
             .xinput_xi_select_events(
                 x_window,
                 &[xinput::EventMask {
-                    deviceid: XINPUT_MASTER_DEVICE,
+                    deviceid: XINPUT_ALL_DEVICE_GROUPS,
                     mask: vec![
                         xinput::XIEventMask::MOTION
                             | xinput::XIEventMask::BUTTON_PRESS
                             | xinput::XIEventMask::BUTTON_RELEASE
                             | xinput::XIEventMask::ENTER
                             | xinput::XIEventMask::LEAVE,
+                    ],
+                }],
+            )
+            .unwrap();
+
+        xcb_connection
+            .xinput_xi_select_events(
+                x_window,
+                &[xinput::EventMask {
+                    deviceid: XINPUT_ALL_DEVICES,
+                    mask: vec![
+                        xinput::XIEventMask::HIERARCHY,
+                        xinput::XIEventMask::DEVICE_CHANGED,
                     ],
                 }],
             )
@@ -873,8 +903,8 @@ impl X11WindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(selection.range);
             }
             let mut state = self.state.borrow_mut();
             state.input_handler = Some(input_handler);
@@ -1236,7 +1266,7 @@ impl PlatformWindow for X11Window {
             self.0.x_window,
             state.atoms._GTK_SHOW_WINDOW_MENU,
             [
-                XINPUT_MASTER_DEVICE as u32,
+                XINPUT_ALL_DEVICE_GROUPS as u32,
                 coords.dst_x as u32,
                 coords.dst_y as u32,
                 0,
@@ -1393,6 +1423,13 @@ impl PlatformWindow for X11Window {
         if let Some(appearance_changed) = callbacks.appearance_changed.as_mut() {
             appearance_changed();
         }
+    }
+
+    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+        let mut state = self.0.state.borrow_mut();
+        let client = state.client.clone();
+        drop(state);
+        client.update_ime_position(bounds);
     }
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {

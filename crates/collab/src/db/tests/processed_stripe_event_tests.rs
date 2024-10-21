@@ -22,19 +22,17 @@ async fn test_already_processed_stripe_event(db: &Arc<Database>) {
     .await
     .unwrap();
 
-    assert_eq!(
+    assert!(
         db.already_processed_stripe_event(&processed_event_id)
             .await
             .unwrap(),
-        true,
         "Expected {processed_event_id} to already be processed"
     );
 
-    assert_eq!(
-        db.already_processed_stripe_event(&unprocessed_event_id)
+    assert!(
+        !db.already_processed_stripe_event(&unprocessed_event_id)
             .await
             .unwrap(),
-        false,
         "Expected {unprocessed_event_id} to be unprocessed"
     );
 }

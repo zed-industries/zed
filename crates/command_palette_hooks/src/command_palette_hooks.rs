@@ -118,9 +118,7 @@ impl CommandPaletteInterceptor {
 
     /// Intercepts the given query from the command palette.
     pub fn intercept(&self, query: &str, cx: &AppContext) -> Option<CommandInterceptResult> {
-        let Some(handler) = self.0.as_ref() else {
-            return None;
-        };
+        let handler = self.0.as_ref()?;
 
         (handler)(query, cx)
     }

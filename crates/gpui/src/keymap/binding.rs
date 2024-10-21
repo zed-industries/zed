@@ -57,7 +57,7 @@ impl KeyBinding {
             }
         }
 
-        return Some(self.keystrokes.len() > typed.len());
+        Some(self.keystrokes.len() > typed.len())
     }
 
     /// Get the keystrokes associated with this binding

@@ -706,11 +706,7 @@ pub struct Bounds<T: Clone + Default + Debug> {
 
 impl Bounds<Pixels> {
     /// Generate a centered bounds for the given display or primary display if none is provided
-    pub fn centered(
-        display_id: Option<DisplayId>,
-        size: Size<Pixels>,
-        cx: &mut AppContext,
-    ) -> Self {
+    pub fn centered(display_id: Option<DisplayId>, size: Size<Pixels>, cx: &AppContext) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
@@ -730,7 +726,7 @@ impl Bounds<Pixels> {
     }
 
     /// Generate maximized bounds for the given display or primary display if none is provided
-    pub fn maximized(display_id: Option<DisplayId>, cx: &mut AppContext) -> Self {
+    pub fn maximized(display_id: Option<DisplayId>, cx: &AppContext) -> Self {
         let display = display_id
             .and_then(|id| cx.find_display(id))
             .or_else(|| cx.primary_display());
@@ -1836,11 +1832,18 @@ impl Edges<Pixels> {
 
 impl From<f32> for Edges<Pixels> {
     fn from(val: f32) -> Self {
+        let val: Pixels = val.into();
+        val.into()
+    }
+}
+
+impl From<Pixels> for Edges<Pixels> {
+    fn from(val: Pixels) -> Self {
         Edges {
-            top: val.into(),
-            right: val.into(),
-            bottom: val.into(),
-            left: val.into(),
+            top: val,
+            right: val,
+            bottom: val,
+            left: val,
         }
     }
 }
@@ -1902,20 +1905,20 @@ where
 
 impl Corners<AbsoluteLength> {
     /// Converts the `AbsoluteLength` to `Pixels` based on the provided size and rem size, ensuring the resulting
-    /// `Pixels` do not exceed half of the maximum of the provided size's width and height.
+    /// `Pixels` do not exceed half of the minimum of the provided size's width and height.
     ///
     /// This method is particularly useful when dealing with corner radii, where the radius in pixels should not
     /// exceed half the size of the box it applies to, to avoid the corners overlapping.
     ///
     /// # Arguments
     ///
-    /// * `size` - The `Size<Pixels>` against which the maximum allowable radius is determined.
+    /// * `size` - The `Size<Pixels>` against which the minimum allowable radius is determined.
     /// * `rem_size` - The size of one REM unit in pixels, used for conversion if the `AbsoluteLength` is in REMs.
     ///
     /// # Returns
     ///
     /// Returns a `Corners<Pixels>` instance with each corner's length converted to pixels and clamped to the
-    /// maximum allowable radius based on the provided size.
+    /// minimum allowable radius based on the provided size.
     ///
     /// # Examples
     ///
@@ -1924,7 +1927,7 @@ impl Corners<AbsoluteLength> {
     /// let corners = Corners {
     ///     top_left: AbsoluteLength::Pixels(Pixels(15.0)),
     ///     top_right: AbsoluteLength::Rems(Rems(1.0)),
-    ///     bottom_right: AbsoluteLength::Pixels(Pixels(20.0)),
+    ///     bottom_right: AbsoluteLength::Pixels(Pixels(30.0)),
     ///     bottom_left: AbsoluteLength::Rems(Rems(2.0)),
     /// };
     /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
@@ -1934,11 +1937,11 @@ impl Corners<AbsoluteLength> {
     /// // The resulting corners should not exceed half the size of the smallest dimension (50.0 / 2.0 = 25.0).
     /// assert_eq!(corners_in_pixels.top_left, Pixels(15.0));
     /// assert_eq!(corners_in_pixels.top_right, Pixels(16.0)); // 1 rem converted to pixels
-    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(20.0).min(Pixels(25.0))); // Clamped to 25.0
-    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0).min(Pixels(25.0))); // 2 rems converted to pixels and clamped
+    /// assert_eq!(corners_in_pixels.bottom_right, Pixels(30.0).min(Pixels(25.0))); // Clamped to 25.0
+    /// assert_eq!(corners_in_pixels.bottom_left, Pixels(32.0).min(Pixels(25.0))); // 2 rems converted to pixels and clamped to 25.0
     /// ```
     pub fn to_pixels(&self, size: Size<Pixels>, rem_size: Pixels) -> Corners<Pixels> {
-        let max = size.width.max(size.height) / 2.;
+        let max = size.width.min(size.height) / 2.;
         Corners {
             top_left: self.top_left.to_pixels(rem_size).min(max),
             top_right: self.top_right.to_pixels(rem_size).min(max),
@@ -2146,7 +2149,7 @@ pub struct Percentage(pub f32);
 /// Generate a `Radian` from a percentage of a full circle.
 pub fn percentage(value: f32) -> Percentage {
     debug_assert!(
-        value >= 0.0 && value <= 1.0,
+        (0.0..=1.0).contains(&value),
         "Percentage must be between 0 and 1"
     );
     Percentage(value)
@@ -2447,10 +2450,24 @@ impl From<usize> for Pixels {
 /// affected by the device's scale factor, `DevicePixels` always correspond to real pixels on the
 /// display.
 #[derive(
-    Add, AddAssign, Clone, Copy, Default, Div, Eq, Hash, Ord, PartialEq, PartialOrd, Sub, SubAssign,
+    Add,
+    AddAssign,
+    Clone,
+    Copy,
+    Default,
+    Div,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+    Sub,
+    SubAssign,
+    Serialize,
+    Deserialize,
 )]
 #[repr(transparent)]
-pub struct DevicePixels(pub(crate) i32);
+pub struct DevicePixels(pub i32);
 
 impl DevicePixels {
     /// Converts the `DevicePixels` value to the number of bytes needed to represent it in memory.
@@ -2588,6 +2605,12 @@ impl From<DevicePixels> for ScaledPixels {
 impl From<ScaledPixels> for f64 {
     fn from(scaled_pixels: ScaledPixels) -> Self {
         scaled_pixels.0 as f64
+    }
+}
+
+impl From<ScaledPixels> for u32 {
+    fn from(pixels: ScaledPixels) -> Self {
+        pixels.0 as u32
     }
 }
 
@@ -3119,12 +3142,12 @@ mod tests {
         };
 
         // Test Case 1: Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds2), true);
+        assert!(bounds1.intersects(&bounds2));
 
         // Test Case 2: Non-Intersecting bounds
-        assert_eq!(bounds1.intersects(&bounds3), false);
+        assert!(!bounds1.intersects(&bounds3));
 
         // Test Case 3: Bounds intersecting with themselves
-        assert_eq!(bounds1.intersects(&bounds1), true);
+        assert!(bounds1.intersects(&bounds1));
     }
 }

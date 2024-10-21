@@ -11,24 +11,24 @@ use futures::future::BoxFuture;
 use futures::stream::BoxStream;
 use futures::{FutureExt, StreamExt};
 use gpui::{
-    percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, FocusHandle,
-    Model, Render, Subscription, Task, Transformation,
+    percentage, svg, Animation, AnimationExt, AnyView, AppContext, AsyncAppContext, Model, Render,
+    Subscription, Task, Transformation,
 };
 use settings::{Settings, SettingsStore};
 use std::time::Duration;
 use strum::IntoEnumIterator;
 use ui::{
-    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, IconName,
-    IconPosition, IconSize, Indicator, IntoElement, Label, LabelCommon, ParentElement, Styled,
+    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, Icon,
+    IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
     ViewContext, VisualContext, WindowContext,
 };
 
 use crate::settings::AllLanguageModelSettings;
-use crate::LanguageModelProviderState;
 use crate::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
 };
+use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
 use super::open_ai::count_open_ai_tokens;
 
@@ -91,6 +91,10 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         LanguageModelProviderName(PROVIDER_NAME.into())
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Copilot
+    }
+
     fn provided_models(&self, _cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
         CopilotChatModel::iter()
             .map(|model| {
@@ -128,10 +132,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(result)
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> (AnyView, Option<FocusHandle>) {
+    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
         let state = self.state.clone();
-        let view = cx.new_view(|cx| ConfigurationView::new(state, cx)).into();
-        (view, None)
+        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -177,6 +180,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
         let model = match self.model {
+            CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
             CopilotChatModel::Gpt4 => open_ai::Model::Four,
             CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
         };
@@ -188,9 +192,9 @@ impl LanguageModel for CopilotChatLanguageModel {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
         if let Some(message) = request.messages.last() {
-            if message.content.trim().is_empty() {
+            if message.contents_empty() {
                 const EMPTY_PROMPT_MSG: &str =
                     "Empty prompts aren't allowed. Please provide a non-empty prompt.";
                 return futures::future::ready(Err(anyhow::anyhow!(EMPTY_PROMPT_MSG))).boxed();
@@ -239,7 +243,13 @@ impl LanguageModel for CopilotChatLanguageModel {
             }).await
         });
 
-        async move { Ok(future.await?.boxed()) }.boxed()
+        async move {
+            Ok(future
+                .await?
+                .map(|result| result.map(LanguageModelCompletionEvent::Text))
+                .boxed())
+        }
+        .boxed()
     }
 
     fn use_any_tool(
@@ -249,7 +259,7 @@ impl LanguageModel for CopilotChatLanguageModel {
         _description: String,
         _schema: serde_json::Value,
         _cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<serde_json::Value>> {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         future::ready(Err(anyhow!("not implemented"))).boxed()
     }
 }
@@ -267,7 +277,7 @@ impl CopilotChatLanguageModel {
                         Role::Assistant => CopilotChatRole::Assistant,
                         Role::System => CopilotChatRole::System,
                     },
-                    content: msg.content,
+                    content: msg.string_contents(),
                 })
                 .collect(),
         )
@@ -302,8 +312,8 @@ impl Render for ConfigurationView {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()
-                .gap_2()
-                .child(Indicator::dot().color(Color::Success))
+                .gap_1()
+                .child(Icon::new(IconName::Check).color(Color::Success))
                 .child(Label::new(LABEL))
         } else {
             let loading_icon = svg()
@@ -316,7 +326,7 @@ impl Render for ConfigurationView {
                     |svg, delta| svg.with_transformation(Transformation::rotate(percentage(delta))),
                 );
 
-            const ERROR_LABEL: &str = "Copilot Chat requires the Copilot plugin to be available and running. Please ensure Copilot is running and try again, or use a different Assistant provider.";
+            const ERROR_LABEL: &str = "Copilot Chat requires an active GitHub Copilot subscription. Please ensure Copilot is configured and try again, or use a different Assistant provider.";
 
             match &self.copilot_status {
                 Some(status) => match status {
@@ -348,7 +358,7 @@ impl Render for ConfigurationView {
                     }
                     _ => {
                         const LABEL: &str =
-                    "To use the assistant panel or inline assistant, you must login to GitHub Copilot. Your GitHub account must have an active Copilot Chat subscription.";
+                    "To use Zed's assistant with GitHub Copilot, you need to be logged in to GitHub. Note that your GitHub account must have an active Copilot Chat subscription.";
                         v_flex().gap_6().child(Label::new(LABEL)).child(
                             v_flex()
                                 .gap_2()

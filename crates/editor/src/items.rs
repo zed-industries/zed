@@ -20,13 +20,14 @@ use language::{
 };
 use multi_buffer::AnchorRangeExt;
 use project::{
-    project_settings::ProjectSettings, search::SearchQuery, FormatTrigger, Item as _, Project,
-    ProjectPath,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Item as _,
+    Project, ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 
+use project::lsp_store::FormatTarget;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -68,7 +69,6 @@ impl FollowableItem for Editor {
             unreachable!()
         };
 
-        let replica_id = project.read(cx).replica_id();
         let buffer_ids = state
             .excerpts
             .iter()
@@ -92,7 +92,7 @@ impl FollowableItem for Editor {
                     if state.singleton && buffers.len() == 1 {
                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
-                        multibuffer = MultiBuffer::new(replica_id, project.read(cx).capability());
+                        multibuffer = MultiBuffer::new(project.read(cx).capability());
                         let mut excerpts = state.excerpts.into_iter().peekable();
                         while let Some(excerpt) = excerpts.peek() {
                             let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
@@ -356,7 +356,7 @@ async fn update_editor_from_message(
                 .collect::<Vec<_>>();
             removed_excerpt_ids.sort_by({
                 let multibuffer = multibuffer.read(cx);
-                move |a, b| a.cmp(&b, &multibuffer)
+                move |a, b| a.cmp(b, &multibuffer)
             });
 
             let mut insertions = message.inserted_excerpts.into_iter().peekable();
@@ -604,7 +604,7 @@ impl Item for Editor {
                     .and_then(|path| FileIcons::get_icon(path.path.as_ref(), cx))
             })
             .flatten()
-            .map(|icon| Icon::from_path(icon))
+            .map(Icon::from_path)
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
@@ -631,7 +631,7 @@ impl Item for Editor {
                 return None;
             }
 
-            Some(util::truncate_and_trailoff(&description, MAX_TAB_TITLE_LEN))
+            Some(util::truncate_and_trailoff(description, MAX_TAB_TITLE_LEN))
         });
 
         h_flex()
@@ -680,6 +680,12 @@ impl Item for Editor {
         self.nav_history = Some(history);
     }
 
+    fn discarded(&self, _project: Model<Project>, cx: &mut ViewContext<Self>) {
+        for buffer in self.buffer().clone().read(cx).all_buffers() {
+            buffer.update(cx, |buffer, cx| buffer.discarded(cx))
+        }
+    }
+
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, cx);
@@ -717,7 +723,12 @@ impl Item for Editor {
         cx.spawn(|this, mut cx| async move {
             if format {
                 this.update(&mut cx, |editor, cx| {
-                    editor.perform_format(project.clone(), FormatTrigger::Save, cx)
+                    editor.perform_format(
+                        project.clone(),
+                        FormatTrigger::Save,
+                        FormatTarget::Buffer,
+                        cx,
+                    )
                 })?
                 .await?;
             }
@@ -823,7 +834,7 @@ impl Item for Editor {
         let cursor = self.selections.newest_anchor().head();
         let multibuffer = &self.buffer().read(cx);
         let (buffer_id, symbols) =
-            multibuffer.symbols_containing(cursor, Some(&variant.syntax()), cx)?;
+            multibuffer.symbols_containing(cursor, Some(variant.syntax()), cx)?;
         let buffer = multibuffer.buffer(buffer_id)?;
 
         let buffer = buffer.read(cx);
@@ -838,7 +849,13 @@ impl Item for Editor {
                         .unwrap_or_default(),
                 )
                 .map(|path| path.to_string_lossy().to_string())
-                .unwrap_or_else(|| "untitled".to_string())
+                .unwrap_or_else(|| {
+                    if multibuffer.is_singleton() {
+                        multibuffer.title(cx).to_string()
+                    } else {
+                        "untitled".to_string()
+                    }
+                })
         });
 
         let settings = ThemeSettings::get_global(cx);
@@ -893,6 +910,10 @@ impl Item for Editor {
 
             _ => {}
         }
+    }
+
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.buffer.read(cx).preserve_preview(cx)
     }
 }
 
@@ -1071,10 +1092,14 @@ impl SerializableItem for Editor {
         let workspace_id = workspace.database_id()?;
 
         let buffer = self.buffer().read(cx).as_singleton()?;
+        let path = buffer
+            .read(cx)
+            .file()
+            .map(|file| file.full_path(cx))
+            .and_then(|full_path| project.read(cx).find_project_path(&full_path, cx))
+            .and_then(|project_path| project.read(cx).absolute_path(&project_path, cx));
 
         let is_dirty = buffer.read(cx).is_dirty();
-        let local_file = buffer.read(cx).file().and_then(|file| file.as_local());
-        let path = local_file.map(|file| file.abs_path(cx));
         let mtime = buffer.read(cx).saved_mtime();
 
         let snapshot = buffer.read(cx).snapshot();
@@ -1134,16 +1159,37 @@ pub(crate) enum BufferSearchHighlights {}
 impl SearchableItem for Editor {
     type Match = Range<Anchor>;
 
+    fn get_matches(&self, _: &mut WindowContext) -> Vec<Range<Anchor>> {
+        self.background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map_or(Vec::new(), |(_color, ranges)| {
+                ranges.iter().cloned().collect()
+            })
+    }
+
     fn clear_matches(&mut self, cx: &mut ViewContext<Self>) {
-        self.clear_background_highlights::<BufferSearchHighlights>(cx);
+        if self
+            .clear_background_highlights::<BufferSearchHighlights>(cx)
+            .is_some()
+        {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn update_matches(&mut self, matches: &[Range<Anchor>], cx: &mut ViewContext<Self>) {
+        let existing_range = self
+            .background_highlights
+            .get(&TypeId::of::<BufferSearchHighlights>())
+            .map(|(_, range)| range.as_ref());
+        let updated = existing_range != Some(matches);
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
             cx,
         );
+        if updated {
+            cx.emit(SearchEvent::MatchesInvalidated);
+        }
     }
 
     fn has_filtered_search_ranges(&mut self) -> bool {
@@ -1188,7 +1234,7 @@ impl SearchableItem for Editor {
             }
             SeedQuerySetting::Selection => String::new(),
             SeedQuerySetting::Always => {
-                let (range, kind) = snapshot.surrounding_word(selection.start);
+                let (range, kind) = snapshot.surrounding_word(selection.start, true);
                 if kind == Some(CharKind::Word) {
                     let text: String = snapshot.text_for_range(range).collect();
                     if !text.trim().is_empty() {
@@ -1217,7 +1263,7 @@ impl SearchableItem for Editor {
         self.unfold_ranges(matches.to_vec(), false, false, cx);
         let mut ranges = Vec::new();
         for m in matches {
-            ranges.push(self.range_for_match(&m))
+            ranges.push(self.range_for_match(m))
         }
         self.change_selections(None, cx, |s| s.select_ranges(ranges));
     }
@@ -1298,7 +1344,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_gt()
                 {
-                    count = count - 1
+                    count -= 1
                 }
 
                 (current_index + count) % matches.len()
@@ -1309,7 +1355,7 @@ impl SearchableItem for Editor {
                     .cmp(&current_index_position, &buffer)
                     .is_lt()
                 {
-                    count = count - 1;
+                    count -= 1;
                 }
 
                 if current_index >= count {
@@ -1331,7 +1377,7 @@ impl SearchableItem for Editor {
             .background_highlights
             .get(&TypeId::of::<SearchWithinRange>())
             .map_or(vec![], |(_color, ranges)| {
-                ranges.iter().map(|range| range.clone()).collect::<Vec<_>>()
+                ranges.iter().cloned().collect::<Vec<_>>()
             });
 
         cx.background_executor().spawn(async move {
@@ -1374,7 +1420,7 @@ impl SearchableItem for Editor {
                     if !search_range.is_empty() {
                         ranges.extend(
                             query
-                                .search(&search_buffer, Some(search_range.clone()))
+                                .search(search_buffer, Some(search_range.clone()))
                                 .await
                                 .into_iter()
                                 .map(|match_range| {
@@ -1562,7 +1608,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -1668,8 +1714,8 @@ mod tests {
 
                 let buffer = editor.buffer().read(cx).as_singleton().unwrap().read(cx);
                 assert_eq!(
-                    buffer.language().map(|lang| lang.name()).as_deref(),
-                    Some("Rust")
+                    buffer.language().map(|lang| lang.name()),
+                    Some("Rust".into())
                 ); // Language should be set to Rust
                 assert!(buffer.file().is_none()); // The buffer should not have an associated file
             });

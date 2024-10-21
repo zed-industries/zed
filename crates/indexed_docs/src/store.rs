@@ -39,6 +39,13 @@ pub trait IndexedDocsProvider {
     /// Returns the path to the database for this provider.
     fn database_path(&self) -> PathBuf;
 
+    /// Returns a list of packages as suggestions to be included in the search
+    /// results.
+    ///
+    /// This can be used to provide completions for known packages (e.g., from the
+    /// local project or a registry) before a package has been indexed.
+    async fn suggest_packages(&self) -> Result<Vec<PackageName>>;
+
     /// Indexes the package with the given name.
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()>;
 }
@@ -120,6 +127,12 @@ impl IndexedDocsStore {
             .map_err(|err| anyhow!(err))?
             .any_with_prefix(prefix)
             .await
+    }
+
+    pub fn suggest_packages(self: Arc<Self>) -> Task<Result<Vec<PackageName>>> {
+        let this = self.clone();
+        self.executor
+            .spawn(async move { this.provider.suggest_packages().await })
     }
 
     pub fn index(

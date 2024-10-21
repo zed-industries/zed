@@ -53,7 +53,7 @@ impl Render for InlineCompletionButton {
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.inline_completions.provider {
-            InlineCompletionProvider::None => return div(),
+            InlineCompletionProvider::None => div(),
 
             InlineCompletionProvider::Copilot => {
                 let Some(copilot) = Copilot::global(cx) else {
@@ -62,7 +62,7 @@ impl Render for InlineCompletionButton {
                 let status = copilot.read(cx).status();
 
                 let enabled = self.editor_enabled.unwrap_or_else(|| {
-                    all_language_settings.inline_completions_enabled(None, None)
+                    all_language_settings.inline_completions_enabled(None, None, cx)
                 });
 
                 let icon = match status {
@@ -159,16 +159,29 @@ impl Render for InlineCompletionButton {
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
                 let this = cx.view().clone();
+                let fs = self.fs.clone();
 
                 return div().child(
                     PopoverMenu::new("supermaven")
                         .menu(move |cx| match &status {
                             SupermavenButtonStatus::NeedsActivation(activate_url) => {
                                 Some(ContextMenu::build(cx, |menu, _| {
+                                    let fs = fs.clone();
                                     let activate_url = activate_url.clone();
                                     menu.entry("Sign In", None, move |cx| {
                                         cx.open_url(activate_url.as_str())
                                     })
+                                    .entry(
+                                        "Use Copilot",
+                                        None,
+                                        move |cx| {
+                                            set_completion_provider(
+                                                fs.clone(),
+                                                cx,
+                                                InlineCompletionProvider::Copilot,
+                                            )
+                                        },
+                                    )
                                 }))
                             }
                             SupermavenButtonStatus::Ready => Some(
@@ -208,11 +221,21 @@ impl InlineCompletionButton {
     pub fn build_copilot_start_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let fs = self.fs.clone();
         ContextMenu::build(cx, |menu, _| {
-            menu.entry("Sign In", None, initiate_sign_in).entry(
-                "Disable Copilot",
-                None,
-                move |cx| hide_copilot(fs.clone(), cx),
-            )
+            menu.entry("Sign In", None, initiate_sign_in)
+                .entry("Disable Copilot", None, {
+                    let fs = fs.clone();
+                    move |cx| hide_copilot(fs.clone(), cx)
+                })
+                .entry("Use Supermaven", None, {
+                    let fs = fs.clone();
+                    move |cx| {
+                        set_completion_provider(
+                            fs.clone(),
+                            cx,
+                            InlineCompletionProvider::Supermaven,
+                        )
+                    }
+                })
         })
     }
 
@@ -225,8 +248,9 @@ impl InlineCompletionButton {
 
         if let Some(language) = self.language.clone() {
             let fs = fs.clone();
-            let language_enabled = language_settings::language_settings(Some(&language), None, cx)
-                .show_inline_completions;
+            let language_enabled =
+                language_settings::language_settings(Some(language.name()), None, cx)
+                    .show_inline_completions;
 
             menu = menu.entry(
                 format!(
@@ -269,7 +293,7 @@ impl InlineCompletionButton {
             );
         }
 
-        let globally_enabled = settings.inline_completions_enabled(None, None);
+        let globally_enabled = settings.inline_completions_enabled(None, None, cx);
         menu.entry(
             if globally_enabled {
                 "Hide Inline Completions for All Files"
@@ -317,6 +341,7 @@ impl InlineCompletionButton {
                     && all_language_settings(file, cx).inline_completions_enabled(
                         language,
                         file.map(|file| file.path().as_ref()),
+                        cx,
                     ),
             )
         };
@@ -419,9 +444,21 @@ async fn configure_disabled_globs(
 
 fn toggle_inline_completions_globally(fs: Arc<dyn Fs>, cx: &mut AppContext) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(None, None);
+        all_language_settings(None, cx).inline_completions_enabled(None, None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.defaults.show_inline_completions = Some(!show_inline_completions)
+    });
+}
+
+fn set_completion_provider(
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+    provider: InlineCompletionProvider,
+) {
+    update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
+        file.features
+            .get_or_insert(Default::default())
+            .inline_completion_provider = Some(provider);
     });
 }
 
@@ -431,7 +468,7 @@ fn toggle_inline_completions_for_language(
     cx: &mut AppContext,
 ) {
     let show_inline_completions =
-        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None);
+        all_language_settings(None, cx).inline_completions_enabled(Some(&language), None, cx);
     update_settings_file::<AllLanguageSettings>(fs, cx, move |file, _| {
         file.languages
             .entry(language.name())

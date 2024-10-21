@@ -12,11 +12,10 @@ use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
     LanguageServerId, ToOffset,
 };
-use lazy_static::lazy_static;
 use parking_lot::RwLock;
 use project::{search::SearchQuery, Completion};
 use settings::Settings;
-use std::{ops::Range, sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, TextSize};
 
@@ -24,17 +23,18 @@ use crate::panel_settings::MessageEditorSettings;
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 
-lazy_static! {
-    static ref MENTIONS_SEARCH: SearchQuery = SearchQuery::regex(
+static MENTIONS_SEARCH: LazyLock<SearchQuery> = LazyLock::new(|| {
+    SearchQuery::regex(
         "@[-_\\w]+",
         false,
         false,
         false,
         Default::default(),
-        Default::default()
+        Default::default(),
+        None,
     )
-    .unwrap();
-}
+    .unwrap()
+});
 
 pub struct MessageEditor {
     pub editor: View<Editor>,
@@ -111,7 +111,7 @@ impl MessageEditor {
             editor.set_show_gutter(false, cx);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
-            editor.set_completion_provider(Box::new(MessageEditorCompletionProvider(this)));
+            editor.set_completion_provider(Some(Box::new(MessageEditorCompletionProvider(this))));
             editor.set_auto_replace_emoji_shortcode(
                 MessageEditorSettings::get_global(cx)
                     .auto_replace_emoji_shortcode
@@ -228,10 +228,10 @@ impl MessageEditor {
     fn on_buffer_event(
         &mut self,
         buffer: Model<Buffer>,
-        event: &language::Event,
+        event: &language::BufferEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        if let language::Event::Reparsed | language::Event::Edited = event {
+        if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let buffer = buffer.read(cx).snapshot();
             self.mentions_task = Some(cx.spawn(|this, cx| async move {
                 cx.background_executor()
@@ -293,8 +293,8 @@ impl MessageEditor {
         completion_fn: impl Fn(&StringMatch) -> (String, CodeLabel),
     ) -> Vec<Completion> {
         let matches = fuzzy::match_strings(
-            &candidates,
-            &query,
+            candidates,
+            query,
             true,
             10,
             &Default::default(),
@@ -314,7 +314,6 @@ impl MessageEditor {
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
-                    show_new_completions_on_confirm: false,
                 }
             })
             .collect()
@@ -347,7 +346,7 @@ impl MessageEditor {
     ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let Some(query) = buffer.update(cx, |buffer, _| {
+        let query = buffer.update(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == '@' {
@@ -359,9 +358,7 @@ impl MessageEditor {
                 query.push(ch);
             }
             None
-        }) else {
-            return None;
-        };
+        })?;
 
         let start_offset = end_offset - query.len();
         let start_anchor = buffer.read(cx).anchor_before(start_offset);
@@ -400,8 +397,8 @@ impl MessageEditor {
         end_anchor: Anchor,
         cx: &mut ViewContext<Self>,
     ) -> Option<(Anchor, String, &'static [StringMatchCandidate])> {
-        lazy_static! {
-            static ref EMOJI_FUZZY_MATCH_CANDIDATES: Vec<StringMatchCandidate> = {
+        static EMOJI_FUZZY_MATCH_CANDIDATES: LazyLock<Vec<StringMatchCandidate>> =
+            LazyLock::new(|| {
                 let emojis = emojis::iter()
                     .flat_map(|s| s.shortcodes())
                     .map(|emoji| StringMatchCandidate {
@@ -411,12 +408,11 @@ impl MessageEditor {
                     })
                     .collect::<Vec<_>>();
                 emojis
-            };
-        }
+            });
 
         let end_offset = end_anchor.to_offset(buffer.read(cx));
 
-        let Some(query) = buffer.update(cx, |buffer, _| {
+        let query = buffer.update(cx, |buffer, _| {
             let mut query = String::new();
             for ch in buffer.reversed_chars_at(end_offset).take(100) {
                 if ch == ':' {
@@ -452,9 +448,7 @@ impl MessageEditor {
                 query.push(ch);
             }
             None
-        }) else {
-            return None;
-        };
+        })?;
 
         let start_offset = end_offset - query.len() - 1;
         let start_anchor = buffer.read(cx).anchor_before(start_offset);

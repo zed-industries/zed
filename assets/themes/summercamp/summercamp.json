@@ -1,4 +1,5 @@
 {
+  "$schema": "https://zed.dev/schema/themes/v0.1.0.json",
   "name": "Summercamp",
   "author": "Zed Industries",
   "themes": [

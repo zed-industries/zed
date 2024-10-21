@@ -1,3 +1,4 @@
+(comment) @annotation
 (type_declaration
     "type" @context
     (type_spec

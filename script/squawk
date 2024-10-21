@@ -28,7 +28,7 @@ if [ -n "$SQUAWK_GITHUB_TOKEN" ]; then
     export SQUAWK_GITHUB_REPO_NAME=$(echo $GITHUB_REPOSITORY | awk -F/ '{print $2}')
     export SQUAWK_GITHUB_PR_NUMBER=$(echo $GITHUB_REF | awk 'BEGIN { FS = "/" } ; { print $3 }')
 
-    $SQUAWK_BIN $SQUAWK_ARGS upload-to-github $(git diff --name-only origin/$GITHUB_BASE_REF...origin/$GITHUB_HEAD_REF 'crates/collab/migrations/*.sql')
+    $SQUAWK_BIN $SQUAWK_ARGS upload-to-github $(git diff --name-only origin/$GITHUB_BASE_REF...origin/$GITHUB_HEAD_REF 'crates/collab/migrations/*.sql' 'crates/collab/migrations_llm/*.sql')
 else
-    $SQUAWK_BIN $SQUAWK_ARGS $(git ls-files --others crates/collab/migrations/*.sql) $(git diff --name-only main crates/collab/migrations/*.sql)
+    $SQUAWK_BIN $SQUAWK_ARGS $(git ls-files --others crates/collab/migrations/*.sql crates/collab/migrations_llm/*.sql) $(git diff --name-only main crates/collab/migrations/*.sql crates/collab/migrations_llm/*.sql)
 fi

@@ -8,10 +8,10 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
 };
 use futures::AsyncReadExt;
-use gpui::{AppContext, Task, WeakView};
+use gpui::{Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -104,11 +104,11 @@ impl SlashCommand for FetchSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert URL contents".into()
+        "Insert fetched URL contents".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert fetched URL contents".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -117,22 +117,24 @@ impl SlashCommand for FetchSlashCommand {
 
     fn complete_argument(
         self: Arc<Self>,
-        _query: String,
+        _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut AppContext,
+        _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
 
     fn run(
         self: Arc<Self>,
-        argument: Option<&str>,
+        arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
-        _delegate: Arc<dyn LspAdapterDelegate>,
+        _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<Result<SlashCommandOutput>> {
-        let Some(argument) = argument else {
+        let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
         };
         let Some(workspace) = workspace.upgrade() else {
@@ -150,6 +152,10 @@ impl SlashCommand for FetchSlashCommand {
         let url = SharedString::from(url);
         cx.foreground_executor().spawn(async move {
             let text = text.await?;
+            if text.trim().is_empty() {
+                bail!("no textual content found");
+            }
+
             let range = 0..text.len();
             Ok(SlashCommandOutput {
                 text,
@@ -157,6 +163,7 @@ impl SlashCommand for FetchSlashCommand {
                     range,
                     icon: IconName::AtSign,
                     label: format!("fetch {}", url).into(),
+                    metadata: None,
                 }],
                 run_commands_in_text: false,
             })

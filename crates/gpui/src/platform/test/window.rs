@@ -1,8 +1,8 @@
 use crate::{
     AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GPUSpecs,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
-    Point, Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
-    WindowParams,
+    Point, ScaledPixels, Size, TestPlatform, TileId, WindowAppearance, WindowBackgroundAppearance,
+    WindowBounds, WindowParams,
 };
 use collections::HashMap;
 use parking_lot::Mutex;
@@ -273,6 +273,8 @@ impl PlatformWindow for TestWindow {
     fn start_window_move(&self) {
         unimplemented!()
     }
+
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {}
 
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         None

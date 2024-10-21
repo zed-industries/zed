@@ -221,7 +221,7 @@ impl DispatchTree {
         self.focusable_node_ids.insert(focus_id, node_id);
     }
 
-    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+    pub fn parent_view_id(&self) -> Option<EntityId> {
         self.view_stack.last().copied()
     }
 
@@ -406,7 +406,7 @@ impl DispatchTree {
         keymap
             .bindings_for_action(action)
             .filter(|binding| {
-                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, &context_stack);
+                let (bindings, _) = keymap.bindings_for_input(&binding.keystrokes, context_stack);
                 bindings
                     .iter()
                     .next()
@@ -428,7 +428,7 @@ impl DispatchTree {
 
         self.keymap
             .borrow()
-            .bindings_for_input(&input, &context_stack)
+            .bindings_for_input(input, &context_stack)
     }
 
     /// dispatch_key processes the keystroke
@@ -467,7 +467,7 @@ impl DispatchTree {
         let mut result = self.dispatch_key(suffix, keystroke, dispatch_path);
         to_replay.extend(result.to_replay);
         result.to_replay = to_replay;
-        return result;
+        result
     }
 
     /// If the user types a matching prefix of a binding and then waits for a timeout
@@ -479,7 +479,7 @@ impl DispatchTree {
     ) -> SmallVec<[Replay; 1]> {
         let (suffix, mut to_replay) = self.replay_prefix(input, dispatch_path);
 
-        if suffix.len() > 0 {
+        if !suffix.is_empty() {
             to_replay.extend(self.flush_dispatch(suffix, dispatch_path))
         }
 
@@ -488,7 +488,7 @@ impl DispatchTree {
 
     /// Converts the longest prefix of input to a replay event and returns the rest.
     fn replay_prefix(
-        &mut self,
+        &self,
         mut input: SmallVec<[Keystroke; 1]>,
         dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) -> (SmallVec<[Keystroke; 1]>, SmallVec<[Replay; 1]>) {

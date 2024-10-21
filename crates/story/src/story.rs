@@ -1,196 +1,33 @@
 use gpui::{
-    div, hsla, prelude::*, px, rems, AnyElement, Div, ElementId, Hsla, SharedString, WindowContext,
+    div, prelude::*, px, rems, AnyElement, DefaultColor, DefaultColors, Div, SharedString,
+    WindowContext,
 };
 use itertools::Itertools;
 use smallvec::SmallVec;
 
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-static COUNTER: AtomicUsize = AtomicUsize::new(0);
-
-pub fn reasonably_unique_id() -> String {
-    let now = SystemTime::now();
-    let timestamp = now.duration_since(UNIX_EPOCH).unwrap();
-
-    let cnt = COUNTER.fetch_add(1, Ordering::Relaxed);
-
-    let id = format!("{}_{}", timestamp.as_nanos(), cnt);
-
-    id
-}
-
-pub struct StoryColor {
-    pub primary: Hsla,
-    pub secondary: Hsla,
-    pub border: Hsla,
-    pub background: Hsla,
-    pub card_background: Hsla,
-    pub divider: Hsla,
-    pub link: Hsla,
-}
-
-impl StoryColor {
-    pub fn new() -> Self {
-        Self {
-            primary: hsla(216. / 360., 11. / 100., 0. / 100., 1.),
-            secondary: hsla(216. / 360., 11. / 100., 16. / 100., 1.),
-            border: hsla(216. / 360., 11. / 100., 91. / 100., 1.),
-            background: hsla(0. / 360., 0. / 100., 1., 1.),
-            card_background: hsla(0. / 360., 0. / 100., 96. / 100., 1.),
-            divider: hsla(216. / 360., 11. / 100., 86. / 100., 1.),
-            link: hsla(206. / 360., 1., 50. / 100., 1.),
-        }
-    }
-}
-
-pub fn story_color() -> StoryColor {
-    StoryColor::new()
-}
-
-#[derive(IntoElement)]
-pub struct StoryContainer {
-    title: SharedString,
-    relative_path: &'static str,
-    children: SmallVec<[AnyElement; 2]>,
-}
-
-impl StoryContainer {
-    pub fn new(title: impl Into<SharedString>, relative_path: &'static str) -> Self {
-        Self {
-            title: title.into(),
-            relative_path,
-            children: SmallVec::new(),
-        }
-    }
-}
-
-impl ParentElement for StoryContainer {
-    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
-        self.children.extend(elements)
-    }
-}
-
-impl RenderOnce for StoryContainer {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .id("story_container")
-            .bg(story_color().background)
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .w_full()
-                    .justify_between()
-                    .p_2()
-                    .bg(story_color().background)
-                    .border_b_1()
-                    .border_color(story_color().border)
-                    .child(Story::title(self.title))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(story_color().primary)
-                            .child(Story::open_story_link(self.relative_path)),
-                    ),
-            )
-            .child(
-                div()
-                    .w_full()
-                    .h_px()
-                    .flex_1()
-                    .id("story_body")
-                    .overflow_x_hidden()
-                    .overflow_y_scroll()
-                    .flex()
-                    .flex_col()
-                    .pb_4()
-                    .children(self.children),
-            )
-    }
-}
-
 pub struct Story {}
 
 impl Story {
-    pub fn container() -> Div {
-        div().size_full().overflow_hidden().child(
-            div()
-                .id("story_container")
-                .overflow_y_scroll()
-                .w_full()
-                .min_h_full()
-                .flex()
-                .flex_col()
-                .bg(story_color().background),
-        )
-    }
-
-    // TODO: Move all stories to container2, then rename
-    pub fn container2<T>(relative_path: &'static str) -> Div {
-        div().size_full().child(
-            div()
-                .size_full()
-                .id("story_container")
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .flex_none()
-                .child(
-                    div()
-                        .flex()
-                        .justify_between()
-                        .p_2()
-                        .border_b_1()
-                        .border_color(story_color().border)
-                        .child(Story::title_for::<T>())
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(story_color().primary)
-                                .child(Story::open_story_link(relative_path)),
-                        ),
-                )
-                .child(
-                    div()
-                        .w_full()
-                        .min_h_full()
-                        .flex()
-                        .flex_col()
-                        .bg(story_color().background),
-                ),
-        )
-    }
-
-    pub fn open_story_link(relative_path: &'static str) -> impl Element {
-        let path = PathBuf::from_iter([relative_path]);
+    pub fn container() -> gpui::Stateful<Div> {
+        let colors = DefaultColors::light();
 
         div()
+            .id("story_container")
+            .overflow_y_scroll()
+            .w_full()
+            .min_h_full()
             .flex()
-            .gap_2()
-            .text_xs()
-            .text_color(story_color().primary)
-            .id(SharedString::from(format!("id_{}", relative_path)))
-            .on_click({
-                let path = path.clone();
-
-                move |_event, _cx| {
-                    let path = format!("{}:0:0", path.to_string_lossy());
-
-                    std::process::Command::new("zed").arg(path).spawn().ok();
-                }
-            })
-            .children(vec![div().child(Story::link("Open in Zed →"))])
+            .flex_col()
+            .text_color(DefaultColor::Text.hsla(&colors))
+            .bg(DefaultColor::Background.hsla(&colors))
     }
 
     pub fn title(title: impl Into<SharedString>) -> impl Element {
+        let colors = DefaultColors::light();
+
         div()
             .text_xs()
-            .text_color(story_color().primary)
+            .text_color(DefaultColor::Text.hsla(&colors))
             .child(title.into())
     }
 
@@ -199,59 +36,66 @@ impl Story {
     }
 
     pub fn section() -> Div {
+        let colors = DefaultColors::light();
+
         div()
             .p_4()
             .m_4()
             .border_1()
-            .border_color(story_color().border)
+            .border_color(DefaultColor::Separator.hsla(&colors))
     }
 
     pub fn section_title() -> Div {
-        div().text_lg().text_color(story_color().primary)
+        let colors = DefaultColors::light();
+
+        div().text_lg().text_color(DefaultColor::Text.hsla(&colors))
     }
 
     pub fn group() -> Div {
-        div().my_2().bg(story_color().background)
+        let colors = DefaultColors::light();
+        div().my_2().bg(DefaultColor::Container.hsla(&colors))
     }
 
     pub fn code_block(code: impl Into<SharedString>) -> Div {
+        let colors = DefaultColors::light();
+
         div()
             .size_full()
             .p_2()
             .max_w(rems(36.))
-            .bg(gpui::black())
+            .bg(DefaultColor::Container.hsla(&colors))
             .rounded_md()
             .text_sm()
-            .text_color(gpui::white())
+            .text_color(DefaultColor::Text.hsla(&colors))
             .overflow_hidden()
             .child(code.into())
     }
 
     pub fn divider() -> Div {
-        div().my_2().h(px(1.)).bg(story_color().divider)
-    }
+        let colors = DefaultColors::light();
 
-    pub fn link(link: impl Into<SharedString>) -> impl Element {
         div()
-            .id(ElementId::from(SharedString::from(reasonably_unique_id())))
-            .text_xs()
-            .text_color(story_color().link)
-            .cursor(gpui::CursorStyle::PointingHand)
-            .child(link.into())
+            .my_2()
+            .h(px(1.))
+            .bg(DefaultColor::Separator.hsla(&colors))
     }
 
     pub fn description(description: impl Into<SharedString>) -> impl Element {
+        let colors = DefaultColors::light();
+
         div()
             .text_sm()
-            .text_color(story_color().secondary)
+            .text_color(DefaultColor::Text.hsla(&colors))
             .min_w_96()
             .child(description.into())
     }
 
     pub fn label(label: impl Into<SharedString>) -> impl Element {
+        let colors = DefaultColors::light();
+
         div()
             .text_xs()
-            .text_color(story_color().primary)
+            .text_color(DefaultColor::Text.hsla(&colors))
             .child(label.into())
     }
 
@@ -292,6 +136,8 @@ impl StoryItem {
 
 impl RenderOnce for StoryItem {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        let colors = DefaultColors::light();
+
         div()
             .my_2()
             .flex()
@@ -306,9 +152,9 @@ impl RenderOnce for StoryItem {
                     .child(
                         div()
                             .rounded_md()
-                            .bg(story_color().card_background)
+                            .bg(DefaultColor::Background.hsla(&colors))
                             .border_1()
-                            .border_color(story_color().border)
+                            .border_color(DefaultColor::Border.hsla(&colors))
                             .py_1()
                             .px_2()
                             .overflow_hidden()
@@ -336,6 +182,12 @@ impl RenderOnce for StoryItem {
 pub struct StorySection {
     description: Option<SharedString>,
     children: SmallVec<[AnyElement; 2]>,
+}
+
+impl Default for StorySection {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl StorySection {

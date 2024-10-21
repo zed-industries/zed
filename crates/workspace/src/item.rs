@@ -40,6 +40,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+    pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
 }
 
@@ -58,13 +59,12 @@ pub enum ClosePosition {
     Right,
 }
 
-impl ClosePosition {
-    pub fn right(&self) -> bool {
-        match self {
-            ClosePosition::Left => false,
-            ClosePosition::Right => true,
-        }
-    }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ActivateOnClose {
+    #[default]
+    History,
+    Neighbour,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -79,8 +79,12 @@ pub struct ItemSettingsContent {
     close_position: Option<ClosePosition>,
     /// Whether to show the file icon for a tab.
     ///
-    /// Default: true
+    /// Default: false
     file_icons: Option<bool>,
+    /// What to do after closing the current tab.
+    ///
+    /// Default: history
+    pub activate_on_close: Option<ActivateOnClose>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -184,6 +188,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
+    fn discarded(&self, _project: Model<Project>, _cx: &mut ViewContext<Self>) {}
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
@@ -287,6 +292,10 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
         None
     }
+
+    fn preserve_preview(&self, _cx: &AppContext) -> bool {
+        false
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -369,6 +378,7 @@ pub trait ItemHandle: 'static + Send {
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]>;
     fn project_item_model_ids(&self, cx: &AppContext) -> SmallVec<[EntityId; 3]>;
     fn for_each_project_item(
         &self,
@@ -389,6 +399,7 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut ViewContext<Workspace>,
     );
     fn deactivated(&self, cx: &mut WindowContext);
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext);
     fn workspace_deactivated(&self, cx: &mut WindowContext);
     fn navigate(&self, data: Box<dyn Any>, cx: &mut WindowContext) -> bool;
     fn item_id(&self) -> EntityId;
@@ -427,10 +438,12 @@ pub trait ItemHandle: 'static + Send {
     fn pixel_position_of_cursor(&self, cx: &AppContext) -> Option<Point<Pixels>>;
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
+    fn preserve_preview(&self, cx: &AppContext) -> bool;
 }
 
 pub trait WeakItemHandle: Send + Sync {
     fn id(&self) -> EntityId;
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle>;
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>>;
 }
 
@@ -505,7 +518,7 @@ impl<T: Item> ItemHandle for View<T> {
         if let Some(project_path) = self.project_path(cx) {
             WorkspaceSettings::get(
                 Some(SettingsLocation {
-                    worktree_id: project_path.worktree_id.into(),
+                    worktree_id: project_path.worktree_id,
                     path: &project_path.path,
                 }),
                 cx,
@@ -519,6 +532,16 @@ impl<T: Item> ItemHandle for View<T> {
         let mut result = SmallVec::new();
         self.read(cx).for_each_project_item(cx, &mut |_, item| {
             if let Some(id) = item.entry_id(cx) {
+                result.push(id);
+            }
+        });
+        result
+    }
+
+    fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]> {
+        let mut result = SmallVec::new();
+        self.read(cx).for_each_project_item(cx, &mut |_, item| {
+            if let Some(id) = item.project_path(cx) {
                 result.push(id);
             }
         });
@@ -666,7 +689,6 @@ impl<T: Item> ItemHandle for View<T> {
                                 pane.close_item_by_id(item.item_id(), crate::SaveIntent::Close, cx)
                             })
                             .detach_and_log_err(cx);
-                            return;
                         }
 
                         ItemEvent::UpdateTab => {
@@ -716,6 +738,10 @@ impl<T: Item> ItemHandle for View<T> {
         cx.defer(|workspace, cx| {
             workspace.serialize_workspace(cx);
         });
+    }
+
+    fn discarded(&self, project: Model<Project>, cx: &mut WindowContext) {
+        self.update(cx, |this, cx| this.discarded(project, cx));
     }
 
     fn deactivated(&self, cx: &mut WindowContext) {
@@ -818,6 +844,10 @@ impl<T: Item> ItemHandle for View<T> {
     ) -> Option<Box<dyn SerializableItemHandle>> {
         SerializableItemRegistry::view_to_serializable_item_handle(self.to_any(), cx)
     }
+
+    fn preserve_preview(&self, cx: &AppContext) -> bool {
+        self.read(cx).preserve_preview(cx)
+    }
 }
 
 impl From<Box<dyn ItemHandle>> for AnyView {
@@ -841,6 +871,10 @@ impl Clone for Box<dyn ItemHandle> {
 impl<T: Item> WeakItemHandle for WeakView<T> {
     fn id(&self) -> EntityId {
         self.entity_id()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn WeakItemHandle> {
+        Box::new(self.clone())
     }
 
     fn upgrade(&self) -> Option<Box<dyn ItemHandle>> {

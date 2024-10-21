@@ -46,7 +46,7 @@ impl SvgRenderer {
     }
 
     pub fn render_pixmap(&self, bytes: &[u8], size: SvgSize) -> Result<Pixmap, usvg::Error> {
-        let tree = usvg::Tree::from_data(&bytes, &usvg::Options::default())?;
+        let tree = usvg::Tree::from_data(bytes, &usvg::Options::default())?;
 
         let size = match size {
             SvgSize::Size(size) => size,

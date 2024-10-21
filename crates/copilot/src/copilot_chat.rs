@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::{sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
@@ -5,16 +7,15 @@ use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
+use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_file;
 use strum::EnumIter;
 use ui::Context;
 
-pub const COPILOT_CHAT_COMPLETION_URL: &'static str =
-    "https://api.githubcopilot.com/chat/completions";
-pub const COPILOT_CHAT_AUTH_URL: &'static str = "https://api.github.com/copilot_internal/v2/token";
+pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
+pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
 
 #[derive(Clone, Copy, Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -28,6 +29,8 @@ pub enum Role {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
+    #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
+    Gpt4o,
     #[serde(alias = "gpt-4", rename = "gpt-4")]
     Gpt4,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
@@ -37,6 +40,7 @@ pub enum Model {
 impl Model {
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
+            "gpt-4o" => Ok(Self::Gpt4o),
             "gpt-4" => Ok(Self::Gpt4),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
             _ => Err(anyhow!("Invalid model id: {}", id)),
@@ -47,6 +51,7 @@ impl Model {
         match self {
             Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
+            Self::Gpt4o => "gpt-4o",
         }
     }
 
@@ -54,11 +59,13 @@ impl Model {
         match self {
             Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
+            Self::Gpt4o => "GPT-4o",
         }
     }
 
     pub fn max_token_count(&self) -> usize {
         match self {
+            Self::Gpt4o => 128000,
             Self::Gpt4 => 8192,
             Self::Gpt3_5Turbo => 16385,
         }
@@ -164,6 +171,20 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<dyn HttpClient>, cx: &mut AppContext) {
     cx.set_global(GlobalCopilotChat(copilot_chat));
 }
 
+fn copilot_chat_config_path() -> &'static PathBuf {
+    static COPILOT_CHAT_CONFIG_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+    COPILOT_CHAT_CONFIG_DIR.get_or_init(|| {
+        if cfg!(target_os = "windows") {
+            home_dir().join("AppData").join("Local")
+        } else {
+            home_dir().join(".config")
+        }
+        .join("github-copilot")
+        .join("hosts.json")
+    })
+}
+
 impl CopilotChat {
     pub fn global(cx: &AppContext) -> Option<gpui::Model<Self>> {
         cx.try_global::<GlobalCopilotChat>()
@@ -174,7 +195,7 @@ impl CopilotChat {
         let mut config_file_rx = watch_config_file(
             cx.background_executor(),
             fs,
-            paths::copilot_chat_config_path().clone(),
+            copilot_chat_config_path().clone(),
         );
 
         cx.spawn(|cx| async move {
@@ -253,7 +274,7 @@ async fn request_api_token(
         .header("Accept", "application/json");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
 
     let request = request_builder.body(AsyncBody::empty())?;
@@ -310,7 +331,7 @@ async fn stream_completion(
         .header("Copilot-Integration-Id", "vscode-chat");
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;

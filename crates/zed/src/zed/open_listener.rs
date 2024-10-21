@@ -1,6 +1,7 @@
 use crate::restorable_workspace_locations;
 use crate::{handle_open_request, init_headless, init_ui};
 use anyhow::{anyhow, Context, Result};
+use assistant::PromptBuilder;
 use cli::{ipc, IpcHandshake};
 use cli::{ipc::IpcSender, CliRequest, CliResponse};
 use client::parse_zed_link;
@@ -8,12 +9,17 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use editor::scroll::Autoscroll;
 use editor::Editor;
+use fs::Fs;
 use futures::channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use futures::channel::{mpsc, oneshot};
+use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
 use language::{Bias, Point};
+use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
+use settings::Settings;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 use std::{process, thread};
@@ -21,12 +27,12 @@ use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
-use workspace::{AppState, Workspace};
+use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {
     pub cli_connection: Option<(mpsc::Receiver<CliRequest>, IpcSender<CliResponse>)>,
-    pub open_paths: Vec<PathWithPosition>,
+    pub open_paths: Vec<String>,
     pub open_channel_notes: Vec<(u64, Option<String>)>,
     pub join_channel: Option<u64>,
     pub ssh_connection: Option<SshConnectionOptions>,
@@ -43,7 +49,7 @@ impl OpenRequest {
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
             } else if url.starts_with("ssh://") {
-                this.parse_ssh_file_path(&url)?
+                this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
                 this.parse_request_path(request_path).log_err();
             } else {
@@ -56,12 +62,11 @@ impl OpenRequest {
 
     fn parse_file_path(&mut self, file: &str) {
         if let Some(decoded) = urlencoding::decode(file).log_err() {
-            let path_buf = PathWithPosition::parse_str(&decoded);
-            self.open_paths.push(path_buf)
+            self.open_paths.push(decoded.into_owned())
         }
     }
 
-    fn parse_ssh_file_path(&mut self, file: &str) -> Result<()> {
+    fn parse_ssh_file_path(&mut self, file: &str, cx: &AppContext) -> Result<()> {
         let url = url::Url::parse(file)?;
         let host = url
             .host()
@@ -73,11 +78,13 @@ impl OpenRequest {
         if !self.open_paths.is_empty() {
             return Err(anyhow!("cannot open both local and ssh paths"));
         }
+        let args = SshSettings::get_global(cx).args_for(&host, port, &username);
         let connection = SshConnectionOptions {
             username,
             password,
             host,
             port,
+            args,
         };
         if let Some(ssh_connection) = &self.ssh_connection {
             if *ssh_connection != connection {
@@ -188,7 +195,7 @@ fn connect_to_cli(
 }
 
 pub async fn open_paths_with_positions(
-    path_positions: &Vec<PathWithPosition>,
+    path_positions: &[PathWithPosition],
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
     cx: &mut AsyncAppContext,
@@ -245,6 +252,7 @@ pub async fn open_paths_with_positions(
 pub async fn handle_cli_connection(
     (mut requests, responses): (mpsc::Receiver<CliRequest>, IpcSender<CliResponse>),
     app_state: Arc<AppState>,
+    prompt_builder: Arc<PromptBuilder>,
     mut cx: AsyncAppContext,
 ) {
     if let Some(request) = requests.next().await {
@@ -255,6 +263,7 @@ pub async fn handle_cli_connection(
                 wait,
                 open_new_workspace,
                 dev_server_token,
+                env,
             } => {
                 if let Some(dev_server_token) = dev_server_token {
                     match cx
@@ -289,7 +298,12 @@ pub async fn handle_cli_connection(
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
                             Ok(open_request) => {
-                                handle_open_request(open_request, app_state.clone(), cx);
+                                handle_open_request(
+                                    open_request,
+                                    app_state.clone(),
+                                    prompt_builder.clone(),
+                                    cx,
+                                );
                                 responses.send(CliResponse::Exit { status: 0 }).log_err();
                             }
                             Err(e) => {
@@ -307,7 +321,7 @@ pub async fn handle_cli_connection(
                 }
 
                 if let Err(e) = cx
-                    .update(|cx| init_ui(app_state.clone(), cx))
+                    .update(|cx| init_ui(app_state.clone(), prompt_builder.clone(), cx))
                     .and_then(|r| r)
                 {
                     responses
@@ -325,6 +339,7 @@ pub async fn handle_cli_connection(
                     &responses,
                     wait,
                     app_state.clone(),
+                    env,
                     &mut cx,
                 )
                 .await;
@@ -342,46 +357,24 @@ async fn open_workspaces(
     responses: &IpcSender<CliResponse>,
     wait: bool,
     app_state: Arc<AppState>,
-    mut cx: &mut AsyncAppContext,
+    env: Option<collections::HashMap<String, String>>,
+    cx: &mut AsyncAppContext,
 ) -> Result<()> {
-    let grouped_paths = if paths.is_empty() {
+    let grouped_locations = if paths.is_empty() {
         // If no paths are provided, restore from previous workspaces unless a new workspace is requested with -n
         if open_new_workspace == Some(true) {
             Vec::new()
         } else {
-            let locations = restorable_workspace_locations(&mut cx, &app_state).await;
-            locations
-                .into_iter()
-                .flat_map(|locations| {
-                    locations
-                        .into_iter()
-                        .map(|location| {
-                            location
-                                .paths()
-                                .iter()
-                                .map(|path| PathWithPosition {
-                                    path: path.clone(),
-                                    row: None,
-                                    column: None,
-                                })
-                                .collect::<Vec<_>>()
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect()
+            let locations = restorable_workspace_locations(cx, &app_state).await;
+            locations.unwrap_or_default()
         }
     } else {
-        // If paths are provided, parse them (they include positions)
-        let paths_with_position = paths
-            .into_iter()
-            .map(|path_with_position_string| {
-                PathWithPosition::parse_str(&path_with_position_string)
-            })
-            .collect();
-        vec![paths_with_position]
+        vec![SerializedWorkspaceLocation::from_local_paths(
+            paths.into_iter().map(PathBuf::from),
+        )]
     };
 
-    if grouped_paths.is_empty() {
+    if grouped_locations.is_empty() {
         // If we have no paths to open, show the welcome screen if this is the first launch
         if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {
             cx.update(|cx| show_welcome_view(app_state, cx).detach())
@@ -390,7 +383,11 @@ async fn open_workspaces(
         // If not the first launch, show an empty window with empty editor
         else {
             cx.update(|cx| {
-                workspace::open_new(app_state, cx, |workspace, cx| {
+                let open_options = OpenOptions {
+                    env,
+                    ..Default::default()
+                };
+                workspace::open_new(open_options, app_state, cx, |workspace, cx| {
                     Editor::new_file(workspace, &Default::default(), cx)
                 })
                 .detach();
@@ -401,19 +398,61 @@ async fn open_workspaces(
         // If there are paths to open, open a workspace for each grouping of paths
         let mut errored = false;
 
-        for workspace_paths in grouped_paths {
-            let workspace_failed_to_open = open_workspace(
-                workspace_paths,
-                open_new_workspace,
-                wait,
-                responses,
-                &app_state,
-                &mut cx,
-            )
-            .await;
+        for location in grouped_locations {
+            match location {
+                SerializedWorkspaceLocation::Local(workspace_paths, _) => {
+                    let workspace_paths = workspace_paths
+                        .paths()
+                        .iter()
+                        .map(|path| path.to_string_lossy().to_string())
+                        .collect();
 
-            if workspace_failed_to_open {
-                errored = true
+                    let workspace_failed_to_open = open_local_workspace(
+                        workspace_paths,
+                        open_new_workspace,
+                        wait,
+                        responses,
+                        env.as_ref(),
+                        &app_state,
+                        cx,
+                    )
+                    .await;
+
+                    if workspace_failed_to_open {
+                        errored = true
+                    }
+                }
+                SerializedWorkspaceLocation::Ssh(ssh) => {
+                    let app_state = app_state.clone();
+                    let args = cx
+                        .update(|cx| {
+                            SshSettings::get_global(cx).args_for(&ssh.host, ssh.port, &ssh.user)
+                        })
+                        .ok()
+                        .flatten();
+                    let connection_options = SshConnectionOptions {
+                        args,
+                        host: ssh.host.clone(),
+                        username: ssh.user.clone(),
+                        port: ssh.port,
+                        password: None,
+                    };
+                    cx.spawn(|mut cx| async move {
+                        open_ssh_project(
+                            connection_options,
+                            ssh.paths.into_iter().map(PathBuf::from).collect(),
+                            app_state,
+                            OpenOptions::default(),
+                            &mut cx,
+                        )
+                        .await
+                        .log_err();
+                    })
+                    .detach();
+                    // We don't set `errored` here, because for ssh projects, the
+                    // error is displayed in the window.
+                }
+                SerializedWorkspaceLocation::DevServer(_) => {}
             }
         }
 
@@ -425,21 +464,25 @@ async fn open_workspaces(
     Ok(())
 }
 
-async fn open_workspace(
-    workspace_paths: Vec<PathWithPosition>,
+async fn open_local_workspace(
+    workspace_paths: Vec<String>,
     open_new_workspace: Option<bool>,
     wait: bool,
     responses: &IpcSender<CliResponse>,
+    env: Option<&HashMap<String, String>>,
     app_state: &Arc<AppState>,
     cx: &mut AsyncAppContext,
 ) -> bool {
     let mut errored = false;
 
+    let paths_with_position =
+        derive_paths_with_position(app_state.fs.as_ref(), workspace_paths).await;
     match open_paths_with_positions(
-        &workspace_paths,
+        &paths_with_position,
         app_state.clone(),
         workspace::OpenOptions {
             open_new_workspace,
+            env: env.cloned(),
             ..Default::default()
         },
         cx,
@@ -449,7 +492,7 @@ async fn open_workspace(
         Ok((workspace, items)) => {
             let mut item_release_futures = Vec::new();
 
-            for (item, path) in items.into_iter().zip(&workspace_paths) {
+            for (item, path) in items.into_iter().zip(&paths_with_position) {
                 match item {
                     Some(Ok(item)) => {
                         cx.update(|cx| {
@@ -480,7 +523,7 @@ async fn open_workspace(
             if wait {
                 let background = cx.background_executor().clone();
                 let wait = async move {
-                    if workspace_paths.is_empty() {
+                    if paths_with_position.is_empty() {
                         let (done_tx, done_rx) = oneshot::channel();
                         let _subscription = workspace.update(cx, |_, cx| {
                             cx.on_release(move |_, _, _| {
@@ -515,7 +558,7 @@ async fn open_workspace(
             errored = true;
             responses
                 .send(CliResponse::Stderr {
-                    message: format!("error opening {workspace_paths:?}: {error}"),
+                    message: format!("error opening {paths_with_position:?}: {error}"),
                 })
                 .log_err();
         }
@@ -523,9 +566,26 @@ async fn open_workspace(
     errored
 }
 
+pub async fn derive_paths_with_position(
+    fs: &dyn Fs,
+    path_strings: impl IntoIterator<Item = impl AsRef<str>>,
+) -> Vec<PathWithPosition> {
+    join_all(path_strings.into_iter().map(|path_str| async move {
+        let canonicalized = fs.canonicalize(Path::new(path_str.as_ref())).await;
+        (path_str, canonicalized)
+    }))
+    .await
+    .into_iter()
+    .map(|(original, canonicalized)| match canonicalized {
+        Ok(canonicalized) => PathWithPosition::from_path(canonicalized),
+        Err(_) => PathWithPosition::parse_str(original.as_ref()),
+    })
+    .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc};
+    use std::sync::Arc;
 
     use cli::{
         ipc::{self},
@@ -534,10 +594,9 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
-    use util::paths::PathWithPosition;
     use workspace::{AppState, Workspace};
 
-    use crate::zed::{open_listener::open_workspace, tests::init_test};
+    use crate::zed::{open_listener::open_local_workspace, tests::init_test};
 
     #[gpui::test]
     async fn test_open_workspace_with_directory(cx: &mut TestAppContext) {
@@ -644,24 +703,20 @@ mod tests {
         path: &str,
         open_new_workspace: Option<bool>,
         app_state: Arc<AppState>,
-        cx: &mut TestAppContext,
+        cx: &TestAppContext,
     ) {
         let (response_tx, _) = ipc::channel::<CliResponse>().unwrap();
 
-        let path = PathBuf::from(path);
-        let workspace_paths = vec![PathWithPosition {
-            path,
-            row: None,
-            column: None,
-        }];
+        let workspace_paths = vec![path.to_owned()];
 
         let errored = cx
             .spawn(|mut cx| async move {
-                open_workspace(
+                open_local_workspace(
                     workspace_paths,
                     open_new_workspace,
                     false,
                     &response_tx,
+                    None,
                     &app_state,
                     &mut cx,
                 )

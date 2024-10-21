@@ -434,12 +434,10 @@ impl<T> Clone for Model<T> {
 
 impl<T> std::fmt::Debug for Model<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Model {{ entity_id: {:?}, entity_type: {:?} }}",
-            self.any_model.entity_id,
-            type_name::<T>()
-        )
+        f.debug_struct("Model")
+            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_type", &type_name::<T>())
+            .finish()
     }
 }
 
@@ -567,6 +565,15 @@ pub struct WeakModel<T> {
     entity_type: PhantomData<T>,
 }
 
+impl<T> std::fmt::Debug for WeakModel<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(&type_name::<Self>())
+            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_type", &type_name::<T>())
+            .finish()
+    }
+}
+
 unsafe impl<T> Send for WeakModel<T> {}
 unsafe impl<T> Sync for WeakModel<T> {}
 
@@ -642,10 +649,8 @@ impl<T> PartialEq<Model<T>> for WeakModel<T> {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-lazy_static::lazy_static! {
-    static ref LEAK_BACKTRACE: bool =
-        std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty());
-}
+static LEAK_BACKTRACE: std::sync::LazyLock<bool> =
+    std::sync::LazyLock::new(|| std::env::var("LEAK_BACKTRACE").map_or(false, |b| !b.is_empty()));
 
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
@@ -668,7 +673,7 @@ impl LeakDetector {
         let handles = self.entity_handles.entry(entity_id).or_default();
         handles.insert(
             handle_id,
-            LEAK_BACKTRACE.then(|| backtrace::Backtrace::new_unresolved()),
+            LEAK_BACKTRACE.then(backtrace::Backtrace::new_unresolved),
         );
         handle_id
     }
@@ -681,7 +686,7 @@ impl LeakDetector {
     pub fn assert_released(&mut self, entity_id: EntityId) {
         let handles = self.entity_handles.entry(entity_id).or_default();
         if !handles.is_empty() {
-            for (_, backtrace) in handles {
+            for backtrace in handles.values_mut() {
                 if let Some(mut backtrace) = backtrace.take() {
                     backtrace.resolve();
                     eprintln!("Leaked handle: {:#?}", backtrace);

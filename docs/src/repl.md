@@ -4,7 +4,7 @@
 
 Bring the power of [Jupyter kernels](https://docs.jupyter.org/en/latest/projects/kernels.html) to your editor! The built-in REPL for Zed allows you to run code interactively in your editor similarly to a notebook with your own text files.
 
-<figure style="overflow: hidden; border-top-left-radius: 2px; border-top-right-radius: 2px;">
+<figure style="width: 100%; margin: 0; overflow: hidden; border-top-left-radius: 2px; border-top-right-radius: 2px;">
     <video loop controls playsinline>
         <source
             src="https://customer-snccc0j9v3kfzkif.cloudflarestream.com/aec66e79f23d6d1a0bee5e388a3f17cc/downloads/default.mp4"
@@ -29,6 +29,10 @@ Zed supports running code in multiple languages. To get started, you need to ins
 
 - [Python (ipykernel)](#python)
 - [TypeScript (Deno)](#typescript-deno)
+- [R (Ark)](#r-ark)
+- [R (Xeus)](#r-xeus)
+- [Julia](#julia)
+- [Scala (Almond)](#scala)
 
 Once installed, you can start using the REPL in the respective language files, or other places those languages are supported, such as Markdown. If you recently added the kernels, run the `repl: refresh kernelspecs` command to make them available in the editor.
 
@@ -66,20 +70,20 @@ style.use('ggplot')
 
 <div class="warning">
 
-On MacOS, your system Python will _not_ work. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment.
+On macOS, your system Python will _not_ work. Either set up [pyenv](https://github.com/pyenv/pyenv?tab=readme-ov-file#installation) or use a virtual environment.
 
 </div>
 
-To setup your current python to have an available kernel, run:
+To setup your current Python to have an available kernel, run:
 
-```
+```sh
 pip install ipykernel
 python -m ipykernel install --user
 ```
 
 #### Conda Environment
 
-```
+```sh
 source activate myenv
 conda install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
@@ -87,29 +91,58 @@ python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 
 #### Virtualenv with pip
 
-```
+```sh
 source activate myenv
 pip install ipykernel
 python -m ipykernel install --user --name myenv --display-name "Python (myenv)"
 ```
 
+### R (Ark Kernel) {#r-ark}
+
+Install [Ark](https://github.com/posit-dev/ark/releases) by downloading the release for your operating system. For example, for macOS just unpack `ark` binary and put it into `/usr/local/bin`. Then run:
+
+```sh
+ark --install
+```
+
+### R (Xeus Kernel) {#r-xeus}
+
+- Install [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
+- Install the R Extension for Zed (search for `R` in Zed Extensions)
+
+<!--
+TBD: Improve R REPL (Ark Kernel) instructions
+-->
+
 ### Typescript: Deno {#typescript-deno}
 
-[Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
+- [Install Deno](https://docs.deno.com/runtime/manual/getting_started/installation/) and then install the Deno jupyter kernel:
 
-```
+```sh
 deno jupyter --install
 ```
 
-### Other languages
+<!--
+TBD: Improve R REPL (Ark Kernel) instructions
+-->
 
-The following languages and kernels are also supported. You can help us out by expanding their installation instructions and configuration:
+### Julia
 
-- [Julia (IJulia)](https://github.com/JuliaLang/IJulia.jl)
-- R
-  - [Ark Kernel](https://github.com/posit-dev/ark) - via Positron, formerly RStudio
-  - [Xeus-R](https://github.com/jupyter-xeus/xeus-r)
-- [Scala (almond)](https://almond.sh/docs/quick-start-install)
+- Download and install Julia from the [official website](https://julialang.org/downloads/).
+- Install the Julia Extension for Zed (search for `Julia` in Zed Extensions)
+
+<!--
+TBD: Improve Julia REPL instructions
+-->
+
+### Scala
+
+- [Install Scala](https://www.scala-lang.org/download/) with `cs setup` (Coursier):
+  - `brew install coursier/formulas/coursier && cs setup`
+- REPL (Almond) [setup instructions](https://almond.sh/docs/quick-start-install):
+  - `brew install --cask temurin` (Eclipse foundation official OpenJDK binaries)
+  - `brew install coursier/formulas/coursier && cs setup`
+  - `coursier launch --use-bootstrap almond -- --install`
 
 ## Changing which kernel is used per language {#changing-kernels}
 
@@ -122,7 +155,8 @@ language, you can assign a kernel for any supported language in your `settings.j
     "kernel_selections": {
       "python": "conda-env",
       "typescript": "deno",
-      "javascript": "deno"
+      "javascript": "deno",
+      "r": "ark"
     }
   }
 }
@@ -134,7 +168,7 @@ Available kernels are shown via the `repl: sessions` command. To refresh the ker
 
 If you have `jupyter` installed, you can run `jupyter kernelspec list` to see the available kernels.
 
-```
+```sh
 $ jupyter kernelspec list
 Available kernels:
   ark                   /Users/z/Library/Jupyter/kernels/ark
@@ -146,4 +180,4 @@ Available kernels:
   rust                  /Users/z/Library/Jupyter/kernels/rust
 ```
 
-Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.
+> Note: Zed makes best effort usage of `sys.prefix` and `CONDA_PREFIX` to find kernels in Python environments. If you want explicitly control run `python -m ipykernel install --user --name myenv --display-name "Python (myenv)"` to install the kernel directly while in the environment.

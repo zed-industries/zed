@@ -8,6 +8,22 @@ use crate::{rems_from_px, Color};
 
 /// Extends [`gpui::Styled`] with typography-related styling methods.
 pub trait StyledTypography: Styled + Sized {
+    /// Sets the font family to the buffer font.
+    fn font_buffer(self, cx: &WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+        let buffer_font_family = settings.buffer_font.family.clone();
+
+        self.font_family(buffer_font_family)
+    }
+
+    /// Sets the font family to the UI font.
+    fn font_ui(self, cx: &WindowContext) -> Self {
+        let settings = ThemeSettings::get_global(cx);
+        let ui_font_family = settings.ui_font.family.clone();
+
+        self.font_family(ui_font_family)
+    }
+
     /// Sets the text size using a [`UiTextSize`].
     fn text_ui_size(self, size: TextSize, cx: &WindowContext) -> Self {
         self.text_size(size.rems(cx))
@@ -71,6 +87,7 @@ pub trait StyledTypography: Styled + Sized {
 
 impl<E: Styled> StyledTypography for E {}
 
+/// A utility for getting the size of various semantic text sizes.
 #[derive(Debug, Default, Clone)]
 pub enum TextSize {
     /// The default size for UI text.
@@ -112,6 +129,7 @@ pub enum TextSize {
 }
 
 impl TextSize {
+    /// Returns the text size in rems.
     pub fn rems(self, cx: &WindowContext) -> Rems {
         let theme_settings = ThemeSettings::get_global(cx);
 
@@ -127,20 +145,27 @@ impl TextSize {
 }
 
 /// The size of a [`Headline`] element
+///
+/// Defaults to a Major Second scale.
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Default)]
 pub enum HeadlineSize {
+    /// An extra small headline - `~14px` @16px/rem
     XSmall,
+    /// A small headline - `16px` @16px/rem
     Small,
     #[default]
+    /// A medium headline - `~18px` @16px/rem
     Medium,
+    /// A large headline - `~20px` @16px/rem
     Large,
+    /// An extra large headline - `~22px` @16px/rem
     XLarge,
 }
 
 impl HeadlineSize {
-    pub fn size(self) -> Rems {
+    /// Returns the headline size in rems.
+    pub fn rems(self) -> Rems {
         match self {
-            // Based on the Major Second scale
             Self::XSmall => rems(0.88),
             Self::Small => rems(1.0),
             Self::Medium => rems(1.125),
@@ -149,6 +174,7 @@ impl HeadlineSize {
         }
     }
 
+    /// Returns the line height for the headline size.
     pub fn line_height(self) -> Rems {
         match self {
             Self::XSmall => rems(1.6),
@@ -160,6 +186,8 @@ impl HeadlineSize {
     }
 }
 
+/// A headline element, used to emphasize some text and
+/// create a visual hierarchy.
 #[derive(IntoElement)]
 pub struct Headline {
     size: HeadlineSize,
@@ -174,13 +202,14 @@ impl RenderOnce for Headline {
         div()
             .font(ui_font)
             .line_height(self.size.line_height())
-            .text_size(self.size.size())
+            .text_size(self.size.rems())
             .text_color(cx.theme().colors().text)
             .child(self.text)
     }
 }
 
 impl Headline {
+    /// Create a new headline element.
     pub fn new(text: impl Into<SharedString>) -> Self {
         Self {
             size: HeadlineSize::default(),
@@ -189,11 +218,13 @@ impl Headline {
         }
     }
 
+    /// Set the size of the headline.
     pub fn size(mut self, size: HeadlineSize) -> Self {
         self.size = size;
         self
     }
 
+    /// Set the color of the headline.
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self

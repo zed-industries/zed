@@ -1,4 +1,4 @@
-{"Put":{"state":"ˇa\nb\nc"}}
+{"Put":{"state":"ˇa\nb\nb\nc"}}
 {"Key":":"}
 {"Key":"%"}
 {"Key":"s"}
@@ -7,7 +7,7 @@
 {"Key":"/"}
 {"Key":"d"}
 {"Key":"enter"}
-{"Get":{"state":"a\nˇd\nc","mode":"Normal"}}
+{"Get":{"state":"a\nd\nˇd\nc","mode":"Normal"}}
 {"Key":":"}
 {"Key":"%"}
 {"Key":"s"}
@@ -19,4 +19,13 @@
 {"Key":"\\"}
 {"Key":"0"}
 {"Key":"enter"}
-{"Get":{"state":"aa\ndd\nˇcc","mode":"Normal"}}
+{"Get":{"state":"aa\ndd\ndd\nˇcc","mode":"Normal"}}
+{"Key":"k"}
+{"Key":":"}
+{"Key":"s"}
+{"Key":"/"}
+{"Key":"dd"}
+{"Key":"/"}
+{"Key":"ee"}
+{"Key":"enter"}
+{"Get":{"state":"aa\ndd\nˇee\ncc", "mode":"Normal"}}

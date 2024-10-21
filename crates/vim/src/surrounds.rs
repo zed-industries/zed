@@ -5,15 +5,15 @@ use crate::{
     Vim,
 };
 use editor::{movement, scroll::Autoscroll, Bias};
-use gpui::WindowContext;
 use language::BracketPair;
 use serde::Deserialize;
 use std::sync::Arc;
+use ui::ViewContext;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurroundsType {
     Motion(Motion),
-    Object(Object),
+    Object(Object, bool),
     Selection,
 }
 
@@ -27,12 +27,17 @@ impl<'de> Deserialize<'de> for SurroundsType {
     }
 }
 
-pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowContext) {
-    Vim::update(cx, |vim, cx| {
-        vim.stop_recording();
-        let count = vim.take_count(cx);
-        let mode = vim.state().mode;
-        vim.update_active_editor(cx, |_, editor, cx| {
+impl Vim {
+    pub fn add_surrounds(
+        &mut self,
+        text: Arc<str>,
+        target: SurroundsType,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.stop_recording(cx);
+        let count = self.take_count(cx);
+        let mode = self.mode;
+        self.update_editor(cx, |_, editor, cx| {
             let text_layout_details = editor.text_layout_details(cx);
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -54,11 +59,11 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
 
                 for selection in &display_selections {
                     let range = match &target {
-                        SurroundsType::Object(object) => {
-                            object.range(&display_map, selection.clone(), false)
+                        SurroundsType::Object(object, around) => {
+                            object.range(&display_map, selection.clone(), *around)
                         }
                         SurroundsType::Motion(motion) => {
-                            let range = motion
+                            motion
                                 .range(
                                     &display_map,
                                     selection.clone(),
@@ -84,8 +89,7 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                                         );
                                     }
                                     range
-                                });
-                            range
+                                })
                         }
                         SurroundsType::Selection => Some(selection.range()),
                     };
@@ -128,13 +132,11 @@ pub fn add_surrounds(text: Arc<str>, target: SurroundsType, cx: &mut WindowConte
                 });
             });
         });
-        vim.switch_mode(Mode::Normal, false, cx);
-    });
-}
+        self.switch_mode(Mode::Normal, false, cx);
+    }
 
-pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
-    Vim::update(cx, |vim, cx| {
-        vim.stop_recording();
+    pub fn delete_surrounds(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
+        self.stop_recording(cx);
 
         // only legitimate surrounds can be removed
         let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
@@ -147,7 +149,7 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
         };
         let surround = pair.end != *text;
 
-        vim.update_active_editor(cx, |_, editor, cx| {
+        self.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 editor.set_clip_at_line_ends(false, cx);
 
@@ -224,14 +226,12 @@ pub fn delete_surrounds(text: Arc<str>, cx: &mut WindowContext) {
                 editor.set_clip_at_line_ends(true, cx);
             });
         });
-    });
-}
+    }
 
-pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) {
-    if let Some(will_replace_pair) = object_to_bracket_pair(target) {
-        Vim::update(cx, |vim, cx| {
-            vim.stop_recording();
-            vim.update_active_editor(cx, |_, editor, cx| {
+    pub fn change_surrounds(&mut self, text: Arc<str>, target: Object, cx: &mut ViewContext<Self>) {
+        if let Some(will_replace_pair) = object_to_bracket_pair(target) {
+            self.stop_recording(cx);
+            self.update_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     editor.set_clip_at_line_ends(false, cx);
 
@@ -269,17 +269,14 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                     let mut open_str = pair.start.clone();
                                     let start = offset;
                                     let mut end = start + 1;
-                                    match chars_and_offset.peek() {
-                                        Some((next_ch, _)) => {
-                                            // If the next position is already a space or line break,
-                                            // we don't need to splice another space even under around
-                                            if surround && !next_ch.is_whitespace() {
-                                                open_str.push_str(" ");
-                                            } else if !surround && next_ch.to_string() == " " {
-                                                end += 1;
-                                            }
+                                    if let Some((next_ch, _)) = chars_and_offset.peek() {
+                                        // If the next position is already a space or line break,
+                                        // we don't need to splice another space even under around
+                                        if surround && !next_ch.is_whitespace() {
+                                            open_str.push(' ');
+                                        } else if !surround && next_ch.to_string() == " " {
+                                            end += 1;
                                         }
-                                        None => {}
                                     }
                                     edits.push((start..end, open_str));
                                     anchors.push(start..start);
@@ -299,7 +296,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                                     let end = start + 1;
                                     if let Some((next_ch, _)) = reverse_chars_and_offsets.peek() {
                                         if surround && !next_ch.is_whitespace() {
-                                            close_str.insert_str(0, " ")
+                                            close_str.insert(0, ' ')
                                         } else if !surround && next_ch.to_string() == " " {
                                             start -= 1;
                                         }
@@ -316,7 +313,7 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                     let stable_anchors = editor
                         .selections
                         .disjoint_anchors()
-                        .into_iter()
+                        .iter()
                         .map(|selection| {
                             let start = selection.start.bias_left(&display_map.buffer_snapshot);
                             start..start
@@ -332,65 +329,67 @@ pub fn change_surrounds(text: Arc<str>, target: Object, cx: &mut WindowContext) 
                     });
                 });
             });
-        });
+        }
     }
-}
 
-/// Checks if any of the current cursors are surrounded by a valid pair of brackets.
-///
-/// This method supports multiple cursors and checks each cursor for a valid pair of brackets.
-/// A pair of brackets is considered valid if it is well-formed and properly closed.
-///
-/// If a valid pair of brackets is found, the method returns `true` and the cursor is automatically moved to the start of the bracket pair.
-/// If no valid pair of brackets is found for any cursor, the method returns `false`.
-pub fn check_and_move_to_valid_bracket_pair(
-    vim: &mut Vim,
-    object: Object,
-    cx: &mut WindowContext,
-) -> bool {
-    let mut valid = false;
-    if let Some(pair) = object_to_bracket_pair(object) {
-        vim.update_active_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                editor.set_clip_at_line_ends(false, cx);
-                let (display_map, selections) = editor.selections.all_adjusted_display(cx);
-                let mut anchors = Vec::new();
+    /// Checks if any of the current cursors are surrounded by a valid pair of brackets.
+    ///
+    /// This method supports multiple cursors and checks each cursor for a valid pair of brackets.
+    /// A pair of brackets is considered valid if it is well-formed and properly closed.
+    ///
+    /// If a valid pair of brackets is found, the method returns `true` and the cursor is automatically moved to the start of the bracket pair.
+    /// If no valid pair of brackets is found for any cursor, the method returns `false`.
+    pub fn check_and_move_to_valid_bracket_pair(
+        &mut self,
+        object: Object,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let mut valid = false;
+        if let Some(pair) = object_to_bracket_pair(object) {
+            self.update_editor(cx, |_, editor, cx| {
+                editor.transact(cx, |editor, cx| {
+                    editor.set_clip_at_line_ends(false, cx);
+                    let (display_map, selections) = editor.selections.all_adjusted_display(cx);
+                    let mut anchors = Vec::new();
 
-                for selection in &selections {
-                    let start = selection.start.to_offset(&display_map, Bias::Left);
-                    if let Some(range) = object.range(&display_map, selection.clone(), true) {
-                        // If the current parenthesis object is single-line,
-                        // then we need to filter whether it is the current line or not
-                        if object.is_multiline()
-                            || (!object.is_multiline()
-                                && selection.start.row() == range.start.row()
-                                && selection.end.row() == range.end.row())
-                        {
-                            valid = true;
-                            let mut chars_and_offset = display_map
-                                .buffer_chars_at(range.start.to_offset(&display_map, Bias::Left))
-                                .peekable();
-                            while let Some((ch, offset)) = chars_and_offset.next() {
-                                if ch.to_string() == pair.start {
-                                    anchors.push(offset..offset);
-                                    break;
+                    for selection in &selections {
+                        let start = selection.start.to_offset(&display_map, Bias::Left);
+                        if let Some(range) = object.range(&display_map, selection.clone(), true) {
+                            // If the current parenthesis object is single-line,
+                            // then we need to filter whether it is the current line or not
+                            if object.is_multiline()
+                                || (!object.is_multiline()
+                                    && selection.start.row() == range.start.row()
+                                    && selection.end.row() == range.end.row())
+                            {
+                                valid = true;
+                                let chars_and_offset = display_map
+                                    .buffer_chars_at(
+                                        range.start.to_offset(&display_map, Bias::Left),
+                                    )
+                                    .peekable();
+                                for (ch, offset) in chars_and_offset {
+                                    if ch.to_string() == pair.start {
+                                        anchors.push(offset..offset);
+                                        break;
+                                    }
                                 }
+                            } else {
+                                anchors.push(start..start)
                             }
                         } else {
                             anchors.push(start..start)
                         }
-                    } else {
-                        anchors.push(start..start)
                     }
-                }
-                editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                    s.select_ranges(anchors);
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        s.select_ranges(anchors);
+                    });
+                    editor.set_clip_at_line_ends(true, cx);
                 });
-                editor.set_clip_at_line_ends(true, cx);
             });
-        });
+        }
+        valid
     }
-    return valid;
 }
 
 fn find_surround_pair<'a>(pairs: &'a [BracketPair], ch: &str) -> Option<&'a BracketPair> {
@@ -398,7 +397,7 @@ fn find_surround_pair<'a>(pairs: &'a [BracketPair], ch: &str) -> Option<&'a Brac
 }
 
 fn all_support_surround_pair() -> Vec<BracketPair> {
-    return vec![
+    vec![
         BracketPair {
             start: "{".into(),
             end: "}".into(),
@@ -462,7 +461,7 @@ fn all_support_surround_pair() -> Vec<BracketPair> {
             surround: true,
             newline: false,
         },
-    ];
+    ]
 }
 
 fn pair_to_object(pair: &BracketPair) -> Option<Object> {
@@ -695,6 +694,40 @@ mod test {
             indoc! {"
                 ˇ({ The quick brown }•
             fox jumps over)
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds around object
+        cx.set_state(
+            indoc! {"
+            The [quˇick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s a ] )");
+        cx.assert_state(
+            indoc! {"
+            The ˇ([quick]) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // test add surrounds inside object
+        cx.set_state(
+            indoc! {"
+            The [quˇick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s i ] )");
+        cx.assert_state(
+            indoc! {"
+            The [ˇ(quick)] brown
+            fox jumps over
             the lazy dog."},
             Mode::Normal,
         );

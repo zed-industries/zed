@@ -7,11 +7,13 @@ use gpui::{
 use persistence::IMAGE_VIEWER;
 use ui::prelude::*;
 
+use file_icons::FileIcons;
 use project::{Project, ProjectEntryId, ProjectPath};
+use settings::Settings;
 use std::{ffi::OsStr, path::PathBuf};
 use workspace::{
     item::{Item, ProjectItem, SerializableItem, TabContentParams},
-    ItemId, Pane, Workspace, WorkspaceId,
+    ItemId, ItemSettings, Pane, Workspace, WorkspaceId,
 };
 
 const IMAGE_VIEWER_KIND: &str = "ImageView";
@@ -34,7 +36,9 @@ impl project::Item for ImageItem {
             .path
             .extension()
             .and_then(OsStr::to_str)
+            .map(str::to_lowercase)
             .unwrap_or_default();
+        let ext = ext.as_str();
 
         // Only open the item if it's a binary image (no SVGs, etc.)
         // Since we do not have a way to toggle to an editor
@@ -83,6 +87,14 @@ impl Item for ImageView {
             .color(params.text_color())
             .italic(params.preview)
             .into_any_element()
+    }
+
+    fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
+        ItemSettings::get_global(cx)
+            .file_icons
+            .then(|| FileIcons::get_icon(self.path.as_path(), cx))
+            .flatten()
+            .map(Icon::from_path)
     }
 
     fn clone_on_split(

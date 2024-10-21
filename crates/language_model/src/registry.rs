@@ -1,3 +1,4 @@
+use crate::provider::cloud::RefreshLlmTokenListener;
 use crate::{
     provider::{
         anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
@@ -7,16 +8,16 @@ use crate::{
     LanguageModel, LanguageModelId, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderState,
 };
-use client::Client;
+use client::{Client, UserStore};
 use collections::BTreeMap;
 use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(user_store: Model<UserStore>, client: Arc<Client>, cx: &mut AppContext) {
     let registry = cx.new_model(|cx| {
         let mut registry = LanguageModelRegistry::default();
-        register_language_model_providers(&mut registry, client, cx);
+        register_language_model_providers(&mut registry, user_store, client, cx);
         registry
     });
     cx.set_global(GlobalLanguageModelRegistry(registry));
@@ -24,10 +25,13 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 
 fn register_language_model_providers(
     registry: &mut LanguageModelRegistry,
+    user_store: Model<UserStore>,
     client: Arc<Client>,
     cx: &mut ModelContext<LanguageModelRegistry>,
 ) {
     use feature_flags::FeatureFlagAppExt;
+
+    RefreshLlmTokenListener::register(client.clone(), cx);
 
     registry.register_provider(
         AnthropicLanguageModelProvider::new(client.http_client(), cx),
@@ -48,10 +52,14 @@ fn register_language_model_providers(
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
 
     cx.observe_flag::<feature_flags::LanguageModels, _>(move |enabled, cx| {
+        let user_store = user_store.clone();
         let client = client.clone();
         LanguageModelRegistry::global(cx).update(cx, move |registry, cx| {
             if enabled {
-                registry.register_provider(CloudLanguageModelProvider::new(client.clone(), cx), cx);
+                registry.register_provider(
+                    CloudLanguageModelProvider::new(user_store.clone(), client.clone(), cx),
+                    cx,
+                );
             } else {
                 registry.unregister_provider(
                     LanguageModelProviderId::from(crate::provider::cloud::PROVIDER_ID.to_string()),
@@ -71,6 +79,7 @@ impl Global for GlobalLanguageModelRegistry {}
 pub struct LanguageModelRegistry {
     active_model: Option<ActiveModel>,
     providers: BTreeMap<LanguageModelProviderId, Arc<dyn LanguageModelProvider>>,
+    inline_alternatives: Vec<Arc<dyn LanguageModel>>,
 }
 
 pub struct ActiveModel {
@@ -98,7 +107,7 @@ impl LanguageModelRegistry {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn test(cx: &mut AppContext) -> crate::provider::fake::FakeLanguageModelProvider {
-        let fake_provider = crate::provider::fake::FakeLanguageModelProvider::default();
+        let fake_provider = crate::provider::fake::FakeLanguageModelProvider;
         let registry = cx.new_model(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
@@ -154,18 +163,17 @@ impl LanguageModelRegistry {
         providers
     }
 
-    pub fn available_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
+    pub fn available_models<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = Arc<dyn LanguageModel>> + 'a {
         self.providers
             .values()
             .flat_map(|provider| provider.provided_models(cx))
-            .collect()
     }
 
-    pub fn provider(
-        &self,
-        name: &LanguageModelProviderId,
-    ) -> Option<Arc<dyn LanguageModelProvider>> {
-        self.providers.get(name).cloned()
+    pub fn provider(&self, id: &LanguageModelProviderId) -> Option<Arc<dyn LanguageModelProvider>> {
+        self.providers.get(id).cloned()
     }
 
     pub fn select_active_model(
@@ -174,7 +182,7 @@ impl LanguageModelRegistry {
         model_id: &LanguageModelId,
         cx: &mut ModelContext<Self>,
     ) {
-        let Some(provider) = self.provider(&provider) else {
+        let Some(provider) = self.provider(provider) else {
             return;
         };
 
@@ -225,6 +233,37 @@ impl LanguageModelRegistry {
     pub fn active_model(&self) -> Option<Arc<dyn LanguageModel>> {
         self.active_model.as_ref()?.model.clone()
     }
+
+    /// Selects and sets the inline alternatives for language models based on
+    /// provider name and id.
+    pub fn select_inline_alternative_models(
+        &mut self,
+        alternatives: impl IntoIterator<Item = (LanguageModelProviderId, LanguageModelId)>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let mut selected_alternatives = Vec::new();
+
+        for (provider_id, model_id) in alternatives {
+            if let Some(provider) = self.providers.get(&provider_id) {
+                if let Some(model) = provider
+                    .provided_models(cx)
+                    .iter()
+                    .find(|m| m.id() == model_id)
+                {
+                    selected_alternatives.push(model.clone());
+                }
+            }
+        }
+
+        self.inline_alternatives = selected_alternatives;
+    }
+
+    /// The models to use for inline assists. Returns the union of the active
+    /// model and all inline alternatives. When there are multiple models, the
+    /// user will be able to cycle through results.
+    pub fn inline_alternative_models(&self) -> &[Arc<dyn LanguageModel>] {
+        &self.inline_alternatives
+    }
 }
 
 #[cfg(test)]
@@ -237,7 +276,7 @@ mod tests {
         let registry = cx.new_model(|_| LanguageModelRegistry::default());
 
         registry.update(cx, |registry, cx| {
-            registry.register_provider(FakeLanguageModelProvider::default(), cx);
+            registry.register_provider(FakeLanguageModelProvider, cx);
         });
 
         let providers = registry.read(cx).providers();

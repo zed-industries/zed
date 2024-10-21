@@ -2,12 +2,16 @@ use crate::tests::TestServer;
 use call::ActiveCall;
 use fs::{FakeFs, Fs as _};
 use gpui::{Context as _, TestAppContext};
-use remote::SshSession;
-use remote_server::HeadlessProject;
+use http_client::BlockedHttpClient;
+use language::{language_settings::language_settings, LanguageRegistry};
+use node_runtime::NodeRuntime;
+use project::ProjectPath;
+use remote::SshRemoteClient;
+use remote_server::{HeadlessAppState, HeadlessProject};
 use serde_json::json;
 use std::{path::Path, sync::Arc};
 
-#[gpui::test]
+#[gpui::test(iterations = 10)]
 async fn test_sharing_an_ssh_remote_project(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
@@ -22,13 +26,16 @@ async fn test_sharing_an_ssh_remote_project(
         .await;
 
     // Set up project on remote FS
-    let (client_ssh, server_ssh) = SshSession::fake(cx_a, server_cx);
+    let (port, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
             "/code",
             json!({
                 "project1": {
+                    ".zed": {
+                        "settings.json": r#"{"languages":{"Rust":{"language_servers":["override-rust-analyzer"]}}}"#
+                    },
                     "README.md": "# project 1",
                     "src": {
                         "lib.rs": "fn one() -> usize { 1 }"
@@ -43,14 +50,29 @@ async fn test_sharing_an_ssh_remote_project(
 
     // User A connects to the remote project via SSH.
     server_cx.update(HeadlessProject::init);
-    let _headless_project =
-        server_cx.new_model(|cx| HeadlessProject::new(server_ssh, remote_fs.clone(), cx));
+    let remote_http_client = Arc::new(BlockedHttpClient);
+    let node = NodeRuntime::unavailable();
+    let languages = Arc::new(LanguageRegistry::new(server_cx.executor()));
+    let _headless_project = server_cx.new_model(|cx| {
+        client::init_settings(cx);
+        HeadlessProject::new(
+            HeadlessAppState {
+                session: server_ssh,
+                fs: remote_fs.clone(),
+                http_client: remote_http_client,
+                node_runtime: node,
+                languages,
+            },
+            cx,
+        )
+    });
 
+    let client_ssh = SshRemoteClient::fake_client(port, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project("/code/project1", client_ssh, cx_a)
         .await;
 
-    // User A shares the remote project.
+    // While the SSH worktree is being scanned, user A shares the remote project.
     let active_call_a = cx_a.read(ActiveCall::global);
     let project_id = active_call_a
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
@@ -58,16 +80,36 @@ async fn test_sharing_an_ssh_remote_project(
         .unwrap();
 
     // User B joins the project.
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let worktree_b = project_b
         .update(cx_b, |project, cx| project.worktree_for_id(worktree_id, cx))
         .unwrap();
 
+    let worktree_a = project_a
+        .update(cx_a, |project, cx| project.worktree_for_id(worktree_id, cx))
+        .unwrap();
+
     executor.run_until_parked();
+
+    worktree_a.update(cx_a, |worktree, _cx| {
+        assert_eq!(
+            worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
+            vec![
+                Path::new(".zed"),
+                Path::new(".zed/settings.json"),
+                Path::new("README.md"),
+                Path::new("src"),
+                Path::new("src/lib.rs"),
+            ]
+        );
+    });
+
     worktree_b.update(cx_b, |worktree, _cx| {
         assert_eq!(
             worktree.paths().map(Arc::as_ref).collect::<Vec<_>>(),
             vec![
+                Path::new(".zed"),
+                Path::new(".zed/settings.json"),
                 Path::new("README.md"),
                 Path::new("src"),
                 Path::new("src/lib.rs"),
@@ -88,15 +130,47 @@ async fn test_sharing_an_ssh_remote_project(
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
 
+    executor.run_until_parked();
+
+    cx_b.read(|cx| {
+        let file = buffer_b.read(cx).file();
+        assert_eq!(
+            language_settings(Some("Rust".into()), file, cx).language_servers,
+            ["override-rust-analyzer".to_string()]
+        )
+    });
+
     project_b
-        .update(cx_b, |project, cx| project.save_buffer(buffer_b, cx))
+        .update(cx_b, |project, cx| {
+            project.save_buffer_as(
+                buffer_b.clone(),
+                ProjectPath {
+                    worktree_id: worktree_id.to_owned(),
+                    path: Arc::from(Path::new("src/renamed.rs")),
+                },
+                cx,
+            )
+        })
         .await
         .unwrap();
     assert_eq!(
         remote_fs
-            .load("/code/project1/src/lib.rs".as_ref())
+            .load("/code/project1/src/renamed.rs".as_ref())
             .await
             .unwrap(),
         "fn one() -> usize { 100 }"
     );
+    cx_b.run_until_parked();
+    cx_b.update(|cx| {
+        assert_eq!(
+            buffer_b
+                .read(cx)
+                .file()
+                .unwrap()
+                .path()
+                .to_string_lossy()
+                .to_string(),
+            "src/renamed.rs".to_string()
+        );
+    });
 }

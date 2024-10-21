@@ -1,13 +1,14 @@
-use std::ops::Range;
-
+use crate::actions::FormatSelections;
 use crate::{
-    selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut, DisplayPoint,
-    DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDefinition, GoToImplementation,
-    GoToTypeDefinition, Paste, Rename, RevealInFileManager, SelectMode, ToDisplayPoint,
-    ToggleCodeActions,
+    actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
+    DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
+    GoToDefinition, GoToImplementation, GoToTypeDefinition, Paste, Rename, RevealInFileManager,
+    SelectMode, ToDisplayPoint, ToggleCodeActions,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
+use std::ops::Range;
+use text::PointUtf16;
 use workspace::OpenInTerminal;
 
 #[derive(Debug)]
@@ -113,7 +114,7 @@ fn display_ranges<'a>(
         .disjoint
         .iter()
         .chain(pending)
-        .map(move |s| s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map))
+        .map(move |s| s.start.to_display_point(display_map)..s.end.to_display_point(display_map))
 }
 
 pub fn deploy_context_menu(
@@ -158,14 +159,32 @@ pub fn deploy_context_menu(
         }
 
         let focus = cx.focused();
+        let has_reveal_target = editor.target_file(cx).is_some();
+        let reveal_in_finder_label = if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else {
+            "Reveal in File Manager"
+        };
+        let has_selections = editor
+            .selections
+            .all::<PointUtf16>(cx)
+            .into_iter()
+            .any(|s| !s.is_empty());
+
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
-                .action("Rename Symbol", Box::new(Rename))
                 .action("Go to Definition", Box::new(GoToDefinition))
+                .action("Go to Declaration", Box::new(GoToDeclaration))
                 .action("Go to Type Definition", Box::new(GoToTypeDefinition))
                 .action("Go to Implementation", Box::new(GoToImplementation))
                 .action("Find All References", Box::new(FindAllReferences))
+                .separator()
+                .action("Rename Symbol", Box::new(Rename))
+                .action("Format Buffer", Box::new(Format))
+                .when(has_selections, |cx| {
+                    cx.action("Format Selections", Box::new(FormatSelections))
+                })
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {
@@ -177,11 +196,13 @@ pub fn deploy_context_menu(
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .when(cfg!(target_os = "macos"), |builder| {
-                    builder.action("Reveal in Finder", Box::new(RevealInFileManager))
-                })
-                .when(cfg!(not(target_os = "macos")), |builder| {
-                    builder.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                .map(|builder| {
+                    if has_reveal_target {
+                        builder.action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    } else {
+                        builder
+                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    }
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine));

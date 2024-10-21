@@ -337,7 +337,7 @@ impl InlayHintCache {
     /// If needed, queries LSP for new inlay hints, using the invalidation strategy given.
     /// To reduce inlay hint jumping, attempts to query a visible range of the editor(s) first,
     /// followed by the delayed queries of the same range above and below the visible one.
-    /// This way, concequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
+    /// This way, subsequent refresh invocations are less likely to trigger LSP queries for the invisible ranges.
     pub(super) fn spawn_hint_refresh(
         &mut self,
         reason_description: &'static str,
@@ -466,7 +466,7 @@ impl InlayHintCache {
                                             to_insert.push(Inlay::hint(
                                                 cached_hint_id.id(),
                                                 anchor,
-                                                &cached_hint,
+                                                cached_hint,
                                             ));
                                         }
                                     }
@@ -490,7 +490,7 @@ impl InlayHintCache {
                         to_insert.push(Inlay::hint(
                             cached_hint_id.id(),
                             anchor,
-                            &maybe_missed_cached_hint,
+                            maybe_missed_cached_hint,
                         ));
                     }
                 }
@@ -591,21 +591,13 @@ impl InlayHintCache {
                     drop(guard);
                     cx.spawn(|editor, mut cx| async move {
                         let resolved_hint_task = editor.update(&mut cx, |editor, cx| {
-                            editor
-                                .buffer()
-                                .read(cx)
-                                .buffer(buffer_id)
-                                .and_then(|buffer| {
-                                    let project = editor.project.as_ref()?;
-                                    Some(project.update(cx, |project, cx| {
-                                        project.resolve_inlay_hint(
-                                            hint_to_resolve,
-                                            buffer,
-                                            server_id,
-                                            cx,
-                                        )
-                                    }))
-                                })
+                            let buffer = editor.buffer().read(cx).buffer(buffer_id)?;
+                            editor.semantics_provider.as_ref()?.resolve_inlay_hint(
+                                hint_to_resolve,
+                                buffer,
+                                server_id,
+                                cx,
+                            )
                         })?;
                         if let Some(resolved_hint_task) = resolved_hint_task {
                             let mut resolved_hint =
@@ -835,7 +827,7 @@ fn new_update_task(
 
         let query_range_failed =
             |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
-                log::error!("inlay hint update task for range {range:?} failed: {e:#}");
+                log::error!("inlay hint update task for range failed: {e:#?}");
                 editor
                     .update(cx, |editor, cx| {
                         if let Some(task_ranges) = editor
@@ -844,7 +836,7 @@ fn new_update_task(
                             .get_mut(&query.excerpt_id)
                         {
                             let buffer_snapshot = excerpt_buffer.read(cx).snapshot();
-                            task_ranges.invalidate_range(&buffer_snapshot, &range);
+                            task_ranges.invalidate_range(&buffer_snapshot, range);
                         }
                     })
                     .ok()
@@ -895,11 +887,13 @@ fn fetch_and_update_hints(
 ) -> Task<anyhow::Result<()>> {
     cx.spawn(|editor, mut cx| async move {
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
-        let (lsp_request_limiter, multi_buffer_snapshot) = editor.update(&mut cx, |editor, cx| {
-            let multi_buffer_snapshot  = editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
-            let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
-            (lsp_request_limiter, multi_buffer_snapshot)
-        })?;
+        let (lsp_request_limiter, multi_buffer_snapshot) =
+            editor.update(&mut cx, |editor, cx| {
+                let multi_buffer_snapshot =
+                    editor.buffer().update(cx, |buffer, cx| buffer.snapshot(cx));
+                let lsp_request_limiter = Arc::clone(&editor.inlay_hint_cache.lsp_request_limiter);
+                (lsp_request_limiter, multi_buffer_snapshot)
+            })?;
 
         let (lsp_request_guard, got_throttled) = if query.invalidate.should_invalidate() {
             (None, false)
@@ -909,12 +903,15 @@ fn fetch_and_update_hints(
                 None => (Some(lsp_request_limiter.acquire().await), true),
             }
         };
-        let fetch_range_to_log =
-            fetch_range.start.to_point(&buffer_snapshot)..fetch_range.end.to_point(&buffer_snapshot);
+        let fetch_range_to_log = fetch_range.start.to_point(&buffer_snapshot)
+            ..fetch_range.end.to_point(&buffer_snapshot);
         let inlay_hints_fetch_task = editor
             .update(&mut cx, |editor, cx| {
                 if got_throttled {
-                    let query_not_around_visible_range = match editor.excerpts_for_inlay_hints_query(None, cx).remove(&query.excerpt_id) {
+                    let query_not_around_visible_range = match editor
+                        .excerpts_for_inlay_hints_query(None, cx)
+                        .remove(&query.excerpt_id)
+                    {
                         Some((_, _, current_visible_range)) => {
                             let visible_offset_length = current_visible_range.len();
                             let double_visible_range = current_visible_range
@@ -928,11 +925,11 @@ fn fetch_and_update_hints(
                                 .contains(&fetch_range.start.to_offset(&buffer_snapshot))
                                 && !double_visible_range
                                     .contains(&fetch_range.end.to_offset(&buffer_snapshot))
-                        },
+                        }
                         None => true,
                     };
                     if query_not_around_visible_range {
-                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                        // log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
                         if let Some(task_ranges) = editor
                             .inlay_hint_cache
                             .update_tasks
@@ -943,16 +940,12 @@ fn fetch_and_update_hints(
                         return None;
                     }
                 }
+
+                let buffer = editor.buffer().read(cx).buffer(query.buffer_id)?;
                 editor
-                    .buffer()
-                    .read(cx)
-                    .buffer(query.buffer_id)
-                    .and_then(|buffer| {
-                        let project = editor.project.as_ref()?;
-                        Some(project.update(cx, |project, cx| {
-                            project.inlay_hints(buffer, fetch_range.clone(), cx)
-                        }))
-                    })
+                    .semantics_provider
+                    .as_ref()?
+                    .inlay_hints(buffer, fetch_range.clone(), cx)
             })
             .ok()
             .flatten();
@@ -1004,12 +997,12 @@ fn fetch_and_update_hints(
             })
             .await;
         if let Some(new_update) = new_update {
-            log::debug!(
-                "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
-                new_update.remove_from_visible.len(),
-                new_update.remove_from_cache.len(),
-                new_update.add_to_cache.len()
-            );
+            // log::debug!(
+            //     "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
+            //     new_update.remove_from_visible.len(),
+            //     new_update.remove_from_cache.len(),
+            //     new_update.add_to_cache.len()
+            // );
             log::trace!("New update: {new_update:?}");
             editor
                 .update(&mut cx, |editor, cx| {
@@ -1296,6 +1289,7 @@ pub mod tests {
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
 
@@ -1428,6 +1422,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1547,6 +1542,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -1575,9 +1571,9 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )));
-            let fake_servers = language_registry.register_fake_lsp_adapter(
+            let fake_servers = language_registry.register_fake_lsp(
                 name,
                 FakeLspAdapter {
                     name,
@@ -1777,6 +1773,7 @@ pub mod tests {
                 show_type_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Type)),
                 show_parameter_hints: allowed_hint_kinds.contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
 
@@ -1941,6 +1938,7 @@ pub mod tests {
                     show_parameter_hints: new_allowed_hint_kinds
                         .contains(&Some(InlayHintKind::Parameter)),
                     show_other_hints: new_allowed_hint_kinds.contains(&None),
+                    show_background: false,
                 })
             });
             cx.executor().run_until_parked();
@@ -1987,6 +1985,7 @@ pub mod tests {
                 show_parameter_hints: another_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: another_allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -2047,6 +2046,7 @@ pub mod tests {
                 show_parameter_hints: final_allowed_hint_kinds
                     .contains(&Some(InlayHintKind::Parameter)),
                 show_other_hints: final_allowed_hint_kinds.contains(&None),
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -2122,6 +2122,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2256,6 +2257,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2273,7 +2275,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -2551,6 +2553,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -2569,7 +2572,7 @@ pub mod tests {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let language = crate::editor_tests::rust_lang();
         language_registry.add(language);
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -2597,7 +2600,7 @@ pub mod tests {
             .await
             .unwrap();
         let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
+            let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
             multibuffer.push_excerpts(
                 buffer_1.clone(),
                 [
@@ -2902,6 +2905,7 @@ pub mod tests {
                 show_type_hints: false,
                 show_parameter_hints: false,
                 show_other_hints: false,
+                show_background: false,
             })
         });
 
@@ -2919,7 +2923,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -2946,7 +2950,7 @@ pub mod tests {
             })
             .await
             .unwrap();
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(0, Capability::ReadWrite));
+        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let (buffer_1_excerpts, buffer_2_excerpts) = multibuffer.update(cx, |multibuffer, cx| {
             let buffer_1_excerpts = multibuffer.push_excerpts(
                 buffer_1.clone(),
@@ -3096,6 +3100,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -3131,6 +3136,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -3148,7 +3154,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -3225,6 +3231,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
 
@@ -3305,6 +3312,7 @@ pub mod tests {
                 show_type_hints: true,
                 show_parameter_hints: true,
                 show_other_hints: true,
+                show_background: false,
             })
         });
         cx.executor().run_until_parked();
@@ -3389,7 +3397,7 @@ pub mod tests {
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(crate::editor_tests::rust_lang());
-        let mut fake_servers = language_registry.register_fake_lsp_adapter(
+        let mut fake_servers = language_registry.register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 capabilities: lsp::ServerCapabilities {
@@ -3424,7 +3432,7 @@ pub mod tests {
 
     pub fn cached_hint_labels(editor: &Editor) -> Vec<String> {
         let mut labels = Vec::new();
-        for (_, excerpt_hints) in &editor.inlay_hint_cache().hints {
+        for excerpt_hints in editor.inlay_hint_cache().hints.values() {
             let excerpt_hints = excerpt_hints.read();
             for id in &excerpt_hints.ordered_hints {
                 labels.push(excerpt_hints.hints_by_id[id].text());

@@ -100,7 +100,7 @@ impl RateLimiter {
     pub async fn save(&self) -> Result<()> {
         let mut buckets = Vec::new();
         self.dirty_buckets.retain(|key| {
-            if let Some(bucket) = self.buckets.get(&key) {
+            if let Some(bucket) = self.buckets.get(key) {
                 buckets.push(crate::db::rate_buckets::Model {
                     user_id: key.0,
                     rate_limit_name: key.1.clone(),

@@ -34,7 +34,7 @@
       "cmd-]": "pane::GoForward",
       "alt-f7": "editor::FindAllReferences",
       "cmd-alt-f7": "editor::FindAllReferences",
-      "cmd-b": "editor::GoToDefinition",
+      "cmd-b": "editor::GoToDefinition", // Conflicts with workspace::ToggleLeftDock
       "cmd-alt-b": "editor::GoToDefinitionSplit",
       "cmd-shift-b": "editor::GoToTypeDefinition",
       "cmd-alt-shift-b": "editor::GoToTypeDefinitionSplit",
@@ -64,7 +64,8 @@
       "cmd-shift-o": "file_finder::Toggle",
       "cmd-shift-a": "command_palette::Toggle",
       "shift shift": "command_palette::Toggle",
-      "cmd-alt-o": "project_symbols::Toggle",
+      "cmd-alt-o": "project_symbols::Toggle", // JetBrains: Go to Symbol
+      "cmd-o": "project_symbols::Toggle", // JetBrains: Go to Class
       "cmd-1": "workspace::ToggleLeftDock",
       "cmd-6": "diagnostics::Deploy"
     }

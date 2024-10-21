@@ -175,7 +175,8 @@ impl Render for ChannelModal {
                                                 .read(cx)
                                                 .channel_for_id(channel_id)
                                             {
-                                                let item = ClipboardItem::new(channel.link(cx));
+                                                let item =
+                                                    ClipboardItem::new_string(channel.link(cx));
                                                 cx.write_to_clipboard(item);
                                             }
                                         })),
@@ -308,7 +309,7 @@ impl PickerDelegate for ChannelModalDelegate {
                             let members = search_members.await?;
                             picker.update(&mut cx, |picker, cx| {
                                 picker.delegate.has_all_members =
-                                    query == "" && members.len() < 100;
+                                    query.is_empty() && members.len() < 100;
                                 picker.delegate.matching_member_indices =
                                     (0..members.len()).collect();
                                 picker.delegate.members = members;

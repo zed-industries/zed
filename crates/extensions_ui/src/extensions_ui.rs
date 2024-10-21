@@ -95,11 +95,10 @@ pub fn init(cx: &mut AppContext) {
                     .detach();
             });
 
-        cx.subscribe(workspace.project(), |_, _, event, cx| match event {
-            project::Event::LanguageNotFound(buffer) => {
+        cx.subscribe(workspace.project(), |_, _, event, cx| {
+            if let project::Event::LanguageNotFound(buffer) = event {
                 extension_suggest::suggest(buffer.clone(), cx);
             }
-            _ => {}
         })
         .detach();
     })
@@ -452,28 +451,34 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        ),
                     )
                     .child(Label::new("<>").size(LabelSize::Small)),
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .children(extension.description.as_ref().map(|description| {
-                        Label::new(description.clone())
-                            .size(LabelSize::Small)
-                            .color(Color::Default)
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(description.clone())
+                                .size(LabelSize::Small)
+                                .color(Color::Default),
+                        )
                     }))
                     .children(repository_url.map(|repository_url| {
                         IconButton::new(
@@ -547,18 +552,21 @@ impl ExtensionsPage {
             )
             .child(
                 h_flex()
+                    .gap_2()
                     .justify_between()
                     .child(
-                        Label::new(format!(
-                            "{}: {}",
-                            if extension.manifest.authors.len() > 1 {
-                                "Authors"
-                            } else {
-                                "Author"
-                            },
-                            extension.manifest.authors.join(", ")
-                        ))
-                        .size(LabelSize::Small),
+                        div().overflow_x_hidden().text_ellipsis().child(
+                            Label::new(format!(
+                                "{}: {}",
+                                if extension.manifest.authors.len() > 1 {
+                                    "Authors"
+                                } else {
+                                    "Author"
+                                },
+                                extension.manifest.authors.join(", ")
+                            ))
+                            .size(LabelSize::Small),
+                        ),
                     )
                     .child(
                         Label::new(format!(
@@ -573,7 +581,7 @@ impl ExtensionsPage {
                     .gap_2()
                     .justify_between()
                     .children(extension.manifest.description.as_ref().map(|description| {
-                        h_flex().overflow_x_hidden().child(
+                        div().overflow_x_hidden().text_ellipsis().child(
                             Label::new(description.clone())
                                 .size(LabelSize::Small)
                                 .color(Color::Default),
@@ -633,7 +641,7 @@ impl ExtensionsPage {
             context_menu.entry(
                 "Install Another Version...",
                 None,
-                cx.handler_for(&this, move |this, cx| {
+                cx.handler_for(this, move |this, cx| {
                     this.show_extension_version_list(extension_id.clone(), cx)
                 }),
             )
@@ -683,8 +691,7 @@ impl ExtensionsPage {
         has_dev_extension: bool,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
-        let is_compatible =
-            extension::is_version_compatible(ReleaseChannel::global(cx), &extension);
+        let is_compatible = extension::is_version_compatible(ReleaseChannel::global(cx), extension);
 
         if has_dev_extension {
             // If we have a dev extension for the given extension, just treat it as uninstalled.
@@ -824,7 +831,7 @@ impl ExtensionsPage {
         };
 
         EditorElement::new(
-            &editor,
+            editor,
             EditorStyle {
                 background: cx.theme().colors().editor_background,
                 local_player: cx.theme().players().local(),
@@ -860,7 +867,7 @@ impl ExtensionsPage {
             // If the search was just cleared then we can just reload the list
             // of extensions without a debounce, which allows us to avoid seeing
             // an intermittent flash of a "no extensions" state.
-            if let Some(_) = search {
+            if search.is_some() {
                 cx.background_executor()
                     .timer(Duration::from_millis(250))
                     .await;
@@ -956,7 +963,7 @@ impl ExtensionsPage {
             {
                 self.upsells.insert(*feature);
             } else {
-                self.upsells.remove(&feature);
+                self.upsells.remove(feature);
             }
         }
     }

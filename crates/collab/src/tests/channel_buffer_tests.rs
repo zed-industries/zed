@@ -85,7 +85,7 @@ async fn test_core_channel_buffers(
 
     // Client B sees that client A is gone from the channel buffer.
     channel_buffer_b.read_with(cx_b, |buffer, _| {
-        assert_collaborators(&buffer.collaborators(), &[client_b.user_id()]);
+        assert_collaborators(buffer.collaborators(), &[client_b.user_id()]);
     });
 
     // Client A rejoins the channel buffer
@@ -99,7 +99,7 @@ async fn test_core_channel_buffers(
     // Sanity test, make sure we saw A rejoining
     channel_buffer_b.read_with(cx_b, |buffer, _| {
         assert_collaborators(
-            &buffer.collaborators(),
+            buffer.collaborators(),
             &[client_a.user_id(), client_b.user_id()],
         );
     });
@@ -111,7 +111,7 @@ async fn test_core_channel_buffers(
 
     // Client B observes A disconnect
     channel_buffer_b.read_with(cx_b, |buffer, _| {
-        assert_collaborators(&buffer.collaborators(), &[client_b.user_id()]);
+        assert_collaborators(buffer.collaborators(), &[client_b.user_id()]);
     });
 
     // TODO:
@@ -246,10 +246,11 @@ async fn test_channel_notes_participant_indices(
         .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
         .await
         .unwrap();
-    let project_b = client_b.build_dev_server_project(project_id, cx_b).await;
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
     // Clients A and B open the same file.
+    executor.start_waiting();
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
@@ -258,6 +259,7 @@ async fn test_channel_notes_participant_indices(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+    executor.start_waiting();
     let editor_b = workspace_b
         .update(cx_b, |workspace, cx| {
             workspace.open_path((worktree_id_a, "file.txt"), None, true, cx)
@@ -685,7 +687,7 @@ fn assert_collaborators(collaborators: &HashMap<PeerId, Collaborator>, ids: &[Op
     user_ids.sort();
     assert_eq!(
         user_ids,
-        ids.into_iter().map(|id| id.unwrap()).collect::<Vec<_>>()
+        ids.iter().map(|id| id.unwrap()).collect::<Vec<_>>()
     );
 }
 

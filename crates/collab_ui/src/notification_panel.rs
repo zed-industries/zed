@@ -92,7 +92,7 @@ impl NotificationPanel {
         cx.new_view(|cx: &mut ViewContext<Self>| {
             let mut status = client.status();
             cx.spawn(|this, mut cx| async move {
-                while let Some(_) = status.next().await {
+                while (status.next().await).is_some() {
                     if this
                         .update(&mut cx, |_, cx| {
                             cx.notify();

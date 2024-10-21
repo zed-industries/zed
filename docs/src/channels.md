@@ -31,23 +31,19 @@ After joining a channel, you can `Share` a project with the other people there. 
 
 When you are editing someone else’s project, you still have the full power of the editor at your fingertips, you can jump to definitions, use the AI assistant, and see any diagnostic errors. This is extremely powerful for pairing, as one of you can be implementing the current method while the other is reading and researching the correct solution to the next problem. And, because you have your own config running, it feels like you’re using your own machine.
 
-### Following
+See [our collaboration documentation](./collaboration.md) for more details about how this works.
 
-You can follow someone by clicking on their avatar in the top bar, or their name in the collaboration panel. When following, your pane will show you what they are looking at, even if they are jumping between different files in the project. If you want to stop following them, you can by scrolling around, or clicking in a different part of the file.
-
-Following is incredibly useful when you’re learning a new codebase, or trying to debug together. Because you can always see what each person is looking at, there’s no confusion as to what is being talked about.
-
-As a bonus, if the other person is sharing their screen, you can follow them out of Zed and see what is going on, so you can see if the code you wrote together really works.
-
-### Notes & Chat
+### Notes
 
 Each channel has a notes file associated with it to keep track of current status, new ideas, or to collaborate on building out the design for the feature that you’re working on before diving into code.
 
 <figure><img src="../.gitbook/assets/channels-3.png" alt=""><figcaption></figcaption></figure>
 
-The chat is also there for quickly sharing context, or getting questions answered, that are more ephemeral in nature.
+This is similar to a Google Doc, except powered by Zed's collaborative software and persisted to our servers.
 
-Between the two, you can use Zed’s collaboration mode for large-scale changes with multiple people tackling different aspects of the problem. Because you’re all working on the same copy of the code, there are no merge conflicts, and because you all have access to the same notes, it’s easy to track progress and keep everyone in the loop.
+### Chat
+
+The chat is also there for quickly sharing context without a microphone, getting questions answered, or however else you'd want to use a chat channel.
 
 ### Inviting people
 

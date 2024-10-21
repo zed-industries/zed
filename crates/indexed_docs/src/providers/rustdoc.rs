@@ -1,12 +1,16 @@
 mod item;
 mod to_markdown;
 
+use cargo_metadata::MetadataCommand;
 use futures::future::BoxFuture;
 pub use item::*;
+use parking_lot::RwLock;
 pub use to_markdown::convert_rustdoc_to_markdown;
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -52,6 +56,32 @@ impl IndexedDocsProvider for LocalRustdocProvider {
         paths::support_dir().join("docs/rust/rustdoc-db.1.mdb")
     }
 
+    async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
+        static WORKSPACE_CRATES: LazyLock<RwLock<Option<(BTreeSet<PackageName>, Instant)>>> =
+            LazyLock::new(|| RwLock::new(None));
+
+        if let Some((crates, fetched_at)) = &*WORKSPACE_CRATES.read() {
+            if fetched_at.elapsed() < Duration::from_secs(300) {
+                return Ok(crates.iter().cloned().collect());
+            }
+        }
+
+        let workspace = MetadataCommand::new()
+            .manifest_path(self.cargo_workspace_root.join("Cargo.toml"))
+            .exec()
+            .context("failed to load cargo metadata")?;
+
+        let workspace_crates = workspace
+            .packages
+            .into_iter()
+            .map(|package| PackageName::from(package.name.as_str()))
+            .collect::<BTreeSet<_>>();
+
+        *WORKSPACE_CRATES.write() = Some((workspace_crates.clone(), Instant::now()));
+
+        Ok(workspace_crates.iter().cloned().collect())
+    }
+
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
         index_rustdoc(package, database, {
             move |crate_name, item| {
@@ -61,7 +91,7 @@ impl IndexedDocsProvider for LocalRustdocProvider {
                 let item = item.cloned();
                 async move {
                     let target_doc_path = cargo_workspace_root.join("target/doc");
-                    let mut local_cargo_doc_path = target_doc_path.join(crate_name.as_ref());
+                    let mut local_cargo_doc_path = target_doc_path.join(crate_name.as_ref().replace('-', "_"));
 
                     if !fs.is_dir(&local_cargo_doc_path).await {
                         let cargo_doc_exists_at_all = fs.is_dir(&target_doc_path).await;
@@ -115,6 +145,18 @@ impl IndexedDocsProvider for DocsDotRsProvider {
 
     fn database_path(&self) -> PathBuf {
         paths::support_dir().join("docs/rust/docs-rs-db.1.mdb")
+    }
+
+    async fn suggest_packages(&self) -> Result<Vec<PackageName>> {
+        static POPULAR_CRATES: LazyLock<Vec<PackageName>> = LazyLock::new(|| {
+            include_str!("./rustdoc/popular_crates.txt")
+                .lines()
+                .filter(|line| !line.starts_with('#'))
+                .map(|line| PackageName::from(line.trim()))
+                .collect()
+        });
+
+        Ok(POPULAR_CRATES.clone())
     }
 
     async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
@@ -193,7 +235,7 @@ async fn index_rustdoc(
     while let Some(item_with_history) = items_to_visit.pop_front() {
         let item = &item_with_history.item;
 
-        let Some(result) = fetch_page(&package, Some(&item)).await.with_context(|| {
+        let Some(result) = fetch_page(&package, Some(item)).await.with_context(|| {
             #[cfg(debug_assertions)]
             {
                 format!(
@@ -226,11 +268,8 @@ async fn index_rustdoc(
             seen_items.insert(item.clone());
 
             item.path.extend(parent_item.path.clone());
-            match parent_item.kind {
-                RustdocItemKind::Mod => {
-                    item.path.push(parent_item.name.clone());
-                }
-                _ => {}
+            if parent_item.kind == RustdocItemKind::Mod {
+                item.path.push(parent_item.name.clone());
             }
 
             items_to_visit.push_back(RustdocItemWithHistory {

@@ -177,10 +177,6 @@ impl PlatformTextSystem for DirectWriteTextSystem {
         self.0.read().all_font_names()
     }
 
-    fn all_font_families(&self) -> Vec<String> {
-        self.0.read().all_font_families()
-    }
-
     fn font_id(&self, font: &Font) -> Result<FontId> {
         let lock = self.0.upgradable_read();
         if let Some(font_id) = lock.font_selections.get(font) {
@@ -279,54 +275,52 @@ impl DirectWriteState {
 
     fn generate_font_fallbacks(
         &self,
-        fallbacks: Option<&FontFallbacks>,
+        fallbacks: &FontFallbacks,
     ) -> Result<Option<IDWriteFontFallback>> {
-        if fallbacks.is_some_and(|fallbacks| fallbacks.fallback_list().is_empty()) {
+        if fallbacks.fallback_list().is_empty() {
             return Ok(None);
         }
         unsafe {
             let builder = self.components.factory.CreateFontFallbackBuilder()?;
             let font_set = &self.system_font_collection.GetFontSet()?;
-            if let Some(fallbacks) = fallbacks {
-                for family_name in fallbacks.fallback_list() {
-                    let Some(fonts) = font_set
-                        .GetMatchingFonts(
-                            &HSTRING::from(family_name),
-                            DWRITE_FONT_WEIGHT_NORMAL,
-                            DWRITE_FONT_STRETCH_NORMAL,
-                            DWRITE_FONT_STYLE_NORMAL,
-                        )
-                        .log_err()
-                    else {
-                        continue;
-                    };
-                    if fonts.GetFontCount() == 0 {
-                        log::error!("No mathcing font find for {}", family_name);
-                        continue;
-                    }
-                    let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
-                    let mut count = 0;
-                    font.GetUnicodeRanges(None, &mut count).ok();
-                    if count == 0 {
-                        continue;
-                    }
-                    let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
-                    let Some(_) = font
-                        .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
-                        .log_err()
-                    else {
-                        continue;
-                    };
-                    let target_family_name = HSTRING::from(family_name);
-                    builder.AddMapping(
-                        &unicode_ranges,
-                        &[target_family_name.as_ptr()],
-                        None,
-                        None,
-                        None,
-                        1.0,
-                    )?;
+            for family_name in fallbacks.fallback_list() {
+                let Some(fonts) = font_set
+                    .GetMatchingFonts(
+                        &HSTRING::from(family_name),
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                    )
+                    .log_err()
+                else {
+                    continue;
+                };
+                if fonts.GetFontCount() == 0 {
+                    log::error!("No matching font found for {}", family_name);
+                    continue;
                 }
+                let font = fonts.GetFontFaceReference(0)?.CreateFontFace()?;
+                let mut count = 0;
+                font.GetUnicodeRanges(None, &mut count).ok();
+                if count == 0 {
+                    continue;
+                }
+                let mut unicode_ranges = vec![DWRITE_UNICODE_RANGE::default(); count as usize];
+                let Some(_) = font
+                    .GetUnicodeRanges(Some(&mut unicode_ranges), &mut count)
+                    .log_err()
+                else {
+                    continue;
+                };
+                let target_family_name = HSTRING::from(family_name);
+                builder.AddMapping(
+                    &unicode_ranges,
+                    &[target_family_name.as_ptr()],
+                    None,
+                    None,
+                    None,
+                    1.0,
+                )?;
             }
             let system_fallbacks = self.components.factory.GetSystemFontFallback()?;
             builder.AddMappings(&system_fallbacks)?;
@@ -382,10 +376,8 @@ impl DirectWriteState {
             else {
                 continue;
             };
-            let fallbacks = self
-                .generate_font_fallbacks(font_fallbacks)
-                .log_err()
-                .unwrap_or_default();
+            let fallbacks = font_fallbacks
+                .and_then(|fallbacks| self.generate_font_fallbacks(fallbacks).log_err().flatten());
             let font_info = FontInfo {
                 font_family: family_name.to_owned(),
                 font_face,
@@ -962,10 +954,6 @@ impl DirectWriteState {
         ));
         result
     }
-
-    fn all_font_families(&self) -> Vec<String> {
-        get_font_names_from_collection(&self.system_font_collection, &self.components.locale)
-    }
 }
 
 impl Drop for DirectWriteState {
@@ -1075,7 +1063,7 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
             // This `cast()` action here should never fail since we are running on Win10+, and
             // `IDWriteFontFace3` requires Win10
             let font_face = &font_face.cast::<IDWriteFontFace3>().unwrap();
-            let Some((font_identifier, font_struct, is_emoji)) =
+            let Some((font_identifier, font_struct, color_font)) =
                 get_font_identifier_and_font_struct(font_face, &self.locale)
             else {
                 return Ok(());
@@ -1096,6 +1084,8 @@ impl IDWriteTextRenderer_Impl for TextRenderer_Impl {
                 context
                     .index_converter
                     .advance_to_utf16_ix(context.utf16_index);
+                let is_emoji = color_font
+                    && is_color_glyph(font_face, id, &context.text_system.components.factory);
                 glyphs.push(ShapedGlyph {
                     id,
                     position: point(px(context.width), px(0.0)),
@@ -1456,6 +1446,44 @@ fn get_render_target_property(
         usage: D2D1_RENDER_TARGET_USAGE_NONE,
         minLevel: D2D1_FEATURE_LEVEL_DEFAULT,
     }
+}
+
+// One would think that with newer DirectWrite method: IDWriteFontFace4::GetGlyphImageFormats
+// but that doesn't seem to work for some glyphs, say ❤
+fn is_color_glyph(
+    font_face: &IDWriteFontFace3,
+    glyph_id: GlyphId,
+    factory: &IDWriteFactory5,
+) -> bool {
+    let glyph_run = DWRITE_GLYPH_RUN {
+        fontFace: unsafe { std::mem::transmute_copy(font_face) },
+        fontEmSize: 14.0,
+        glyphCount: 1,
+        glyphIndices: &(glyph_id.0 as u16),
+        glyphAdvances: &0.0,
+        glyphOffsets: &DWRITE_GLYPH_OFFSET {
+            advanceOffset: 0.0,
+            ascenderOffset: 0.0,
+        },
+        isSideways: BOOL(0),
+        bidiLevel: 0,
+    };
+    unsafe {
+        factory.TranslateColorGlyphRun(
+            D2D_POINT_2F::default(),
+            &glyph_run as _,
+            None,
+            DWRITE_GLYPH_IMAGE_FORMATS_COLR
+                | DWRITE_GLYPH_IMAGE_FORMATS_SVG
+                | DWRITE_GLYPH_IMAGE_FORMATS_PNG
+                | DWRITE_GLYPH_IMAGE_FORMATS_JPEG
+                | DWRITE_GLYPH_IMAGE_FORMATS_PREMULTIPLIED_B8G8R8A8,
+            DWRITE_MEASURING_MODE_NATURAL,
+            None,
+            0,
+        )
+    }
+    .is_ok()
 }
 
 const DEFAULT_LOCALE_NAME: PCWSTR = windows::core::w!("en-US");

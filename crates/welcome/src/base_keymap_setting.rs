@@ -79,7 +79,7 @@ impl BaseKeymap {
         Self::OPTIONS
             .iter()
             .copied()
-            .find_map(|(name, value)| (name == option).then(|| value))
+            .find_map(|(name, value)| (name == option).then_some(value))
             .unwrap_or_default()
     }
 }
@@ -95,6 +95,9 @@ impl Settings for BaseKeymap {
     ) -> anyhow::Result<Self> {
         if let Some(Some(user_value)) = sources.user.copied() {
             return Ok(user_value);
+        }
+        if let Some(Some(server_value)) = sources.server.copied() {
+            return Ok(server_value);
         }
         sources.default.ok_or_else(Self::missing_default)
     }

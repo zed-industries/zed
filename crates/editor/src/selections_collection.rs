@@ -109,7 +109,7 @@ impl SelectionsCollection {
 
     pub fn all<'a, D>(&self, cx: &AppContext) -> Vec<Selection<D>>
     where
-        D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+        D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
         let disjoint_anchors = &self.disjoint;
         let mut disjoint =
@@ -339,7 +339,7 @@ impl SelectionsCollection {
         let is_empty = positions.start == positions.end;
         let line_len = display_map.line_len(row);
 
-        let line = display_map.layout_row(row, &text_layout_details);
+        let line = display_map.layout_row(row, text_layout_details);
 
         let start_col = line.closest_index_for_x(positions.start) as u32;
         if start_col < line_len || (is_empty && positions.start == line.width) {
@@ -393,7 +393,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         self.collection.display_map(self.cx)
     }
 
-    fn buffer(&self) -> Ref<MultiBufferSnapshot> {
+    pub fn buffer(&self) -> Ref<MultiBufferSnapshot> {
         self.collection.buffer(self.cx)
     }
 
@@ -850,7 +850,7 @@ pub(crate) fn resolve_multiple<'a, D, I>(
     snapshot: &MultiBufferSnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
 where
-    D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+    D: TextDimension + Ord + Sub<D, Output = D>,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     let (to_summarize, selections) = selections.into_iter().tee();

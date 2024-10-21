@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{btree_map::Entry as BTreeEntry, hash_map::Entry, BTreeMap, HashMap, HashSet};
 use futures::Stream;
-use gpui::{BackgroundExecutor, ImageSource};
+use gpui::{BackgroundExecutor, SurfaceSource};
 use live_kit_server::{proto, token};
 
 use parking_lot::Mutex;
@@ -320,7 +320,7 @@ impl TestServer {
                     .try_broadcast(RoomUpdate::SubscribedToRemoteAudioTrack(
                         Arc::new(RemoteAudioTrack {
                             server_track: track.clone(),
-                            room: Arc::downgrade(&client_room),
+                            room: Arc::downgrade(client_room),
                         }),
                         publication.clone(),
                     ))
@@ -332,7 +332,7 @@ impl TestServer {
     }
 
     fn set_track_muted(&self, token: &str, track_sid: &str, muted: bool) -> Result<()> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key)?;
+        let claims = live_kit_server::token::validate(token, &self.secret_key)?;
         let room_name = claims.video.room.unwrap();
         let identity = claims.sub.unwrap();
         let mut server_rooms = self.rooms.lock();
@@ -363,7 +363,7 @@ impl TestServer {
     }
 
     fn is_track_muted(&self, token: &str, track_sid: &str) -> Option<bool> {
-        let claims = live_kit_server::token::validate(&token, &self.secret_key).ok()?;
+        let claims = live_kit_server::token::validate(token, &self.secret_key).ok()?;
         let room_name = claims.video.room.unwrap();
 
         let mut server_rooms = self.rooms.lock();
@@ -419,7 +419,7 @@ impl TestServer {
             .map(|track| {
                 Arc::new(RemoteAudioTrack {
                     server_track: track.clone(),
-                    room: Arc::downgrade(&client_room),
+                    room: Arc::downgrade(client_room),
                 })
             })
             .collect())
@@ -842,6 +842,12 @@ pub struct MacOSDisplay {
     ),
 }
 
+impl Default for MacOSDisplay {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MacOSDisplay {
     pub fn new() -> Self {
         Self {
@@ -870,7 +876,7 @@ impl Frame {
         self.height
     }
 
-    pub fn image(&self) -> ImageSource {
+    pub fn image(&self) -> SurfaceSource {
         unimplemented!("you can't call this in test mode")
     }
 }

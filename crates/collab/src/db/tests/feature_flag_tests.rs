@@ -2,6 +2,7 @@ use crate::{
     db::{Database, NewUserParams},
     test_both_dbs,
 };
+use pretty_assertions::assert_eq;
 use std::sync::Arc;
 
 test_both_dbs!(
@@ -37,22 +38,27 @@ async fn test_get_user_flags(db: &Arc<Database>) {
         .unwrap()
         .user_id;
 
-    const CHANNELS_ALPHA: &str = "channels-alpha";
-    const NEW_SEARCH: &str = "new-search";
+    const FEATURE_FLAG_ONE: &str = "brand-new-ux";
+    const FEATURE_FLAG_TWO: &str = "cool-feature";
+    const FEATURE_FLAG_THREE: &str = "feature-enabled-for-everyone";
 
-    let channels_flag = db.create_user_flag(CHANNELS_ALPHA).await.unwrap();
-    let search_flag = db.create_user_flag(NEW_SEARCH).await.unwrap();
+    let feature_flag_one = db.create_user_flag(FEATURE_FLAG_ONE, false).await.unwrap();
+    let feature_flag_two = db.create_user_flag(FEATURE_FLAG_TWO, false).await.unwrap();
+    db.create_user_flag(FEATURE_FLAG_THREE, true).await.unwrap();
 
-    db.add_user_flag(user_1, channels_flag).await.unwrap();
-    db.add_user_flag(user_1, search_flag).await.unwrap();
+    db.add_user_flag(user_1, feature_flag_one).await.unwrap();
+    db.add_user_flag(user_1, feature_flag_two).await.unwrap();
 
-    db.add_user_flag(user_2, channels_flag).await.unwrap();
+    db.add_user_flag(user_2, feature_flag_one).await.unwrap();
 
     let mut user_1_flags = db.get_user_flags(user_1).await.unwrap();
     user_1_flags.sort();
-    assert_eq!(user_1_flags, &[CHANNELS_ALPHA, NEW_SEARCH]);
+    assert_eq!(
+        user_1_flags,
+        &[FEATURE_FLAG_ONE, FEATURE_FLAG_TWO, FEATURE_FLAG_THREE]
+    );
 
     let mut user_2_flags = db.get_user_flags(user_2).await.unwrap();
     user_2_flags.sort();
-    assert_eq!(user_2_flags, &[CHANNELS_ALPHA]);
+    assert_eq!(user_2_flags, &[FEATURE_FLAG_ONE, FEATURE_FLAG_THREE]);
 }

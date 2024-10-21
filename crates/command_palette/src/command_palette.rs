@@ -58,20 +58,23 @@ fn trim_consecutive_whitespaces(input: &str) -> String {
 
 impl CommandPalette {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(|workspace, _: &Toggle, cx| {
-            let Some(previous_focus_handle) = cx.focused() else {
-                return;
-            };
-            let telemetry = workspace.client().telemetry().clone();
-            workspace.toggle_modal(cx, move |cx| {
-                CommandPalette::new(previous_focus_handle, telemetry, cx)
-            });
+        workspace.register_action(|workspace, _: &Toggle, cx| Self::toggle(workspace, "", cx));
+    }
+
+    pub fn toggle(workspace: &mut Workspace, query: &str, cx: &mut ViewContext<Workspace>) {
+        let Some(previous_focus_handle) = cx.focused() else {
+            return;
+        };
+        let telemetry = workspace.client().telemetry().clone();
+        workspace.toggle_modal(cx, move |cx| {
+            CommandPalette::new(previous_focus_handle, telemetry, query, cx)
         });
     }
 
     fn new(
         previous_focus_handle: FocusHandle,
         telemetry: Arc<Telemetry>,
+        query: &str,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let filter = CommandPaletteFilter::try_global(cx);
@@ -98,8 +101,17 @@ impl CommandPalette {
             previous_focus_handle,
         );
 
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new_view(|cx| {
+            let picker = Picker::uniform_list(delegate, cx);
+            picker.set_query(query, cx);
+            picker
+        });
         Self { picker }
+    }
+
+    pub fn set_query(&mut self, query: &str, cx: &mut ViewContext<Self>) {
+        self.picker
+            .update(cx, |picker, cx| picker.set_query(query, cx))
     }
 }
 
@@ -261,7 +273,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             let mut commands = self.all_commands.clone();
             let hit_counts = cx.global::<HitCounts>().clone();
             let executor = cx.background_executor().clone();
-            let query = trim_consecutive_whitespaces(&query.as_str());
+            let query = trim_consecutive_whitespaces(query.as_str());
             async move {
                 commands.sort_by_key(|action| {
                     (
@@ -291,7 +303,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         })
                         .collect()
                 } else {
-                    let ret = fuzzy::match_strings(
+                    fuzzy::match_strings(
                         &candidates,
                         &query,
                         true,
@@ -299,8 +311,7 @@ impl PickerDelegate for CommandPaletteDelegate {
                         &Default::default(),
                         executor,
                     )
-                    .await;
-                    ret
+                    .await
                 };
 
                 tx.send((commands, matches)).await.log_err();

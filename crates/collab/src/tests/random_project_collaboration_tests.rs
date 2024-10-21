@@ -15,7 +15,7 @@ use language::{
 use lsp::FakeLanguageServer;
 use pretty_assertions::assert_eq;
 use project::{
-    search::SearchQuery, Project, ProjectPath, SearchResult, DEFAULT_COMPLETION_CONTEXT,
+    search::SearchQuery, search::SearchResult, Project, ProjectPath, DEFAULT_COMPLETION_CONTEXT,
 };
 use rand::{
     distributions::{Alphanumeric, DistString},
@@ -282,7 +282,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             let mut paths = client.fs().paths(false);
                             paths.remove(0);
                             let new_root_path = if paths.is_empty() || rng.gen() {
-                                Path::new("/").join(&plan.next_root_dir_name())
+                                Path::new("/").join(plan.next_root_dir_name())
                             } else {
                                 paths.choose(rng).unwrap().clone()
                             };
@@ -882,6 +882,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             false,
                             Default::default(),
                             Default::default(),
+                            None,
                         )
                         .unwrap(),
                         cx,
@@ -1045,7 +1046,7 @@ impl RandomizedTest for ProjectCollaborationTest {
             },
             None,
         )));
-        client.language_registry().register_fake_lsp_adapter(
+        client.language_registry().register_fake_lsp(
             "Rust",
             FakeLspAdapter {
                 name: "the-fake-language-server",
@@ -1167,7 +1168,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                             Some((project, cx))
                         });
 
-                        if !guest_project.is_disconnected() {
+                        if !guest_project.is_disconnected(cx) {
                             if let Some((host_project, host_cx)) = host_project {
                                 let host_worktree_snapshots =
                                     host_project.read_with(host_cx, |host_project, cx| {
@@ -1253,8 +1254,8 @@ impl RandomizedTest for ProjectCollaborationTest {
 
             let buffers = client.buffers().clone();
             for (guest_project, guest_buffers) in &buffers {
-                let project_id = if guest_project.read_with(client_cx, |project, _| {
-                    project.is_local() || project.is_disconnected()
+                let project_id = if guest_project.read_with(client_cx, |project, cx| {
+                    project.is_local() || project.is_disconnected(cx)
                 }) {
                     continue;
                 } else {

@@ -1,7 +1,7 @@
 use crate::ProjectDiagnosticsEditor;
 use gpui::{EventEmitter, ParentElement, Render, View, ViewContext, WeakView};
 use ui::prelude::*;
-use ui::{IconButton, IconName, Tooltip};
+use ui::{IconButton, IconButtonShape, IconName, Tooltip};
 use workspace::{item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView};
 
 pub struct ToolbarControls {
@@ -18,11 +18,11 @@ impl Render for ToolbarControls {
             let editor = editor.read(cx);
             include_warnings = editor.include_warnings;
             has_stale_excerpts = !editor.paths_to_update.is_empty();
-            is_updating = editor.update_paths_tx.len() > 0
+            is_updating = !editor.update_paths_tx.is_empty()
                 || editor
                     .project
                     .read(cx)
-                    .language_servers_running_disk_based_diagnostics()
+                    .language_servers_running_disk_based_diagnostics(cx)
                     .next()
                     .is_some();
         }
@@ -33,11 +33,19 @@ impl Render for ToolbarControls {
             "Include Warnings"
         };
 
+        let warning_color = if include_warnings {
+            Color::Warning
+        } else {
+            Color::Muted
+        };
+
         h_flex()
+            .gap_1()
             .when(has_stale_excerpts, |div| {
                 div.child(
                     IconButton::new("update-excerpts", IconName::Update)
                         .icon_color(Color::Info)
+                        .shape(IconButtonShape::Square)
                         .disabled(is_updating)
                         .tooltip(move |cx| Tooltip::text("Update excerpts", cx))
                         .on_click(cx.listener(|this, _, cx| {
@@ -50,7 +58,9 @@ impl Render for ToolbarControls {
                 )
             })
             .child(
-                IconButton::new("toggle-warnings", IconName::ExclamationTriangle)
+                IconButton::new("toggle-warnings", IconName::Warning)
+                    .icon_color(warning_color)
+                    .shape(IconButtonShape::Square)
                     .tooltip(move |cx| Tooltip::text(tooltip, cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(editor) = this.editor() {
@@ -81,6 +91,12 @@ impl ToolbarItemView for ToolbarControls {
         } else {
             ToolbarItemLocation::Hidden
         }
+    }
+}
+
+impl Default for ToolbarControls {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

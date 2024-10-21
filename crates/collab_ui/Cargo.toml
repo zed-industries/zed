@@ -42,7 +42,6 @@ futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 language.workspace = true
-lazy_static.workspace = true
 menu.workspace = true
 notifications.workspace = true
 parking_lot.workspace = true

@@ -1,15 +1,3 @@
 name = "Markdown-Inline"
 grammar = "markdown-inline"
-path_suffixes = []
-word_characters = ["-"]
-brackets = [
-    { start = "{", end = "}", close = true, newline = true },
-    { start = "[", end = "]", close = true, newline = true },
-    { start = "(", end = ")", close = true, newline = true },
-    { start = "<", end = ">", close = true, newline = true },
-    { start = "\"", end = "\"", close = false, newline = false },
-    { start = "'", end = "'", close = false, newline = false },
-    { start = "`", end = "`", close = false, newline = false },
-]
-
-tab_size = 2
+hidden = true

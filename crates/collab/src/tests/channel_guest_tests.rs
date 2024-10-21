@@ -1,5 +1,6 @@
 use crate::{db::ChannelId, tests::TestServer};
 use call::ActiveCall;
+use chrono::Utc;
 use editor::Editor;
 use gpui::{BackgroundExecutor, TestAppContext};
 use rpc::proto;
@@ -49,7 +50,7 @@ async fn test_channel_guests(
         project_b.read_with(cx_b, |project, _| project.remote_id()),
         Some(project_id),
     );
-    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+    assert!(project_b.read_with(cx_b, |project, cx| project.is_read_only(cx)));
     assert!(project_b
         .update(cx_b, |project, cx| {
             let worktree_id = project.worktrees(cx).next().unwrap().read(cx).id();
@@ -102,7 +103,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
             workspace.active_item_as::<Editor>(cx).unwrap(),
         )
     });
-    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+    assert!(project_b.read_with(cx_b, |project, cx| project.is_read_only(cx)));
     assert!(editor_b.update(cx_b, |e, cx| e.read_only(cx)));
     assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
     assert!(room_b
@@ -126,7 +127,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     cx_a.run_until_parked();
 
     // project and buffers are now editable
-    assert!(project_b.read_with(cx_b, |project, _| !project.is_read_only()));
+    assert!(project_b.read_with(cx_b, |project, cx| !project.is_read_only(cx)));
     assert!(editor_b.update(cx_b, |editor, cx| !editor.read_only(cx)));
 
     // B sees themselves as muted, and can unmute.
@@ -152,7 +153,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     cx_a.run_until_parked();
 
     // project and buffers are no longer editable
-    assert!(project_b.read_with(cx_b, |project, _| project.is_read_only()));
+    assert!(project_b.read_with(cx_b, |project, cx| project.is_read_only(cx)));
     assert!(editor_b.update(cx_b, |editor, cx| editor.read_only(cx)));
     assert!(room_b
         .update(cx_b, |room, cx| room.share_microphone(cx))
@@ -167,7 +168,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .get_or_create_user_by_github_account("user_b", Some(100), None, None)
+        .get_or_create_user_by_github_account("user_b", 100, None, Utc::now(), None)
         .await
         .unwrap();
 
@@ -265,7 +266,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .add_contributor("user_b", Some(100), None, None)
+        .add_contributor("user_b", 100, None, Utc::now(), None)
         .await
         .unwrap();
 

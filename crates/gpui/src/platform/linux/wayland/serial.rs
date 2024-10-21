@@ -6,7 +6,6 @@ pub(crate) enum SerialKind {
     InputMethod,
     MouseEnter,
     MousePress,
-    KeyEnter,
     KeyPress,
 }
 

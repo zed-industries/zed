@@ -1,4 +1,4 @@
-use crate::one_themes::one_dark;
+use crate::fallback_themes::zed_default_dark;
 use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -35,6 +35,9 @@ const MIN_LINE_HEIGHT: f32 = 1.0;
     Deserialize,
     JsonSchema,
 )]
+
+/// Specifies the density of the UI.
+/// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
 #[serde(rename_all = "snake_case")]
 pub enum UiDensity {
     /// A denser UI with tighter spacing and smaller elements.
@@ -50,6 +53,8 @@ pub enum UiDensity {
 }
 
 impl UiDensity {
+    /// The spacing ratio of a given density.
+    /// TODO: Standardize usage throughout the app or remove
     pub fn spacing_ratio(self) -> f32 {
         match self {
             UiDensity::Compact => 0.75,
@@ -70,9 +75,9 @@ impl From<String> for UiDensity {
     }
 }
 
-impl Into<String> for UiDensity {
-    fn into(self) -> String {
-        match self {
+impl From<UiDensity> for String {
+    fn from(val: UiDensity) -> Self {
+        match val {
             UiDensity::Compact => "compact".to_string(),
             UiDensity::Default => "default".to_string(),
             UiDensity::Comfortable => "comfortable".to_string(),
@@ -80,17 +85,44 @@ impl Into<String> for UiDensity {
     }
 }
 
+/// Customizable settings for the UI and theme system.
 #[derive(Clone)]
 pub struct ThemeSettings {
+    /// The UI font size. Determines the size of text in the UI,
+    /// as well as the size of a [gpui::Rems] unit.
+    ///
+    /// Changing this will impact the size of all UI elements.
     pub ui_font_size: Pixels,
+    /// The font used for UI elements.
     pub ui_font: Font,
-    pub buffer_font: Font,
+    /// The font size used for buffers, and the terminal.
+    ///
+    /// The terminal font size can be overridden using it's own setting.
     pub buffer_font_size: Pixels,
+    /// The font used for buffers, and the terminal.
+    ///
+    /// The terminal font family can be overridden using it's own setting.
+    pub buffer_font: Font,
+    /// The line height for buffers, and the terminal.
+    ///
+    /// Changing this may affect the spacing of some UI elements.
+    ///
+    /// The terminal font family can be overridden using it's own setting.
     pub buffer_line_height: BufferLineHeight,
+    /// The current theme selection.
+    /// TODO: Document this further
     pub theme_selection: Option<ThemeSelection>,
+    /// The active theme.
     pub active_theme: Arc<Theme>,
+    /// Manual overrides for the active theme.
+    ///
+    /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
+    /// The density of the UI.
+    /// Note: This setting is still experimental. See [this tracking issue](
     pub ui_density: UiDensity,
+    /// The amount of fading applied to unnecessary code.
+    pub unnecessary_code_fade: f32,
 }
 
 impl ThemeSettings {
@@ -180,15 +212,21 @@ pub(crate) struct AdjustedUiFontSize(Pixels);
 
 impl Global for AdjustedUiFontSize {}
 
+/// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(untagged)]
 pub enum ThemeSelection {
+    /// A static theme selection, represented by a single theme name.
     Static(#[schemars(schema_with = "theme_name_ref")] String),
+    /// A dynamic theme selection, which can change based the [ThemeMode].
     Dynamic {
+        /// The mode used to determine which theme to use.
         #[serde(default)]
         mode: ThemeMode,
+        /// The theme to use for light mode.
         #[schemars(schema_with = "theme_name_ref")]
         light: String,
+        /// The theme to use for dark mode.
         #[schemars(schema_with = "theme_name_ref")]
         dark: String,
     },
@@ -198,6 +236,12 @@ fn theme_name_ref(_: &mut SchemaGenerator) -> Schema {
     Schema::new_ref("#/definitions/ThemeName".into())
 }
 
+// TODO: Rename ThemeMode -> ThemeAppearanceMode
+/// The mode use to select a theme.
+///
+/// `Light` and `Dark` will select their respective themes.
+///
+/// `System` will select the theme based on the system's appearance.
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemeMode {
@@ -213,6 +257,7 @@ pub enum ThemeMode {
 }
 
 impl ThemeSelection {
+    /// Returns the theme name for the selected [ThemeMode].
     pub fn theme(&self, system_appearance: Appearance) -> &str {
         match self {
             Self::Static(theme) => theme,
@@ -227,6 +272,7 @@ impl ThemeSelection {
         }
     }
 
+    /// Returns the [ThemeMode] for the [ThemeSelection].
     pub fn mode(&self) -> Option<ThemeMode> {
         match self {
             ThemeSelection::Static(_) => None,
@@ -246,9 +292,11 @@ pub struct ThemeSettingsContent {
     pub ui_font_family: Option<String>,
     /// The font fallbacks to use for rendering in the UI.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub ui_font_fallbacks: Option<Vec<String>>,
     /// The OpenType features to enable for text in the UI.
     #[serde(default)]
+    #[schemars(default = "default_font_features")]
     pub ui_font_features: Option<FontFeatures>,
     /// The weight of the UI font in CSS units from 100 to 900.
     #[serde(default)]
@@ -258,6 +306,7 @@ pub struct ThemeSettingsContent {
     pub buffer_font_family: Option<String>,
     /// The font fallbacks to use for rendering in text buffers.
     #[serde(default)]
+    #[schemars(default = "default_font_fallbacks")]
     pub buffer_font_fallbacks: Option<Vec<String>>,
     /// The default font size for rendering in text buffers.
     #[serde(default)]
@@ -270,6 +319,7 @@ pub struct ThemeSettingsContent {
     pub buffer_line_height: Option<BufferLineHeight>,
     /// The OpenType features to enable for rendering in text buffers.
     #[serde(default)]
+    #[schemars(default = "default_font_features")]
     pub buffer_font_features: Option<FontFeatures>,
     /// The name of the Zed theme to use.
     #[serde(default)]
@@ -281,11 +331,23 @@ pub struct ThemeSettingsContent {
     #[serde(rename = "unstable.ui_density", default)]
     pub ui_density: Option<UiDensity>,
 
+    /// How much to fade out unused code.
+    #[serde(default)]
+    pub unnecessary_code_fade: Option<f32>,
+
     /// EXPERIMENTAL: Overrides for the current theme.
     ///
     /// These values will override the ones on the current theme specified in `theme`.
     #[serde(rename = "experimental.theme_overrides", default)]
     pub theme_overrides: Option<ThemeStyleContent>,
+}
+
+fn default_font_features() -> Option<FontFeatures> {
+    Some(FontFeatures::default())
+}
+
+fn default_font_fallbacks() -> Option<FontFallbacks> {
+    Some(FontFallbacks::default())
 }
 
 impl ThemeSettingsContent {
@@ -310,6 +372,7 @@ impl ThemeSettingsContent {
         }
     }
 
+    /// Sets the mode for the theme.
     pub fn set_mode(&mut self, mode: ThemeMode) {
         if let Some(selection) = self.theme.as_mut() {
             match selection {
@@ -338,16 +401,23 @@ impl ThemeSettingsContent {
     }
 }
 
+/// The buffer's line height.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BufferLineHeight {
+    /// A less dense line height.
     #[default]
     Comfortable,
+    /// The default line height.
     Standard,
+    /// A custom line height.
+    ///
+    /// A line height of 1.0 is the height of the buffer's font size.
     Custom(f32),
 }
 
 impl BufferLineHeight {
+    /// Returns the value of the line height.
     pub fn value(&self) -> f32 {
         match self {
             BufferLineHeight::Comfortable => 1.618,
@@ -358,12 +428,15 @@ impl BufferLineHeight {
 }
 
 impl ThemeSettings {
+    /// Returns the [AdjustedBufferFontSize].
     pub fn buffer_font_size(&self, cx: &AppContext) -> Pixels {
         cx.try_global::<AdjustedBufferFontSize>()
             .map_or(self.buffer_font_size, |size| size.0)
             .max(MIN_FONT_SIZE)
     }
 
+    // TODO: Rename: `line_height` -> `buffer_line_height`
+    /// Returns the buffer's line height.
     pub fn line_height(&self) -> f32 {
         f32::max(self.buffer_line_height.value(), MIN_LINE_HEIGHT)
     }
@@ -416,6 +489,7 @@ impl ThemeSettings {
     }
 }
 
+/// Observe changes to the adjusted buffer font size.
 pub fn observe_buffer_font_size_adjustment<V: 'static>(
     cx: &mut ViewContext<V>,
     f: impl 'static + Fn(&mut V, &mut ViewContext<V>),
@@ -423,7 +497,8 @@ pub fn observe_buffer_font_size_adjustment<V: 'static>(
     cx.observe_global::<AdjustedBufferFontSize>(f)
 }
 
-pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
+/// Sets the adjusted buffer font size.
+pub fn adjusted_font_size(size: Pixels, cx: &AppContext) -> Pixels {
     if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
         let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
         let delta = *adjusted_size - buffer_font_size;
@@ -434,12 +509,14 @@ pub fn adjusted_font_size(size: Pixels, cx: &mut AppContext) -> Pixels {
     .max(MIN_FONT_SIZE)
 }
 
+/// Returns the adjusted buffer font size.
 pub fn get_buffer_font_size(cx: &AppContext) -> Pixels {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     cx.try_global::<AdjustedBufferFontSize>()
         .map_or(buffer_font_size, |adjusted_size| adjusted_size.0)
 }
 
+/// Adjusts the buffer font size.
 pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
     let mut adjusted_size = cx
@@ -452,10 +529,12 @@ pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     cx.refresh();
 }
 
-pub fn has_adjusted_buffer_font_size(cx: &mut AppContext) -> bool {
+/// Returns whether the buffer font size has been adjusted.
+pub fn has_adjusted_buffer_font_size(cx: &AppContext) -> bool {
     cx.has_global::<AdjustedBufferFontSize>()
 }
 
+/// Resets the buffer font size to the default value.
 pub fn reset_buffer_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedBufferFontSize>() {
         cx.remove_global::<AdjustedBufferFontSize>();
@@ -463,6 +542,8 @@ pub fn reset_buffer_font_size(cx: &mut AppContext) {
     }
 }
 
+// TODO: Make private, change usages to use `get_ui_font_size` instead.
+#[allow(missing_docs)]
 pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
     let (ui_font, ui_font_size) = {
         let theme_settings = ThemeSettings::get_global(cx);
@@ -474,13 +555,15 @@ pub fn setup_ui_font(cx: &mut WindowContext) -> gpui::Font {
     ui_font
 }
 
-pub fn get_ui_font_size(cx: &WindowContext) -> Pixels {
+/// Gets the adjusted UI font size.
+pub fn get_ui_font_size(cx: &AppContext) -> Pixels {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
     cx.try_global::<AdjustedUiFontSize>()
         .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
 }
 
-pub fn adjust_ui_font_size(cx: &mut WindowContext, f: fn(&mut Pixels)) {
+/// Sets the adjusted UI font size.
+pub fn adjust_ui_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
     let mut adjusted_size = cx
         .try_global::<AdjustedUiFontSize>()
@@ -492,15 +575,21 @@ pub fn adjust_ui_font_size(cx: &mut WindowContext, f: fn(&mut Pixels)) {
     cx.refresh();
 }
 
-pub fn has_adjusted_ui_font_size(cx: &mut AppContext) -> bool {
+/// Returns whether the UI font size has been adjusted.
+pub fn has_adjusted_ui_font_size(cx: &AppContext) -> bool {
     cx.has_global::<AdjustedUiFontSize>()
 }
 
-pub fn reset_ui_font_size(cx: &mut WindowContext) {
+/// Resets the UI font size to the default value.
+pub fn reset_ui_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedUiFontSize>() {
         cx.remove_global::<AdjustedUiFontSize>();
         cx.refresh();
     }
+}
+
+fn clamp_font_weight(weight: f32) -> FontWeight {
+    FontWeight(weight.clamp(100., 950.))
 }
 
 impl settings::Settings for ThemeSettings {
@@ -540,13 +629,19 @@ impl settings::Settings for ThemeSettings {
             theme_selection: defaults.theme.clone(),
             active_theme: themes
                 .get(defaults.theme.as_ref().unwrap().theme(*system_appearance))
-                .or(themes.get(&one_dark().name))
+                .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
+            unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
 
-        for value in sources.user.into_iter().chain(sources.release_channel) {
+        for value in sources
+            .user
+            .into_iter()
+            .chain(sources.release_channel)
+            .chain(sources.server)
+        {
             if let Some(value) = value.ui_density {
                 this.ui_density = value;
             }
@@ -561,7 +656,7 @@ impl settings::Settings for ThemeSettings {
                 this.buffer_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.buffer_font_weight {
-                this.buffer_font.weight = FontWeight(value);
+                this.buffer_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = value.ui_font_family.clone() {
@@ -574,7 +669,7 @@ impl settings::Settings for ThemeSettings {
                 this.ui_font.fallbacks = Some(FontFallbacks::from_fonts(value));
             }
             if let Some(value) = value.ui_font_weight {
-                this.ui_font.weight = FontWeight(value);
+                this.ui_font.weight = clamp_font_weight(value);
             }
 
             if let Some(value) = &value.theme {
@@ -591,11 +686,19 @@ impl settings::Settings for ThemeSettings {
             this.apply_theme_overrides();
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
+            this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
+
             merge(
                 &mut this.buffer_font_size,
                 value.buffer_font_size.map(Into::into),
             );
+            this.buffer_font_size = this.buffer_font_size.clamp(px(6.), px(100.));
+
             merge(&mut this.buffer_line_height, value.buffer_line_height);
+
+            // Clamp the `unnecessary_code_fade` to ensure text can't disappear entirely.
+            merge(&mut this.unnecessary_code_fade, value.unnecessary_code_fade);
+            this.unnecessary_code_fade = this.unnecessary_code_fade.clamp(0.0, 0.9);
         }
 
         Ok(this)

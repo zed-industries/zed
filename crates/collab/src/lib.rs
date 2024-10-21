@@ -1,29 +1,42 @@
 pub mod api;
 pub mod auth;
+mod cents;
+pub mod clickhouse;
 pub mod db;
 pub mod env;
 pub mod executor;
+pub mod llm;
+pub mod migrations;
 mod rate_limiter;
 pub mod rpc;
 pub mod seed;
+pub mod stripe_billing;
+pub mod user_backfiller;
 
 #[cfg(test)]
 mod tests;
 
 use anyhow::anyhow;
 use aws_config::{BehaviorVersion, Region};
-use axum::{http::StatusCode, response::IntoResponse};
+use axum::{
+    http::{HeaderMap, StatusCode},
+    response::IntoResponse,
+};
+pub use cents::*;
 use db::{ChannelId, Database};
 use executor::Executor;
+use llm::db::LlmDatabase;
 pub use rate_limiter::*;
 use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 use util::ResultExt;
 
+use crate::stripe_billing::StripeBilling;
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub enum Error {
-    Http(StatusCode, String),
+    Http(StatusCode, String, HeaderMap),
     Database(sea_orm::error::DbErr),
     Internal(anyhow::Error),
     Stripe(stripe::StripeError),
@@ -65,12 +78,18 @@ impl From<serde_json::Error> for Error {
     }
 }
 
+impl Error {
+    fn http(code: StatusCode, message: String) -> Self {
+        Self::Http(code, message, HeaderMap::default())
+    }
+}
+
 impl IntoResponse for Error {
     fn into_response(self) -> axum::response::Response {
         match self {
-            Error::Http(code, message) => {
+            Error::Http(code, message, headers) => {
                 log::error!("HTTP error {}: {}", code, &message);
-                (code, message).into_response()
+                (code, headers, message).into_response()
             }
             Error::Database(error) => {
                 log::error!(
@@ -103,7 +122,7 @@ impl IntoResponse for Error {
 impl std::fmt::Debug for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Http(code, message) => (code, message).fmt(f),
+            Error::Http(code, message, _headers) => (code, message).fmt(f),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
             Error::Stripe(error) => error.fmt(f),
@@ -114,7 +133,7 @@ impl std::fmt::Debug for Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Error::Http(code, message) => write!(f, "{code}: {message}"),
+            Error::Http(code, message, _) => write!(f, "{code}: {message}"),
             Error::Database(error) => error.fmt(f),
             Error::Internal(error) => error.fmt(f),
             Error::Stripe(error) => error.fmt(f),
@@ -124,7 +143,7 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Config {
     pub http_port: u16,
     pub database_url: String,
@@ -140,6 +159,10 @@ pub struct Config {
     pub live_kit_server: Option<String>,
     pub live_kit_key: Option<String>,
     pub live_kit_secret: Option<String>,
+    pub llm_database_url: Option<String>,
+    pub llm_database_max_connections: Option<u32>,
+    pub llm_database_migrations_path: Option<PathBuf>,
+    pub llm_api_secret: Option<String>,
     pub rust_log: Option<String>,
     pub log_json: Option<bool>,
     pub blob_store_url: Option<String>,
@@ -151,12 +174,14 @@ pub struct Config {
     pub openai_api_key: Option<Arc<str>>,
     pub google_ai_api_key: Option<Arc<str>>,
     pub anthropic_api_key: Option<Arc<str>>,
+    pub anthropic_staff_api_key: Option<Arc<str>>,
+    pub llm_closed_beta_model_name: Option<Arc<str>>,
     pub zed_client_checksum_seed: Option<String>,
     pub slack_panics_webhook: Option<String>,
     pub auto_join_channel_id: Option<ChannelId>,
     pub stripe_api_key: Option<String>,
-    pub stripe_price_id: Option<Arc<str>>,
     pub supermaven_admin_api_key: Option<Arc<str>>,
+    pub user_backfiller_github_access_token: Option<Arc<str>>,
 }
 
 impl Config {
@@ -172,16 +197,85 @@ impl Config {
             _ => "https://zed.dev",
         }
     }
+
+    #[cfg(test)]
+    pub fn test() -> Self {
+        Self {
+            http_port: 0,
+            database_url: "".into(),
+            database_max_connections: 0,
+            api_token: "".into(),
+            invite_link_prefix: "".into(),
+            live_kit_server: None,
+            live_kit_key: None,
+            live_kit_secret: None,
+            llm_database_url: None,
+            llm_database_max_connections: None,
+            llm_database_migrations_path: None,
+            llm_api_secret: None,
+            rust_log: None,
+            log_json: None,
+            zed_environment: "test".into(),
+            blob_store_url: None,
+            blob_store_region: None,
+            blob_store_access_key: None,
+            blob_store_secret_key: None,
+            blob_store_bucket: None,
+            openai_api_key: None,
+            google_ai_api_key: None,
+            anthropic_api_key: None,
+            anthropic_staff_api_key: None,
+            llm_closed_beta_model_name: None,
+            clickhouse_url: None,
+            clickhouse_user: None,
+            clickhouse_password: None,
+            clickhouse_database: None,
+            zed_client_checksum_seed: None,
+            slack_panics_webhook: None,
+            auto_join_channel_id: None,
+            migrations_path: None,
+            seed_path: None,
+            stripe_api_key: None,
+            supermaven_admin_api_key: None,
+            user_backfiller_github_access_token: None,
+        }
+    }
+}
+
+/// The service mode that collab should run in.
+#[derive(Debug, PartialEq, Eq, Clone, Copy, strum::Display)]
+#[strum(serialize_all = "snake_case")]
+pub enum ServiceMode {
+    Api,
+    Collab,
+    Llm,
+    All,
+}
+
+impl ServiceMode {
+    pub fn is_collab(&self) -> bool {
+        matches!(self, Self::Collab | Self::All)
+    }
+
+    pub fn is_api(&self) -> bool {
+        matches!(self, Self::Api | Self::All)
+    }
+
+    pub fn is_llm(&self) -> bool {
+        matches!(self, Self::Llm | Self::All)
+    }
 }
 
 pub struct AppState {
     pub db: Arc<Database>,
+    pub llm_db: Option<Arc<LlmDatabase>>,
     pub live_kit_client: Option<Arc<dyn live_kit_server::api::Client>>,
     pub blob_store_client: Option<aws_sdk_s3::Client>,
     pub stripe_client: Option<Arc<stripe::Client>>,
+    pub stripe_billing: Option<Arc<StripeBilling>>,
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
-    pub clickhouse_client: Option<clickhouse::Client>,
+    pub clickhouse_client: Option<::clickhouse::Client>,
     pub config: Config,
 }
 
@@ -191,6 +285,20 @@ impl AppState {
         db_options.max_connections(config.database_max_connections);
         let mut db = Database::new(db_options, Executor::Production).await?;
         db.initialize_notification_kinds().await?;
+
+        let llm_db = if let Some((llm_database_url, llm_database_max_connections)) = config
+            .llm_database_url
+            .clone()
+            .zip(config.llm_database_max_connections)
+        {
+            let mut llm_db_options = db::ConnectOptions::new(llm_database_url);
+            llm_db_options.max_connections(llm_database_max_connections);
+            let mut llm_db = LlmDatabase::new(llm_db_options, executor.clone()).await?;
+            llm_db.initialize().await?;
+            Some(Arc::new(llm_db))
+        } else {
+            None
+        };
 
         let live_kit_client = if let Some(((server, key), secret)) = config
             .live_kit_server
@@ -208,14 +316,16 @@ impl AppState {
         };
 
         let db = Arc::new(db);
+        let stripe_client = build_stripe_client(&config).map(Arc::new).log_err();
         let this = Self {
             db: db.clone(),
+            llm_db,
             live_kit_client,
             blob_store_client: build_blob_store_client(&config).await.log_err(),
-            stripe_client: build_stripe_client(&config)
-                .await
-                .map(|client| Arc::new(client))
-                .log_err(),
+            stripe_billing: stripe_client
+                .clone()
+                .map(|stripe_client| Arc::new(StripeBilling::new(stripe_client))),
+            stripe_client,
             rate_limiter: Arc::new(RateLimiter::new(db)),
             executor,
             clickhouse_client: config
@@ -228,12 +338,11 @@ impl AppState {
     }
 }
 
-async fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
+fn build_stripe_client(config: &Config) -> anyhow::Result<stripe::Client> {
     let api_key = config
         .stripe_api_key
         .as_ref()
         .ok_or_else(|| anyhow!("missing stripe_api_key"))?;
-
     Ok(stripe::Client::new(api_key))
 }
 
@@ -272,8 +381,8 @@ async fn build_blob_store_client(config: &Config) -> anyhow::Result<aws_sdk_s3::
     Ok(aws_sdk_s3::Client::new(&s3_config))
 }
 
-fn build_clickhouse_client(config: &Config) -> anyhow::Result<clickhouse::Client> {
-    Ok(clickhouse::Client::default()
+fn build_clickhouse_client(config: &Config) -> anyhow::Result<::clickhouse::Client> {
+    Ok(::clickhouse::Client::default()
         .with_url(
             config
                 .clickhouse_url

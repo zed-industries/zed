@@ -2,9 +2,7 @@
 //! in editor given a given motion (e.g. it handles converting a "move left" command into coordinates in editor). It is exposed mostly for use by vim crate.
 
 use super::{Bias, DisplayPoint, DisplaySnapshot, SelectionGoal, ToDisplayPoint};
-use crate::{
-    char_kind, scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint,
-};
+use crate::{scroll::ScrollAnchor, CharKind, DisplayRow, EditorStyle, RowExt, ToOffset, ToPoint};
 use gpui::{px, Pixels, WindowTextSystem};
 use language::Point;
 use multi_buffer::{MultiBufferRow, MultiBufferSnapshot};
@@ -264,11 +262,24 @@ pub fn line_end(
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
-        (char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace())
+        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(right))
             || left == '\n'
+    })
+}
+
+/// Returns a position of the previous word boundary, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
+pub fn previous_word_start_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+
+    find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
+        (classifier.kind(left) != classifier.kind(right) && !right.is_whitespace())
+            || left == '\n'
+            || right == '\n'
     })
 }
 
@@ -277,13 +288,14 @@ pub fn previous_word_start(map: &DisplaySnapshot, point: DisplayPoint) -> Displa
 /// lowerspace characters and uppercase characters.
 pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_preceding_boundary_display_point(map, point, FindRange::MultiLine, |left, right| {
         let is_word_start =
-            char_kind(&scope, left) != char_kind(&scope, right) && !right.is_whitespace();
-        let is_subword_start =
-            left == '_' && right != '_' || left.is_lowercase() && right.is_uppercase();
+            classifier.kind(left) != classifier.kind(right) && !right.is_whitespace();
+        let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+            || left == '_' && right != '_'
+            || left.is_lowercase() && right.is_uppercase();
         is_word_start || is_subword_start || left == '\n'
     })
 }
@@ -292,10 +304,28 @@ pub fn previous_subword_start(map: &DisplaySnapshot, point: DisplayPoint) -> Dis
 /// uppercase letter, lowercase letter, '_' character or language-specific word character (like '-' in CSS).
 pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
-        (char_kind(&scope, left) != char_kind(&scope, right) && !left.is_whitespace())
+        (classifier.kind(left) != classifier.kind(right) && !classifier.is_whitespace(left))
+            || right == '\n'
+    })
+}
+
+/// Returns a position of the next word boundary, where a word character is defined as either
+/// uppercase letter, lowercase letter, '_' character, language-specific word character (like '-' in CSS) or newline.
+pub fn next_word_end_or_newline(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
+    let raw_point = point.to_point(map);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
+
+    let mut on_starting_row = true;
+    find_boundary(map, point, FindRange::MultiLine, |left, right| {
+        if left == '\n' {
+            on_starting_row = false;
+        }
+        (classifier.kind(left) != classifier.kind(right)
+            && ((on_starting_row && !left.is_whitespace())
+                || (!on_starting_row && !right.is_whitespace())))
             || right == '\n'
     })
 }
@@ -305,13 +335,14 @@ pub fn next_word_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint
 /// lowerspace characters and uppercase characters.
 pub fn next_subword_end(map: &DisplaySnapshot, point: DisplayPoint) -> DisplayPoint {
     let raw_point = point.to_point(map);
-    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
 
     find_boundary(map, point, FindRange::MultiLine, |left, right| {
         let is_word_end =
-            (char_kind(&scope, left) != char_kind(&scope, right)) && !left.is_whitespace();
-        let is_subword_end =
-            left != '_' && right == '_' || left.is_lowercase() && right.is_uppercase();
+            (classifier.kind(left) != classifier.kind(right)) && !classifier.is_whitespace(left);
+        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+            || left != '_' && right == '_'
+            || left.is_lowercase() && right.is_uppercase();
         is_word_end || is_subword_end || right == '\n'
     })
 }
@@ -385,7 +416,7 @@ pub fn find_preceding_boundary_point(
     mut is_boundary: impl FnMut(char, char) -> bool,
 ) -> Point {
     let mut prev_ch = None;
-    let mut offset = from.to_offset(&buffer_snapshot);
+    let mut offset = from.to_offset(buffer_snapshot);
 
     for ch in buffer_snapshot.reversed_chars_at(offset) {
         if find_range == FindRange::SingleLine && ch == '\n' {
@@ -401,7 +432,7 @@ pub fn find_preceding_boundary_point(
         prev_ch = Some(ch);
     }
 
-    offset.to_point(&buffer_snapshot)
+    offset.to_point(buffer_snapshot)
 }
 
 /// Scans for a boundary preceding the given start point `from` until a boundary is found,
@@ -435,7 +466,7 @@ pub fn find_boundary_point(
     mut is_boundary: impl FnMut(char, char) -> bool,
     return_point_before_boundary: bool,
 ) -> DisplayPoint {
-    let mut offset = from.to_offset(&map, Bias::Right);
+    let mut offset = from.to_offset(map, Bias::Right);
     let mut prev_offset = offset;
     let mut prev_ch = None;
 
@@ -465,7 +496,7 @@ pub fn find_boundary(
     find_range: FindRange,
     is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    return find_boundary_point(map, from, find_range, is_boundary, false);
+    find_boundary_point(map, from, find_range, is_boundary, false)
 }
 
 pub fn find_boundary_exclusive(
@@ -474,7 +505,7 @@ pub fn find_boundary_exclusive(
     find_range: FindRange,
     is_boundary: impl FnMut(char, char) -> bool,
 ) -> DisplayPoint {
-    return find_boundary_point(map, from, find_range, is_boundary, true);
+    find_boundary_point(map, from, find_range, is_boundary, true)
 }
 
 /// Returns an iterator over the characters following a given offset in the [`DisplaySnapshot`].
@@ -486,7 +517,7 @@ pub fn chars_after(
 ) -> impl Iterator<Item = (char, Range<usize>)> + '_ {
     map.buffer_snapshot.chars_at(offset).map(move |ch| {
         let before = offset;
-        offset = offset + ch.len_utf8();
+        offset += ch.len_utf8();
         (ch, before..offset)
     })
 }
@@ -502,21 +533,21 @@ pub fn chars_before(
         .reversed_chars_at(offset)
         .map(move |ch| {
             let after = offset;
-            offset = offset - ch.len_utf8();
+            offset -= ch.len_utf8();
             (ch, offset..after)
         })
 }
 
 pub(crate) fn is_inside_word(map: &DisplaySnapshot, point: DisplayPoint) -> bool {
     let raw_point = point.to_point(map);
-    let scope = map.buffer_snapshot.language_scope_at(raw_point);
+    let classifier = map.buffer_snapshot.char_classifier_at(raw_point);
     let ix = map.clip_point(point, Bias::Left).to_offset(map, Bias::Left);
     let text = &map.buffer_snapshot;
-    let next_char_kind = text.chars_at(ix).next().map(|c| char_kind(&scope, c));
+    let next_char_kind = text.chars_at(ix).next().map(|c| classifier.kind(c));
     let prev_char_kind = text
         .reversed_chars_at(ix)
         .next()
-        .map(|c| char_kind(&scope, c));
+        .map(|c| classifier.kind(c));
     prev_char_kind.zip(next_char_kind) == Some((CharKind::Word, CharKind::Word))
 }
 
@@ -527,7 +558,7 @@ pub(crate) fn surrounding_word(
     let position = map
         .clip_point(position, Bias::Left)
         .to_offset(map, Bias::Left);
-    let (range, _) = map.buffer_snapshot.surrounding_word(position);
+    let (range, _) = map.buffer_snapshot.surrounding_word(position, false);
     let start = range
         .start
         .to_point(&map.buffer_snapshot)
@@ -897,7 +928,7 @@ mod tests {
 
             let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
             let multibuffer = cx.new_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
+                let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
                     [
@@ -921,7 +952,7 @@ mod tests {
                     px(14.0),
                     None,
                     true,
-                    2,
+                    0,
                     2,
                     0,
                     FoldPlaceholder::test(),

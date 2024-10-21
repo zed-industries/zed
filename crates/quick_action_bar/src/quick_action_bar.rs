@@ -1,5 +1,5 @@
 use assistant::assistant_settings::AssistantSettings;
-use assistant::{AssistantPanel, InlineAssist};
+use assistant::AssistantPanel;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
@@ -8,17 +8,19 @@ use editor::actions::{
 use editor::{Editor, EditorSettings};
 
 use gpui::{
-    anchored, deferred, Action, AnchorCorner, ClickEvent, DismissEvent, ElementId, EventEmitter,
+    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
 use settings::{Settings, SettingsStore};
 use ui::{
-    prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize, Tooltip,
+    prelude::*, ButtonStyle, ContextMenu, IconButton, IconButtonShape, IconName, IconSize,
+    PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
+use zed_actions::InlineAssist;
 
 mod repl_menu;
 mod toggle_markdown_preview;
@@ -27,10 +29,9 @@ pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
     active_item: Option<Box<dyn ItemHandle>>,
     buffer_search_bar: View<BufferSearchBar>,
-    repl_menu: Option<View<ContextMenu>>,
     show: bool,
-    toggle_selections_menu: Option<View<ContextMenu>>,
-    toggle_settings_menu: Option<View<ContextMenu>>,
+    toggle_selections_handle: PopoverMenuHandle<ContextMenu>,
+    toggle_settings_handle: PopoverMenuHandle<ContextMenu>,
     workspace: WeakView<Workspace>,
 }
 
@@ -44,10 +45,9 @@ impl QuickActionBar {
             _inlay_hints_enabled_subscription: None,
             active_item: None,
             buffer_search_bar,
-            repl_menu: None,
             show: true,
-            toggle_selections_menu: None,
-            toggle_settings_menu: None,
+            toggle_selections_handle: Default::default(),
+            toggle_settings_handle: Default::default(),
             workspace: workspace.weak_handle(),
         };
         this.apply_settings(cx);
@@ -78,17 +78,6 @@ impl QuickActionBar {
         } else {
             ToolbarItemLocation::Hidden
         }
-    }
-
-    fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
-        div().absolute().bottom_0().right_0().size_0().child(
-            deferred(
-                anchored()
-                    .anchor(AnchorCorner::TopRight)
-                    .child(menu.clone()),
-            )
-            .with_priority(1),
-        )
     }
 }
 
@@ -121,12 +110,15 @@ impl Render for QuickActionBar {
             )
         };
 
+        let focus_handle = editor.read(cx).focus_handle(cx);
+
         let search_button = editor.is_singleton(cx).then(|| {
             QuickActionBarButton::new(
                 "toggle buffer search",
                 IconName::MagnifyingGlass,
                 !self.buffer_search_bar.read(cx).is_dismissed(),
                 Box::new(buffer_search::Deploy::find()),
+                focus_handle.clone(),
                 "Buffer Search",
                 {
                     let buffer_search_bar = self.buffer_search_bar.clone();
@@ -141,9 +133,10 @@ impl Render for QuickActionBar {
 
         let assistant_button = QuickActionBarButton::new(
             "toggle inline assistant",
-            IconName::MagicWand,
+            IconName::ZedAssistant,
             false,
             Box::new(InlineAssist::default()),
+            focus_handle.clone(),
             "Inline Assist",
             {
                 let workspace = self.workspace.clone();
@@ -158,146 +151,155 @@ impl Render for QuickActionBar {
         );
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
-            IconButton::new("toggle_editor_selections_icon", IconName::TextCursor)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .style(ButtonStyle::Subtle)
-                .selected(self.toggle_selections_menu.is_some())
-                .on_click({
-                    let focus = editor.focus_handle(cx);
-                    cx.listener(move |quick_action_bar, _, cx| {
-                        let focus = focus.clone();
-                        let menu = ContextMenu::build(cx, move |menu, _| {
-                            menu.context(focus.clone())
-                                .action("Select All", Box::new(SelectAll))
-                                .action(
-                                    "Select Next Occurrence",
-                                    Box::new(SelectNext {
-                                        replace_newest: false,
-                                    }),
-                                )
-                                .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
-                                .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
-                                .action("Add Cursor Above", Box::new(AddSelectionAbove))
-                                .action("Add Cursor Below", Box::new(AddSelectionBelow))
-                                .separator()
-                                .action("Go to Symbol", Box::new(ToggleOutline))
-                                .action("Go to Line/Column", Box::new(ToggleGoToLine))
-                                .separator()
-                                .action("Next Problem", Box::new(GoToDiagnostic))
-                                .action("Previous Problem", Box::new(GoToPrevDiagnostic))
-                                .separator()
-                                .action("Next Hunk", Box::new(GoToHunk))
-                                .action("Previous Hunk", Box::new(GoToPrevHunk))
-                                .separator()
-                                .action("Move Line Up", Box::new(MoveLineUp))
-                                .action("Move Line Down", Box::new(MoveLineDown))
-                                .action("Duplicate Selection", Box::new(DuplicateLineDown))
-                        });
-                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
-                            quick_action_bar.toggle_selections_menu = None;
-                        })
-                        .detach();
-                        quick_action_bar.toggle_selections_menu = Some(menu);
-                    })
-                })
-                .when(self.toggle_selections_menu.is_none(), |this| {
-                    this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
+            let focus = editor.focus_handle(cx);
+            PopoverMenu::new("editor-selections-dropdown")
+                .trigger(
+                    IconButton::new("toggle_editor_selections_icon", IconName::CursorIBeam)
+                        .shape(IconButtonShape::Square)
+                        .icon_size(IconSize::Small)
+                        .style(ButtonStyle::Subtle)
+                        .selected(self.toggle_selections_handle.is_deployed())
+                        .when(!self.toggle_selections_handle.is_deployed(), |this| {
+                            this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
+                        }),
+                )
+                .with_handle(self.toggle_selections_handle.clone())
+                .anchor(AnchorCorner::TopRight)
+                .menu(move |cx| {
+                    let focus = focus.clone();
+                    let menu = ContextMenu::build(cx, move |menu, _| {
+                        menu.context(focus.clone())
+                            .action("Select All", Box::new(SelectAll))
+                            .action(
+                                "Select Next Occurrence",
+                                Box::new(SelectNext {
+                                    replace_newest: false,
+                                }),
+                            )
+                            .action("Expand Selection", Box::new(SelectLargerSyntaxNode))
+                            .action("Shrink Selection", Box::new(SelectSmallerSyntaxNode))
+                            .action("Add Cursor Above", Box::new(AddSelectionAbove))
+                            .action("Add Cursor Below", Box::new(AddSelectionBelow))
+                            .separator()
+                            .action("Go to Symbol", Box::new(ToggleOutline))
+                            .action("Go to Line/Column", Box::new(ToggleGoToLine))
+                            .separator()
+                            .action("Next Problem", Box::new(GoToDiagnostic))
+                            .action("Previous Problem", Box::new(GoToPrevDiagnostic))
+                            .separator()
+                            .action("Next Hunk", Box::new(GoToHunk))
+                            .action("Previous Hunk", Box::new(GoToPrevHunk))
+                            .separator()
+                            .action("Move Line Up", Box::new(MoveLineUp))
+                            .action("Move Line Down", Box::new(MoveLineDown))
+                            .action("Duplicate Selection", Box::new(DuplicateLineDown))
+                    });
+                    Some(menu)
                 })
         });
 
-        let editor_settings_dropdown =
-            IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
-                .shape(IconButtonShape::Square)
-                .icon_size(IconSize::Small)
-                .style(ButtonStyle::Subtle)
-                .selected(self.toggle_settings_menu.is_some())
-                .on_click({
-                    let editor = editor.clone();
-                    cx.listener(move |quick_action_bar, _, cx| {
-                        let menu = ContextMenu::build(cx, |mut menu, _| {
-                            if supports_inlay_hints {
-                                menu = menu.toggleable_entry(
-                                    "Inlay Hints",
-                                    inlay_hints_enabled,
-                                    Some(editor::actions::ToggleInlayHints.boxed_clone()),
-                                    {
-                                        let editor = editor.clone();
-                                        move |cx| {
-                                            editor.update(cx, |editor, cx| {
-                                                editor.toggle_inlay_hints(
-                                                    &editor::actions::ToggleInlayHints,
-                                                    cx,
-                                                );
-                                            });
-                                        }
-                                    },
-                                );
-                            }
-
-                            menu = menu.toggleable_entry(
-                                "Inline Git Blame",
-                                git_blame_inline_enabled,
-                                Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.toggle_git_blame_inline(
-                                                &editor::actions::ToggleGitBlameInline,
-                                                cx,
-                                            )
-                                        });
-                                    }
-                                },
-                            );
-
-                            menu = menu.toggleable_entry(
-                                "Selection Menu",
-                                selection_menu_enabled,
-                                Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.toggle_selection_menu(
-                                                &editor::actions::ToggleSelectionMenu,
-                                                cx,
-                                            )
-                                        });
-                                    }
-                                },
-                            );
-
-                            menu = menu.toggleable_entry(
-                                "Auto Signature Help",
-                                auto_signature_help_enabled,
-                                Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
-                                {
-                                    let editor = editor.clone();
-                                    move |cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.toggle_auto_signature_help_menu(
-                                                &editor::actions::ToggleAutoSignatureHelp,
+        let editor = editor.downgrade();
+        let editor_settings_dropdown = PopoverMenu::new("editor-settings")
+            .trigger(
+                IconButton::new("toggle_editor_settings_icon", IconName::Sliders)
+                    .shape(IconButtonShape::Square)
+                    .icon_size(IconSize::Small)
+                    .style(ButtonStyle::Subtle)
+                    .selected(self.toggle_settings_handle.is_deployed())
+                    .when(!self.toggle_settings_handle.is_deployed(), |this| {
+                        this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
+                    }),
+            )
+            .anchor(AnchorCorner::TopRight)
+            .with_handle(self.toggle_settings_handle.clone())
+            .menu(move |cx| {
+                let menu = ContextMenu::build(cx, |mut menu, _| {
+                    if supports_inlay_hints {
+                        menu = menu.toggleable_entry(
+                            "Inlay Hints",
+                            inlay_hints_enabled,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleInlayHints.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_inlay_hints(
+                                                &editor::actions::ToggleInlayHints,
                                                 cx,
                                             );
-                                        });
-                                    }
-                                },
-                            );
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
+                    }
 
-                            menu
-                        });
-                        cx.subscribe(&menu, |quick_action_bar, _, _: &DismissEvent, _cx| {
-                            quick_action_bar.toggle_settings_menu = None;
-                        })
-                        .detach();
-                        quick_action_bar.toggle_settings_menu = Some(menu);
-                    })
-                })
-                .when(self.toggle_settings_menu.is_none(), |this| {
-                    this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
+                    menu = menu.toggleable_entry(
+                        "Inline Git Blame",
+                        git_blame_inline_enabled,
+                        IconPosition::Start,
+                        Some(editor::actions::ToggleGitBlameInline.boxed_clone()),
+                        {
+                            let editor = editor.clone();
+                            move |cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.toggle_git_blame_inline(
+                                            &editor::actions::ToggleGitBlameInline,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }
+                        },
+                    );
+
+                    menu = menu.toggleable_entry(
+                        "Selection Menu",
+                        selection_menu_enabled,
+                        IconPosition::Start,
+                        Some(editor::actions::ToggleSelectionMenu.boxed_clone()),
+                        {
+                            let editor = editor.clone();
+                            move |cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.toggle_selection_menu(
+                                            &editor::actions::ToggleSelectionMenu,
+                                            cx,
+                                        )
+                                    })
+                                    .ok();
+                            }
+                        },
+                    );
+
+                    menu = menu.toggleable_entry(
+                        "Auto Signature Help",
+                        auto_signature_help_enabled,
+                        IconPosition::Start,
+                        Some(editor::actions::ToggleAutoSignatureHelp.boxed_clone()),
+                        {
+                            let editor = editor.clone();
+                            move |cx| {
+                                editor
+                                    .update(cx, |editor, cx| {
+                                        editor.toggle_auto_signature_help_menu(
+                                            &editor::actions::ToggleAutoSignatureHelp,
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        },
+                    );
+
+                    menu
                 });
+                Some(menu)
+            });
 
         h_flex()
             .id("quick action bar")
@@ -312,21 +314,6 @@ impl Render for QuickActionBar {
             )
             .children(editor_selections_dropdown)
             .child(editor_settings_dropdown)
-            .when_some(self.repl_menu.as_ref(), |el, repl_menu| {
-                el.child(Self::render_menu_overlay(repl_menu))
-            })
-            .when_some(
-                self.toggle_settings_menu.as_ref(),
-                |el, toggle_settings_menu| {
-                    el.child(Self::render_menu_overlay(toggle_settings_menu))
-                },
-            )
-            .when_some(
-                self.toggle_selections_menu.as_ref(),
-                |el, toggle_selections_menu| {
-                    el.child(Self::render_menu_overlay(toggle_selections_menu))
-                },
-            )
     }
 }
 
@@ -338,6 +325,7 @@ struct QuickActionBarButton {
     icon: IconName,
     toggled: bool,
     action: Box<dyn Action>,
+    focus_handle: FocusHandle,
     tooltip: SharedString,
     on_click: Box<dyn Fn(&ClickEvent, &mut WindowContext)>,
 }
@@ -348,6 +336,7 @@ impl QuickActionBarButton {
         icon: IconName,
         toggled: bool,
         action: Box<dyn Action>,
+        focus_handle: FocusHandle,
         tooltip: impl Into<SharedString>,
         on_click: impl Fn(&ClickEvent, &mut WindowContext) + 'static,
     ) -> Self {
@@ -356,6 +345,7 @@ impl QuickActionBarButton {
             icon,
             toggled,
             action,
+            focus_handle,
             tooltip: tooltip.into(),
             on_click: Box::new(on_click),
         }
@@ -372,7 +362,9 @@ impl RenderOnce for QuickActionBarButton {
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
             .selected(self.toggled)
-            .tooltip(move |cx| Tooltip::for_action(tooltip.clone(), &*action, cx))
+            .tooltip(move |cx| {
+                Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, cx)
+            })
             .on_click(move |event, cx| (self.on_click)(event, cx))
     }
 }

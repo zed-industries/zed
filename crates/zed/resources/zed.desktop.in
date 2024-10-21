@@ -10,7 +10,7 @@ Exec=$APP_CLI $APP_ARGS
 Icon=$APP_ICON
 Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
-MimeType=text/plain;inode/directory;x-scheme-handler/zed;
+MimeType=text/plain;application/x-zerosize;x-scheme-handler/zed;
 Actions=NewWorkspace;
 
 [Desktop Action NewWorkspace]

@@ -12,7 +12,7 @@
 //! - [`WrapMap`] that handles soft wrapping.
 //! - [`BlockMap`] that tracks custom blocks such as diagnostics that should be displayed within buffer.
 //! - [`DisplayMap`] that adds background highlights to the regions of text.
-//! Each one of those builds on top of preceding map.
+//!   Each one of those builds on top of preceding map.
 //!
 //! [Editor]: crate::Editor
 //! [EditorElement]: crate::element::EditorElement
@@ -74,8 +74,6 @@ pub enum FoldStatus {
 
 pub type RenderFoldToggle = Arc<dyn Fn(FoldStatus, &mut WindowContext) -> AnyElement>;
 
-const UNNECESSARY_CODE_FADE: f32 = 0.3;
-
 pub trait ToDisplayPoint {
     fn to_display_point(&self, map: &DisplaySnapshot) -> DisplayPoint;
 }
@@ -107,7 +105,7 @@ pub struct DisplayMap {
     inlay_highlights: InlayHighlights,
     /// A container for explicitly foldable ranges, which supersede indentation based fold range suggestions.
     crease_map: CreaseMap,
-    fold_placeholder: FoldPlaceholder,
+    pub(crate) fold_placeholder: FoldPlaceholder,
     pub clip_at_line_ends: bool,
     pub(crate) masked: bool,
 }
@@ -129,7 +127,9 @@ impl DisplayMap {
         let buffer_subscription = buffer.update(cx, |buffer, _| buffer.subscribe());
 
         let tab_size = Self::tab_size(&buffer, cx);
-        let (inlay_map, snapshot) = InlayMap::new(buffer.read(cx).snapshot(cx));
+        let buffer_snapshot = buffer.read(cx).snapshot(cx);
+        let crease_map = CreaseMap::new(&buffer_snapshot);
+        let (inlay_map, snapshot) = InlayMap::new(buffer_snapshot);
         let (fold_map, snapshot) = FoldMap::new(snapshot);
         let (tab_map, snapshot) = TabMap::new(snapshot, tab_size);
         let (wrap_map, snapshot) = WrapMap::new(snapshot, font, font_size, wrap_width, cx);
@@ -140,7 +140,6 @@ impl DisplayMap {
             excerpt_header_height,
             excerpt_footer_height,
         );
-        let crease_map = CreaseMap::default();
 
         cx.observe(&wrap_map, |_, _, cx| cx.notify()).detach();
 
@@ -424,11 +423,12 @@ impl DisplayMap {
     }
 
     fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
+        let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).language());
-        language_settings(language, None, cx).tab_size
+            .and_then(|buffer| buffer.language())
+            .map(|l| l.name());
+        let file = buffer.and_then(|buffer| buffer.file());
+        language_settings(language, file, cx).tab_size
     }
 
     #[cfg(test)]
@@ -590,7 +590,7 @@ impl DisplaySnapshot {
 
     pub fn display_point_to_anchor(&self, point: DisplayPoint, bias: Bias) -> Anchor {
         self.buffer_snapshot
-            .anchor_at(point.to_offset(&self, bias), bias)
+            .anchor_at(point.to_offset(self, bias), bias)
     }
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
@@ -691,7 +691,7 @@ impl DisplaySnapshot {
             let mut diagnostic_highlight = HighlightStyle::default();
 
             if chunk.is_unnecessary {
-                diagnostic_highlight.fade_out = Some(UNNECESSARY_CODE_FADE);
+                diagnostic_highlight.fade_out = Some(editor_style.unnecessary_code_fade);
             }
 
             if let Some(severity) = chunk.diagnostic_severity {
@@ -737,7 +737,7 @@ impl DisplaySnapshot {
         let mut line = String::new();
 
         let range = display_row..display_row.next_row();
-        for chunk in self.highlighted_chunks(range, false, &editor_style) {
+        for chunk in self.highlighted_chunks(range, false, editor_style) {
             line.push_str(chunk.text);
 
             let text_style = if let Some(style) = chunk.style {
@@ -1281,12 +1281,14 @@ pub mod tests {
                                         position.to_point(&buffer),
                                         height
                                     );
+                                    let priority = rng.gen_range(1..100);
                                     BlockProperties {
                                         style: BlockStyle::Fixed,
                                         position,
                                         height,
                                         disposition,
                                         render: Box::new(|_| div().into_any()),
+                                        priority,
                                     }
                                 })
                                 .collect::<Vec<_>>();
@@ -1645,7 +1647,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"
@@ -1750,7 +1752,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"
@@ -1833,7 +1835,7 @@ pub mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_highlights_query(
                 r#"

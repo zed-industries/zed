@@ -26,7 +26,7 @@ use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
 use crate::scene::Scene;
 use crate::{
     px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
-    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, Size, Tiling,
+    PlatformDisplay, PlatformInput, Point, PromptLevel, ResizeEdge, ScaledPixels, Size, Tiling,
     WaylandClientStatePtr, WindowAppearance, WindowBackgroundAppearance, WindowBounds,
     WindowControls, WindowDecorations, WindowParams,
 };
@@ -622,8 +622,12 @@ impl WaylandWindowStatePtr {
         let mut bounds: Option<Bounds<Pixels>> = None;
         if let Some(mut input_handler) = state.input_handler.take() {
             drop(state);
-            if let Some(range) = input_handler.selected_text_range() {
-                bounds = input_handler.bounds_for_range(range);
+            if let Some(selection) = input_handler.selected_text_range(true) {
+                bounds = input_handler.bounds_for_range(if selection.reversed {
+                    selection.range.start..selection.range.start
+                } else {
+                    selection.range.end..selection.range.end
+                });
             }
             self.state.borrow_mut().input_handler = Some(input_handler);
         }
@@ -1006,6 +1010,11 @@ impl PlatformWindow for WaylandWindow {
         }
     }
 
+    fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
+        let state = self.borrow();
+        state.client.update_ime_position(bounds);
+    }
+
     fn gpu_specs(&self) -> Option<GPUSpecs> {
         self.borrow().renderer.gpu_specs().into()
     }
@@ -1037,8 +1046,8 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         && state.decorations == WindowDecorations::Server
     {
         // Promise the compositor that this region of the window surface
-        // contains no transparent pixels. This allows the compositor to
-        // do skip whatever is behind the surface for better performance.
+        // contains no transparent pixels. This allows the compositor to skip
+        // updating whatever is behind the surface for better performance.
         state.surface.set_opaque_region(Some(&region));
     } else {
         state.surface.set_opaque_region(None);
@@ -1048,7 +1057,6 @@ fn update_window(mut state: RefMut<WaylandWindowState>) {
         if state.background_appearance == WindowBackgroundAppearance::Blurred {
             if state.blur.is_none() {
                 let blur = blur_manager.create(&state.surface, &state.globals.qh, ());
-                blur.set_region(Some(&region));
                 state.blur = Some(blur);
             }
             state.blur.as_ref().unwrap().commit();

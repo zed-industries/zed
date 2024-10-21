@@ -6,7 +6,6 @@ mod repl_editor;
 mod repl_sessions_ui;
 mod repl_store;
 mod session;
-mod stdio;
 
 use std::{sync::Arc, time::Duration};
 
@@ -20,7 +19,7 @@ pub use crate::jupyter_settings::JupyterSettings;
 pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
 pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
-    ClearOutputs, Interrupt, ReplSessionsPage, Run, Sessions, Shutdown,
+    ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
 use crate::repl_store::ReplStore;
 pub use crate::session::Session;

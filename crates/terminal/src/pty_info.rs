@@ -98,9 +98,10 @@ impl PtyProcessInfo {
 
     fn refresh(&mut self) -> Option<&Process> {
         let pid = self.pid_getter.pid()?;
-        if self
-            .system
-            .refresh_process_specifics(pid, self.refresh_kind)
+        if self.system.refresh_processes_specifics(
+            sysinfo::ProcessesToUpdate::Some(&[pid]),
+            self.refresh_kind,
+        ) == 1
         {
             self.system.process(pid)
         } else {
@@ -116,9 +117,13 @@ impl PtyProcessInfo {
             .map_or(PathBuf::new(), |p| p.to_owned());
 
         let info = ProcessInfo {
-            name: process.name().to_owned(),
+            name: process.name().to_str()?.to_owned(),
             cwd,
-            argv: process.cmd().to_vec(),
+            argv: process
+                .cmd()
+                .iter()
+                .filter_map(|s| s.to_str().map(ToOwned::to_owned))
+                .collect(),
         };
         self.current = Some(info.clone());
         Some(info)
