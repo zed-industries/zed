@@ -3,6 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
+use gpui::SharedString;
 use language::LanguageName;
 use language::Toolchain;
 use language::ToolchainList;
@@ -332,7 +333,17 @@ impl ToolchainLister for PythonToolchainProvider {
         LanguageName::new("Python")
     }
     async fn list(&self) -> ToolchainList {
-        ToolchainList::default()
+        ToolchainList {
+            toolchains: vec![
+                Toolchain {
+                    label: SharedString::new_static("My cool python toolchain"),
+                },
+                Toolchain {
+                    label: SharedString::new_static("Global Python"),
+                },
+            ],
+            default: Some(1),
+        }
     }
     async fn activate(&self, _: Toolchain) {}
 }

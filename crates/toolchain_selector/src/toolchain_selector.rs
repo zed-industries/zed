@@ -1,6 +1,6 @@
-mod active_buffer_language;
+mod active_toolchain;
 
-pub use active_buffer_language::ActiveBufferLanguage;
+pub use active_toolchain::ActiveToolchain;
 use anyhow::anyhow;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
