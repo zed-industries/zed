@@ -1135,6 +1135,38 @@ pub struct FoldChunks<'a> {
     max_output_offset: FoldOffset,
 }
 
+impl<'a> FoldChunks<'a> {
+    pub(crate) fn seek(&mut self, range: Range<FoldOffset>) {
+        self.transform_cursor.seek(&range.start, Bias::Right, &());
+
+        let inlay_start = {
+            let overshoot = range.start.0 - self.transform_cursor.start().0 .0;
+            self.transform_cursor.start().1 + InlayOffset(overshoot)
+        };
+
+        let transform_end = self.transform_cursor.end(&());
+
+        let inlay_end = if self
+            .transform_cursor
+            .item()
+            .map_or(true, |transform| transform.is_fold())
+        {
+            inlay_start
+        } else if range.end < transform_end.0 {
+            let overshoot = range.end.0 - self.transform_cursor.start().0 .0;
+            self.transform_cursor.start().1 + InlayOffset(overshoot)
+        } else {
+            transform_end.1
+        };
+
+        self.inlay_chunks.seek(inlay_start..inlay_end);
+        self.inlay_chunk = None;
+        self.inlay_offset = inlay_start;
+        self.output_offset = range.start;
+        self.max_output_offset = range.end;
+    }
+}
+
 impl<'a> Iterator for FoldChunks<'a> {
     type Item = Chunk<'a>;
 

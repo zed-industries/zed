@@ -1026,18 +1026,6 @@ impl BlockSnapshot {
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        let input_end = {
-            cursor.seek(&BlockRow(rows.end), Bias::Right, &());
-            let overshoot = if cursor
-                .item()
-                .map_or(false, |transform| transform.block.is_none())
-            {
-                rows.end - cursor.start().0 .0
-            } else {
-                0
-            };
-            cursor.start().1 .0 + overshoot
-        };
         let input_start = {
             cursor.seek(&BlockRow(rows.start), Bias::Right, &());
             let overshoot = if cursor
@@ -1050,6 +1038,19 @@ impl BlockSnapshot {
             };
             cursor.start().1 .0 + overshoot
         };
+        let input_end = if let Some(transform) = cursor.item() {
+            if transform.block.is_some() {
+                input_start
+            } else {
+                cmp::min(
+                    cursor.end(&()).1 .0,
+                    input_start + (rows.end - cursor.start().1 .0),
+                )
+            }
+        } else {
+            input_start
+        };
+
         BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(
                 input_start..input_end,
@@ -1304,6 +1305,20 @@ impl<'a> BlockChunks<'a> {
             } else {
                 break;
             }
+        }
+
+        if self
+            .transforms
+            .item()
+            .map_or(false, |transform| transform.block.is_none())
+        {
+            let start_input_row = self.transforms.start().1 .0;
+            let end_input_row = cmp::min(
+                self.transforms.end(&()).1 .0,
+                start_input_row + (self.max_output_row - self.transforms.start().0 .0),
+            );
+            self.input_chunks.seek(start_input_row..end_input_row);
+            self.input_chunk = Chunk::default();
         }
     }
 }
@@ -1936,6 +1951,37 @@ mod tests {
             snapshot.text(),
             "one two \nthree\n\nfour five \nsix\n\nseven \neight"
         );
+    }
+
+    #[gpui::test]
+    fn test_replace_lines(cx: &mut gpui::TestAppContext) {
+        cx.update(init_test);
+
+        let text = "line1\nline2\nline3\nline4\nline5";
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
+        let (_inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
+        let (_fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
+        let (_tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 1.try_into().unwrap());
+        let (_wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), px(14.0), None, cx));
+        let mut block_map = BlockMap::new(wraps_snapshot.clone(), false, 1, 1, 0);
+
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.insert(vec![BlockProperties {
+            style: BlockStyle::Fixed,
+            placement: BlockPlacement::Replace(
+                buffer_snapshot.anchor_after(Point::new(1, 3))
+                    ..buffer_snapshot.anchor_before(Point::new(2, 1)),
+            ),
+            height: 3,
+            render: Box::new(|_| div().into_any()),
+            priority: 0,
+        }]);
+
+        let snapshot = block_map.read(wraps_snapshot, Default::default());
+        assert_eq!(snapshot.text(), "line1\n\n\n\nline4\nline5");
     }
 
     #[gpui::test(iterations = 100)]

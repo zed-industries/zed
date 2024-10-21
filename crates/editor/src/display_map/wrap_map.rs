@@ -56,6 +56,7 @@ pub struct WrapChunks<'a> {
     output_position: WrapPoint,
     max_output_row: u32,
     transforms: Cursor<'a, Transform, (WrapPoint, TabPoint)>,
+    snapshot: &'a WrapSnapshot,
 }
 
 #[derive(Clone)]
@@ -598,6 +599,7 @@ impl WrapSnapshot {
             output_position: output_start,
             max_output_row: rows.end,
             transforms,
+            snapshot: self,
         }
     }
 
@@ -781,6 +783,26 @@ impl WrapSnapshot {
                 );
             }
         }
+    }
+}
+
+impl<'a> WrapChunks<'a> {
+    pub(crate) fn seek(&mut self, rows: Range<u32>) {
+        let output_start = WrapPoint::new(rows.start, 0);
+        let output_end = WrapPoint::new(rows.end, 0);
+        self.transforms.seek(&output_start, Bias::Right, &());
+        let mut input_start = TabPoint(self.transforms.start().1 .0);
+        if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
+            input_start.0 += output_start.0 - self.transforms.start().0 .0;
+        }
+        let input_end = self
+            .snapshot
+            .to_tab_point(output_end)
+            .min(self.snapshot.tab_snapshot.max_point());
+        self.input_chunks.seek(input_start..input_end);
+        self.input_chunk = Chunk::default();
+        self.output_position = output_start;
+        self.max_output_row = rows.end;
     }
 }
 
