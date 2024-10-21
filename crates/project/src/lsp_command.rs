@@ -2303,7 +2303,9 @@ impl LspCommand for OnTypeFormatting {
             .await?;
 
         let options = buffer.update(&mut cx, |buffer, cx| {
-            lsp_formatting_options(language_settings(buffer.language(), buffer.file(), cx))
+            lsp_formatting_options(
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx).as_ref(),
+            )
         })?;
 
         Ok(Self {

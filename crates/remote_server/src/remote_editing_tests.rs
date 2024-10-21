@@ -5,7 +5,7 @@ use fs::{FakeFs, Fs};
 use gpui::{Context, Model, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
-    language_settings::{all_language_settings, AllLanguageSettings},
+    language_settings::{language_settings, AllLanguageSettings},
     Buffer, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageRegistry, LanguageServerName,
     LineEnding,
 };
@@ -208,7 +208,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(Some(&"Rust".into()))
+                .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
             ["from-local-settings".to_string()]
         )
@@ -228,7 +228,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     server_cx.read(|cx| {
         assert_eq!(
             AllLanguageSettings::get_global(cx)
-                .language(Some(&"Rust".into()))
+                .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
             ["from-server-settings".to_string()]
         )
@@ -287,7 +287,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
                 }),
                 cx
             )
-            .language(Some(&"Rust".into()))
+            .language(None, Some(&"Rust".into()), cx)
             .language_servers,
             ["override-rust-analyzer".to_string()]
         )
@@ -296,9 +296,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
     cx.read(|cx| {
         let file = buffer.read(cx).file();
         assert_eq!(
-            all_language_settings(file, cx)
-                .language(Some(&"Rust".into()))
-                .language_servers,
+            language_settings(Some("Rust".into()), file, cx).language_servers,
             ["override-rust-analyzer".to_string()]
         )
     });
@@ -379,9 +377,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     cx.read(|cx| {
         let file = buffer.read(cx).file();
         assert_eq!(
-            all_language_settings(file, cx)
-                .language(Some(&"Rust".into()))
-                .language_servers,
+            language_settings(Some("Rust".into()), file, cx).language_servers,
             ["rust-analyzer".to_string()]
         )
     });

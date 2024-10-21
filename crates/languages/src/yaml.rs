@@ -101,7 +101,7 @@ impl LspAdapter for YamlLspAdapter {
 
         let tab_size = cx.update(|cx| {
             AllLanguageSettings::get(Some(location), cx)
-                .language(Some(&"YAML".into()))
+                .language(Some(location), Some(&"YAML".into()), cx)
                 .tab_size
         })?;
         let mut options = serde_json::json!({"[yaml]": {"editor.tabSize": tab_size}});

@@ -90,7 +90,7 @@ pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    language_settings::{self, all_language_settings, InlayHintSettings},
+    language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
@@ -428,8 +428,7 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
-    let show_background = all_language_settings(None, cx)
-        .language(None)
+    let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -4248,7 +4247,10 @@ impl Editor {
             .text_anchor_for_position(position, cx)?;
 
         let settings = language_settings::language_settings(
-            buffer.read(cx).language_at(buffer_position).as_ref(),
+            buffer
+                .read(cx)
+                .language_at(buffer_position)
+                .map(|l| l.name()),
             buffer.read(cx).file(),
             cx,
         );
@@ -13374,11 +13376,8 @@ fn inlay_hint_settings(
     cx: &mut ViewContext<'_, Editor>,
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
-    let language = snapshot.language_at(location);
-    let settings = all_language_settings(file, cx);
-    settings
-        .language(language.map(|l| l.name()).as_ref())
-        .inlay_hints
+    let language = snapshot.language_at(location).map(|l| l.name());
+    language_settings(language, file, cx).inlay_hints
 }
 
 fn consume_contiguous_rows(
