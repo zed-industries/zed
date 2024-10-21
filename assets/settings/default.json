@@ -592,6 +592,8 @@
     //   "window_width": "large",
     // 4. Extra Large width:
     //   "window_width": "xlarge"
+    // 5. Fullscreen width:
+    //   "window_width": "full"
     "window_width": "medium"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
