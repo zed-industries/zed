@@ -29,7 +29,10 @@ use std::{
     },
 };
 use text::Point;
-use ui::{prelude::*, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
+use ui::{
+    prelude::*, ButtonLike, ContextMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
+    PopoverMenu, Tooltip,
+};
 use util::{paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
     item::PreviewTabsSettings, notifications::NotifyResultExt, pane, ModalView, SplitDirection,
@@ -1151,10 +1154,7 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
-        let action_source = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.active_pane().focus_handle(cx))
-            .ok()?;
+        let weak_self = cx.view().downgrade();
         Some(
             h_flex()
                 .w_full()
@@ -1163,26 +1163,93 @@ impl PickerDelegate for FileFinderDelegate {
                 .pr_2()
                 .border_color(cx.theme().colors().border)
                 .justify_end()
-                .gap_4()
                 .child(
-                    Button::new("split_right", "Split right")
-                        .label_size(LabelSize::Small)
-                        .key_binding(KeyBinding::for_action_in(
-                            &pane::SplitRight,
-                            &action_source,
-                            cx,
-                        ))
-                        .on_click(|_, cx| cx.dispatch_action(pane::SplitRight.boxed_clone())),
+                    ButtonLike::new("open-selection")
+                        .when_some(KeyBinding::for_action(&menu::Confirm, cx), |button, key| {
+                            button.child(key)
+                        })
+                        .child(Label::new("Open"))
+                        .on_click(|_, cx| cx.dispatch_action(menu::Confirm.boxed_clone())),
                 )
                 .child(
-                    Button::new("split_down", "Split down")
-                        .label_size(LabelSize::Small)
-                        .key_binding(KeyBinding::for_action_in(
-                            &pane::SplitDown,
-                            &action_source,
-                            cx,
-                        ))
-                        .on_click(|_, cx| cx.dispatch_action(pane::SplitDown.boxed_clone())),
+                    PopoverMenu::new("split-popover")
+                        .trigger(
+                            IconButton::new("split-trigger", IconName::EllipsisVertical)
+                                .icon_size(IconSize::Small)
+                                .tooltip(|cx| Tooltip::text("Open in split", cx)),
+                        )
+                        .menu({
+                            let weak_self = weak_self.clone();
+                            move |cx| {
+                                let weak_self = weak_self.clone();
+                                Some(ContextMenu::build(cx, move |menu, cx| {
+                                    let context = weak_self
+                                        .update(cx, |this, cx| {
+                                            this.delegate.workspace.upgrade().and_then(
+                                                |workspace| {
+                                                    Some(
+                                                        workspace
+                                                            .read(cx)
+                                                            .active_item_as::<Editor>(cx)?
+                                                            .focus_handle(cx),
+                                                    )
+                                                },
+                                            )
+                                        })
+                                        .ok()
+                                        .flatten();
+                                    menu.when_some(context, |menu, context| menu.context(context))
+                                        .entry("Split left", None, {
+                                            let weak_self = weak_self.clone();
+                                            move |cx| {
+                                                weak_self
+                                                    .update(cx, |_, cx| {
+                                                        cx.dispatch_action(
+                                                            pane::SplitLeft.boxed_clone(),
+                                                        )
+                                                    })
+                                                    .ok();
+                                            }
+                                        })
+                                        .entry("Split right", None, {
+                                            let weak_self = weak_self.clone();
+                                            move |cx| {
+                                                weak_self
+                                                    .update(cx, |_, cx| {
+                                                        cx.dispatch_action(
+                                                            pane::SplitRight.boxed_clone(),
+                                                        )
+                                                    })
+                                                    .ok();
+                                            }
+                                        })
+                                        .entry("Split up", None, {
+                                            let weak_self = weak_self.clone();
+                                            move |cx| {
+                                                weak_self
+                                                    .update(cx, |_, cx| {
+                                                        cx.dispatch_action(
+                                                            pane::SplitUp.boxed_clone(),
+                                                        )
+                                                    })
+                                                    .ok();
+                                            }
+                                        })
+                                        .entry("Split down", None, {
+                                            let weak_self = weak_self.clone();
+                                            move |cx| {
+                                                weak_self
+                                                    .update(cx, |_, cx| {
+                                                        cx.dispatch_action(
+                                                            pane::SplitDown.boxed_clone(),
+                                                        )
+                                                    })
+                                                    .ok();
+                                            }
+                                        })
+                                }))
+                            }
+                        }),
                 )
                 .into_any(),
         )
