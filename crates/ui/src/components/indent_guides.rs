@@ -25,7 +25,7 @@ pub struct IndentGuides {
             ) -> SmallVec<[RenderedIndentGuide; 16]>,
         >,
     >,
-    on_hovered_indent_guide_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
+    on_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
 }
 
 pub fn indent_guides<V: Render>(
@@ -42,16 +42,16 @@ pub fn indent_guides<V: Render>(
         indent_size,
         compute_fn: Box::new(compute_indent_guides),
         render_fn: None,
-        on_hovered_indent_guide_click: None,
+        on_click: None,
     }
 }
 
 impl IndentGuides {
-    pub fn on_hovered_indent_guide_click(
+    pub fn on_click(
         mut self,
         on_click: impl Fn(&IndentGuideLayout, &mut WindowContext) + 'static,
     ) -> Self {
-        self.on_hovered_indent_guide_click = Some(Rc::new(on_click));
+        self.on_click = Some(Rc::new(on_click));
         self
     }
 
@@ -145,7 +145,7 @@ mod uniform_list {
             let indent_guides = IndentGuidesElement {
                 indent_guides: Rc::new(indent_guides),
                 colors: self.colors.clone(),
-                on_hovered_indent_guide_click: self.on_hovered_indent_guide_click.clone(),
+                on_hovered_indent_guide_click: self.on_click.clone(),
             };
             indent_guides.into_any_element()
         }
@@ -229,6 +229,7 @@ mod uniform_list {
             }
 
             for (i, hitbox) in prepaint.hitboxes.iter().enumerate() {
+                cx.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
                 let fill_color = if hitbox.is_hovered(cx) {
                     self.colors.hovered
                 } else if self.indent_guides[i].is_active {

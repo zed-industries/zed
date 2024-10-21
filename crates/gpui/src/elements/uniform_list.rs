@@ -80,7 +80,7 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
-    decorations: SmallVec<[AnyElement; 4]>,
+    decorations: SmallVec<[AnyElement; 1]>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.

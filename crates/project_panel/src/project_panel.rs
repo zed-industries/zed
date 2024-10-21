@@ -3075,7 +3075,7 @@ impl Render for ProjectPanel {
                                     items
                                 },
                             )
-                            .on_hovered_indent_guide_click(cx.listener(
+                            .on_click(cx.listener(
                                 |this, active_indent_guide: &IndentGuideLayout, cx| {
                                     if cx.modifiers().secondary() {
                                         let ix = active_indent_guide.offset.y;
