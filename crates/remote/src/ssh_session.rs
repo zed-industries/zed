@@ -233,7 +233,6 @@ pub trait SshClientDelegate: Send + Sync {
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
-    fn set_error(&self, error_message: String, cx: &mut AsyncAppContext);
 }
 
 impl SshSocket {
@@ -485,7 +484,6 @@ impl SshRemoteClient {
 
             if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                 log::error!("failed to establish connection: {}", error);
-                delegate.set_error(error.to_string(), &mut cx);
                 return Err(error);
             }
 
@@ -1301,9 +1299,7 @@ impl SshRemoteConnection {
         };
 
         if let Err(e) = result {
-            let error_message = format!("Failed to connect to host: {}.", e);
-            delegate.set_error(error_message, cx);
-            return Err(e);
+            return Err(e.context("Failed to connect to host"));
         }
 
         drop(askpass_task);
@@ -1317,7 +1313,6 @@ impl SshRemoteConnection {
                 "failed to connect: {}",
                 String::from_utf8_lossy(&output).trim()
             );
-            delegate.set_error(error_message.clone(), cx);
             Err(anyhow!(error_message))?;
         }
 
@@ -1860,9 +1855,6 @@ mod fake {
             unreachable!()
         }
         fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {
-            unreachable!()
-        }
-        fn set_error(&self, _: String, _: &mut AsyncAppContext) {
             unreachable!()
         }
     }
