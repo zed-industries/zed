@@ -3474,7 +3474,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "project",
- "serde_json",
  "workspace",
 ]
 
