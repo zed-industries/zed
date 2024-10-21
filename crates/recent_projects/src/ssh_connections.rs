@@ -376,7 +376,14 @@ impl FocusableView for SshConnectionModal {
 
 impl EventEmitter<DismissEvent> for SshConnectionModal {}
 
-impl ModalView for SshConnectionModal {}
+impl ModalView for SshConnectionModal {
+    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> workspace::DismissDecision {
+        return workspace::DismissDecision::Dismiss(false);
+    }
+    fn fade_out_background(&self) -> bool {
+        true
+    }
+}
 
 #[derive(Clone)]
 pub struct SshClientDelegate {
