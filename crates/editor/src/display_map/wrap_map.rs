@@ -740,6 +740,21 @@ impl WrapSnapshot {
         None
     }
 
+    #[cfg(test)]
+    pub fn text(&self) -> String {
+        self.text_chunks(0).collect()
+    }
+
+    #[cfg(test)]
+    pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
+        self.chunks(
+            wrap_row..self.max_point().row() + 1,
+            false,
+            Highlights::default(),
+        )
+        .map(|h| h.text)
+    }
+
     fn check_invariants(&self) {
         #[cfg(test)]
         {
@@ -1353,19 +1368,6 @@ mod tests {
     }
 
     impl WrapSnapshot {
-        pub fn text(&self) -> String {
-            self.text_chunks(0).collect()
-        }
-
-        pub fn text_chunks(&self, wrap_row: u32) -> impl Iterator<Item = &str> {
-            self.chunks(
-                wrap_row..self.max_point().row() + 1,
-                false,
-                Highlights::default(),
-            )
-            .map(|h| h.text)
-        }
-
         fn verify_chunks(&mut self, rng: &mut impl Rng) {
             for _ in 0..5 {
                 let mut end_row = rng.gen_range(0..=self.max_point().row());

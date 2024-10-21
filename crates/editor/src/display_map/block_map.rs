@@ -372,6 +372,31 @@ pub struct BlockBufferRows<'a> {
     started: bool,
 }
 
+fn debug_transforms(transforms: &SumTree<Transform>) -> String {
+    use core::fmt::Write;
+
+    let mut buf = "(".to_string();
+
+    for transform in transforms.items(&()) {
+        write!(
+            &mut buf,
+            "[{} - {:?}:{:?}]",
+            match transform.block.as_ref() {
+                Some(Block::Custom(block)) => format!("block:{}", block.id.0),
+                Some(Block::ExcerptBoundary { .. }) => "boundary".to_string(),
+                None => "isomorphic".to_string(),
+            },
+            transform.summary.input_rows,
+            transform.summary.output_rows
+        )
+        .unwrap();
+    }
+
+    buf.push(')');
+
+    buf
+}
+
 impl BlockMap {
     pub fn new(
         wrap_snapshot: WrapSnapshot,
@@ -451,21 +476,27 @@ impl BlockMap {
 
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
-        let new_row_count = wrap_snapshot.max_point().row() + 1;
         let mut cursor = transforms.cursor::<WrapRow>(&());
         let mut last_block_ix = 0;
         let mut blocks_in_edit = Vec::new();
         let mut edits = edits.into_iter().peekable();
 
         while let Some(edit) = edits.next() {
-            // Preserve any old transforms that precede this edit.
             let mut old_start = WrapRow(edit.old.start);
             let mut new_start = WrapRow(edit.new.start);
+
+            // Preserve transforms that:
+            // * strictly precedes this edit
+            // * isomorphic or replace transforms that end *at* the start of the edit
+            // * below blocks that end at the start of the edit
             new_transforms.append(cursor.slice(&old_start, Bias::Left, &()), &());
             if let Some(transform) = cursor.item() {
-                if transform.summary.input_rows > 0 && old_start == cursor.end(&()) {
+                if transform.summary.input_rows > 0 && cursor.end(&()) == old_start {
+                    // Preserve the transform (push and next)
                     new_transforms.push(transform.clone(), &());
                     cursor.next(&());
+
+                    // Preserve below blocks at end of edit
                     while let Some(transform) = cursor.item() {
                         if transform.block.as_ref().map_or(false, |b| b.place_below()) {
                             new_transforms.push(transform.clone(), &());
@@ -477,67 +508,70 @@ impl BlockMap {
                 }
             }
 
-            let mut skip_blocks_above_start = false;
+            // Ensure the edit starts at a transform boundary.
+            // If the edit starts within an isomorphic transform, preserve its prefix
+            // If the edit lands within a replacement block, expand the edit to include the start of the replaced input range
+            let mut preserved_blocks_above_edit = false;
             let transform = cursor.item().unwrap();
-            let rows_before_edit = old_start.0 - cursor.start().0;
-            if rows_before_edit > 0 {
+            let transform_rows_before_edit = old_start.0 - cursor.start().0;
+            if transform_rows_before_edit > 0 {
                 if transform.block.is_none() {
                     // Preserve any portion of the old isomorphic transform that precedes this edit.
-                    push_isomorphic(&mut new_transforms, rows_before_edit);
+                    push_isomorphic(&mut new_transforms, transform_rows_before_edit);
                 } else {
                     // We landed within a block that replaces some lines, so we
                     // extend the edit to start at the beginning of the
                     // replacement.
                     debug_assert!(transform.summary.input_rows > 0);
-                    old_start.0 -= rows_before_edit;
-                    new_start.0 -= rows_before_edit;
+                    old_start.0 -= transform_rows_before_edit;
+                    new_start.0 -= transform_rows_before_edit;
                     // The blocks *above* it are already in the new transforms, so
                     // we don't need to re-insert them when querying blocks.
-                    skip_blocks_above_start = true;
+                    preserved_blocks_above_edit = true;
                 }
             }
 
-            // Skip over any old transforms that intersect this edit.
+            // Decide where the edit ends
+            // * It should end at a transform boundary
+            // * Coalesce edits that intersect the same transform
             let mut old_end = WrapRow(edit.old.end);
             let mut new_end = WrapRow(edit.new.end);
-            cursor.seek(&old_end, Bias::Left, &());
-            cursor.next(&());
-            if old_end == *cursor.start() {
-                while let Some(transform) = cursor.item() {
-                    if transform.block.as_ref().map_or(false, |b| b.place_below()) {
+            loop {
+                // Seek to the transform starting at or after the end of the edit
+                cursor.seek(&old_end, Bias::Left, &());
+                cursor.next(&());
+
+                // Extend edit to the end of the discarded transform so it is reconstructed in full
+                let transform_rows_after_edit = cursor.start().0 - old_end.0;
+                old_end.0 += transform_rows_after_edit;
+                new_end.0 += transform_rows_after_edit;
+
+                // Combine this edit with any subsequent edits that intersect the same transform.
+                while let Some(next_edit) = edits.peek() {
+                    if next_edit.old.start <= cursor.start().0 {
+                        old_end = WrapRow(next_edit.old.end);
+                        new_end = WrapRow(next_edit.new.end);
+                        cursor.seek(&old_end, Bias::Left, &());
                         cursor.next(&());
+                        edits.next();
                     } else {
                         break;
                     }
                 }
-            }
 
-            // Combine this edit with any subsequent edits that intersect the same transform.
-            while let Some(next_edit) = edits.peek() {
-                if next_edit.old.start <= cursor.start().0 {
-                    old_end = WrapRow(next_edit.old.end);
-                    new_end = WrapRow(next_edit.new.end);
-                    cursor.seek(&old_end, Bias::Left, &());
-                    cursor.next(&());
-                    if old_end == *cursor.start() {
-                        while let Some(transform) = cursor.item() {
-                            if transform.block.as_ref().map_or(false, |b| b.place_below()) {
-                                cursor.next(&());
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    edits.next();
-                } else {
+                if *cursor.start() == old_end {
                     break;
                 }
             }
 
-            // Expand the edit to the end of the transform.
-            let extent_after_edit = cursor.start().0 - old_end.0;
-            old_end.0 += extent_after_edit;
-            new_end.0 += extent_after_edit;
+            // Discard below blocks at the end of the edit. They'll be reconstructed.
+            while let Some(transform) = cursor.item() {
+                if transform.block.as_ref().map_or(false, |b| b.place_below()) {
+                    cursor.next(&());
+                } else {
+                    break;
+                }
+            }
 
             // Find the blocks within this edited region.
             let new_buffer_start =
@@ -546,9 +580,10 @@ impl BlockMap {
             let start_block_ix =
                 match self.custom_blocks[last_block_ix..].binary_search_by(|probe| {
                     probe
-                        .end()
+                        .start()
                         .to_point(buffer)
                         .cmp(&new_buffer_start)
+                        // Move left until we find the index of the first block starting within this edit
                         .then(Ordering::Greater)
                 }) {
                     Ok(ix) | Err(ix) => last_block_ix + ix,
@@ -599,7 +634,7 @@ impl BlockMap {
             }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
-            if skip_blocks_above_start {
+            if preserved_blocks_above_edit {
                 blocks_in_edit
                     .retain(|(placement, _)| *placement != BlockPlacement::Above(old_start));
             }
@@ -611,23 +646,22 @@ impl BlockMap {
                     input_rows: 0,
                     output_rows: block.height(),
                 };
+
+                let rows_before_block;
                 match block_placement {
                     BlockPlacement::Above(position) => {
-                        let extent_before_block = position.0 - new_transforms.summary().input_rows;
-                        push_isomorphic(&mut new_transforms, extent_before_block);
+                        rows_before_block = position.0 - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Below(position) => {
-                        let extent_before_block =
-                            (position.0 + 1) - new_transforms.summary().input_rows;
-                        push_isomorphic(&mut new_transforms, extent_before_block);
+                        rows_before_block = (position.0 + 1) - new_transforms.summary().input_rows;
                     }
                     BlockPlacement::Replace(range) => {
-                        let extent_before_block =
-                            range.start.0 - new_transforms.summary().input_rows;
-                        push_isomorphic(&mut new_transforms, extent_before_block);
+                        rows_before_block = range.start.0 - new_transforms.summary().input_rows;
                         summary.input_rows = range.end.0 - range.start.0 + 1;
                     }
                 }
+
+                push_isomorphic(&mut new_transforms, rows_before_block);
                 new_transforms.push(
                     Transform {
                         summary,
@@ -638,13 +672,15 @@ impl BlockMap {
             }
 
             // Insert an isomorphic transform after the final block.
-            // todo!("do we need the min?")
-            let extent_after_last_block =
-                new_end.0.min(new_row_count) - new_transforms.summary().input_rows;
-            push_isomorphic(&mut new_transforms, extent_after_last_block);
+            let rows_after_last_block = new_end
+                .0
+                .saturating_sub(new_transforms.summary().input_rows);
+
+            push_isomorphic(&mut new_transforms, rows_after_last_block);
         }
 
         new_transforms.append(cursor.suffix(&()), &());
+
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1
@@ -1014,6 +1050,17 @@ impl BlockSnapshot {
         )
         .map(|chunk| chunk.text)
         .collect()
+    }
+
+    pub fn with_transforms(&self, transforms: SumTree<Transform>) -> Self {
+        Self {
+            wrap_snapshot: self.wrap_snapshot.clone(),
+            transforms,
+            custom_blocks_by_id: self.custom_blocks_by_id.clone(),
+            buffer_header_height: self.buffer_header_height,
+            excerpt_header_height: self.excerpt_header_height,
+            excerpt_footer_height: self.excerpt_footer_height,
+        }
     }
 
     pub(crate) fn chunks<'a>(
@@ -2050,10 +2097,17 @@ mod tests {
         let buffer = if rng.gen() {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
-            log::info!("initial buffer text: {:?}", text);
+            log::info!("initial singleton buffer text: {:?}", text);
             cx.update(|cx| MultiBuffer::build_simple(&text, cx))
         } else {
-            cx.update(|cx| MultiBuffer::build_random(&mut rng, cx))
+            cx.update(|cx| {
+                let multibuffer = MultiBuffer::build_random(&mut rng, cx);
+                log::info!(
+                    "initial multi-buffer text: {:?}",
+                    multibuffer.read(cx).read(cx).text()
+                );
+                multibuffer
+            })
         };
 
         let mut buffer_snapshot = cx.update(|cx| buffer.read(cx).snapshot(cx));
