@@ -2,7 +2,7 @@ use gpui::{Hsla, WindowContext};
 use theme::ActiveTheme;
 
 /// Sets a color that has a consistent meaning across all themes.
-#[derive(Debug, Default, PartialEq, Copy, Clone)]
+#[derive(Debug, Default, Eq, PartialEq, Copy, Clone)]
 pub enum Color {
     #[default]
     /// The default text color. Might be known as "foreground" or "primary" in
