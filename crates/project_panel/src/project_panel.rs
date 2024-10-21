@@ -617,32 +617,6 @@ impl ProjectPanel {
         false
     }
 
-    fn is_auto_folded_dir(&self, entry: &Entry, worktree: &Worktree, cx: &AppContext) -> bool {
-        if !ProjectPanelSettings::get_global(cx).auto_fold_dirs {
-            return false;
-        }
-
-        if entry.is_dir() {
-            let snapshot = worktree.snapshot();
-
-            let Some(parent) = entry.path.parent() else {
-                return false;
-            };
-
-            let Some(parent_entry) = worktree.entry_for_path(parent) else {
-                return false;
-            };
-
-            let mut child_entries = snapshot.child_entries(&parent_entry.path);
-            if let Some(child) = child_entries.next() {
-                if child_entries.next().is_none() {
-                    return child.kind.is_dir();
-                }
-            }
-        }
-        false
-    }
-
     fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             if let Some(folded_ancestors) = self.ancestors.get_mut(&entry.id) {
