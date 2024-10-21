@@ -350,22 +350,6 @@ impl DevServerProjects {
         }
     }
 
-    fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
-            return;
-        }
-        self.selectable_items.next(cx);
-        self.scroll_to_selected(cx);
-    }
-
-    fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
-        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
-            return;
-        }
-        self.selectable_items.prev(cx);
-        self.scroll_to_selected(cx);
-    }
-
     fn scroll_to_selected(&self, _: &mut ViewContext<Self>) {
         if let Mode::Default(scroll_state) = &self.mode {
             if let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() {
@@ -374,6 +358,24 @@ impl DevServerProjects {
                 }
             }
         }
+    }
+
+    fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
+            return;
+        }
+        self.selectable_items.next(cx);
+        cx.notify();
+        self.scroll_to_selected(cx);
+    }
+
+    fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
+            return;
+        }
+        self.selectable_items.prev(cx);
+        cx.notify();
+        self.scroll_to_selected(cx);
     }
 
     pub fn project_picker(
@@ -925,9 +927,10 @@ impl DevServerProjects {
                 }
                 .render(cx),
             )
+            // .child(ListSeparator)
             .child(
                 v_flex()
-                    .py_1()
+                    .py_1p5()
                     .child({
                         self.selectable_items.add_item(Box::new({
                             move |this, cx| {
@@ -1213,10 +1216,10 @@ impl DevServerProjects {
                                 .occlude()
                                 .h_full()
                                 .absolute()
-                                .right_1()
+                                .right_0p5()
                                 .top_1()
-                                .bottom_1()
-                                .w(px(12.))
+                                .bottom_0p5()
+                                .w(px(8.))
                                 .children(Scrollbar::vertical(scroll_state)),
                         ),
                 ),

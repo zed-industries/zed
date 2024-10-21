@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use ui::{
     div, h_flex, prelude::*, v_flex, ActiveTheme, Color, Icon, IconName, IconSize,
-    InteractiveElement, IntoElement, Label, LabelCommon, Styled, ViewContext, VisualContext,
-    WindowContext,
+    InteractiveElement, IntoElement, Label, LabelCommon, ListSeparator, Styled, ViewContext,
+    VisualContext, WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -272,26 +272,28 @@ impl RenderOnce for SshConnectionHeader {
         };
 
         h_flex()
-            .p_1()
+            .py(Spacing::Large.rems(cx))
+            .px(Spacing::XLarge.rems(cx))
             .rounded_t_md()
             .w_full()
             .gap_2()
-            .justify_center()
+            // .justify_center()
             .border_b_1()
             .border_color(theme.colors().border_variant)
-            .bg(header_color)
+            // .bg(header_color)
             .child(Icon::new(IconName::Server).size(IconSize::XSmall))
             .child(
                 h_flex()
                     .gap_1()
-                    .child(
-                        Label::new(main_label)
-                            .size(ui::LabelSize::Small)
-                            .single_line(),
-                    )
+                    .child(Headline::new(main_label).size(HeadlineSize::XSmall))
+                    // .child(
+                    //     Label::new(main_label)
+                    //         // .size(ui::LabelSize::Small)
+                    //         .single_line(),
+                    // )
                     .children(meta_label.map(|label| {
                         Label::new(label)
-                            .size(ui::LabelSize::Small)
+                            // .size(ui::LabelSize::Small)
                             .single_line()
                             .color(Color::Muted)
                     })),
@@ -311,7 +313,7 @@ impl Render for SshConnectionModal {
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
-            .w(px(500.))
+            .w(rems(34.))
             .border_1()
             .border_color(theme.colors().border)
             .child(
