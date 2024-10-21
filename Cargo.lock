@@ -6230,6 +6230,7 @@ dependencies = [
  "lsp",
  "parking_lot",
  "postage",
+ "pretty_assertions",
  "pulldown-cmark 0.12.1",
  "rand 0.8.5",
  "regex",
