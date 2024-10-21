@@ -38,7 +38,16 @@ struct MarkdownParser<'a> {
 
 struct MarkdownListItem {
     content: Vec<ParsedMarkdownElement>,
-    item_type: Option<ParsedMarkdownListItemType>,
+    item_type: ParsedMarkdownListItemType,
+}
+
+impl Default for MarkdownListItem {
+    fn default() -> Self {
+        Self {
+            content: Vec::new(),
+            item_type: ParsedMarkdownListItemType::Unordered,
+        }
+    }
 }
 
 impl<'a> MarkdownParser<'a> {
@@ -484,10 +493,7 @@ impl<'a> MarkdownParser<'a> {
         let (_, list_source_range) = self.previous().unwrap();
 
         let mut items = Vec::new();
-        let mut items_stack = vec![MarkdownListItem {
-            content: Vec::new(),
-            item_type: None,
-        }];
+        let mut items_stack = vec![MarkdownListItem::default()];
         let mut depth = 1;
         let mut order = order;
         let mut order_stack = Vec::new();
@@ -528,12 +534,9 @@ impl<'a> MarkdownParser<'a> {
                     start_item_range = source_range.clone();
 
                     self.cursor += 1;
-                    items_stack.push(MarkdownListItem {
-                        content: Vec::new(),
-                        item_type: None,
-                    });
+                    items_stack.push(MarkdownListItem::default());
 
-                    let mut is_task_list = None;
+                    let mut task_list = None;
                     // Check for task list marker (`- [ ]` or `- [x]`)
                     if let Some(event) = self.current_event() {
                         // If there is a linebreak in between two list items the task list marker will actually be the first element of the paragraph
@@ -542,8 +545,7 @@ impl<'a> MarkdownParser<'a> {
                         }
 
                         if let Some((Event::TaskListMarker(checked), range)) = self.current() {
-                            is_task_list =
-                                Some(ParsedMarkdownListItemType::Task(*checked, range.clone()));
+                            task_list = Some((*checked, range.clone()));
                             self.cursor += 1;
                         }
                     }
@@ -555,17 +557,15 @@ impl<'a> MarkdownParser<'a> {
                             let text = self.parse_text(false, Some(range.clone()));
                             let block = ParsedMarkdownElement::Paragraph(text);
                             if let Some(content) = items_stack.last_mut() {
-                                if let Some(task_list) = is_task_list {
-                                    content.content.push(block);
-                                    content.item_type = Some(task_list)
+                                let item_type = if let Some((checked, range)) = task_list {
+                                    ParsedMarkdownListItemType::Task(checked, range)
                                 } else if let Some(order) = order {
-                                    content.content.push(block);
-                                    content.item_type =
-                                        Some(ParsedMarkdownListItemType::Ordered(order))
+                                    ParsedMarkdownListItemType::Ordered(order)
                                 } else {
-                                    content.content.push(block);
-                                    content.item_type = Some(ParsedMarkdownListItemType::Unordered);
-                                }
+                                    ParsedMarkdownListItemType::Unordered
+                                };
+                                content.item_type = item_type;
+                                content.content.push(block);
                             }
                         } else {
                             let block = self.parse_block().await;
@@ -593,9 +593,6 @@ impl<'a> MarkdownParser<'a> {
                         let source_range = source_ranges
                             .remove(&depth)
                             .unwrap_or(start_item_range.clone());
-                        if list_item.item_type.is_none() {
-                            break;
-                        }
 
                         // We need to remove the last character of the source range, because it includes the newline character
                         let source_range = source_range.start..source_range.end - 1;
@@ -603,7 +600,7 @@ impl<'a> MarkdownParser<'a> {
                             source_range,
                             content: list_item.content,
                             depth,
-                            item_type: list_item.item_type.unwrap(),
+                            item_type: list_item.item_type,
                         });
 
                         if let Some(index) = insertion_indices.get(&depth) {
