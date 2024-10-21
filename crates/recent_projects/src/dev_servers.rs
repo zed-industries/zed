@@ -301,6 +301,7 @@ impl gpui::Render for ProjectPicker {
             .child(self.picker.clone())
     }
 }
+
 enum Mode {
     Default(ScrollbarState),
     ViewServerOptions(usize, SshConnection),
@@ -315,6 +316,7 @@ impl Mode {
         Self::Default(ScrollbarState::new(handle))
     }
 }
+
 impl DevServerProjects {
     pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
@@ -353,13 +355,27 @@ impl DevServerProjects {
             return;
         }
         self.selectable_items.next(cx);
+        self.scroll_to_selected(cx);
     }
+
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
         if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
         self.selectable_items.prev(cx);
+        self.scroll_to_selected(cx);
     }
+
+    fn scroll_to_selected(&self, _: &mut ViewContext<Self>) {
+        if let Mode::Default(scroll_state) = &self.mode {
+            if let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() {
+                if let Some(active_item) = self.selectable_items.active_item {
+                    scroll_handle.scroll_to_item(active_item);
+                }
+            }
+        }
+    }
+
     pub fn project_picker(
         ix: usize,
         connection_options: remote::SshConnectionOptions,
@@ -1107,6 +1123,9 @@ impl DevServerProjects {
         let ssh_connections = SshSettings::get_global(cx)
             .ssh_connections()
             .collect::<Vec<_>>();
+
+        self.selectable_items.reset();
+
         self.selectable_items.add_item(Box::new(|this, cx| {
             this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
             cx.notify();
