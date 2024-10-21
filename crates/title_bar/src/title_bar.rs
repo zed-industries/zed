@@ -593,7 +593,17 @@ impl TitleBar {
                             .separator()
                         })
                         .action("Settings", zed_actions::OpenSettings.boxed_clone())
+                        .advanced_action(
+                            "Default Settings",
+                            zed_actions::OpenSettings.boxed_clone(),
+                            Some("Settings".into()),
+                        )
                         .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                        .advanced_action(
+                            "Some Advanced",
+                            Box::new(zed_actions::DecreaseUiFontSize),
+                            None,
+                        )
                         .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                         .action("Extensions", extensions_ui::Extensions.boxed_clone())
                         .separator()
@@ -622,7 +632,17 @@ impl TitleBar {
                 .menu(|cx| {
                     ContextMenu::build(cx, |menu, _| {
                         menu.action("Settings", zed_actions::OpenSettings.boxed_clone())
+                            .advanced_action(
+                                "Default Settings",
+                                zed_actions::OpenSettings.boxed_clone(),
+                                Some("Settings".into()),
+                            )
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
+                            .advanced_action(
+                                "Some Advanced",
+                                Box::new(zed_actions::DecreaseUiFontSize),
+                                None,
+                            )
                             .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
                     })
