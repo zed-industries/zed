@@ -87,10 +87,6 @@ pub enum IsOnlyInstance {
 }
 
 pub fn ensure_only_instance() -> IsOnlyInstance {
-    if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
-        return IsOnlyInstance::Yes;
-    }
-
     if check_got_handshake() {
         return IsOnlyInstance::No;
     }
