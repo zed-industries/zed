@@ -336,6 +336,8 @@ pub enum BufferEvent {
     FileHandleChanged,
     /// The buffer was reloaded.
     Reloaded,
+    /// The buffer is in need of a reload
+    ReloadNeeded,
     /// The buffer's diff_base changed.
     DiffBaseChanged,
     /// Buffer's excerpts for a certain diff base were recalculated.
@@ -1077,7 +1079,7 @@ impl Buffer {
                     file_changed = true;
 
                     if !self.is_dirty() {
-                        self.reload(cx).close();
+                        cx.emit(BufferEvent::ReloadNeeded);
                     }
                 }
             }
