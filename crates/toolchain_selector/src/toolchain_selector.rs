@@ -6,9 +6,9 @@ use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ParentElement, Render, Styled, View, ViewContext, VisualContext, WeakView,
+    ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
-use language::{Buffer, LanguageRegistry};
+use language::{Buffer, ToolchainList, ToolchainLister};
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use std::sync::Arc;
@@ -16,17 +16,17 @@ use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(language_selector, [Toggle]);
+actions!(toolchain_selector, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(LanguageSelector::register).detach();
+    cx.observe_new_views(ToolchainSelector::register).detach();
 }
 
-pub struct LanguageSelector {
-    picker: View<Picker<LanguageSelectorDelegate>>,
+pub struct ToolchainSelector {
+    picker: View<Picker<ToolchainSelectorDelegate>>,
 }
 
-impl LanguageSelector {
+impl ToolchainSelector {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(move |workspace, _: &Toggle, cx| {
             Self::toggle(workspace, cx);
@@ -42,8 +42,9 @@ impl LanguageSelector {
             .active_excerpt(cx)?;
         let project = workspace.project().clone();
 
+        let lister = buffer.read(cx).language()?.toolchain_lister().clone()?;
         workspace.toggle_modal(cx, move |cx| {
-            LanguageSelector::new(buffer, project, registry, cx)
+            ToolchainSelector::new(buffer, project, lister, cx)
         });
         Some(())
     }
@@ -51,77 +52,81 @@ impl LanguageSelector {
     fn new(
         buffer: Model<Buffer>,
         project: Model<Project>,
-        language_registry: Arc<LanguageRegistry>,
+        lister: Arc<dyn ToolchainLister>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = LanguageSelectorDelegate::new(
-            cx.view().downgrade(),
-            buffer,
-            project,
-            language_registry,
-        );
-
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let view = cx.view().downgrade();
+        let picker = cx.new_view(|cx| {
+            let delegate = ToolchainSelectorDelegate::new(view, buffer, project, lister, cx);
+            Picker::uniform_list(delegate, cx)
+        });
         Self { picker }
     }
 }
 
-impl Render for LanguageSelector {
+impl Render for ToolchainSelector {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex().w(rems(34.)).child(self.picker.clone())
     }
 }
 
-impl FocusableView for LanguageSelector {
+impl FocusableView for ToolchainSelector {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
-impl EventEmitter<DismissEvent> for LanguageSelector {}
-impl ModalView for LanguageSelector {}
+impl EventEmitter<DismissEvent> for ToolchainSelector {}
+impl ModalView for ToolchainSelector {}
 
-pub struct LanguageSelectorDelegate {
-    language_selector: WeakView<LanguageSelector>,
+pub struct ToolchainSelectorDelegate {
+    toolchain_selector: WeakView<ToolchainSelector>,
     buffer: Model<Buffer>,
     project: Model<Project>,
-    language_registry: Arc<LanguageRegistry>,
-    candidates: Vec<StringMatchCandidate>,
+    lister: Arc<dyn ToolchainLister>,
+    candidates: ToolchainList,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    _fetch_candidates_task: Task<()>,
 }
 
-impl LanguageSelectorDelegate {
+impl ToolchainSelectorDelegate {
     fn new(
-        language_selector: WeakView<LanguageSelector>,
+        language_selector: WeakView<ToolchainSelector>,
         buffer: Model<Buffer>,
         project: Model<Project>,
-        language_registry: Arc<LanguageRegistry>,
+        lister: Arc<dyn ToolchainLister>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Self {
-        let candidates = language_registry
-            .language_names()
-            .into_iter()
-            .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
-            .collect::<Vec<_>>();
+        let _fetch_candidates_task = cx.spawn({
+            let lister = lister.clone();
+            move |this, mut cx| async move {
+                let available_toolchains = lister.list().await;
+                let _ = this.update(&mut cx, move |this, cx| {
+                    this.delegate.candidates = available_toolchains;
+                    this.update_matches(this.query(cx), cx);
+                });
+            }
+        });
 
         Self {
-            language_selector,
+            toolchain_selector: language_selector,
             buffer,
             project,
-            language_registry,
-            candidates,
+            lister,
+            candidates: Default::default(),
             matches: vec![],
             selected_index: 0,
+            _fetch_candidates_task,
         }
     }
 }
 
-impl PickerDelegate for LanguageSelectorDelegate {
+impl PickerDelegate for ToolchainSelectorDelegate {
     type ListItem = ListItem;
 
     fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
-        "Select a language...".into()
+        "Select a toolchain...".into()
     }
 
     fn match_count(&self) -> usize {
@@ -130,21 +135,20 @@ impl PickerDelegate for LanguageSelectorDelegate {
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let language_name = &self.candidates[mat.candidate_id].string;
-            let language = self.language_registry.language_for_name(language_name);
+            let toolchain = &self.candidates.toolchains()[mat.candidate_id];
             let project = self.project.downgrade();
             let buffer = self.buffer.downgrade();
             cx.spawn(|_, mut cx| async move {
-                let language = language.await?;
                 let project = project
                     .upgrade()
                     .ok_or_else(|| anyhow!("project was dropped"))?;
                 let buffer = buffer
                     .upgrade()
                     .ok_or_else(|| anyhow!("buffer was dropped"))?;
-                project.update(&mut cx, |project, cx| {
-                    project.set_language_for_buffer(&buffer, language, cx);
-                })
+                // project.update(&mut cx, |project, cx| {
+                //     project.set_language_for_buffer(&buffer, language, cx);
+                // })
+                Result::<_, anyhow::Error>::Ok(())
             })
             .detach_and_log_err(cx);
         }
@@ -152,7 +156,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
-        self.language_selector
+        self.toolchain_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
     }
@@ -175,16 +179,25 @@ impl PickerDelegate for LanguageSelectorDelegate {
         cx.spawn(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
+                    .toolchains
                     .into_iter()
                     .enumerate()
                     .map(|(index, candidate)| StringMatch {
                         candidate_id: index,
-                        string: candidate.string,
+                        string: candidate.label.into(),
                         positions: Vec::new(),
                         score: 0.0,
                     })
                     .collect()
             } else {
+                let candidates = candidates
+                    .toolchains
+                    .into_iter()
+                    .enumerate()
+                    .map(|(candidate_id, toolchain)| {
+                        StringMatchCandidate::new(candidate_id, toolchain.label.to_string())
+                    })
+                    .collect::<Vec<_>>();
                 match_strings(
                     &candidates,
                     &query,

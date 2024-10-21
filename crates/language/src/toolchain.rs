@@ -26,7 +26,7 @@ pub trait ToolchainLister: Send + Sync {
 }
 
 type DefaultIndex = usize;
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct ToolchainList {
     pub toolchains: Vec<Toolchain>,
     pub default: Option<DefaultIndex>,

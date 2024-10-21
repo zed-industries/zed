@@ -10,7 +10,7 @@ use settings::SettingsStore;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::LanguageSelector;
+use crate::ToolchainSelector;
 
 pub struct ActiveToolchain {
     lister: Option<Arc<dyn ToolchainLister>>,
@@ -107,7 +107,7 @@ impl Render for ActiveToolchain {
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
                             workspace.update(cx, |workspace, cx| {
-                                LanguageSelector::toggle(workspace, cx)
+                                ToolchainSelector::toggle(workspace, cx)
                             });
                         }
                     }))

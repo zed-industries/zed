@@ -14,6 +14,8 @@ use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
 
+use std::io::Stdout;
+use std::process::Stdio;
 use std::{
     any::Any,
     borrow::Cow,
@@ -333,15 +335,32 @@ impl ToolchainLister for PythonToolchainProvider {
         LanguageName::new("Python")
     }
     async fn list(&self) -> ToolchainList {
+        let process = smol::process::Command::new("pet")
+            .arg("find")
+            .arg("--list")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let output = process.output().await.unwrap();
+        let mut toolchains = vec![];
+        let mut is_environment = false;
+        let executable_path =
+        for line in std::str::from_utf8(&output.stdout).unwrap().lines() {
+            if line.starts_with("Environment") {
+                is_environment = true;
+            } else if let Some(path) = is_environment
+                .then_some(())
+                .and_then(|_| line.strip_prefix("   Executable  :"))
+            {
+                toolchains.push(Toolchain {
+                    label: SharedString::from(path.to_string()),
+                });
+            } else {
+                is_environment = false;
+            }
+        }
         ToolchainList {
-            toolchains: vec![
-                Toolchain {
-                    label: SharedString::new_static("My cool python toolchain"),
-                },
-                Toolchain {
-                    label: SharedString::new_static("Global Python"),
-                },
-            ],
+            toolchains,
             default: Some(1),
         }
     }
