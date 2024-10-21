@@ -41,6 +41,7 @@ pub enum FileFinderWidth {
     Medium,
     Large,
     XLarge,
+    Full,
 }
 
 impl FileFinderWidth {
@@ -52,12 +53,17 @@ impl FileFinderWidth {
             FileFinderWidth::Medium => 1024.,
             FileFinderWidth::Large => 768.,
             FileFinderWidth::XLarge => 512.,
+            FileFinderWidth::Full => 0.,
         };
 
         Pixels(padding_val)
     }
 
     pub fn calc_width(&self, window_width: Pixels) -> Pixels {
+        if self == &FileFinderWidth::Full {
+            return window_width;
+        }
+
         let min_window_width_px = Pixels(FileFinderWidth::MIN_WINDOW_WIDTH_PX);
 
         let padding_px = self.padding_px();
