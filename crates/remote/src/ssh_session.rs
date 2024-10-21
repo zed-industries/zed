@@ -186,7 +186,7 @@ impl SshConnectionOptions {
 
     // Uniquely identifies dev server projects on a remote host. Needs to be
     // stable for the same dev server project.
-    pub fn dev_server_identifier(&self) -> String {
+    pub fn remote_server_identifier(&self) -> String {
         let mut identifier = format!("dev-server-{:?}", self.host);
         if let Some(username) = self.username.as_ref() {
             identifier.push('-');
