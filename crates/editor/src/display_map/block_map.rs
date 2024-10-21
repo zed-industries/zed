@@ -451,7 +451,6 @@ impl BlockMap {
 
         let mut transforms = self.transforms.borrow_mut();
         let mut new_transforms = SumTree::default();
-        let old_row_count = transforms.summary().input_rows;
         let new_row_count = wrap_snapshot.max_point().row() + 1;
         let mut cursor = transforms.cursor::<WrapRow>(&());
         let mut last_block_ix = 0;
@@ -480,18 +479,18 @@ impl BlockMap {
 
             let mut skip_blocks_above_start = false;
             let transform = cursor.item().unwrap();
-            let rows_before_edits = old_start.0 - cursor.start().0;
-            if rows_before_edits > 0 {
+            let rows_before_edit = old_start.0 - cursor.start().0;
+            if rows_before_edit > 0 {
                 if transform.block.is_none() {
                     // Preserve any portion of the old isomorphic transform that precedes this edit.
-                    push_isomorphic(&mut new_transforms, rows_before_edits);
+                    push_isomorphic(&mut new_transforms, rows_before_edit);
                 } else {
                     // We landed within a block that replaces some lines, so we
                     // extend the edit to start at the beginning of the
                     // replacement.
                     debug_assert!(transform.summary.input_rows > 0);
-                    old_start.0 -= rows_before_edits;
-                    new_start.0 -= rows_before_edits;
+                    old_start.0 -= rows_before_edit;
+                    new_start.0 -= rows_before_edit;
                     // The blocks *above* it are already in the new transforms, so
                     // we don't need to re-insert them when querying blocks.
                     skip_blocks_above_start = true;
@@ -535,6 +534,11 @@ impl BlockMap {
                 }
             }
 
+            // Expand the edit to the end of the transform.
+            let extent_after_edit = cursor.start().0 - old_end.0;
+            old_end.0 += extent_after_edit;
+            new_end.0 += extent_after_edit;
+
             // Find the blocks within this edited region.
             let new_buffer_start =
                 wrap_snapshot.to_point(WrapPoint::new(new_start.0, 0), Bias::Left);
@@ -542,7 +546,7 @@ impl BlockMap {
             let start_block_ix =
                 match self.custom_blocks[last_block_ix..].binary_search_by(|probe| {
                     probe
-                        .start()
+                        .end()
                         .to_point(buffer)
                         .cmp(&new_buffer_start)
                         .then(Ordering::Greater)
@@ -560,7 +564,7 @@ impl BlockMap {
                 end_bound = Bound::Excluded(new_buffer_end);
                 match self.custom_blocks[start_block_ix..].binary_search_by(|probe| {
                     probe
-                        .end()
+                        .start()
                         .to_point(buffer)
                         .cmp(&new_buffer_end)
                         .then(Ordering::Greater)
@@ -631,20 +635,13 @@ impl BlockMap {
                     },
                     &(),
                 );
-                dbg!(new_transforms.summary());
             }
 
-            old_end = WrapRow(old_end.0.min(old_row_count));
-            new_end = WrapRow(new_end.0.min(new_row_count));
-            dbg!(new_end);
-
             // Insert an isomorphic transform after the final block.
-            let extent_after_last_block = new_end.0 - new_transforms.summary().input_rows;
+            // todo!("do we need the min?")
+            let extent_after_last_block =
+                new_end.0.min(new_row_count) - new_transforms.summary().input_rows;
             push_isomorphic(&mut new_transforms, extent_after_last_block);
-
-            // Preserve any portion of the old transform after this edit.
-            let extent_after_edit = cursor.start().0 - old_end.0;
-            push_isomorphic(&mut new_transforms, extent_after_edit);
         }
 
         new_transforms.append(cursor.suffix(&()), &());
@@ -2003,12 +2000,11 @@ mod tests {
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
 
-        println!("===================");
         let buffer_snapshot = buffer.update(cx, |buffer, cx| {
             buffer.edit(
                 [(
                     Point::new(1, 5)..Point::new(1, 5),
-                    "line 6\nline7\nline 8\nline 9\n",
+                    "\nline 6\nline7\nline 8\nline 9",
                 )],
                 None,
                 cx,
