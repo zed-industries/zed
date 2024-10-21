@@ -33,6 +33,7 @@ use project::{
 };
 use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
 use serde::{Deserialize, Serialize};
+use smallvec::SmallVec;
 use std::{
     cell::{Cell, OnceCell},
     collections::HashSet,
@@ -2170,6 +2171,38 @@ impl ProjectPanel {
         None
     }
 
+    fn iter_visible_entries(
+        &self,
+        range: Range<usize>,
+        cx: &mut ViewContext<ProjectPanel>,
+        mut callback: impl FnMut(&Entry, &HashSet<Arc<Path>>, &mut ViewContext<ProjectPanel>),
+    ) {
+        let mut ix = 0;
+        for (_, visible_worktree_entries, entries_paths) in &self.visible_entries {
+            if ix >= range.end {
+                return;
+            }
+
+            if ix + visible_worktree_entries.len() <= range.start {
+                ix += visible_worktree_entries.len();
+                continue;
+            }
+
+            let end_ix = range.end.min(ix + visible_worktree_entries.len());
+            let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
+            let entries = entries_paths.get_or_init(|| {
+                visible_worktree_entries
+                    .iter()
+                    .map(|e| (e.path.clone()))
+                    .collect()
+            });
+            for entry in visible_worktree_entries[entry_range].iter() {
+                callback(entry, entries, cx);
+            }
+            ix = end_ix;
+        }
+    }
+
     fn for_each_visible_entry(
         &self,
         range: Range<usize>,
@@ -3099,12 +3132,12 @@ impl Render for ProjectPanel {
                                     active: cx.theme().colors().panel_indent_guide_active,
                                 },
                                 |this, range, cx| {
-                                    use smallvec::SmallVec;
                                     let mut items =
                                         SmallVec::with_capacity(range.end - range.start);
-                                    this.for_each_visible_entry(range, cx, |_, details, _| {
-                                        // TODO: only fetch depth instead of all details
-                                        items.push(details.depth);
+                                    this.iter_visible_entries(range, cx, |entry, entries, _| {
+                                        let (depth, _) =
+                                            Self::calculate_depth_and_difference(entry, entries);
+                                        items.push(depth);
                                     });
                                     items
                                 },
