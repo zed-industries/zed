@@ -151,7 +151,7 @@ impl FocusableView for FileFinder {
 
 impl Render for FileFinder {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let window_max_width: Pixels = cx.viewport_size().width.into();
+        let window_max_width: Pixels = cx.viewport_size().width;
         let window_choice = FileFinderSettings::get_global(cx).window_width;
         let width = window_choice.calc_width(window_max_width);
 
