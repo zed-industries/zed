@@ -81,38 +81,36 @@ pub type RenderBlock = Box<dyn Send + FnMut(&mut BlockContext) -> AnyElement>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockPlacement<T> {
-    Above { position: T },
-    Below { position: T },
+    Above(T),
+    Below(T),
 }
 
 impl<T> BlockPlacement<T> {
     fn start(&self) -> &T {
         match self {
-            BlockPlacement::Above { position } => position,
-            BlockPlacement::Below { position } => position,
+            BlockPlacement::Above(position) => position,
+            BlockPlacement::Below(position) => position,
         }
     }
 
     fn end(&self) -> &T {
         match self {
-            BlockPlacement::Above { position } => position,
-            BlockPlacement::Below { position } => position,
+            BlockPlacement::Above(position) => position,
+            BlockPlacement::Below(position) => position,
         }
     }
-}
 
-impl<T> BlockPlacement<T>
-where
-    T: multi_buffer::ToPoint,
-{
-    fn to_point(&self, buffer: &MultiBufferSnapshot) -> BlockPlacement<Point> {
+    pub fn as_ref(&self) -> BlockPlacement<&T> {
         match self {
-            BlockPlacement::Above { position } => BlockPlacement::Above {
-                position: position.to_point(buffer),
-            },
-            BlockPlacement::Below { position } => BlockPlacement::Below {
-                position: position.to_point(buffer),
-            },
+            BlockPlacement::Above(position) => BlockPlacement::Above(position),
+            BlockPlacement::Below(position) => BlockPlacement::Below(position),
+        }
+    }
+
+    pub fn map<R>(self, f: impl FnOnce(T) -> R) -> BlockPlacement<R> {
+        match self {
+            BlockPlacement::Above(position) => BlockPlacement::Above(f(position)),
+            BlockPlacement::Below(position) => BlockPlacement::Below(f(position)),
         }
     }
 }
@@ -123,10 +121,10 @@ impl BlockPlacement<Anchor> {
             .cmp(other.start(), buffer)
             .then_with(|| self.end().cmp(other.end(), buffer))
             .then_with(|| match (self, other) {
-                (BlockPlacement::Above { .. }, BlockPlacement::Above { .. })
-                | (BlockPlacement::Below { .. }, BlockPlacement::Below { .. }) => Ordering::Equal,
-                (BlockPlacement::Above { .. }, _) => Ordering::Less,
-                (BlockPlacement::Below { .. }, _) => Ordering::Greater,
+                (BlockPlacement::Above(_), BlockPlacement::Above(_))
+                | (BlockPlacement::Below(_), BlockPlacement::Below(_)) => Ordering::Equal,
+                (BlockPlacement::Above(_), _) => Ordering::Less,
+                (BlockPlacement::Below(_), _) => Ordering::Greater,
             })
     }
 }
@@ -137,10 +135,10 @@ impl Ord for BlockPlacement<WrapRow> {
             .cmp(other.start())
             .then_with(|| self.end().cmp(other.end()))
             .then_with(|| match (self, other) {
-                (BlockPlacement::Above { .. }, BlockPlacement::Above { .. })
-                | (BlockPlacement::Below { .. }, BlockPlacement::Below { .. }) => Ordering::Equal,
-                (BlockPlacement::Above { .. }, _) => Ordering::Less,
-                (BlockPlacement::Below { .. }, _) => Ordering::Greater,
+                (BlockPlacement::Above(_), BlockPlacement::Above(_))
+                | (BlockPlacement::Below(_), BlockPlacement::Below(_)) => Ordering::Equal,
+                (BlockPlacement::Above(_), _) => Ordering::Less,
+                (BlockPlacement::Below(_), _) => Ordering::Greater,
             })
     }
 }
@@ -229,10 +227,6 @@ struct Transform {
     block: Option<Block>,
 }
 
-pub(crate) trait BlockLike {
-    fn priority(&self) -> usize;
-}
-
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone)]
 pub enum Block {
@@ -279,14 +273,14 @@ impl Block {
 
     fn place_above(&self) -> bool {
         match self {
-            Block::Custom(block) => matches!(block.placement, BlockPlacement::Above { .. }),
+            Block::Custom(block) => matches!(block.placement, BlockPlacement::Above(_)),
             Block::ExcerptBoundary { next_excerpt, .. } => next_excerpt.is_some(),
         }
     }
 
     fn place_below(&self) -> bool {
         match self {
-            Block::Custom(block) => matches!(block.placement, BlockPlacement::Below { .. }),
+            Block::Custom(block) => matches!(block.placement, BlockPlacement::Below(_)),
             Block::ExcerptBoundary { next_excerpt, .. } => next_excerpt.is_none(),
         }
     }
@@ -520,19 +514,19 @@ impl BlockMap {
             blocks_in_edit.extend(self.custom_blocks[start_block_ix..end_block_ix].iter().map(
                 |block| {
                     let placement = match &block.placement {
-                        BlockPlacement::Above { position } => {
+                        BlockPlacement::Above(position) => {
                             let mut position = position.to_point(buffer);
                             position.column = 0;
                             let wrap_row =
                                 WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
-                            BlockPlacement::Above { position: wrap_row }
+                            BlockPlacement::Above(wrap_row)
                         }
-                        BlockPlacement::Below { position } => {
+                        BlockPlacement::Below(position) => {
                             let mut position = position.to_point(buffer);
                             position.column = buffer.line_len(MultiBufferRow(position.row));
                             let wrap_row =
                                 WrapRow(wrap_snapshot.make_wrap_point(position, Bias::Left).row());
-                            BlockPlacement::Below { position: wrap_row }
+                            BlockPlacement::Below(wrap_row)
                         }
                     };
                     (placement, Block::Custom(block.clone()))
@@ -557,11 +551,11 @@ impl BlockMap {
             // and then insert the block itself.
             for (block_placement, block) in blocks_in_edit.drain(..) {
                 match block_placement {
-                    BlockPlacement::Above { position } => {
+                    BlockPlacement::Above(position) => {
                         let extent_before_block = position.0 - new_transforms.summary().input_rows;
                         push_isomorphic(&mut new_transforms, extent_before_block);
                     }
-                    BlockPlacement::Below { position } => {
+                    BlockPlacement::Below(position) => {
                         let extent_before_block =
                             (position.0 + 1) - new_transforms.summary().input_rows;
                         push_isomorphic(&mut new_transforms, extent_before_block);
@@ -604,7 +598,7 @@ impl BlockMap {
         self.show_excerpt_controls
     }
 
-    pub fn header_and_footer_blocks<'a, 'b: 'a, 'c: 'a + 'b, R, T>(
+    fn header_and_footer_blocks<'a, 'b: 'a, 'c: 'a + 'b, R, T>(
         show_excerpt_controls: bool,
         excerpt_footer_height: u32,
         buffer_header_height: u32,
@@ -666,13 +660,9 @@ impl BlockMap {
 
                 Some((
                     if excerpt_boundary.next.is_some() {
-                        BlockPlacement::Above {
-                            position: WrapRow(wrap_row),
-                        }
+                        BlockPlacement::Above(WrapRow(wrap_row))
                     } else {
-                        BlockPlacement::Below {
-                            position: WrapRow(wrap_row),
-                        }
+                        BlockPlacement::Below(WrapRow(wrap_row))
                     },
                     Block::ExcerptBoundary {
                         prev_excerpt: excerpt_boundary.prev,
@@ -685,7 +675,7 @@ impl BlockMap {
             })
     }
 
-    pub(crate) fn sort_blocks(blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>) {
+    fn sort_blocks(blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>) {
         blocks.sort_unstable_by_key(|(placement, block)| {
             (placement.clone(), block.priority(), block.id())
         });
@@ -1426,15 +1416,15 @@ impl CustomBlock {
 
     pub fn start(&self) -> Anchor {
         match &self.placement {
-            BlockPlacement::Above { position } => *position,
-            BlockPlacement::Below { position } => *position,
+            BlockPlacement::Above(position) => *position,
+            BlockPlacement::Below(position) => *position,
         }
     }
 
     pub fn end(&self) -> Anchor {
         match &self.placement {
-            BlockPlacement::Above { position } => *position,
-            BlockPlacement::Below { position } => *position,
+            BlockPlacement::Above(position) => *position,
+            BlockPlacement::Below(position) => *position,
         }
     }
 
@@ -1518,27 +1508,21 @@ mod tests {
         let block_ids = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Above {
-                    position: buffer_snapshot.anchor_after(Point::new(1, 0)),
-                },
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: 1,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Above {
-                    position: buffer_snapshot.anchor_after(Point::new(1, 2)),
-                },
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: 2,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Below {
-                    position: buffer_snapshot.anchor_after(Point::new(3, 3)),
-                },
+                placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: 3,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
@@ -1775,27 +1759,21 @@ mod tests {
         let block_ids = writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Above {
-                    position: buffer_snapshot.anchor_after(Point::new(1, 0)),
-                },
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: 1,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Above {
-                    position: buffer_snapshot.anchor_after(Point::new(1, 2)),
-                },
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: 2,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Below {
-                    position: buffer_snapshot.anchor_after(Point::new(3, 3)),
-                },
+                placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: 3,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
@@ -1884,18 +1862,14 @@ mod tests {
         writer.insert(vec![
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Above {
-                    position: buffer_snapshot.anchor_after(Point::new(1, 12)),
-                },
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 12))),
                 render: Box::new(|_| div().into_any()),
                 height: 1,
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
-                placement: BlockPlacement::Below {
-                    position: buffer_snapshot.anchor_after(Point::new(1, 1)),
-                },
+                placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 1))),
                 render: Box::new(|_| div().into_any()),
                 height: 1,
                 priority: 0,
@@ -1979,14 +1953,14 @@ mod tests {
                             );
 
                             let placement = if rng.gen() {
-                                BlockPlacement::Above { position }
+                                BlockPlacement::Above(position)
                             } else {
-                                BlockPlacement::Below { position }
+                                BlockPlacement::Below(position)
                             };
                             let height = rng.gen_range(0..5);
                             log::info!(
                                 "inserting block {:?} with height {}",
-                                placement.to_point(&buffer),
+                                placement.as_ref().map(|p| p.to_point(&buffer)),
                                 height
                             );
                             BlockProperties {
@@ -2064,19 +2038,19 @@ mod tests {
             let mut expected_blocks = Vec::new();
             expected_blocks.extend(block_map.custom_blocks.iter().map(|block| {
                 let placement = match &block.placement {
-                    BlockPlacement::Above { position } => {
+                    BlockPlacement::Above(position) => {
                         let mut position = position.to_point(&buffer_snapshot);
                         position.column = 0;
                         let wrap_row =
                             WrapRow(wraps_snapshot.make_wrap_point(position, Bias::Left).row());
-                        BlockPlacement::Above { position: wrap_row }
+                        BlockPlacement::Above(wrap_row)
                     }
-                    BlockPlacement::Below { position } => {
+                    BlockPlacement::Below(position) => {
                         let mut position = position.to_point(&buffer_snapshot);
                         position.column = buffer_snapshot.line_len(MultiBufferRow(position.row));
                         let wrap_row =
                             WrapRow(wraps_snapshot.make_wrap_point(position, Bias::Left).row());
-                        BlockPlacement::Below { position: wrap_row }
+                        BlockPlacement::Below(wrap_row)
                     }
                 };
                 (placement, Block::Custom(block.clone()))

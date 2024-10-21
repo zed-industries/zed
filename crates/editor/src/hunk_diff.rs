@@ -15,7 +15,7 @@ use util::RangeExt;
 
 use crate::{
     editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyDiffHunk,
-    BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
+    BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
     DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
     RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
@@ -377,10 +377,9 @@ impl Editor {
         };
 
         BlockProperties {
-            position: hunk.multi_buffer_range.start,
+            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height: 1,
             style: BlockStyle::Sticky,
-            disposition: BlockDisposition::Above,
             priority: 0,
             render: Box::new({
                 let editor = cx.view().clone();
@@ -659,10 +658,9 @@ impl Editor {
         let hunk = hunk.clone();
         let height = editor_height.max(deleted_text_height);
         BlockProperties {
-            position: hunk.multi_buffer_range.start,
+            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height,
             style: BlockStyle::Flex,
-            disposition: BlockDisposition::Above,
             priority: 0,
             render: Box::new(move |cx| {
                 let width = EditorElement::diff_hunk_strip_width(cx.line_height());

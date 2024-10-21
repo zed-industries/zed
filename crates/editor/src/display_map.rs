@@ -28,8 +28,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockDisposition, BlockId,
-    BlockMap, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
+    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -1155,6 +1155,7 @@ impl ToDisplayPoint for Anchor {
 pub mod tests {
     use super::*;
     use crate::{movement, test::marked_display_snapshot};
+    use block_map::BlockPlacement;
     use gpui::{div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla};
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
@@ -1268,24 +1269,22 @@ pub mod tests {
                                             Bias::Left,
                                         ));
 
-                                    let disposition = if rng.gen() {
-                                        BlockDisposition::Above
+                                    let placement = if rng.gen() {
+                                        BlockPlacement::Above(position)
                                     } else {
-                                        BlockDisposition::Below
+                                        BlockPlacement::Below(position)
                                     };
                                     let height = rng.gen_range(1..5);
                                     log::info!(
-                                        "inserting block {:?} {:?} with height {}",
-                                        disposition,
-                                        position.to_point(&buffer),
+                                        "inserting block {:?} with height {}",
+                                        placement.as_ref().map(|p| p.to_point(&buffer)),
                                         height
                                     );
                                     let priority = rng.gen_range(1..100);
                                     BlockProperties {
+                                        placement,
                                         style: BlockStyle::Fixed,
-                                        position,
                                         height,
-                                        disposition,
                                         render: Box::new(|_| div().into_any()),
                                         priority,
                                     }
