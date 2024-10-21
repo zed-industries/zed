@@ -75,6 +75,21 @@ impl OpenPathPrompt {
 impl PickerDelegate for OpenPathDelegate {
     type ListItem = ui::ListItem;
 
+    fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+        let Some(location) = self.lister.location(cx) else {
+            return None;
+        };
+
+        Some(
+            h_flex()
+                .mt_2()
+                .ml_3()
+                .gap_1()
+                .child(Label::new(location).color(Color::Muted))
+                .into_any_element(),
+        )
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }

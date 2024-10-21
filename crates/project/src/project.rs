@@ -513,6 +513,14 @@ impl DirectoryLister {
         "~/".to_string()
     }
 
+    pub fn location<'a>(&self, cx: &mut AppContext) -> Option<String> {
+        let DirectoryLister::Project(project) = self else {
+            return None;
+        };
+        let ssh_client = project.read(cx).ssh_client()?;
+        Some(ssh_client.read(cx).connection_options().ssh_url())
+    }
+
     pub fn list_directory(&self, path: String, cx: &mut AppContext) -> Task<Result<Vec<PathBuf>>> {
         match self {
             DirectoryLister::Project(project) => {

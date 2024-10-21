@@ -232,6 +232,38 @@ impl NewPathPrompt {
 impl PickerDelegate for NewPathDelegate {
     type ListItem = ui::ListItem;
 
+    fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+        let project = self.project.clone();
+        let project = project.read(cx);
+        let ssh_url = if let Some(ssh_client) = project.ssh_client() {
+            ssh_client.read(cx).connection_options().ssh_url()
+        } else {
+            "".to_string()
+        };
+        let visible_worktrees = project.visible_worktrees(cx).collect::<Vec<_>>();
+        let abs_path = if visible_worktrees.len() == 1 {
+            visible_worktrees[0]
+                .read(cx)
+                .abs_path()
+                .to_string_lossy()
+                .to_string()
+        } else {
+            "".to_string()
+        };
+        if ssh_url == "" && abs_path == "" {
+            return None;
+        }
+
+        Some(
+            h_flex()
+                .mt_2()
+                .ml_3()
+                .gap_1()
+                .child(Label::new(format!("{}{}", ssh_url, abs_path)).color(Color::Muted))
+                .into_any_element(),
+        )
+    }
+
     fn match_count(&self) -> usize {
         self.matches.len()
     }
