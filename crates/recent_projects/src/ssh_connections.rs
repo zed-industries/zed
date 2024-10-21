@@ -138,9 +138,10 @@ impl SshPrompt {
         let theme = ThemeSettings::get_global(cx);
 
         let mut text_style = cx.text_style();
+
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
-            font_size: Some(theme.buffer_font_size.into()),
+            // font_size: Some(theme.buffer_font_size.into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
             ..Default::default()
@@ -193,6 +194,7 @@ impl Render for SshPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let cx = cx.window_context();
         let theme = cx.theme();
+
         v_flex()
             .key_context("PasswordPrompt")
             .size_full()
@@ -202,7 +204,7 @@ impl Render for SshPrompt {
                     el.child(
                         h_flex()
                             .p_2()
-                            .flex()
+                            .gap_2()
                             .child(if self.error_message.is_some() {
                                 Icon::new(IconName::XCircle)
                                     .size(IconSize::Medium)
@@ -255,10 +257,10 @@ impl Render for SshPrompt {
                         .size_full()
                         .overflow_hidden()
                         .p_4()
-                        .border_t_1()
-                        .border_color(theme.colors().border_variant)
+                        // .border_t_1()
+                        // .border_color(colors().border_variant)
                         .font_buffer(cx)
-                        .text_buffer(cx)
+                        // .text_buffer(cx)
                         .child(prompt.0.clone())
                         .child(self.editor.clone()),
                 )
@@ -318,6 +320,7 @@ impl RenderOnce for SshConnectionHeader {
             .border_b_1()
             .border_color(theme.colors().border_variant)
             // .bg(header_color)
+            // .child(ListSeparator)
             .child(Icon::new(IconName::Server).size(IconSize::XSmall))
             .child(
                 h_flex()

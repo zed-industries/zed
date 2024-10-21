@@ -1190,36 +1190,36 @@ impl DevServerProjects {
             )
             .section(
                 Section::new().padded(false).child(
-                    h_flex()
+                    v_flex()
                         .min_h(rems(20.))
                         .size_full()
+                        .relative()
+                        .child(ListSeparator)
                         .child(
-                            v_flex().size_full().child(ListSeparator).child(
-                                canvas(
-                                    |bounds, cx| {
-                                        modal_section.prepaint_as_root(
-                                            bounds.origin,
-                                            bounds.size.into(),
-                                            cx,
-                                        );
-                                        modal_section
-                                    },
-                                    |_, mut modal_section, cx| {
-                                        modal_section.paint(cx);
-                                    },
-                                )
-                                .size_full(),
-                            ),
+                            canvas(
+                                |bounds, cx| {
+                                    modal_section.prepaint_as_root(
+                                        bounds.origin,
+                                        bounds.size.into(),
+                                        cx,
+                                    );
+                                    modal_section
+                                },
+                                |_, mut modal_section, cx| {
+                                    modal_section.paint(cx);
+                                },
+                            )
+                            .size_full(),
                         )
                         .child(
                             div()
                                 .occlude()
                                 .h_full()
                                 .absolute()
-                                .right_0p5()
+                                .right_1()
                                 .top_1()
-                                .bottom_0p5()
-                                .w(px(8.))
+                                .bottom_1()
+                                .w(px(6.))
                                 .children(Scrollbar::vertical(scroll_state)),
                         ),
                 ),
