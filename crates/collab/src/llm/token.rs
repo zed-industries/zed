@@ -1,5 +1,6 @@
 use crate::db::user;
-use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
+use crate::Cents;
 use crate::{db::billing_preference, Config};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
@@ -89,6 +90,12 @@ impl LlmTokenClaims {
                 }
             }
         }
+    }
+
+    pub fn free_tier_monthly_spending_limit(&self) -> Cents {
+        self.custom_llm_monthly_allowance_in_cents
+            .map(Cents)
+            .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT)
     }
 }
 
