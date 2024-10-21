@@ -311,7 +311,7 @@ impl QuickCommitState {
     }
 
     fn toggle_file_staged(&mut self, file_id: usize) {
-        if let Some(pos) = self.staged_files.iter().position(|&id| id == file_id) {
+        if let Some(pos) = self.staged_files.iter().position() {
             self.staged_files.swap_remove(pos);
         } else {
             self.staged_files.push(file_id);
