@@ -7,15 +7,18 @@ use futures::channel::oneshot;
 use gpui::{
     percentage, px, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
     EventEmitter, FocusableView, ParentElement as _, Render, SemanticVersion, SharedString, Task,
-    Transformation, View,
+    TextStyleRefinement, Transformation, View,
 };
 use gpui::{AppContext, Model};
 
+use language::CursorShape;
+use markdown::{Markdown, MarkdownStyle};
 use release_channel::{AppVersion, ReleaseChannel};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
+use theme::ThemeSettings;
 use ui::{
     div, h_flex, prelude::*, v_flex, ActiveTheme, Color, Icon, IconName, IconSize,
     InteractiveElement, IntoElement, Label, LabelCommon, Styled, ViewContext, VisualContext,
@@ -102,7 +105,7 @@ pub struct SshPrompt {
     connection_string: SharedString,
     status_message: Option<SharedString>,
     error_message: Option<SharedString>,
-    prompt: Option<(SharedString, oneshot::Sender<Result<String>>)>,
+    prompt: Option<(View<Markdown>, oneshot::Sender<Result<String>>)>,
     editor: View<Editor>,
 }
 
@@ -132,14 +135,34 @@ impl SshPrompt {
         tx: oneshot::Sender<Result<String>>,
         cx: &mut ViewContext<Self>,
     ) {
+        let theme = ThemeSettings::get_global(cx);
+
+        let mut text_style = cx.text_style();
+        let refinement = TextStyleRefinement {
+            font_family: Some(theme.buffer_font.family.clone()),
+            font_size: Some(theme.buffer_font_size.into()),
+            color: Some(cx.theme().colors().editor_foreground),
+            background_color: Some(gpui::transparent_black()),
+            ..Default::default()
+        };
+
+        text_style.refine(&refinement);
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
                 editor.set_masked(false, cx);
             } else {
                 editor.set_masked(true, cx);
             }
+            editor.set_text_style_refinement(refinement);
+            editor.set_cursor_shape(CursorShape::Block, cx);
         });
-        self.prompt = Some((prompt.into(), tx));
+        let markdown_style = MarkdownStyle {
+            base_text_style: text_style,
+            selection_background_color: cx.theme().players().local().selection,
+            ..Default::default()
+        };
+        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, cx, None));
+        self.prompt = Some((markdown, tx));
         self.status_message.take();
         cx.focus_view(&self.editor);
         cx.notify();
@@ -157,6 +180,7 @@ impl SshPrompt {
 
     pub fn confirm(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, tx)) = self.prompt.take() {
+            self.status_message = Some("Connecting".into());
             self.editor.update(cx, |editor, cx| {
                 tx.send(Ok(editor.text(cx))).ok();
                 editor.clear(cx);
@@ -172,60 +196,73 @@ impl Render for SshPrompt {
         v_flex()
             .key_context("PasswordPrompt")
             .size_full()
-            .child(
-                h_flex()
-                    .p_2()
-                    .flex()
-                    .child(if self.error_message.is_some() {
-                        Icon::new(IconName::XCircle)
-                            .size(IconSize::Medium)
-                            .color(Color::Error)
-                            .into_any_element()
-                    } else {
-                        Icon::new(IconName::ArrowCircle)
-                            .size(IconSize::Medium)
-                            .with_animation(
-                                "arrow-circle",
-                                Animation::new(Duration::from_secs(2)).repeat(),
-                                |icon, delta| {
-                                    icon.transform(Transformation::rotate(percentage(delta)))
-                                },
-                            )
-                            .into_any_element()
-                    })
-                    .child(
-                        div()
-                            .ml_1()
-                            .text_ellipsis()
-                            .overflow_x_hidden()
-                            .when_some(self.error_message.as_ref(), |el, error| {
-                                el.child(Label::new(format!("{}", error)).size(LabelSize::Small))
-                            })
-                            .when(
-                                self.error_message.is_none() && self.status_message.is_some(),
-                                |el| {
-                                    el.child(
-                                        Label::new(format!(
-                                            "{}…",
-                                            self.status_message.clone().unwrap()
-                                        ))
-                                        .size(LabelSize::Small),
+            .when(
+                self.error_message.is_some() || self.status_message.is_some(),
+                |el| {
+                    el.child(
+                        h_flex()
+                            .p_2()
+                            .flex()
+                            .child(if self.error_message.is_some() {
+                                Icon::new(IconName::XCircle)
+                                    .size(IconSize::Medium)
+                                    .color(Color::Error)
+                                    .into_any_element()
+                            } else {
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::Medium)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
                                     )
-                                },
+                                    .into_any_element()
+                            })
+                            .child(
+                                div()
+                                    .ml_1()
+                                    .text_ellipsis()
+                                    .overflow_x_hidden()
+                                    .when_some(self.error_message.as_ref(), |el, error| {
+                                        el.child(
+                                            Label::new(format!("{}", error)).size(LabelSize::Small),
+                                        )
+                                    })
+                                    .when(
+                                        self.error_message.is_none()
+                                            && self.status_message.is_some(),
+                                        |el| {
+                                            el.child(
+                                                Label::new(format!(
+                                                    "{}…",
+                                                    self.status_message.clone().unwrap()
+                                                ))
+                                                .size(LabelSize::Small),
+                                            )
+                                        },
+                                    ),
                             ),
-                    ),
+                    )
+                },
             )
-            .child(div().when_some(self.prompt.as_ref(), |el, prompt| {
+            .when_some(self.prompt.as_ref(), |el, prompt| {
                 el.child(
-                    h_flex()
+                    div()
+                        .size_full()
+                        .overflow_hidden()
                         .p_4()
                         .border_t_1()
                         .border_color(theme.colors().border_variant)
                         .font_buffer(cx)
-                        .child(Label::new(prompt.0.clone()))
+                        .text_buffer(cx)
+                        .child(prompt.0.clone())
                         .child(self.editor.clone()),
                 )
-            }))
+            })
     }
 }
 
