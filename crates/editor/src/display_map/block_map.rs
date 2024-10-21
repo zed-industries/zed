@@ -1339,6 +1339,7 @@ impl Transform {
 }
 
 impl<'a> BlockChunks<'a> {
+    /// Go to the next transform
     fn advance(&mut self) {
         self.transforms.next(&());
         while let Some(transform) = self.transforms.item() {
@@ -1359,11 +1360,14 @@ impl<'a> BlockChunks<'a> {
             .map_or(false, |transform| transform.block.is_none())
         {
             let start_input_row = self.transforms.start().1 .0;
-            let end_input_row = cmp::min(
-                self.transforms.end(&()).1 .0,
-                start_input_row + (self.max_output_row - self.transforms.start().0 .0),
-            );
-            self.input_chunks.seek(start_input_row..end_input_row);
+            let start_output_row = self.transforms.start().0 .0;
+            if start_output_row < self.max_output_row {
+                let end_input_row = cmp::min(
+                    self.transforms.end(&()).1 .0,
+                    start_input_row + (self.max_output_row - start_output_row),
+                );
+                self.input_chunks.seek(start_input_row..end_input_row);
+            }
             self.input_chunk = Chunk::default();
         }
     }
