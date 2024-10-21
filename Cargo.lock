@@ -12604,9 +12604,11 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
+ "menu",
  "settings",
  "theme",
  "ui",
+ "workspace",
 ]
 
 [[package]]

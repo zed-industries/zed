@@ -17,6 +17,8 @@ gpui.workspace = true
 settings.workspace = true
 theme.workspace = true
 ui.workspace = true
+workspace.workspace = true
+menu.workspace = true
 
 [features]
 default = []
