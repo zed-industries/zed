@@ -6,8 +6,7 @@ mod test;
 mod change_list;
 mod command;
 mod digraph;
-mod helix_normal;
-mod helix_visual;
+mod helix;
 mod indent;
 mod insert;
 mod mode_indicator;
@@ -290,6 +289,7 @@ impl Vim {
 
             normal::register(editor, cx);
             insert::register(editor, cx);
+            helix::register(editor, cx);
             motion::register(editor, cx);
             command::register(editor, cx);
             replace::register(editor, cx);

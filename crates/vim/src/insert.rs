@@ -4,24 +4,12 @@ use gpui::{actions, Action, ViewContext};
 use language::SelectionGoal;
 
 actions!(vim, [NormalBefore]);
-actions!(vim, [HelixNormalAfter]);
 
 pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, Vim::normal_before);
-    Vim::action(editor, cx, Vim::helix_normal_after);
 }
 
 impl Vim {
-    fn helix_normal_after(&mut self, action: &HelixNormalAfter, cx: &mut ViewContext<Self>) {
-        if self.active_operator().is_some() {
-            self.operator_stack.clear();
-            self.sync_vim_settings(cx);
-            return;
-        }
-        self.stop_recording_immediately(action.boxed_clone(), cx);
-        self.switch_mode(Mode::HelixNormal, false, cx);
-        return
-    }
     
     fn normal_before(&mut self, action: &NormalBefore, cx: &mut ViewContext<Self>) {
         if self.active_operator().is_some() {
