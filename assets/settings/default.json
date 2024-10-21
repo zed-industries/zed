@@ -346,6 +346,8 @@
     "git_status": true,
     // Amount of indentation for nested items.
     "indent_size": 20,
+    // Whether to show indent guides in the project panel.
+    "indent_guides": true,
     // Whether to reveal it in the project panel automatically,
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
