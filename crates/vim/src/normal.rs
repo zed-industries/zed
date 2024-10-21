@@ -154,6 +154,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 }
 
 impl Vim {
+
     pub fn normal_motion(
         &mut self,
         motion: Motion,

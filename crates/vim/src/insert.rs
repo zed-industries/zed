@@ -10,6 +10,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 }
 
 impl Vim {
+    
     fn normal_before(&mut self, action: &NormalBefore, cx: &mut ViewContext<Self>) {
         if self.active_operator().is_some() {
             self.operator_stack.clear();
