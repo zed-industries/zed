@@ -146,6 +146,7 @@ impl editor::Addon for VimAddon {
 pub(crate) struct Vim {
     pub(crate) mode: Mode,
     pub last_mode: Mode,
+    pub temp_mode: bool,
 
     /// pre_count is the number before an operator is specified (3 in 3d2d)
     pre_count: Option<usize>,
@@ -196,6 +197,7 @@ impl Vim {
         cx.new_view(|cx| Vim {
             mode: Mode::Normal,
             last_mode: Mode::Normal,
+            temp_mode: false,
             pre_count: None,
             post_count: None,
             operator_stack: Vec::new(),
@@ -392,6 +394,8 @@ impl Vim {
             EditorEvent::CursorShapeChanged => self.cursor_shape_changed(cx),
             _ => {}
         }
+
+        self.exit_temporary_normal(cx);
     }
 
     fn push_operator(&mut self, operator: Operator, cx: &mut ViewContext<Self>) {
@@ -433,6 +437,11 @@ impl Vim {
         let prior_tx = self.current_tx;
         self.last_mode = last_mode;
         self.mode = mode;
+
+        if self.temp_mode && mode == Mode::Replace {
+            self.temp_mode = false;
+        }
+
         self.operator_stack.clear();
         self.selected_register.take();
         if mode == Mode::Normal || mode != last_mode {
@@ -1071,6 +1080,19 @@ impl Vim {
             editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
         });
         cx.notify()
+    }
+
+    fn exit_temporary_normal(&mut self, cx: &mut ViewContext<Self>) {
+        if matches!(
+            self.mode,
+            Mode::Visual | Mode::VisualBlock | Mode::VisualLine
+        ) {
+            return;
+        }
+        if self.temp_mode {
+            self.temp_mode = false;
+            self.switch_mode(Mode::Insert, true, cx);
+        }
     }
 }
 
