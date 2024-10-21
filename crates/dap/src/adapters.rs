@@ -6,7 +6,6 @@ use http_client::HttpClient;
 use node_runtime::NodeRuntime;
 use serde_json::Value;
 use std::{collections::HashMap, ffi::OsString, path::Path, sync::Arc};
-
 use task::DebugAdapterConfig;
 
 pub trait DapDelegate {

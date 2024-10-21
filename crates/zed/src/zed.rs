@@ -598,6 +598,8 @@ fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContex
             toolbar.add_item(project_search_bar, cx);
             let lsp_log_item = cx.new_view(|_| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, cx);
+            let dap_log_item = cx.new_view(|_| debugger_tools::DapLogToolbarItemView::new());
+            toolbar.add_item(dap_log_item, cx);
             let syntax_tree_item =
                 cx.new_view(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, cx);

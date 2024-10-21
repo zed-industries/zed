@@ -172,6 +172,7 @@ members = [
     #
 
     "tooling/xtask",
+    "crates/debugger_tools",
 ]
 default-members = ["crates/zed"]
 
@@ -207,6 +208,7 @@ dap = { path = "crates/dap" }
 dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
 debugger_ui = { path = "crates/debugger_ui" }
+debugger_tools = { path = "crates/debugger_tools" }
 dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }

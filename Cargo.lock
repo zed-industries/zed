@@ -3354,10 +3354,12 @@ dependencies = [
  "http_client",
  "log",
  "node_runtime",
+ "parking_lot",
  "schemars",
  "serde",
  "serde_json",
  "settings",
+ "smallvec",
  "smol",
  "task",
 ]
@@ -3460,6 +3462,20 @@ dependencies = [
  "libc",
  "libdbus-sys",
  "winapi",
+]
+
+[[package]]
+name = "debugger_tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dap",
+ "editor",
+ "futures 0.3.30",
+ "gpui",
+ "project",
+ "serde_json",
+ "workspace",
 ]
 
 [[package]]
@@ -14690,6 +14706,7 @@ dependencies = [
  "command_palette_hooks",
  "copilot",
  "db",
+ "debugger_tools",
  "debugger_ui",
  "dev_server_projects",
  "diagnostics",

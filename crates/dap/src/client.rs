@@ -1,8 +1,9 @@
 use crate::{
     adapters::{DebugAdapter, DebugAdapterBinary},
-    transport::TransportDelegate,
+    transport::{IoKind, LogKind, TransportDelegate},
 };
 use anyhow::{anyhow, Result};
+
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
@@ -162,5 +163,16 @@ impl DebugAdapterClient {
 
     pub async fn shutdown(&self) -> Result<()> {
         self.transport_delegate.shutdown().await
+    }
+
+    pub fn has_adapter_logs(&self) -> bool {
+        self.transport_delegate.has_adapter_logs()
+    }
+
+    pub fn add_log_handler<F>(&self, f: F, kind: LogKind)
+    where
+        F: 'static + Send + FnMut(IoKind, &str),
+    {
+        self.transport_delegate.add_log_handler(f, kind);
     }
 }
