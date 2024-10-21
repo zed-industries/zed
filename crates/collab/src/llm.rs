@@ -640,6 +640,10 @@ impl<S> Drop for TokenCountingStream<S> {
                     tokens,
                     claims.has_llm_subscription,
                     Cents(claims.max_monthly_spend_in_cents),
+                    claims
+                        .custom_llm_monthly_allowance_in_cents
+                        .map(Cents)
+                        .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT),
                     Utc::now(),
                 )
                 .await
