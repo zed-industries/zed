@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use std::cmp::Ordering;
 
 use gpui::{AnyElement, IntoElement, Stateful};

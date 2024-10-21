@@ -403,7 +403,10 @@ impl GitBlame {
                     if this.user_triggered {
                         log::error!("failed to get git blame data: {error:?}");
                         let notification = format!("{:#}", error).trim().to_string();
-                        cx.emit(project::Event::Notification(notification));
+                        cx.emit(project::Event::Toast {
+                            notification_id: "git-blame".into(),
+                            message: notification,
+                        });
                     } else {
                         // If we weren't triggered by a user, we just log errors in the background, instead of sending
                         // notifications.
@@ -619,9 +622,11 @@ mod tests {
         let event = project.next_event(cx).await;
         assert_eq!(
             event,
-            project::Event::Notification(
-                "Failed to blame \"file.txt\": failed to get blame for \"file.txt\"".to_string()
-            )
+            project::Event::Toast {
+                notification_id: "git-blame".into(),
+                message: "Failed to blame \"file.txt\": failed to get blame for \"file.txt\""
+                    .to_string()
+            }
         );
 
         blame.update(cx, |blame, cx| {

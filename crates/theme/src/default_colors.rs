@@ -8,12 +8,13 @@ pub(crate) fn neutral() -> ColorScaleSet {
     sand()
 }
 
-// Note: We aren't currently making use of the default colors, as all of the
-// themes have a value set for each color.
-//
-// We'll need to revisit these once we're ready to launch user themes, which may
-// not specify a value for each color (and thus should fall back to the defaults).
+/// The default colors for the theme.
+///
+/// Themes that do not specify all colors are refined off of these defaults.
 impl ThemeColors {
+    /// Returns the default colors for light themes.
+    ///
+    /// Themes that do not specify all colors are refined off of these defaults.
     pub fn light() -> Self {
         let system = SystemColors::default();
 
@@ -114,6 +115,9 @@ impl ThemeColors {
         }
     }
 
+    /// Returns the default colors for dark themes.
+    ///
+    /// Themes that do not specify all colors are refined off of these defaults.
     pub fn dark() -> Self {
         let system = SystemColors::default();
 
@@ -247,6 +251,7 @@ impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
     }
 }
 
+/// Color scales used to build the default themes.
 pub fn default_color_scales() -> ColorScales {
     ColorScales {
         gray: gray(),

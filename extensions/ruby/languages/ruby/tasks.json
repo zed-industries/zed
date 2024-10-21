@@ -1,7 +1,0 @@
-[
-  {
-    "label": "test $ZED_RELATIVE_FILE:$ZED_ROW",
-    "command": "echo 'To run tests, configure tasks in your \".zed/tasks.json\" file as described in the Ruby extension documentation.'",
-    "tags": ["ruby-test"]
-  }
-]

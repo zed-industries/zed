@@ -431,7 +431,7 @@ impl TestAppContext {
         rx
     }
 
-    /// Retuens a stream of events emitted by the given Model.
+    /// Returns a stream of events emitted by the given Model.
     pub fn events<Evt, T: 'static + EventEmitter<Evt>>(
         &mut self,
         entity: &Model<T>,

@@ -37,9 +37,10 @@ if (!hasReleaseNotes) {
 }
 
 const ISSUE_LINK_PATTERN = new RegExp(
-  "https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+",
-  "g",
+  "(?<!(?:Close[sd]?|Fixe[sd]|Resolve[sd]|Implement[sed])\\s+)https://github\\.com/[\\w-]+/[\\w-]+/issues/\\d+",
+  "gi"
 );
+
 
 const includesIssueUrl = ISSUE_LINK_PATTERN.test(body);
 

@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use crate::{prelude::*, Icon, IconName, IconSize};
 
 /// An icon that appears within a button.

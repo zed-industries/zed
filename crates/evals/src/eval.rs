@@ -12,6 +12,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
+use reqwest_client::ReqwestClient;
 use semantic_index::{
     EmbeddingProvider, OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status,
 };
@@ -32,7 +33,6 @@ use std::{
         Arc,
     },
 };
-use ureq_client::UreqClient;
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";
 const EVAL_REPOS_DIR: &'static str = "target/datasets/eval-repos";
@@ -101,11 +101,7 @@ fn main() -> Result<()> {
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
-        let client = Arc::new(UreqClient::new(
-            None,
-            "Zed LLM evals".to_string(),
-            executor.clone(),
-        ));
+        let client = Arc::new(ReqwestClient::user_agent("Zed LLM evals").unwrap());
         cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {

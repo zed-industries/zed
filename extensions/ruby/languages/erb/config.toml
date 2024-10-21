@@ -1,9 +1,0 @@
-name = "ERB"
-grammar = "embedded_template"
-path_suffixes = ["erb"]
-autoclose_before = ">})"
-brackets = [
-    { start = "<", end = ">", close = true, newline = true },
-]
-block_comment = ["<%#", "%>"]
-scope_opt_in_language_servers = ["tailwindcss-language-server"]

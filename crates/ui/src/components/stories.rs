@@ -1,3 +1,6 @@
+// We allow missing docs for stories as the docs will more or less be
+// "This is the ___ story", which is not very useful.
+#![allow(missing_docs)]
 mod avatar;
 mod button;
 mod checkbox;

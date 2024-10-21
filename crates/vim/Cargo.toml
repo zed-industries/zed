@@ -36,7 +36,7 @@ serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
-tokio = { version = "1.15", "optional" = true }
+tokio = { version = "1.15", features = ["full"], optional = true }
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

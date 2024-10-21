@@ -18,7 +18,9 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
+use clock::Lamport;
 pub use clock::ReplicaId;
+use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -35,6 +37,7 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
@@ -90,7 +93,7 @@ enum BufferDiffBase {
     PastBufferVersion {
         buffer: Model<Buffer>,
         rope: Rope,
-        operations_to_ignore: Vec<clock::Lamport>,
+        merged_operations: Vec<Lamport>,
     },
 }
 
@@ -183,7 +186,7 @@ pub enum CursorShape {
     /// A block that surrounds the following character
     Block,
     /// An underline that runs along the following character
-    Underscore,
+    Underline,
     /// A box drawn around the following character
     Hollow,
 }
@@ -588,7 +591,7 @@ impl IndentGuide {
 
 impl Buffer {
     /// Create a new buffer with the given base text.
-    pub fn local<T: Into<String>>(base_text: T, cx: &mut ModelContext<Self>) -> Self {
+    pub fn local<T: Into<String>>(base_text: T, cx: &ModelContext<Self>) -> Self {
         Self::build(
             TextBuffer::new(0, cx.entity_id().as_non_zero_u64().into(), base_text.into()),
             None,
@@ -601,7 +604,7 @@ impl Buffer {
     pub fn local_normalized(
         base_text_normalized: Rope,
         line_ending: LineEnding,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Self {
         Self::build(
             TextBuffer::new_normalized(
@@ -802,7 +805,7 @@ impl Buffer {
                 diff_base: Some(BufferDiffBase::PastBufferVersion {
                     buffer: this.clone(),
                     rope: self.as_rope().clone(),
-                    operations_to_ignore: Vec::new(),
+                    merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
@@ -826,42 +829,60 @@ impl Buffer {
         })
     }
 
-    /// Applies all of the changes in this buffer that intersect the given `range`
-    /// to its base buffer. This buffer must be a branch buffer to call this method.
-    pub fn merge_into_base(&mut self, range: Option<Range<usize>>, cx: &mut ModelContext<Self>) {
+    /// Applies all of the changes in this buffer that intersect any of the
+    /// given `ranges` to its base buffer.
+    ///
+    /// If `ranges` is empty, then all changes will be applied. This buffer must
+    /// be a branch buffer to call this method.
+    pub fn merge_into_base(&mut self, ranges: Vec<Range<usize>>, cx: &mut ModelContext<Self>) {
         let Some(base_buffer) = self.diff_base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
         };
 
-        base_buffer.update(cx, |base_buffer, cx| {
-            let edits = self
-                .edits_since::<usize>(&base_buffer.version)
-                .filter_map(|edit| {
-                    if range
-                        .as_ref()
-                        .map_or(true, |range| range.overlaps(&edit.new))
-                    {
-                        Some((edit.old, self.text_for_range(edit.new).collect::<String>()))
-                    } else {
-                        None
+        let mut ranges = if ranges.is_empty() {
+            &[0..usize::MAX]
+        } else {
+            ranges.as_slice()
+        }
+        .into_iter()
+        .peekable();
+
+        let mut edits = Vec::new();
+        for edit in self.edits_since::<usize>(&base_buffer.read(cx).version()) {
+            let mut is_included = false;
+            while let Some(range) = ranges.peek() {
+                if range.end < edit.new.start {
+                    ranges.next().unwrap();
+                } else {
+                    if range.start <= edit.new.end {
+                        is_included = true;
                     }
-                })
-                .collect::<Vec<_>>();
-
-            let operation = base_buffer.edit(edits, None, cx);
-
-            // Prevent this operation from being reapplied to the branch.
-            if let Some(BufferDiffBase::PastBufferVersion {
-                operations_to_ignore,
-                ..
-            }) = &mut self.diff_base
-            {
-                operations_to_ignore.extend(operation);
+                    break;
+                }
             }
 
+            if is_included {
+                edits.push((
+                    edit.old.clone(),
+                    self.text_for_range(edit.new.clone()).collect::<String>(),
+                ));
+            }
+        }
+
+        let operation = base_buffer.update(cx, |base_buffer, cx| {
             cx.emit(BufferEvent::DiffBaseChanged);
+            base_buffer.edit(edits, None, cx)
         });
+
+        if let Some(operation) = operation {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                merged_operations, ..
+            }) = &mut self.diff_base
+            {
+                merged_operations.push(operation);
+            }
+        }
     }
 
     fn on_base_buffer_event(
@@ -870,31 +891,32 @@ impl Buffer {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        if let BufferEvent::Operation { operation, .. } = event {
-            if let Some(BufferDiffBase::PastBufferVersion {
-                operations_to_ignore,
-                ..
-            }) = &mut self.diff_base
-            {
-                let mut is_ignored = false;
-                if let Operation::Buffer(text::Operation::Edit(buffer_operation)) = &operation {
-                    operations_to_ignore.retain(|operation_to_ignore| {
-                        match buffer_operation.timestamp.cmp(&operation_to_ignore) {
-                            Ordering::Less => true,
-                            Ordering::Equal => {
-                                is_ignored = true;
-                                false
-                            }
-                            Ordering::Greater => false,
-                        }
-                    });
-                }
-                if !is_ignored {
-                    self.apply_ops([operation.clone()], cx);
-                    self.diff_base_version += 1;
-                }
+        let BufferEvent::Operation { operation, .. } = event else {
+            return;
+        };
+        let Some(BufferDiffBase::PastBufferVersion {
+            merged_operations, ..
+        }) = &mut self.diff_base
+        else {
+            return;
+        };
+
+        let mut operation_to_undo = None;
+        if let Operation::Buffer(text::Operation::Edit(operation)) = &operation {
+            if let Ok(ix) = merged_operations.binary_search(&operation.timestamp) {
+                merged_operations.remove(ix);
+                operation_to_undo = Some(operation.timestamp);
             }
         }
+
+        self.apply_ops([operation.clone()], cx);
+
+        if let Some(timestamp) = operation_to_undo {
+            let counts = [(timestamp, u32::MAX)].into_iter().collect();
+            self.undo_operations(counts, cx);
+        }
+
+        self.diff_base_version += 1;
     }
 
     #[cfg(test)]
@@ -934,7 +956,7 @@ impl Buffer {
 
     /// Assign a language registry to the buffer. This allows the buffer to retrieve
     /// other languages if parts of the buffer are written in different languages.
-    pub fn set_language_registry(&mut self, language_registry: Arc<LanguageRegistry>) {
+    pub fn set_language_registry(&self, language_registry: Arc<LanguageRegistry>) {
         self.syntax_map
             .lock()
             .set_language_registry(language_registry);
@@ -967,16 +989,13 @@ impl Buffer {
     }
 
     /// This method is called to signal that the buffer has been discarded.
-    pub fn discarded(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn discarded(&self, cx: &mut ModelContext<Self>) {
         cx.emit(BufferEvent::Discarded);
         cx.notify();
     }
 
     /// Reloads the contents of the buffer from disk.
-    pub fn reload(
-        &mut self,
-        cx: &mut ModelContext<Self>,
-    ) -> oneshot::Receiver<Option<Transaction>> {
+    pub fn reload(&mut self, cx: &ModelContext<Self>) -> oneshot::Receiver<Option<Transaction>> {
         let (tx, rx) = futures::channel::oneshot::channel();
         let prev_version = self.text.version();
         self.reload_task = Some(cx.spawn(|this, mut cx| async move {
@@ -1085,7 +1104,7 @@ impl Buffer {
 
     /// Sets the text that will be used to compute a Git diff
     /// against the buffer text.
-    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &mut ModelContext<Self>) {
+    pub fn set_diff_base(&mut self, diff_base: Option<String>, cx: &ModelContext<Self>) {
         self.diff_base = diff_base.map(|mut raw_diff_base| {
             LineEnding::normalize(&mut raw_diff_base);
             BufferDiffBase::Git(Rope::from(raw_diff_base))
@@ -1117,7 +1136,7 @@ impl Buffer {
     }
 
     /// Recomputes the diff.
-    pub fn recalculate_diff(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<()>> {
+    pub fn recalculate_diff(&self, cx: &ModelContext<Self>) -> Option<Task<()>> {
         let diff_base_rope = match self.diff_base.as_ref()? {
             BufferDiffBase::Git(rope) => rope.clone(),
             BufferDiffBase::PastBufferVersion { buffer, .. } => buffer.read(cx).as_rope().clone(),
@@ -1137,7 +1156,6 @@ impl Buffer {
                 this.non_text_state_update_count += 1;
                 if let Some(BufferDiffBase::PastBufferVersion { rope, .. }) = &mut this.diff_base {
                     *rope = diff_base_rope;
-                    cx.emit(BufferEvent::DiffBaseChanged);
                 }
                 cx.emit(BufferEvent::DiffUpdated);
             })
@@ -2249,12 +2267,7 @@ impl Buffer {
         }
     }
 
-    fn send_operation(
-        &mut self,
-        operation: Operation,
-        is_local: bool,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn send_operation(&self, operation: Operation, is_local: bool, cx: &mut ModelContext<Self>) {
         cx.emit(BufferEvent::Operation {
             operation,
             is_local,
@@ -2316,6 +2329,18 @@ impl Buffer {
             self.did_edit(&old_version, was_dirty, cx)
         }
         undone
+    }
+
+    pub fn undo_operations(
+        &mut self,
+        counts: HashMap<Lamport, u32>,
+        cx: &mut ModelContext<Buffer>,
+    ) {
+        let was_dirty = self.is_dirty();
+        let operation = self.text.undo_operations(counts);
+        let old_version = self.version.clone();
+        self.send_operation(Operation::Buffer(operation), true, cx);
+        self.did_edit(&old_version, was_dirty, cx);
     }
 
     /// Manually redoes a specific transaction in the buffer's redo history.
@@ -2466,7 +2491,11 @@ impl BufferSnapshot {
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
-        let settings = language_settings(self.language_at(position), self.file(), cx);
+        let settings = language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file(),
+            cx,
+        );
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -2799,11 +2828,15 @@ impl BufferSnapshot {
 
     /// Returns the settings for the language at the given location.
     pub fn settings_at<'a, D: ToOffset>(
-        &self,
+        &'a self,
         position: D,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
-        language_settings(self.language_at(position), self.file.as_ref(), cx)
+    ) -> Cow<'a, LanguageSettings> {
+        language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file.as_ref(),
+            cx,
+        )
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
@@ -3505,7 +3538,8 @@ impl BufferSnapshot {
         ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        let language_settings = language_settings(self.language(), self.file.as_ref(), cx);
+        let language_settings =
+            language_settings(self.language().map(|l| l.name()), self.file.as_ref(), cx);
         let settings = language_settings.indent_guides;
         if !ignore_disabled_for_language && !settings.enabled {
             return Vec::new();

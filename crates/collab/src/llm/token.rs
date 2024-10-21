@@ -1,4 +1,8 @@
-use crate::{db::UserId, Config};
+use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
+use crate::{
+    db::{billing_preference, UserId},
+    Config,
+};
 use anyhow::{anyhow, Result};
 use chrono::Utc;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation};
@@ -13,26 +17,25 @@ pub struct LlmTokenClaims {
     pub exp: u64,
     pub jti: String,
     pub user_id: u64,
-    // This field is temporarily optional so it can be added
-    // in a backwards-compatible way. We can make it required
-    // once all of the LLM tokens have cycled (~1 hour after
-    // this change has been deployed).
-    #[serde(default)]
-    pub github_user_login: Option<String>,
+    pub github_user_login: String,
     pub is_staff: bool,
-    #[serde(default)]
     pub has_llm_closed_beta_feature_flag: bool,
+    pub has_llm_subscription: bool,
+    pub max_monthly_spend_in_cents: u32,
     pub plan: rpc::proto::Plan,
 }
 
 const LLM_TOKEN_LIFETIME: Duration = Duration::from_secs(60 * 60);
 
 impl LlmTokenClaims {
+    #[allow(clippy::too_many_arguments)]
     pub fn create(
         user_id: UserId,
         github_user_login: String,
         is_staff: bool,
+        billing_preferences: Option<billing_preference::Model>,
         has_llm_closed_beta_feature_flag: bool,
+        has_llm_subscription: bool,
         plan: rpc::proto::Plan,
         config: &Config,
     ) -> Result<String> {
@@ -47,9 +50,14 @@ impl LlmTokenClaims {
             exp: (now + LLM_TOKEN_LIFETIME).timestamp() as u64,
             jti: uuid::Uuid::new_v4().to_string(),
             user_id: user_id.to_proto(),
-            github_user_login: Some(github_user_login),
+            github_user_login,
             is_staff,
             has_llm_closed_beta_feature_flag,
+            has_llm_subscription,
+            max_monthly_spend_in_cents: billing_preferences
+                .map_or(DEFAULT_MAX_MONTHLY_SPEND.0, |preferences| {
+                    preferences.max_monthly_llm_usage_spending_in_cents as u32
+                }),
             plan,
         };
 

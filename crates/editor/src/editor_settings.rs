@@ -179,7 +179,7 @@ pub struct EditorSettingsContent {
     /// Default: true
     pub cursor_blink: Option<bool>,
     /// Cursor shape for the default editor.
-    /// Can be "bar", "block", "underscore", or "hollow".
+    /// Can be "bar", "block", "underline", or "hollow".
     ///
     /// Default: None
     pub cursor_shape: Option<CursorShape>,

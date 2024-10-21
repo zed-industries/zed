@@ -61,7 +61,7 @@ language = { workspace = true, features = ["test-support"] }
 languages.workspace = true
 project = { workspace = true, features = ["test-support"] }
 tempfile.workspace = true
-ureq_client.workspace = true
+reqwest_client.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }

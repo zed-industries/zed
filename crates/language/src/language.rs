@@ -367,7 +367,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await else {
-                anyhow::bail!("cannot download language servers for remotes (yet)")
+                anyhow::bail!("no language server download dir defined")
             };
 
             let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;

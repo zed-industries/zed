@@ -4,7 +4,7 @@
  (here_string)
  (byte_string)] @string
 (regex) @string.regex
-(escape_sequence) @escape
+(escape_sequence) @string.escape
 
 [(comment)
  (block_comment)

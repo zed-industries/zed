@@ -19,7 +19,7 @@ pub fn app_menus() -> Vec<Menu> {
                         MenuItem::action("Open Key Bindings", zed_actions::OpenKeymap),
                         MenuItem::action("Open Default Settings", super::OpenDefaultSettings),
                         MenuItem::action("Open Default Key Bindings", super::OpenDefaultKeymap),
-                        MenuItem::action("Open Local Settings", super::OpenLocalSettings),
+                        MenuItem::action("Open Project Settings", super::OpenProjectSettings),
                         MenuItem::action("Select Theme...", theme_selector::Toggle::default()),
                     ],
                 }),

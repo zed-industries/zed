@@ -54,6 +54,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("ocaml", &["ml", "mli"]),
     ("php", &["php"]),
     ("prisma", &["prisma"]),
+    ("proto", &["proto"]),
     ("purescript", &["purs"]),
     ("r", &["r", "R"]),
     ("racket", &["rkt"]),
@@ -162,7 +163,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
 
         struct ExtensionSuggestionNotification;
 
-        let notification_id = NotificationId::identified::<ExtensionSuggestionNotification>(
+        let notification_id = NotificationId::composite::<ExtensionSuggestionNotification>(
             SharedString::from(extension_id.clone()),
         );
 

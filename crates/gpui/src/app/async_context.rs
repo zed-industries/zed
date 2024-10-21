@@ -107,7 +107,7 @@ impl Context for AsyncAppContext {
 
 impl AsyncAppContext {
     /// Schedules all windows in the application to be redrawn.
-    pub fn refresh(&mut self) -> Result<()> {
+    pub fn refresh(&self) -> Result<()> {
         let app = self
             .app
             .upgrade()
@@ -205,7 +205,7 @@ impl AsyncAppContext {
     /// A convenience method for [AppContext::update_global]
     /// for updating the global state of the specified type.
     pub fn update_global<G: Global, R>(
-        &mut self,
+        &self,
         update: impl FnOnce(&mut G, &mut AppContext) -> R,
     ) -> Result<R> {
         let app = self

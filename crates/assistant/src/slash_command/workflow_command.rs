@@ -18,6 +18,8 @@ pub(crate) struct WorkflowSlashCommand {
 }
 
 impl WorkflowSlashCommand {
+    pub const NAME: &'static str = "workflow";
+
     pub fn new(prompt_builder: Arc<PromptBuilder>) -> Self {
         Self { prompt_builder }
     }
@@ -25,7 +27,7 @@ impl WorkflowSlashCommand {
 
 impl SlashCommand for WorkflowSlashCommand {
     fn name(&self) -> String {
-        "workflow".into()
+        Self::NAME.into()
     }
 
     fn description(&self) -> String {

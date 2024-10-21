@@ -83,7 +83,10 @@ if [ "$local_arch" = true ]; then
     cargo build ${build_flag} --package zed --package cli --package remote_server
 else
     echo "Compiling zed binaries"
-    cargo build ${build_flag} --package zed --package cli --package remote_server --target aarch64-apple-darwin --target x86_64-apple-darwin
+    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+    # Build remote_server in separate invocation to prevent feature unification from other crates
+    # from influencing dynamic libraries required by it.
+    cargo build ${build_flag} --package remote_server     --target aarch64-apple-darwin --target x86_64-apple-darwin
 fi
 
 echo "Creating application bundle"
@@ -358,7 +361,7 @@ function sign_binary() {
 
     if [[ $can_code_sign = true ]]; then
         echo "Code signing executable $binary_path"
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${binary_path}" -v
+        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${binary_path}" -v
     fi
 }
 

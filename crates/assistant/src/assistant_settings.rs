@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::{AppContext, Pixels};
 use language_model::provider::open_ai;
@@ -61,6 +62,13 @@ pub struct AssistantSettings {
     pub default_model: LanguageModelSelection,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
+    pub enable_experimental_live_diffs: bool,
+}
+
+impl AssistantSettings {
+    pub fn are_live_diffs_enabled(&self, cx: &AppContext) -> bool {
+        cx.is_staff() || self.enable_experimental_live_diffs
+    }
 }
 
 /// Assistant panel settings
@@ -238,6 +246,7 @@ impl AssistantSettingsContent {
                             }
                         }),
                     inline_alternatives: None,
+                    enable_experimental_live_diffs: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -257,6 +266,7 @@ impl AssistantSettingsContent {
                         .to_string(),
                 }),
                 inline_alternatives: None,
+                enable_experimental_live_diffs: None,
             },
         }
     }
@@ -373,6 +383,7 @@ impl Default for VersionedAssistantSettingsContent {
             default_height: None,
             default_model: None,
             inline_alternatives: None,
+            enable_experimental_live_diffs: None,
         })
     }
 }
@@ -403,6 +414,10 @@ pub struct AssistantSettingsContentV2 {
     default_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
+    /// Enable experimental live diffs in the assistant panel.
+    ///
+    /// Default: false
+    enable_experimental_live_diffs: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -525,7 +540,10 @@ impl Settings for AssistantSettings {
             );
             merge(&mut settings.default_model, value.default_model);
             merge(&mut settings.inline_alternatives, value.inline_alternatives);
-            // merge(&mut settings.infer_context, value.infer_context); TODO re-enable this once we ship context inference
+            merge(
+                &mut settings.enable_experimental_live_diffs,
+                value.enable_experimental_live_diffs,
+            );
         }
 
         Ok(settings)
@@ -584,6 +602,7 @@ mod tests {
                             dock: None,
                             default_width: None,
                             default_height: None,
+                            enable_experimental_live_diffs: None,
                         }),
                     )
                 },

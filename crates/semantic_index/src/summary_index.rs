@@ -239,7 +239,7 @@ impl SummaryIndex {
                 persist
             )?;
 
-            log::info!("Summarizing updated entries took {:?}", start.elapsed());
+            log::debug!("Summarizing updated entries took {:?}", start.elapsed());
 
             Ok(())
         }

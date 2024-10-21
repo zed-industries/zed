@@ -1178,7 +1178,7 @@ impl Room {
             this.update(&mut cx, |this, cx| {
                 this.joined_projects.retain(|project| {
                     if let Some(project) = project.upgrade() {
-                        !project.read(cx).is_disconnected()
+                        !project.read(cx).is_disconnected(cx)
                     } else {
                         false
                     }

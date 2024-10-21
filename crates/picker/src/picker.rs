@@ -476,7 +476,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
+    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut WindowContext<'_>) {
         if let Head::Editor(ref editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, cx);

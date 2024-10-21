@@ -74,8 +74,23 @@ impl Render for BranchList {
     }
 }
 
+#[derive(Debug, Clone)]
+enum BranchEntry {
+    Branch(StringMatch),
+    NewBranch { name: String },
+}
+
+impl BranchEntry {
+    fn name(&self) -> &str {
+        match self {
+            Self::Branch(branch) => &branch.string,
+            Self::NewBranch { name } => &name,
+        }
+    }
+}
+
 pub struct BranchListDelegate {
-    matches: Vec<StringMatch>,
+    matches: Vec<BranchEntry>,
     all_branches: Vec<Branch>,
     workspace: View<Workspace>,
     selected_index: usize,
@@ -194,8 +209,14 @@ impl PickerDelegate for BranchListDelegate {
             picker
                 .update(&mut cx, |picker, _| {
                     let delegate = &mut picker.delegate;
-                    delegate.matches = matches;
+                    delegate.matches = matches.into_iter().map(BranchEntry::Branch).collect();
                     if delegate.matches.is_empty() {
+                        if !query.is_empty() {
+                            delegate.matches.push(BranchEntry::NewBranch {
+                                name: query.trim().replace(' ', "-"),
+                            });
+                        }
+
                         delegate.selected_index = 0;
                     } else {
                         delegate.selected_index =
@@ -208,32 +229,44 @@ impl PickerDelegate for BranchListDelegate {
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let current_pick = self.selected_index();
-        let Some(current_pick) = self
-            .matches
-            .get(current_pick)
-            .map(|pick| pick.string.clone())
-        else {
+        let Some(branch) = self.matches.get(self.selected_index()) else {
             return;
         };
-        cx.spawn(|picker, mut cx| async move {
-            picker
-                .update(&mut cx, |this, cx| {
-                    let project = this.delegate.workspace.read(cx).project().read(cx);
-                    let repo = project
-                        .get_first_worktree_root_repo(cx)
-                        .context("failed to get root repository for first worktree")?;
-                    let status = repo
-                        .change_branch(&current_pick);
-                    if status.is_err() {
-                        this.delegate.display_error_toast(format!("Failed to checkout branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                        status?;
-                    }
-                    cx.emit(DismissEvent);
+        cx.spawn({
+            let branch = branch.clone();
+            |picker, mut cx| async move {
+                picker
+                    .update(&mut cx, |this, cx| {
+                        let project = this.delegate.workspace.read(cx).project().read(cx);
+                        let repo = project
+                            .get_first_worktree_root_repo(cx)
+                            .context("failed to get root repository for first worktree")?;
 
-                    Ok::<(), anyhow::Error>(())
-                })
-                .log_err();
+                        let branch_to_checkout = match branch {
+                            BranchEntry::Branch(branch) => branch.string,
+                            BranchEntry::NewBranch { name: branch_name } => {
+                                let status = repo.create_branch(&branch_name);
+                                if status.is_err() {
+                                    this.delegate.display_error_toast(format!("Failed to create branch '{branch_name}', check for conflicts or unstashed files"), cx);
+                                    status?;
+                                }
+
+                                branch_name
+                            }
+                        };
+
+                        let status = repo.change_branch(&branch_to_checkout);
+                        if status.is_err() {
+                            this.delegate.display_error_toast(format!("Failed to checkout branch '{branch_to_checkout}', check for conflicts or unstashed files"), cx);
+                            status?;
+                        }
+
+                        cx.emit(DismissEvent);
+
+                        Ok::<(), anyhow::Error>(())
+                    })
+                    .log_err();
+            }
         })
         .detach();
     }
@@ -250,19 +283,28 @@ impl PickerDelegate for BranchListDelegate {
     ) -> Option<Self::ListItem> {
         let hit = &self.matches[ix];
         let shortened_branch_name =
-            util::truncate_and_trailoff(&hit.string, self.branch_name_trailoff_after);
-        let highlights: Vec<_> = hit
-            .positions
-            .iter()
-            .filter(|index| index < &&self.branch_name_trailoff_after)
-            .copied()
-            .collect();
+            util::truncate_and_trailoff(&hit.name(), self.branch_name_trailoff_after);
+
         Some(
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .start_slot(HighlightedLabel::new(shortened_branch_name, highlights)),
+                .map(|parent| match hit {
+                    BranchEntry::Branch(branch) => {
+                        let highlights: Vec<_> = branch
+                            .positions
+                            .iter()
+                            .filter(|index| index < &&self.branch_name_trailoff_after)
+                            .copied()
+                            .collect();
+
+                        parent.child(HighlightedLabel::new(shortened_branch_name, highlights))
+                    }
+                    BranchEntry::NewBranch { name } => {
+                        parent.child(Label::new(format!("Create branch '{name}'")))
+                    }
+                }),
         )
     }
 
@@ -288,53 +330,5 @@ impl PickerDelegate for BranchListDelegate {
                 .into_any_element()
         };
         Some(v_flex().mt_1().child(label).into_any_element())
-    }
-
-    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
-        if self.last_query.is_empty() {
-            return None;
-        }
-
-        Some(
-            h_flex()
-                .p_2()
-                .border_t_1()
-                .border_color(cx.theme().colors().border_variant)
-                .justify_end()
-                .child(h_flex().w_full())
-                .child(
-                    Button::new("branch-picker-create-branch-button", "Create Branch")
-                        .icon(IconName::Plus)
-                        .icon_size(IconSize::Small)
-                        .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(|_, _, cx| {
-                            cx.spawn(|picker, mut cx| async move {
-                                picker.update(&mut cx, |this, cx| {
-                                    let project =
-                                        this.delegate.workspace.read(cx).project().read(cx);
-                                    let current_pick = &this.delegate.last_query;
-                                    let repo = project.get_first_worktree_root_repo(cx).context(
-                                        "failed to get root repository for first worktree",
-                                    )?;
-                                    let status = repo.create_branch(current_pick);
-                                    if status.is_err() {
-                                        this.delegate.display_error_toast(format!("Failed to create branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                        status?;
-                                    }
-                                    let status = repo.change_branch(current_pick);
-                                    if status.is_err() {
-                                        this.delegate.display_error_toast(format!("Failed to check branch '{current_pick}', check for conflicts or unstashed files"), cx);
-                                        status?;
-                                    }
-                                    this.cancel(&Default::default(), cx);
-                                    Ok::<(), anyhow::Error>(())
-                                })
-                            })
-                            .detach_and_log_err(cx);
-                        }))
-                )
-                .into_any_element(),
-        )
     }
 }

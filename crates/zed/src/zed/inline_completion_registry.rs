@@ -64,7 +64,7 @@ pub fn init(telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     .detach();
 }
 
-fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+fn register_backward_compatible_actions(editor: &mut Editor, cx: &ViewContext<Editor>) {
     // We renamed some of these actions to not be copilot-specific, but that
     // would have not been backwards-compatible. So here we are re-registering
     // the actions with the old names to not break people's keymaps.

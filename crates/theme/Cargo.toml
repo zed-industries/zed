@@ -10,7 +10,6 @@ workspace = true
 
 [features]
 default = []
-stories = ["dep:story"]
 test-support = ["gpui/test-support", "fs/test-support", "settings/test-support"]
 
 [lib]
@@ -36,7 +35,6 @@ serde_json.workspace = true
 serde_json_lenient.workspace = true
 serde_repr.workspace = true
 settings.workspace = true
-story = { workspace = true, optional = true }
 util.workspace = true
 uuid.workspace = true
 

@@ -133,14 +133,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
             let mut element = (self.animator)(element, delta).into_any_element();
 
             if !done {
-                let parent_id = cx.parent_view_id();
-                cx.on_next_frame(move |cx| {
-                    if let Some(parent_id) = parent_id {
-                        cx.notify(parent_id)
-                    } else {
-                        cx.refresh()
-                    }
-                })
+                cx.request_animation_frame();
             }
 
             ((element.request_layout(cx), element), state)

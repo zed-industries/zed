@@ -3,40 +3,37 @@
 use std::{
     borrow::Cow,
     cmp::{self, Reverse},
+    collections::hash_map,
     path::{Path, PathBuf},
     sync::Arc,
 };
 
-use anyhow::Result;
-use collections::{btree_map, BTreeMap, HashMap, VecDeque};
-use futures::{
-    channel::mpsc::{unbounded, UnboundedSender},
-    StreamExt,
-};
-use gpui::{AppContext, Context, Model, ModelContext, Task};
+use anyhow::{Context, Result};
+use collections::{HashMap, HashSet, VecDeque};
+use gpui::{AppContext, Context as _, Model};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
+use settings::{parse_json_with_comments, SettingsLocation};
 use task::{
-    static_source::StaticSource, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
-    TaskVariables, VariableName,
+    ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
-use util::{post_inc, NumericPrefixWithSuffix, ResultExt};
+use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::Project;
+use crate::worktree_store::WorktreeStore;
 
 /// Inventory tracks available tasks for a given project.
+#[derive(Debug, Default)]
 pub struct Inventory {
-    sources: Vec<SourceInInventory>,
     last_scheduled_tasks: VecDeque<(TaskSourceKind, ResolvedTask)>,
-    update_sender: UnboundedSender<()>,
-    _update_pooler: Task<anyhow::Result<()>>,
+    templates_from_settings: ParsedTemplates,
 }
 
-struct SourceInInventory {
-    source: StaticSource,
-    kind: TaskSourceKind,
+#[derive(Debug, Default)]
+struct ParsedTemplates {
+    global: Vec<TaskTemplate>,
+    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<TaskTemplate>>>,
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -47,7 +44,7 @@ pub enum TaskSourceKind {
     /// Tasks from the worktree's .zed/task.json
     Worktree {
         id: WorktreeId,
-        abs_path: PathBuf,
+        directory_in_worktree: PathBuf,
         id_base: Cow<'static, str>,
     },
     /// ~/.config/zed/task.json - like global files with task definitions, applicable to any path
@@ -60,20 +57,6 @@ pub enum TaskSourceKind {
 }
 
 impl TaskSourceKind {
-    pub fn abs_path(&self) -> Option<&Path> {
-        match self {
-            Self::AbsPath { abs_path, .. } | Self::Worktree { abs_path, .. } => Some(abs_path),
-            Self::UserInput | Self::Language { .. } => None,
-        }
-    }
-
-    pub fn worktree(&self) -> Option<WorktreeId> {
-        match self {
-            Self::Worktree { id, .. } => Some(*id),
-            _ => None,
-        }
-    }
-
     pub fn to_id_base(&self) -> String {
         match self {
             TaskSourceKind::UserInput => "oneshot".to_string(),
@@ -83,9 +66,9 @@ impl TaskSourceKind {
             TaskSourceKind::Worktree {
                 id,
                 id_base,
-                abs_path,
+                directory_in_worktree,
             } => {
-                format!("{id_base}_{id}_{}", abs_path.display())
+                format!("{id_base}_{id}_{}", directory_in_worktree.display())
             }
             TaskSourceKind::Language { name } => format!("language_{name}"),
         }
@@ -94,61 +77,7 @@ impl TaskSourceKind {
 
 impl Inventory {
     pub fn new(cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|cx| {
-            let (update_sender, mut rx) = unbounded();
-            let _update_pooler = cx.spawn(|this, mut cx| async move {
-                while let Some(()) = rx.next().await {
-                    this.update(&mut cx, |_, cx| {
-                        cx.notify();
-                    })?;
-                }
-                Ok(())
-            });
-            Self {
-                sources: Vec::new(),
-                last_scheduled_tasks: VecDeque::new(),
-                update_sender,
-                _update_pooler,
-            }
-        })
-    }
-
-    /// If the task with the same path was not added yet,
-    /// registers a new tasks source to fetch for available tasks later.
-    /// Unless a source is removed, ignores future additions for the same path.
-    pub fn add_source(
-        &mut self,
-        kind: TaskSourceKind,
-        create_source: impl FnOnce(UnboundedSender<()>, &mut AppContext) -> StaticSource,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let abs_path = kind.abs_path();
-        if abs_path.is_some() {
-            if let Some(a) = self.sources.iter().find(|s| s.kind.abs_path() == abs_path) {
-                log::debug!("Source for path {abs_path:?} already exists, not adding. Old kind: {OLD_KIND:?}, new kind: {kind:?}", OLD_KIND = a.kind);
-                return;
-            }
-        }
-        let source = create_source(self.update_sender.clone(), cx);
-        let source = SourceInInventory { source, kind };
-        self.sources.push(source);
-        cx.notify();
-    }
-
-    /// If present, removes the local static source entry that has the given path,
-    /// making corresponding task definitions unavailable in the fetch results.
-    ///
-    /// Now, entry for this path can be re-added again.
-    pub fn remove_local_static_source(&mut self, abs_path: &Path) {
-        self.sources.retain(|s| s.kind.abs_path() != Some(abs_path));
-    }
-
-    /// If present, removes the worktree source entry that has the given worktree id,
-    /// making corresponding task definitions unavailable in the fetch results.
-    ///
-    /// Now, entry for this path can be re-added again.
-    pub fn remove_worktree_sources(&mut self, worktree: WorktreeId) {
-        self.sources.retain(|s| s.kind.worktree() != Some(worktree));
+        cx.new_model(|_| Self::default())
     }
 
     /// Pulls its task sources relevant to the worktree and the language given,
@@ -167,42 +96,27 @@ impl Inventory {
             .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
             .into_iter()
             .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
+            .flat_map(|task| Some((task_source_kind.clone()?, task)));
 
-        self.sources
-            .iter()
-            .filter(|source| {
-                let source_worktree = source.kind.worktree();
-                worktree.is_none() || source_worktree.is_none() || source_worktree == worktree
-            })
-            .flat_map(|source| {
-                source
-                    .source
-                    .tasks_to_schedule()
-                    .0
-                    .into_iter()
-                    .map(|task| (&source.kind, task))
-            })
+        self.templates_from_settings(worktree)
             .chain(language_tasks)
-            .map(|(task_source_kind, task)| (task_source_kind.clone(), task))
             .collect()
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
-    /// Deduplicates the tasks by their labels and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
+    /// Deduplicates the tasks by their labels and contenxt and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
-        remote_templates_task: Option<Task<Result<Vec<(TaskSourceKind, TaskTemplate)>>>>,
         worktree: Option<WorktreeId>,
         location: Option<Location>,
         task_context: &TaskContext,
         cx: &AppContext,
-    ) -> Task<(
+    ) -> (
         Vec<(TaskSourceKind, ResolvedTask)>,
         Vec<(TaskSourceKind, ResolvedTask)>,
-    )> {
+    ) {
         let language = location
             .as_ref()
             .and_then(|location| location.buffer.read(cx).language_at(location.range.start));
@@ -212,14 +126,10 @@ impl Inventory {
         let file = location
             .as_ref()
             .and_then(|location| location.buffer.read(cx).file().cloned());
-        let language_tasks = language
-            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
-            .into_iter()
-            .flat_map(|tasks| tasks.0.into_iter())
-            .flat_map(|task| Some((task_source_kind.as_ref()?, task)));
 
+        let mut task_labels_to_ids = HashMap::<String, HashSet<TaskId>>::default();
         let mut lru_score = 0_u32;
-        let mut task_usage = self
+        let previously_spawned_tasks = self
             .last_scheduled_tasks
             .iter()
             .rev()
@@ -230,127 +140,64 @@ impl Inventory {
                     true
                 }
             })
-            .fold(
-                BTreeMap::default(),
-                |mut tasks, (task_source_kind, resolved_task)| {
-                    tasks.entry(&resolved_task.id).or_insert_with(|| {
-                        (task_source_kind, resolved_task, post_inc(&mut lru_score))
-                    });
-                    tasks
-                },
-            );
-        let not_used_score = post_inc(&mut lru_score);
-        let mut currently_resolved_tasks = self
-            .sources
-            .iter()
-            .filter(|source| {
-                let source_worktree = source.kind.worktree();
-                worktree.is_none() || source_worktree.is_none() || source_worktree == worktree
+            .filter(|(_, resolved_task)| {
+                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        o.get_mut().insert(resolved_task.id.clone());
+                        // Neber allow duplicate reused tasks with the same labels
+                        false
+                    }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
+                        true
+                    }
+                }
             })
-            .flat_map(|source| {
-                source
-                    .source
-                    .tasks_to_schedule()
-                    .0
-                    .into_iter()
-                    .map(|task| (&source.kind, task))
+            .map(|(task_source_kind, resolved_task)| {
+                (
+                    task_source_kind.clone(),
+                    resolved_task.clone(),
+                    post_inc(&mut lru_score),
+                )
             })
-            .chain(language_tasks.filter(|_| remote_templates_task.is_none()))
-            .filter_map(|(kind, task)| {
-                let id_base = kind.to_id_base();
-                Some((kind, task.resolve_task(&id_base, task_context)?))
-            })
-            .map(|(kind, task)| {
-                let lru_score = task_usage
-                    .remove(&task.id)
-                    .map(|(_, _, lru_score)| lru_score)
-                    .unwrap_or(not_used_score);
-                (kind.clone(), task, lru_score)
-            })
-            .collect::<Vec<_>>();
-        let previously_spawned_tasks = task_usage
-            .into_iter()
-            .map(|(_, (kind, task, lru_score))| (kind.clone(), task.clone(), lru_score))
+            .sorted_unstable_by(task_lru_comparator)
+            .map(|(kind, task, _)| (kind, task))
             .collect::<Vec<_>>();
 
-        let task_context = task_context.clone();
-        cx.spawn(move |_| async move {
-            let remote_templates = match remote_templates_task {
-                Some(task) => match task.await.log_err() {
-                    Some(remote_templates) => remote_templates,
-                    None => return (Vec::new(), Vec::new()),
-                },
-                None => Vec::new(),
-            };
-            let remote_tasks = remote_templates.into_iter().filter_map(|(kind, task)| {
+        let not_used_score = post_inc(&mut lru_score);
+        let language_tasks = language
+            .and_then(|language| language.context_provider()?.associated_tasks(file, cx))
+            .into_iter()
+            .flat_map(|tasks| tasks.0.into_iter())
+            .flat_map(|task| Some((task_source_kind.clone()?, task)));
+        let new_resolved_tasks = self
+            .templates_from_settings(worktree)
+            .chain(language_tasks)
+            .filter_map(|(kind, task)| {
                 let id_base = kind.to_id_base();
                 Some((
                     kind,
-                    task.resolve_task(&id_base, &task_context)?,
+                    task.resolve_task(&id_base, task_context)?,
                     not_used_score,
                 ))
-            });
-            currently_resolved_tasks.extend(remote_tasks);
-
-            let mut tasks_by_label = BTreeMap::default();
-            tasks_by_label = previously_spawned_tasks.into_iter().fold(
-                tasks_by_label,
-                |mut tasks_by_label, (source, task, lru_score)| {
-                    match tasks_by_label.entry((source, task.resolved_label.clone())) {
-                        btree_map::Entry::Occupied(mut o) => {
-                            let (_, previous_lru_score) = o.get();
-                            if previous_lru_score >= &lru_score {
-                                o.insert((task, lru_score));
-                            }
-                        }
-                        btree_map::Entry::Vacant(v) => {
-                            v.insert((task, lru_score));
-                        }
+            })
+            .filter(|(_, resolved_task, _)| {
+                match task_labels_to_ids.entry(resolved_task.resolved_label.clone()) {
+                    hash_map::Entry::Occupied(mut o) => {
+                        // Allow new tasks with the same label, if their context is different
+                        o.get_mut().insert(resolved_task.id.clone())
                     }
-                    tasks_by_label
-                },
-            );
-            tasks_by_label = currently_resolved_tasks.iter().fold(
-                tasks_by_label,
-                |mut tasks_by_label, (source, task, lru_score)| {
-                    match tasks_by_label.entry((source.clone(), task.resolved_label.clone())) {
-                        btree_map::Entry::Occupied(mut o) => {
-                            let (previous_task, _) = o.get();
-                            let new_template = task.original_task();
-                            if new_template != previous_task.original_task() {
-                                o.insert((task.clone(), *lru_score));
-                            }
-                        }
-                        btree_map::Entry::Vacant(v) => {
-                            v.insert((task.clone(), *lru_score));
-                        }
+                    hash_map::Entry::Vacant(v) => {
+                        v.insert(HashSet::from_iter(Some(resolved_task.id.clone())));
+                        true
                     }
-                    tasks_by_label
-                },
-            );
+                }
+            })
+            .sorted_unstable_by(task_lru_comparator)
+            .map(|(kind, task, _)| (kind, task))
+            .collect::<Vec<_>>();
 
-            let resolved = tasks_by_label
-                .into_iter()
-                .map(|((kind, _), (task, lru_score))| (kind, task, lru_score))
-                .sorted_by(task_lru_comparator)
-                .filter_map(|(kind, task, lru_score)| {
-                    if lru_score < not_used_score {
-                        Some((kind, task))
-                    } else {
-                        None
-                    }
-                })
-                .collect::<Vec<_>>();
-
-            (
-                resolved,
-                currently_resolved_tasks
-                    .into_iter()
-                    .sorted_unstable_by(task_lru_comparator)
-                    .map(|(kind, task, _)| (kind, task))
-                    .collect(),
-            )
-        })
+        (previously_spawned_tasks, new_resolved_tasks)
     }
 
     /// Returns the last scheduled task by task_id if provided.
@@ -386,6 +233,86 @@ impl Inventory {
     /// A similar may still resurface in `used_and_current_resolved_tasks` when its [`TaskTemplate`] is resolved again.
     pub fn delete_previously_used(&mut self, id: &TaskId) {
         self.last_scheduled_tasks.retain(|(_, task)| &task.id != id);
+    }
+
+    fn templates_from_settings(
+        &self,
+        worktree: Option<WorktreeId>,
+    ) -> impl '_ + Iterator<Item = (TaskSourceKind, TaskTemplate)> {
+        self.templates_from_settings
+            .global
+            .clone()
+            .into_iter()
+            .map(|template| {
+                (
+                    TaskSourceKind::AbsPath {
+                        id_base: Cow::Borrowed("global tasks.json"),
+                        abs_path: paths::tasks_file().clone(),
+                    },
+                    template,
+                )
+            })
+            .chain(worktree.into_iter().flat_map(|worktree| {
+                self.templates_from_settings
+                    .worktree
+                    .get(&worktree)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|(directory, templates)| {
+                        templates.iter().map(move |template| (directory, template))
+                    })
+                    .map(move |(directory, template)| {
+                        (
+                            TaskSourceKind::Worktree {
+                                id: worktree,
+                                directory_in_worktree: directory.to_path_buf(),
+                                id_base: Cow::Owned(format!(
+                                    "local worktree tasks from directory {directory:?}"
+                                )),
+                            },
+                            template.clone(),
+                        )
+                    })
+            }))
+    }
+
+    /// Updates in-memory task metadata from the JSON string given.
+    /// Will fail if the JSON is not a valid array of objects, but will continue if any object will not parse into a [`TaskTemplate`].
+    ///
+    /// Global tasks are updated for no worktree provided, otherwise the worktree metadata for a given path will be updated.
+    pub(crate) fn update_file_based_tasks(
+        &mut self,
+        location: Option<SettingsLocation<'_>>,
+        raw_tasks_json: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let raw_tasks =
+            parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json.unwrap_or("[]"))
+                .context("parsing tasks file content as a JSON array")?;
+        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
+            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
+        });
+
+        let parsed_templates = &mut self.templates_from_settings;
+        match location {
+            Some(location) => {
+                let new_templates = new_templates.collect::<Vec<_>>();
+                if new_templates.is_empty() {
+                    if let Some(worktree_tasks) =
+                        parsed_templates.worktree.get_mut(&location.worktree_id)
+                    {
+                        worktree_tasks.remove(location.path);
+                    }
+                } else {
+                    parsed_templates
+                        .worktree
+                        .entry(location.worktree_id)
+                        .or_default()
+                        .insert(Arc::from(location.path), new_templates);
+                }
+            }
+            None => parsed_templates.global = new_templates.collect(),
+        }
+        Ok(())
     }
 }
 
@@ -432,39 +359,14 @@ fn task_variables_preference(task: &ResolvedTask) -> Reverse<usize> {
 
 #[cfg(test)]
 mod test_inventory {
-    use gpui::{AppContext, Model, TestAppContext};
+    use gpui::{Model, TestAppContext};
     use itertools::Itertools;
-    use task::{
-        static_source::{StaticSource, TrackedFile},
-        TaskContext, TaskTemplate, TaskTemplates,
-    };
+    use task::TaskContext;
     use worktree::WorktreeId;
 
     use crate::Inventory;
 
-    use super::{task_source_kind_preference, TaskSourceKind, UnboundedSender};
-
-    pub(super) fn static_test_source(
-        task_names: impl IntoIterator<Item = String>,
-        updates: UnboundedSender<()>,
-        cx: &mut AppContext,
-    ) -> StaticSource {
-        let tasks = TaskTemplates(
-            task_names
-                .into_iter()
-                .map(|name| TaskTemplate {
-                    label: name,
-                    command: "test command".to_owned(),
-                    ..TaskTemplate::default()
-                })
-                .collect(),
-        );
-        let (tx, rx) = futures::channel::mpsc::unbounded();
-        let file = TrackedFile::new(rx, updates, cx);
-        tx.unbounded_send(serde_json::to_string(&tasks).unwrap())
-            .unwrap();
-        StaticSource::new(file)
-    }
+    use super::{task_source_kind_preference, TaskSourceKind};
 
     pub(super) fn task_template_names(
         inventory: &Model<Inventory>,
@@ -506,17 +408,9 @@ mod test_inventory {
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<(TaskSourceKind, String)> {
-        let (used, current) = inventory
-            .update(cx, |inventory, cx| {
-                inventory.used_and_current_resolved_tasks(
-                    None,
-                    worktree,
-                    None,
-                    &TaskContext::default(),
-                    cx,
-                )
-            })
-            .await;
+        let (used, current) = inventory.update(cx, |inventory, cx| {
+            inventory.used_and_current_resolved_tasks(worktree, None, &TaskContext::default(), cx)
+        });
         let mut all = used;
         all.extend(current);
         all.into_iter()
@@ -529,12 +423,12 @@ mod test_inventory {
 /// A context provided that tries to provide values for all non-custom [`VariableName`] variants for a currently opened file.
 /// Applied as a base for every custom [`ContextProvider`] unless explicitly oped out.
 pub struct BasicContextProvider {
-    project: Model<Project>,
+    worktree_store: Model<WorktreeStore>,
 }
 
 impl BasicContextProvider {
-    pub fn new(project: Model<Project>) -> Self {
-        Self { project }
+    pub fn new(worktree_store: Model<WorktreeStore>) -> Self {
+        Self { worktree_store }
     }
 }
 
@@ -585,7 +479,7 @@ impl ContextProvider for BasicContextProvider {
                 .file()
                 .map(|file| file.worktree_id(cx))
                 .and_then(|worktree_id| {
-                    self.project
+                    self.worktree_store
                         .read(cx)
                         .worktree_for_id(worktree_id, cx)
                         .map(|worktree| worktree.read(cx).abs_path())
@@ -653,12 +547,17 @@ impl ContextProvider for ContextProviderWithTasks {
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
+    use pretty_assertions::assert_eq;
+    use serde_json::json;
+
+    use crate::task_store::TaskStore;
 
     use super::test_inventory::*;
     use super::*;
 
     #[gpui::test]
     async fn test_task_list_sorting(cx: &mut TestAppContext) {
+        init_test(cx);
         let inventory = cx.update(Inventory::new);
         let initial_tasks = resolved_task_names(&inventory, None, cx).await;
         assert!(
@@ -670,31 +569,6 @@ mod tests {
             initial_tasks.is_empty(),
             "No tasks expected for empty inventory, but got {initial_tasks:?}"
         );
-
-        inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| static_test_source(vec!["3_task".to_string()], tx, cx),
-                cx,
-            );
-        });
-        inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| {
-                    static_test_source(
-                        vec![
-                            "1_task".to_string(),
-                            "2_task".to_string(),
-                            "1_a_task".to_string(),
-                        ],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-        });
         cx.run_until_parked();
         let expected_initial_state = [
             "1_a_task".to_string(),
@@ -702,6 +576,17 @@ mod tests {
             "2_task".to_string(),
             "3_task".to_string(),
         ];
+
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    None,
+                    Some(&mock_tasks_from_names(
+                        expected_initial_state.iter().map(|name| name.as_str()),
+                    )),
+                )
+                .unwrap();
+        });
         assert_eq!(
             task_template_names(&inventory, None, cx),
             &expected_initial_state,
@@ -720,7 +605,6 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx).await,
             vec![
-                "2_task".to_string(),
                 "2_task".to_string(),
                 "1_a_task".to_string(),
                 "1_task".to_string(),
@@ -742,21 +626,21 @@ mod tests {
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
-                "3_task".to_string(),
-                "1_task".to_string(),
-                "2_task".to_string(),
                 "1_a_task".to_string(),
             ],
         );
 
-        inventory.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| {
-                    static_test_source(vec!["10_hello".to_string(), "11_hello".to_string()], tx, cx)
-                },
-                cx,
-            );
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    None,
+                    Some(&mock_tasks_from_names(
+                        ["10_hello", "11_hello"]
+                            .into_iter()
+                            .chain(expected_initial_state.iter().map(|name| name.as_str())),
+                    )),
+                )
+                .unwrap();
         });
         cx.run_until_parked();
         let expected_updated_state = [
@@ -774,9 +658,6 @@ mod tests {
         assert_eq!(
             resolved_task_names(&inventory, None, cx).await,
             vec![
-                "3_task".to_string(),
-                "1_task".to_string(),
-                "2_task".to_string(),
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
@@ -798,10 +679,6 @@ mod tests {
                 "3_task".to_string(),
                 "1_task".to_string(),
                 "2_task".to_string(),
-                "11_hello".to_string(),
-                "3_task".to_string(),
-                "1_task".to_string(),
-                "2_task".to_string(),
                 "1_a_task".to_string(),
                 "10_hello".to_string(),
             ],
@@ -810,133 +687,50 @@ mod tests {
 
     #[gpui::test]
     async fn test_inventory_static_task_filters(cx: &mut TestAppContext) {
-        let inventory_with_statics = cx.update(Inventory::new);
+        init_test(cx);
+        let inventory = cx.update(Inventory::new);
         let common_name = "common_task_name";
-        let path_1 = Path::new("path_1");
-        let path_2 = Path::new("path_2");
         let worktree_1 = WorktreeId::from_usize(1);
-        let worktree_path_1 = Path::new("worktree_path_1");
         let worktree_2 = WorktreeId::from_usize(2);
-        let worktree_path_2 = Path::new("worktree_path_2");
 
-        inventory_with_statics.update(cx, |inventory, cx| {
-            inventory.add_source(
-                TaskSourceKind::UserInput,
-                |tx, cx| {
-                    static_test_source(
-                        vec!["user_input".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_1.to_path_buf(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["static_source_1".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_2.to_path_buf(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["static_source_2".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::Worktree {
-                    id: worktree_1,
-                    abs_path: worktree_path_1.to_path_buf(),
-                    id_base: "test_source".into(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["worktree_1".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-            inventory.add_source(
-                TaskSourceKind::Worktree {
-                    id: worktree_2,
-                    abs_path: worktree_path_2.to_path_buf(),
-                    id_base: "test_source".into(),
-                },
-                |tx, cx| {
-                    static_test_source(
-                        vec!["worktree_2".to_string(), common_name.to_string()],
-                        tx,
-                        cx,
-                    )
-                },
-                cx,
-            );
-        });
         cx.run_until_parked();
         let worktree_independent_tasks = vec![
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_1.to_path_buf(),
+                    id_base: "global tasks.json".into(),
+                    abs_path: paths::tasks_file().clone(),
+                },
+                common_name.to_string(),
+            ),
+            (
+                TaskSourceKind::AbsPath {
+                    id_base: "global tasks.json".into(),
+                    abs_path: paths::tasks_file().clone(),
                 },
                 "static_source_1".to_string(),
             ),
             (
                 TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_1.to_path_buf(),
-                },
-                common_name.to_string(),
-            ),
-            (
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_2.to_path_buf(),
-                },
-                common_name.to_string(),
-            ),
-            (
-                TaskSourceKind::AbsPath {
-                    id_base: "test source".into(),
-                    abs_path: path_2.to_path_buf(),
+                    id_base: "global tasks.json".into(),
+                    abs_path: paths::tasks_file().clone(),
                 },
                 "static_source_2".to_string(),
             ),
-            (TaskSourceKind::UserInput, common_name.to_string()),
-            (TaskSourceKind::UserInput, "user_input".to_string()),
         ];
         let worktree_1_tasks = [
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    abs_path: worktree_path_1.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::Worktree {
                     id: worktree_1,
-                    abs_path: worktree_path_1.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 "worktree_1".to_string(),
             ),
@@ -945,36 +739,63 @@ mod tests {
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    abs_path: worktree_path_2.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 common_name.to_string(),
             ),
             (
                 TaskSourceKind::Worktree {
                     id: worktree_2,
-                    abs_path: worktree_path_2.to_path_buf(),
-                    id_base: "test_source".into(),
+                    directory_in_worktree: PathBuf::from(".zed"),
+                    id_base: "local worktree tasks from directory \".zed\"".into(),
                 },
                 "worktree_2".to_string(),
             ),
         ];
 
-        let all_tasks = worktree_1_tasks
-            .iter()
-            .chain(worktree_2_tasks.iter())
-            // worktree-less tasks come later in the list
-            .chain(worktree_independent_tasks.iter())
-            .cloned()
-            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
-            .collect::<Vec<_>>();
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(
+                    None,
+                    Some(&mock_tasks_from_names(
+                        worktree_independent_tasks
+                            .iter()
+                            .map(|(_, name)| name.as_str()),
+                    )),
+                )
+                .unwrap();
+            inventory
+                .update_file_based_tasks(
+                    Some(SettingsLocation {
+                        worktree_id: worktree_1,
+                        path: Path::new(".zed"),
+                    }),
+                    Some(&mock_tasks_from_names(
+                        worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
+                    )),
+                )
+                .unwrap();
+            inventory
+                .update_file_based_tasks(
+                    Some(SettingsLocation {
+                        worktree_id: worktree_2,
+                        path: Path::new(".zed"),
+                    }),
+                    Some(&mock_tasks_from_names(
+                        worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
+                    )),
+                )
+                .unwrap();
+        });
 
         assert_eq!(
-            list_tasks(&inventory_with_statics, None, cx).await,
-            all_tasks
+            list_tasks(&inventory, None, cx).await,
+            worktree_independent_tasks,
+            "Without a worktree, only worktree-independent tasks should be listed"
         );
         assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_1), cx).await,
+            list_tasks(&inventory, Some(worktree_1), cx).await,
             worktree_1_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -983,7 +804,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(
-            list_tasks(&inventory_with_statics, Some(worktree_2), cx).await,
+            list_tasks(&inventory, Some(worktree_2), cx).await,
             worktree_2_tasks
                 .iter()
                 .chain(worktree_independent_tasks.iter())
@@ -993,25 +814,39 @@ mod tests {
         );
     }
 
+    fn init_test(_cx: &mut TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+        TaskStore::init(None);
+    }
+
     pub(super) async fn resolved_task_names(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
     ) -> Vec<String> {
-        let (used, current) = inventory
-            .update(cx, |inventory, cx| {
-                inventory.used_and_current_resolved_tasks(
-                    None,
-                    worktree,
-                    None,
-                    &TaskContext::default(),
-                    cx,
-                )
-            })
-            .await;
+        let (used, current) = inventory.update(cx, |inventory, cx| {
+            inventory.used_and_current_resolved_tasks(worktree, None, &TaskContext::default(), cx)
+        });
         used.into_iter()
             .chain(current)
             .map(|(_, task)| task.original_task().label.clone())
             .collect()
+    }
+
+    fn mock_tasks_from_names<'a>(task_names: impl Iterator<Item = &'a str> + 'a) -> String {
+        serde_json::to_string(&serde_json::Value::Array(
+            task_names
+                .map(|task_name| {
+                    json!({
+                        "label": task_name,
+                        "command": "echo",
+                        "args": vec![task_name],
+                    })
+                })
+                .collect::<Vec<_>>(),
+        ))
+        .unwrap()
     }
 }

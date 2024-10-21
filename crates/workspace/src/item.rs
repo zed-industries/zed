@@ -40,6 +40,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 pub struct ItemSettings {
     pub git_status: bool,
     pub close_position: ClosePosition,
+    pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
 }
 
@@ -58,13 +59,12 @@ pub enum ClosePosition {
     Right,
 }
 
-impl ClosePosition {
-    pub fn right(&self) -> bool {
-        match self {
-            ClosePosition::Left => false,
-            ClosePosition::Right => true,
-        }
-    }
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ActivateOnClose {
+    #[default]
+    History,
+    Neighbour,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -81,6 +81,10 @@ pub struct ItemSettingsContent {
     ///
     /// Default: false
     file_icons: Option<bool>,
+    /// What to do after closing the current tab.
+    ///
+    /// Default: history
+    pub activate_on_close: Option<ActivateOnClose>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

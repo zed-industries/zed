@@ -52,11 +52,13 @@ pub struct WindowsWindowState {
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
+    initial_placement: Option<WindowOpenStatus>,
     hwnd: HWND,
 }
 
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
+    this: Weak<Self>,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -97,6 +99,7 @@ impl WindowsWindowState {
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
+        let initial_placement = None;
 
         Ok(Self {
             origin,
@@ -114,6 +117,7 @@ impl WindowsWindowState {
             nc_button_pressed,
             display,
             fullscreen,
+            initial_placement,
             hwnd,
         })
     }
@@ -219,9 +223,10 @@ impl WindowsWindowStatePtr {
             context.display,
         )?);
 
-        Ok(Rc::new(Self {
-            state,
+        Ok(Rc::new_cyclic(|this| Self {
             hwnd,
+            this: this.clone(),
+            state,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
@@ -230,6 +235,89 @@ impl WindowsWindowStatePtr {
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
         }))
+    }
+
+    fn toggle_fullscreen(&self) {
+        let Some(state_ptr) = self.this.upgrade() else {
+            log::error!("Unable to toggle fullscreen: window has been dropped");
+            return;
+        };
+        self.executor
+            .spawn(async move {
+                let mut lock = state_ptr.state.borrow_mut();
+                let StyleAndBounds {
+                    style,
+                    x,
+                    y,
+                    cx,
+                    cy,
+                } = if let Some(state) = lock.fullscreen.take() {
+                    state
+                } else {
+                    let (window_bounds, _) = lock.calculate_window_bounds();
+                    lock.fullscreen_restore_bounds = window_bounds;
+                    let style =
+                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
+                    let mut rc = RECT::default();
+                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
+                    let _ = lock.fullscreen.insert(StyleAndBounds {
+                        style,
+                        x: rc.left,
+                        y: rc.top,
+                        cx: rc.right - rc.left,
+                        cy: rc.bottom - rc.top,
+                    });
+                    let style = style
+                        & !(WS_THICKFRAME
+                            | WS_SYSMENU
+                            | WS_MAXIMIZEBOX
+                            | WS_MINIMIZEBOX
+                            | WS_CAPTION);
+                    let physical_bounds = lock.display.physical_bounds();
+                    StyleAndBounds {
+                        style,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
+                    }
+                };
+                drop(lock);
+                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
+                unsafe {
+                    SetWindowPos(
+                        state_ptr.hwnd,
+                        HWND::default(),
+                        x,
+                        y,
+                        cx,
+                        cy,
+                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+                    )
+                }
+                .log_err();
+            })
+            .detach();
+    }
+
+    fn set_window_placement(&self) -> Result<()> {
+        let Some(open_status) = self.state.borrow_mut().initial_placement.take() else {
+            return Ok(());
+        };
+        match open_status.state {
+            WindowOpenState::Maximized => unsafe {
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+            },
+            WindowOpenState::Fullscreen => {
+                unsafe { SetWindowPlacement(self.hwnd, &open_status.placement)? };
+                self.toggle_fullscreen();
+            }
+            WindowOpenState::Windowed => unsafe {
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+            },
+        }
+        Ok(())
     }
 }
 
@@ -295,9 +383,6 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
-        if !params.show {
-            dwstyle |= WS_MINIMIZE;
-        }
 
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
@@ -336,36 +421,27 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
+        // We should call `?` on state_ptr first, then call `?` on hwnd.
         // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
-        let raw_hwnd = creation_result?;
+        let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
-        unsafe {
-            let mut placement = WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                ..Default::default()
-            };
-            GetWindowPlacement(raw_hwnd, &mut placement)?;
-            // the bounds may be not inside the display
-            let bounds = if display.check_given_bounds(params.bounds) {
-                params.bounds
-            } else {
-                display.default_bounds()
-            };
-            let mut lock = state_ptr.state.borrow_mut();
-            let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.update(raw_hwnd)?;
-            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
-            drop(lock);
-            SetWindowPlacement(raw_hwnd, &placement)?;
-        }
-
+        state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
+        let placement = retrieve_window_placement(
+            hwnd,
+            display,
+            params.bounds,
+            state_ptr.state.borrow().scale_factor,
+            state_ptr.state.borrow().border_offset,
+        )?;
         if params.show {
-            unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
+            unsafe { SetWindowPlacement(hwnd, &placement)? };
         } else {
-            unsafe { ShowWindow(raw_hwnd, SW_HIDE).ok()? };
+            state_ptr.state.borrow_mut().initial_placement = Some(WindowOpenStatus {
+                placement,
+                state: WindowOpenState::Windowed,
+            });
         }
 
         Ok(Self(state_ptr))
@@ -541,11 +617,18 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { SetActiveWindow(hwnd).log_err() };
-        unsafe { SetFocus(hwnd).log_err() };
-        // todo(windows)
-        // crate `windows 0.56` reports true as Err
-        unsafe { SetForegroundWindow(hwnd).as_bool() };
+        let this = self.0.clone();
+        self.0
+            .executor
+            .spawn(async move {
+                this.set_window_placement().log_err();
+                unsafe { SetActiveWindow(hwnd).log_err() };
+                unsafe { SetFocus(hwnd).log_err() };
+                // todo(windows)
+                // crate `windows 0.56` reports true as Err
+                unsafe { SetForegroundWindow(hwnd).as_bool() };
+            })
+            .detach();
     }
 
     fn is_active(&self) -> bool {
@@ -576,68 +659,21 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn zoom(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err() };
+        unsafe {
+            if IsWindowVisible(self.0.hwnd).as_bool() {
+                ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
+            } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+                status.state = WindowOpenState::Maximized;
+            }
+        }
     }
 
     fn toggle_fullscreen(&self) {
-        let state_ptr = self.0.clone();
-        self.0
-            .executor
-            .spawn(async move {
-                let mut lock = state_ptr.state.borrow_mut();
-                let StyleAndBounds {
-                    style,
-                    x,
-                    y,
-                    cx,
-                    cy,
-                } = if let Some(state) = lock.fullscreen.take() {
-                    state
-                } else {
-                    let (window_bounds, _) = lock.calculate_window_bounds();
-                    lock.fullscreen_restore_bounds = window_bounds;
-                    let style =
-                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
-                    let mut rc = RECT::default();
-                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
-                    let _ = lock.fullscreen.insert(StyleAndBounds {
-                        style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
-                    });
-                    let style = style
-                        & !(WS_THICKFRAME
-                            | WS_SYSMENU
-                            | WS_MAXIMIZEBOX
-                            | WS_MINIMIZEBOX
-                            | WS_CAPTION);
-                    let physical_bounds = lock.display.physical_bounds();
-                    StyleAndBounds {
-                        style,
-                        x: physical_bounds.left().0,
-                        y: physical_bounds.top().0,
-                        cx: physical_bounds.size.width.0,
-                        cy: physical_bounds.size.height.0,
-                    }
-                };
-                drop(lock);
-                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
-                unsafe {
-                    SetWindowPos(
-                        state_ptr.hwnd,
-                        HWND::default(),
-                        x,
-                        y,
-                        cx,
-                        cy,
-                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
-                    )
-                }
-                .log_err();
-            })
-            .detach();
+        if unsafe { IsWindowVisible(self.0.hwnd).as_bool() } {
+            self.0.toggle_fullscreen();
+        } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+            status.state = WindowOpenState::Fullscreen;
+        }
     }
 
     fn is_fullscreen(&self) -> bool {
@@ -922,6 +958,17 @@ impl WindowBorderOffset {
     }
 }
 
+struct WindowOpenStatus {
+    placement: WINDOWPLACEMENT,
+    state: WindowOpenState,
+}
+
+enum WindowOpenState {
+    Maximized,
+    Fullscreen,
+    Windowed,
+}
+
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
     const CLASS_NAME: PCWSTR = w!("Zed::Window");
 
@@ -1064,6 +1111,29 @@ fn calculate_client_rect(
         origin: logical_point(left as f32, top as f32, scale_factor),
         size: physical_size.to_pixels(scale_factor),
     }
+}
+
+fn retrieve_window_placement(
+    hwnd: HWND,
+    display: WindowsDisplay,
+    initial_bounds: Bounds<Pixels>,
+    scale_factor: f32,
+    border_offset: WindowBorderOffset,
+) -> Result<WINDOWPLACEMENT> {
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowPlacement(hwnd, &mut placement)? };
+    // the bounds may be not inside the display
+    let bounds = if display.check_given_bounds(initial_bounds) {
+        initial_bounds
+    } else {
+        display.default_bounds()
+    };
+    let bounds = bounds.to_device_pixels(scale_factor);
+    placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
+    Ok(placement)
 }
 
 mod windows_renderer {

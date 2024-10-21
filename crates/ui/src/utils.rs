@@ -1,5 +1,7 @@
-//! UI-related utilities (e.g. converting dates to a human-readable form).
+//! UI-related utilities
 
 mod format_distance;
+mod with_rem_size;
 
 pub use format_distance::*;
+pub use with_rem_size::*;

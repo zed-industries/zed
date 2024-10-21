@@ -37,3 +37,4 @@ windows.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
+regex.workspace = true

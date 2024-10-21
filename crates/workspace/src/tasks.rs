@@ -1,4 +1,5 @@
 use project::TaskSourceKind;
+use remote::ConnectionState;
 use task::{ResolvedTask, TaskContext, TaskTemplate};
 use ui::ViewContext;
 
@@ -12,6 +13,19 @@ pub fn schedule_task(
     omit_history: bool,
     cx: &mut ViewContext<'_, Workspace>,
 ) {
+    match workspace.project.read(cx).ssh_connection_state(cx) {
+        None | Some(ConnectionState::Connected) => {}
+        Some(
+            ConnectionState::Connecting
+            | ConnectionState::Disconnected
+            | ConnectionState::HeartbeatMissed
+            | ConnectionState::Reconnecting,
+        ) => {
+            log::warn!("Cannot schedule tasks when disconnected from a remote host");
+            return;
+        }
+    }
+
     if let Some(spawn_in_terminal) =
         task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
     {
@@ -36,9 +50,13 @@ pub fn schedule_resolved_task(
         if !omit_history {
             resolved_task.resolved = Some(spawn_in_terminal.clone());
             workspace.project().update(cx, |project, cx| {
-                project.task_inventory().update(cx, |inventory, _| {
-                    inventory.task_scheduled(task_source_kind, resolved_task);
-                })
+                if let Some(task_inventory) =
+                    project.task_store().read(cx).task_inventory().cloned()
+                {
+                    task_inventory.update(cx, |inventory, _| {
+                        inventory.task_scheduled(task_source_kind, resolved_task);
+                    })
+                }
             });
         }
         cx.emit(crate::Event::SpawnTask(Box::new(spawn_in_terminal)));

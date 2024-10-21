@@ -17,9 +17,12 @@ use crate::{
     ThemeStyles,
 };
 
+/// The metadata for a theme.
 #[derive(Debug, Clone)]
 pub struct ThemeMeta {
+    /// The name of the theme.
     pub name: SharedString,
+    /// The appearance of the theme.
     pub appearance: Appearance,
 }
 
@@ -38,6 +41,7 @@ struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
 }
 
+/// The registry for themes.
 pub struct ThemeRegistry {
     state: RwLock<ThemeRegistryState>,
     assets: Box<dyn AssetSource>,
@@ -61,6 +65,7 @@ impl ThemeRegistry {
         cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
     }
 
+    /// Creates a new [`ThemeRegistry`] with the given [`AssetSource`].
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let registry = Self {
             state: RwLock::new(ThemeRegistryState {
@@ -69,12 +74,9 @@ impl ThemeRegistry {
             assets,
         };
 
-        // We're loading our new versions of the One themes by default, as
-        // we need them to be loaded for tests.
-        //
-        // These themes will get overwritten when `load_user_themes` is called
-        // when Zed starts, so the One variants used will be the ones ported from Zed1.
-        registry.insert_theme_families([crate::one_themes::one_family()]);
+        // We're loading the Zed default theme, as we need a theme to be loaded
+        // for tests.
+        registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
 
         registry
     }
@@ -99,6 +101,7 @@ impl ThemeRegistry {
         }
     }
 
+    /// Inserts user themes into the registry.
     pub fn insert_user_themes(&self, themes: impl IntoIterator<Item = ThemeContent>) {
         self.insert_themes(themes.into_iter().map(|user_theme| {
             let mut theme_colors = match user_theme.appearance {
@@ -185,16 +188,19 @@ impl ThemeRegistry {
             .retain(|name, _| !themes_to_remove.contains(name))
     }
 
-    pub fn clear(&mut self) {
+    /// Removes all themes from the registry.
+    pub fn clear(&self) {
         self.state.write().themes.clear();
     }
 
+    /// Returns the names of all themes in the registry.
     pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
         let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
         names.sort();
         names
     }
 
+    /// Returns the metadata of all themes in the registry.
     pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
         self.state
             .read()
@@ -207,6 +213,7 @@ impl ThemeRegistry {
             .collect()
     }
 
+    /// Returns the theme with the given name.
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
         self.state
             .read()
@@ -261,6 +268,7 @@ impl ThemeRegistry {
         Ok(())
     }
 
+    /// Asynchronously reads the user theme from the specified path.
     pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
         let reader = fs.open_sync(theme_path).await?;
         let theme_family: ThemeFamilyContent = serde_json_lenient::from_reader(reader)?;

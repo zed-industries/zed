@@ -39,9 +39,13 @@ impl Editor {
     ) -> Option<Vec<MultiBufferIndentGuide>> {
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-                language_settings(buffer.read(cx).language(), buffer.read(cx).file(), cx)
-                    .indent_guides
-                    .enabled
+                language_settings(
+                    buffer.read(cx).language().map(|l| l.name()),
+                    buffer.read(cx).file(),
+                    cx,
+                )
+                .indent_guides
+                .enabled
             } else {
                 true
             }

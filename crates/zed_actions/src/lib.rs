@@ -27,6 +27,7 @@ actions!(
     [
         OpenSettings,
         OpenAccountSettings,
+        OpenServerSettings,
         Quit,
         OpenKeymap,
         About,

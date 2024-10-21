@@ -1,4 +1,3 @@
-use crate::extension_builder::WASI_ADAPTER_URL;
 use crate::extension_manifest::SchemaVersion;
 use crate::extension_settings::ExtensionSettings;
 use crate::{
@@ -12,7 +11,7 @@ use collections::BTreeMap;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
-use http_client::{AsyncBody, FakeHttpClient, HttpClient, Response};
+use http_client::{FakeHttpClient, Response};
 use indexed_docs::IndexedDocsRegistry;
 use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
 use node_runtime::NodeRuntime;
@@ -29,7 +28,6 @@ use std::{
     sync::Arc,
 };
 use theme::ThemeRegistry;
-use ureq_client::UreqClient;
 use util::test::temp_tree;
 
 #[cfg(test)]
@@ -578,7 +576,8 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             std::env::consts::ARCH
         )
     });
-    let builder_client = Arc::new(UreqClient::new(None, user_agent, cx.executor().clone()));
+    let builder_client =
+        Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
     let extension_store = cx.new_model(|cx| {
         ExtensionStore::new(
@@ -769,50 +768,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     // The old language server directory has been cleaned up.
     assert!(fs.metadata(&expected_server_path).await.unwrap().is_none());
-}
-
-#[gpui::test]
-async fn test_wasi_adapter_download(cx: &mut TestAppContext) {
-    let client = Arc::new(UreqClient::new(
-        None,
-        "zed-test-wasi-adapter-download".to_string(),
-        cx.executor().clone(),
-    ));
-
-    let mut response = client
-        .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
-        .await
-        .unwrap();
-
-    let mut content = Vec::new();
-    let mut body = BufReader::new(response.body_mut());
-    body.read_to_end(&mut content).await.unwrap();
-
-    assert!(wasmparser::Parser::is_core_wasm(&content));
-    assert_eq!(content.len(), 96801); // Determined by downloading this to my computer
-    wit_component::ComponentEncoder::default()
-        .adapter("wasi_snapshot_preview1", &content)
-        .unwrap();
-}
-
-#[tokio::test]
-async fn test_wasi_adapter_download_tokio() {
-    let client = Arc::new(ReqwestClient::new());
-
-    let mut response = client
-        .get(WASI_ADAPTER_URL, AsyncBody::default(), true)
-        .await
-        .unwrap();
-
-    let mut content = Vec::new();
-    let mut body = BufReader::new(response.body_mut());
-    body.read_to_end(&mut content).await.unwrap();
-
-    assert!(wasmparser::Parser::is_core_wasm(&content));
-    assert_eq!(content.len(), 96801); // Determined by downloading this to my computer
-    wit_component::ComponentEncoder::default()
-        .adapter("wasi_snapshot_preview1", &content)
-        .unwrap();
 }
 
 fn init_test(cx: &mut TestAppContext) {

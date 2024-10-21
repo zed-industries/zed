@@ -4,6 +4,7 @@ pub mod test;
 mod socks;
 pub mod telemetry;
 pub mod user;
+pub mod zed_urls;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_recursion::async_recursion;
@@ -141,6 +142,7 @@ impl Settings for ProxySettings {
         Ok(Self {
             proxy: sources
                 .user
+                .or(sources.server)
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
@@ -394,7 +396,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Model<T>, cx: &mut AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Model<T>, cx: &AsyncAppContext) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -472,15 +474,21 @@ impl settings::Settings for TelemetrySettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self {
-            diagnostics: sources.user.as_ref().and_then(|v| v.diagnostics).unwrap_or(
-                sources
-                    .default
-                    .diagnostics
-                    .ok_or_else(Self::missing_default)?,
-            ),
+            diagnostics: sources
+                .user
+                .as_ref()
+                .or(sources.server.as_ref())
+                .and_then(|v| v.diagnostics)
+                .unwrap_or(
+                    sources
+                        .default
+                        .diagnostics
+                        .ok_or_else(Self::missing_default)?,
+                ),
             metrics: sources
                 .user
                 .as_ref()
+                .or(sources.server.as_ref())
                 .and_then(|v| v.metrics)
                 .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })
@@ -1137,13 +1145,31 @@ impl Client {
 
             match url_scheme {
                 Https => {
+                    let client_config = {
+                        let mut root_store = rustls::RootCertStore::empty();
+
+                        let root_certs = rustls_native_certs::load_native_certs();
+                        for error in root_certs.errors {
+                            log::warn!("error loading native certs: {:?}", error);
+                        }
+                        root_store.add_parsable_certificates(
+                            &root_certs
+                                .certs
+                                .into_iter()
+                                .map(|cert| cert.as_ref().to_owned())
+                                .collect::<Vec<_>>(),
+                        );
+                        rustls::ClientConfig::builder()
+                            .with_safe_defaults()
+                            .with_root_certificates(root_store)
+                            .with_no_client_auth()
+                    };
+
                     let (stream, _) =
                         async_tungstenite::async_tls::client_async_tls_with_connector(
                             request,
                             stream,
-                            Some(async_tls::TlsConnector::from(
-                                http_client::TLS_CONFIG.clone(),
-                            )),
+                            Some(client_config.into()),
                         )
                         .await?;
                     Ok(Connection::new(

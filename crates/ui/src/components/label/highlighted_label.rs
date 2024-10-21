@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle, StyledText};

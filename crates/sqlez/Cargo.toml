@@ -16,6 +16,7 @@ indoc.workspace = true
 libsqlite3-sys = { version = "0.28", features = ["bundled"] }
 parking_lot.workspace = true
 smol.workspace = true
+sqlformat.workspace = true
 thread_local = "1.1.4"
 util.workspace = true
 uuid.workspace = true

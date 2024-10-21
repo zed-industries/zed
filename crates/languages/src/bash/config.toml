@@ -3,7 +3,7 @@ code_fence_block_name = "bash"
 grammar = "bash"
 path_suffixes = ["sh", "bash", "bashrc", "bash_profile", "bash_aliases", "bash_logout", "profile", "zsh", "zshrc", "zshenv", "zsh_profile", "zsh_aliases", "zsh_histfile", "zlogin", "zprofile", ".env", "PKGBUILD"]
 line_comments = ["# "]
-first_line_pattern = "^#!.*\\b(?:ba|z)?sh\\b"
+first_line_pattern = '^#!.*\b(?:ash|bash|dash|sh|zsh)\b'
 brackets = [
     { start = "[", end = "]", close = true, newline = false },
     { start = "(", end = ")", close = true, newline = false },

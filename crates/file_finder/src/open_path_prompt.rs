@@ -26,6 +26,20 @@ pub struct OpenPathDelegate {
     should_dismiss: bool,
 }
 
+impl OpenPathDelegate {
+    pub fn new(tx: oneshot::Sender<Option<Vec<PathBuf>>>, lister: DirectoryLister) -> Self {
+        Self {
+            tx: Some(tx),
+            lister,
+            selected_index: 0,
+            directory_state: None,
+            matches: Vec::new(),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+            should_dismiss: true,
+        }
+    }
+}
+
 struct DirectoryState {
     path: String,
     match_candidates: Vec<StringMatchCandidate>,
@@ -48,15 +62,7 @@ impl OpenPathPrompt {
         cx: &mut ViewContext<Workspace>,
     ) {
         workspace.toggle_modal(cx, |cx| {
-            let delegate = OpenPathDelegate {
-                tx: Some(tx),
-                lister: lister.clone(),
-                selected_index: 0,
-                directory_state: None,
-                matches: Vec::new(),
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-                should_dismiss: true,
-            };
+            let delegate = OpenPathDelegate::new(tx, lister.clone());
 
             let picker = Picker::uniform_list(delegate, cx).width(rems(34.));
             let query = lister.default_query(cx);

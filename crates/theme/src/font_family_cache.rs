@@ -25,14 +25,17 @@ struct GlobalFontFamilyCache(Arc<FontFamilyCache>);
 impl Global for GlobalFontFamilyCache {}
 
 impl FontFamilyCache {
+    /// Initializes the global font family cache.
     pub fn init_global(cx: &mut AppContext) {
         cx.default_global::<GlobalFontFamilyCache>();
     }
 
+    /// Returns the global font family cache.
     pub fn global(cx: &AppContext) -> Arc<Self> {
         GlobalFontFamilyCache::global(cx).0.clone()
     }
 
+    /// Returns the list of font families.
     pub fn list_font_families(&self, cx: &AppContext) -> Vec<SharedString> {
         if self.state.read().loaded_at.is_some() {
             return self.state.read().font_families.clone();

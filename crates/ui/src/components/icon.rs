@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
@@ -169,6 +170,7 @@ pub enum IconName {
     Dash,
     DatabaseZap,
     Delete,
+    Diff,
     Disconnected,
     Download,
     Ellipsis,
@@ -274,6 +276,7 @@ pub enum IconName {
     Tab,
     Terminal,
     Trash,
+    TrashAlt,
     TriangleRight,
     Undo,
     Unpin,
@@ -471,13 +474,12 @@ impl RenderOnce for IconWithIndicator {
                 this.child(
                     div()
                         .absolute()
-                        .w_2()
-                        .h_2()
-                        .border_1()
+                        .size_2p5()
+                        .border_2()
                         .border_color(indicator_border_color)
                         .rounded_full()
                         .bottom_neg_0p5()
-                        .right_neg_1()
+                        .right_neg_0p5()
                         .child(indicator),
                 )
             })

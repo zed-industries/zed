@@ -284,11 +284,11 @@ impl MetalRenderer {
         }
     }
 
-    pub fn update_transparency(&mut self, _transparent: bool) {
+    pub fn update_transparency(&self, _transparent: bool) {
         // todo(mac)?
     }
 
-    pub fn destroy(&mut self) {
+    pub fn destroy(&self) {
         // nothing to do
     }
 
@@ -486,7 +486,7 @@ impl MetalRenderer {
     }
 
     fn rasterize_paths(
-        &mut self,
+        &self,
         paths: &[Path<ScaledPixels>],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -576,7 +576,7 @@ impl MetalRenderer {
     }
 
     fn draw_shadows(
-        &mut self,
+        &self,
         shadows: &[Shadow],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -639,7 +639,7 @@ impl MetalRenderer {
     }
 
     fn draw_quads(
-        &mut self,
+        &self,
         quads: &[Quad],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -698,7 +698,7 @@ impl MetalRenderer {
     }
 
     fn draw_paths(
-        &mut self,
+        &self,
         paths: &[Path<ScaledPixels>],
         tiles_by_path_id: &HashMap<PathId, AtlasTile>,
         instance_buffer: &mut InstanceBuffer,
@@ -808,7 +808,7 @@ impl MetalRenderer {
     }
 
     fn draw_underlines(
-        &mut self,
+        &self,
         underlines: &[Underline],
         instance_buffer: &mut InstanceBuffer,
         instance_offset: &mut usize,
@@ -871,7 +871,7 @@ impl MetalRenderer {
     }
 
     fn draw_monochrome_sprites(
-        &mut self,
+        &self,
         texture_id: AtlasTextureId,
         sprites: &[MonochromeSprite],
         instance_buffer: &mut InstanceBuffer,
@@ -945,7 +945,7 @@ impl MetalRenderer {
     }
 
     fn draw_polychrome_sprites(
-        &mut self,
+        &self,
         texture_id: AtlasTextureId,
         sprites: &[PolychromeSprite],
         instance_buffer: &mut InstanceBuffer,

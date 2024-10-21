@@ -22,6 +22,7 @@ pub use request::*;
 pub use role::*;
 use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use std::fmt;
 use std::{future::Future, sync::Arc};
 use ui::IconName;
 
@@ -230,6 +231,12 @@ pub struct LanguageModelProviderId(pub SharedString);
 
 #[derive(Clone, Eq, PartialEq, Hash, Debug, Ord, PartialOrd)]
 pub struct LanguageModelProviderName(pub SharedString);
+
+impl fmt::Display for LanguageModelProviderId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl From<String> for LanguageModelId {
     fn from(value: String) -> Self {

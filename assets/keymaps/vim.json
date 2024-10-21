@@ -128,6 +128,10 @@
       "shift-m": "vim::WindowMiddle",
       "shift-l": "vim::WindowBottom",
       // z commands
+      "z enter": ["workspace::SendKeystrokes", "z t ^"],
+      "z -": ["workspace::SendKeystrokes", "z b ^"],
+      "z ^": ["workspace::SendKeystrokes", "shift-h k z b ^"],
+      "z +": ["workspace::SendKeystrokes", "shift-l j z t ^"],
       "z t": "editor::ScrollCursorTop",
       "z z": "editor::ScrollCursorCenter",
       "z .": ["workspace::SendKeystrokes", "z z ^"],
@@ -252,6 +256,7 @@
       "@": ["vim::PushOperator", "ReplayRegister"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
+      "insert": "vim::InsertBefore",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",
@@ -334,7 +339,8 @@
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
-      "ctrl-r": ["vim::PushOperator", "Register"]
+      "ctrl-r": ["vim::PushOperator", "Register"],
+      "insert": "vim::ToggleReplace"
     }
   },
   {
@@ -353,7 +359,8 @@
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "backspace": "vim::UndoReplace",
       "tab": "vim::Tab",
-      "enter": "vim::Enter"
+      "enter": "vim::Enter",
+      "insert": "vim::InsertBefore"
     }
   },
   {

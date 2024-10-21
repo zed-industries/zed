@@ -952,7 +952,7 @@ mod tests {
                     px(14.0),
                     None,
                     true,
-                    2,
+                    0,
                     2,
                     0,
                     FoldPlaceholder::test(),

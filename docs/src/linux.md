@@ -123,16 +123,25 @@ If Vulkan is configured correctly, and Zed is still slow for you, please [file a
 
 ### I can't open any files
 
-### Zed isn't remembering my login
-
 ### Clicking links isn't working
 
-All of these features are provided by XDG desktop portals, specifically:
+These features are provided by XDG desktop portals, specifically:
 
 - `org.freedesktop.portal.FileChooser`
 - `org.freedesktop.portal.OpenURI`
 
 Some window managers, such as `Hyprland`, don't provide a file picker by default. See [this list](https://wiki.archlinux.org/title/XDG_Desktop_Portal#List_of_backends_and_interfaces) as a starting point for alternatives.
+
+### Zed isn't remembering my API keys
+
+### Zed isn't remembering my login
+
+These feature also requires XDG desktop portals, specifically:
+
+- `org.freedesktop.portal.Secret` or
+- `org.freedesktop.Secrets`
+
+Zed needs a place to securely store secrets such as your Zed login cookie or your OpenAI API Keys and we use a system provided keychain to do this. Examples of packages that provide this are `gnome-keyring`, `KWallet` and `keepassxc` among others.
 
 ### Could not start inotify
 

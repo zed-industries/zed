@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::{AnchorCorner, ClickEvent, CursorStyle, MouseButton, View};
 
 use crate::{prelude::*, ContextMenu, PopoverMenu};

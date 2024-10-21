@@ -65,6 +65,7 @@
   ">" @punctuation.bracket)
 
 [
+  "."
   ";"
   ","
   "::"
@@ -121,6 +122,8 @@
   (char_literal)
 ] @string
 
+(escape_sequence) @string.escape
+
 [
   (integer_literal)
   (float_literal)
@@ -147,20 +150,16 @@
   "&&"
   "*"
   "*="
-  "*"
   "+"
   "+="
-  ","
   "-"
   "-="
   "->"
-  "."
   ".."
   "..="
   "..."
   "/="
   ":"
-  ";"
   "<<"
   "<<="
   "<"

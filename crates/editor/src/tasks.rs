@@ -67,10 +67,11 @@ fn task_context_with_editor(
         variables
     };
 
-    let context_task = project.update(cx, |project, cx| {
-        project.task_context_for_location(captured_variables, location.clone(), cx)
-    });
-    cx.spawn(|_| context_task)
+    project.update(cx, |project, cx| {
+        project.task_store().update(cx, |task_store, cx| {
+            task_store.task_context_for_location(captured_variables, location, cx)
+        })
+    })
 }
 
 pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> AsyncTask<TaskContext> {

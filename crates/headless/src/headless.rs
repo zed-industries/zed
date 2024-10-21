@@ -9,7 +9,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use postage::stream::Stream;
 use project::Project;
-use rpc::{proto, ErrorCode, TypedEnvelope};
+use proto::{self, ErrorCode, TypedEnvelope};
 use settings::{Settings, SettingsStore};
 use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
