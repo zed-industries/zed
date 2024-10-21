@@ -114,22 +114,16 @@ pub struct SanitizedPathBuf {
 impl From<PathBuf> for SanitizedPathBuf {
     fn from(path: PathBuf) -> Self {
         println!("path: {:?}, absolute: {}", path, path.is_absolute());
+        debug_assert!(path.is_absolute());
         #[cfg(target_os = "windows")]
         {
-            if path.is_absolute() {
-                let path_string = path.to_string_lossy();
-                if path_string.starts_with("\\\\?\\") {
-                    let trimmed = PathBuf::from(path_string.trim_start_matches("\\\\?\\"));
-                    SanitizedPathBuf { raw: path, trimmed }
-                } else {
-                    let raw = PathBuf::from("\\\\?\\".to_owned() + path_string.as_ref());
-                    SanitizedPathBuf { raw, trimmed: path }
-                }
+            let path_string = path.to_string_lossy();
+            if path_string.starts_with("\\\\?\\") {
+                let trimmed = PathBuf::from(path_string.trim_start_matches("\\\\?\\"));
+                SanitizedPathBuf { raw: path, trimmed }
             } else {
-                SanitizedPathBuf {
-                    raw: path.clone(),
-                    trimmed: path,
-                }
+                let raw = PathBuf::from("\\\\?\\".to_owned() + path_string.as_ref());
+                SanitizedPathBuf { raw, trimmed: path }
             }
         }
         #[cfg(not(target_os = "windows"))]
