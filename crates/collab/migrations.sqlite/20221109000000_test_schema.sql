@@ -11,7 +11,8 @@ CREATE TABLE "users" (
     "metrics_id" TEXT,
     "github_user_id" INTEGER NOT NULL,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
-    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE
+    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE,
+    "custom_llm_monthly_allowance_in_cents" INTEGER
 );
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
 CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");

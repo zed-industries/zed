@@ -1,3 +1,4 @@
+use crate::llm::FREE_TIER_MONTHLY_SPENDING_LIMIT;
 use crate::{
     db::UserId,
     llm::db::{
@@ -49,6 +50,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         },
         false,
         Cents::ZERO,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
@@ -68,6 +70,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         },
         false,
         Cents::ZERO,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
@@ -124,6 +127,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         },
         false,
         Cents::ZERO,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
@@ -180,6 +184,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         },
         false,
         Cents::ZERO,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
@@ -222,6 +227,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         },
         false,
         Cents::ZERO,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
@@ -259,6 +265,7 @@ async fn test_tracking_usage(db: &mut LlmDatabase) {
         },
         false,
         Cents::ZERO,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
