@@ -238,7 +238,7 @@ pub trait SshClientDelegate: Send + Sync {
 
 impl SshSocket {
     fn ssh_command<S: AsRef<OsStr>>(&self, program: S) -> process::Command {
-        let mut command = process::Command::new("ssh");
+        let mut command = util::command::new_smol_command("ssh");
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
             .arg(program);
@@ -1426,7 +1426,7 @@ impl SshRemoteConnection {
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
-        let mut command = process::Command::new("scp");
+        let mut command = util::command::new_smol_command("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
