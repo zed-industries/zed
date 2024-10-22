@@ -23,7 +23,7 @@ use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, window_is_transparent};
-use util::{ResultExt, TryFutureExt};
+use util::TryFutureExt;
 pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
@@ -259,7 +259,7 @@ fn show_hover(
             }
 
             // If there's a diagnostic, assign it on the hover state and notify
-            let local_diagnostic = snapshot
+            let mut local_diagnostic = snapshot
                 .buffer_snapshot
                 .diagnostics_in_range::<_, usize>(anchor..anchor, false)
                 // Find the entry with the most specific range
@@ -281,32 +281,41 @@ fn show_hover(
                     })
             });
 
-            let buffer_snapshot = buffer
-                .update(&mut cx, |buffer, _| buffer.snapshot())
-                .log_err();
-            let (result, invisible_anchor) = if let Some((result, invisible_anchor)) =
-                buffer_snapshot.map(|snapshot| {
-                    let position = anchor.text_anchor;
-                    let offset = text::ToOffset::to_offset(&position, &snapshot);
-                    for ch in snapshot.chars_at(offset).take(1) {
-                        if is_invisible(ch) {
-                            let anchor_end = Anchor {
-                                text_anchor: snapshot.anchor_before(offset),
-                                ..anchor
-                            };
-                            let anchor_start = Anchor {
-                                text_anchor: snapshot.anchor_after(offset),
-                                ..anchor
-                            };
-                            return (Some(ch), Some(anchor_start..anchor_end));
-                        }
-                    }
-                    (None, None)
-                }) {
-                (result, invisible_anchor)
-            } else {
-                (None, None)
-            };
+            if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let after = snapshot.buffer_snapshot.anchor_after(
+                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: anchor..after,
+                })
+            } else if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .reversed_chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let before = snapshot.buffer_snapshot.anchor_before(
+                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::ERROR,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: before..anchor,
+                })
+            }
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -373,65 +382,6 @@ fn show_hover(
                 Some(DiagnosticPopover {
                     local_diagnostic,
                     primary_diagnostic,
-                    parsed_content,
-                    border_color,
-                    background_color,
-                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
-                    anchor: Some(anchor),
-                })
-            } else if result.is_some() {
-                let char = result.unwrap();
-                let message = format!("Unicode character U+{:02X}", char as u32);
-                let new_diagnostic = Diagnostic {
-                    source: None,
-                    code: None,
-                    severity: DiagnosticSeverity::WARNING,
-                    message: message.clone(),
-                    group_id: 0,
-                    is_primary: false,
-                    is_disk_based: false,
-                    is_unnecessary: false,
-                    data: None,
-                };
-                let mut border_color: Option<Hsla> = None;
-                let mut background_color: Option<Hsla> = None;
-                let parsed_content = cx
-                    .new_view(|cx| {
-                        let status_colors = cx.theme().status();
-                        background_color = Some(status_colors.warning_background);
-                        border_color = Some(status_colors.warning_border);
-                        let settings = ThemeSettings::get_global(cx);
-                        let mut base_text_style = cx.text_style();
-                        base_text_style.refine(&TextStyleRefinement {
-                            font_family: Some(settings.ui_font.family.clone()),
-                            font_size: Some(settings.ui_font_size.into()),
-                            color: Some(cx.theme().colors().editor_foreground),
-                            background_color: Some(gpui::transparent_black()),
-                            ..Default::default()
-                        });
-                        let markdown_style = MarkdownStyle {
-                            base_text_style,
-                            selection_background_color: { cx.theme().players().local().selection },
-                            link: TextStyleRefinement {
-                                underline: Some(gpui::UnderlineStyle {
-                                    thickness: px(1.),
-                                    color: Some(cx.theme().colors().editor_foreground),
-                                    wavy: false,
-                                }),
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        };
-                        Markdown::new_text(message, markdown_style.clone(), None, cx, None)
-                    })
-                    .ok();
-                let diagnostic_entry = DiagnosticEntry {
-                    range: invisible_anchor.unwrap(),
-                    diagnostic: new_diagnostic,
-                };
-                Some(DiagnosticPopover {
-                    local_diagnostic: diagnostic_entry.clone(),
-                    primary_diagnostic: Some(diagnostic_entry),
                     parsed_content,
                     border_color,
                     background_color,

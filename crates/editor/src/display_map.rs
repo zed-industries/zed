@@ -819,7 +819,7 @@ impl DisplaySnapshot {
                     let now = char.is_ascii();
                     let end = char.is_ascii() && (char.is_ascii_whitespace() || prev);
                     prev = now;
-                    end
+                    !end
                 }
             });
 

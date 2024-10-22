@@ -140,7 +140,7 @@ fn paint_line(
                     if let Some((background_origin, background_color)) = current_background.as_mut()
                     {
                         let mut width = glyph_origin.x - background_origin.x;
-                        if width == px(0.) {
+                        if width <= px(0.) {
                             width = px(5.)
                         };
                         cx.paint_quad(fill(
