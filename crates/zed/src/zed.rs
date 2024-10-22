@@ -274,7 +274,6 @@ pub fn initialize_workspace(
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
-                cx.focus_self();
             })
         })
         .detach();
