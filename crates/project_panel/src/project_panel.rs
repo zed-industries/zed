@@ -1551,12 +1551,7 @@ impl ProjectPanel {
                 abs_path.and_then(|path| Some(path.parent()?.to_path_buf()))
             };
             if let Some(working_directory) = working_directory {
-                cx.dispatch_action(
-                    workspace::OpenTerminal {
-                        working_directory: working_directory.into(),
-                    }
-                    .boxed_clone(),
-                )
+                cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
             }
         }
     }
