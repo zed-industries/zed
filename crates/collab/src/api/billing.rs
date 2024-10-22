@@ -226,6 +226,13 @@ async fn create_billing_subscription(
         ))?
     };
 
+    if app.db.has_active_billing_subscription(user.id).await? {
+        return Err(Error::http(
+            StatusCode::CONFLICT,
+            "user already has an active subscription".into(),
+        ));
+    }
+
     let customer_id =
         if let Some(existing_customer) = app.db.get_billing_customer_by_user_id(user.id).await? {
             CustomerId::from_str(&existing_customer.stripe_customer_id)
@@ -655,6 +662,33 @@ async fn handle_customer_subscription_event(
             )
             .await?;
     } else {
+        // If the user already has an active billing subscription, ignore the
+        // event and return an `Ok` to signal that it was processed
+        // successfully.
+        //
+        // There is the possibility that this could cause us to not create a
+        // subscription in the following scenario:
+        //
+        //   1. User has an active subscription A
+        //   2. User cancels subscription A
+        //   3. User creates a new subscription B
+        //   4. We process the new subscription B before the cancellation of subscription A
+        //   5. User ends up with no subscriptions
+        //
+        // In theory this situation shouldn't arise as we try to process the events in the order they occur.
+        if app
+            .db
+            .has_active_billing_subscription(billing_customer.user_id)
+            .await?
+        {
+            log::info!(
+                "user {user_id} already has an active subscription, skipping creation of subscription {subscription_id}",
+                user_id = billing_customer.user_id,
+                subscription_id = subscription.id
+            );
+            return Ok(());
+        }
+
         app.db
             .create_billing_subscription(&CreateBillingSubscriptionParams {
                 billing_customer_id: billing_customer.id,
