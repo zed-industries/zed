@@ -253,6 +253,7 @@ messages!(
     (ProjectEntryResponse, Foreground),
     (CountLanguageModelTokens, Background),
     (CountLanguageModelTokensResponse, Background),
+    (RefreshLlmToken, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -364,6 +365,14 @@ messages!(
     (CheckFileExists, Background),
     (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
+    (RemoveWorktree, Foreground),
+    (LanguageServerLog, Foreground),
+    (Toast, Background),
+    (HideToast, Background),
+    (OpenServerSettings, Foreground),
+    (GetPermalinkToLine, Foreground),
+    (GetPermalinkToLineResponse, Foreground),
+    (FlushBufferedMessages, Foreground),
 );
 
 request_messages!(
@@ -486,7 +495,11 @@ request_messages!(
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
     (CheckFileExists, CheckFileExistsResponse),
-    (ShutdownRemoteServer, Ack)
+    (ShutdownRemoteServer, Ack),
+    (RemoveWorktree, Ack),
+    (OpenServerSettings, OpenBufferResponse),
+    (GetPermalinkToLine, GetPermalinkToLineResponse),
+    (FlushBufferedMessages, Ack),
 );
 
 entity_messages!(
@@ -559,6 +572,11 @@ entity_messages!(
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
     CheckFileExists,
+    LanguageServerLog,
+    Toast,
+    HideToast,
+    OpenServerSettings,
+    GetPermalinkToLine,
 );
 
 entity_messages!(

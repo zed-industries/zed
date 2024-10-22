@@ -426,11 +426,12 @@ impl DisplayMap {
     }
 
     fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
+        let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
-            .read(cx)
-            .as_singleton()
-            .and_then(|buffer| buffer.read(cx).language());
-        language_settings(language, None, cx).tab_size
+            .and_then(|buffer| buffer.language())
+            .map(|l| l.name());
+        let file = buffer.and_then(|buffer| buffer.file());
+        language_settings(language, file, cx).tab_size
     }
 
     #[cfg(test)]
@@ -798,7 +799,7 @@ impl DisplaySnapshot {
         layout_line.closest_index_for_x(x) as u32
     }
 
-    pub fn grapheme_at(&self, mut point: DisplayPoint) -> String {
+    pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<String> {
         point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
 
         let chars = self
@@ -827,7 +828,6 @@ impl DisplaySnapshot {
             .graphemes(true)
             .next()
             .map(|s| s.to_owned())
-            .unwrap_or(String::new())
     }
 
     pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {

@@ -119,6 +119,10 @@ impl Markdown {
         this
     }
 
+    pub fn source(&self) -> &str {
+        &self.source
+    }
+
     pub fn append(&mut self, text: &str, cx: &ViewContext<Self>) {
         self.source.push_str(text);
         self.parse(cx);
@@ -135,10 +139,6 @@ impl Markdown {
         self.should_reparse = false;
         self.parsed_markdown = ParsedMarkdown::default();
         self.parse(cx);
-    }
-
-    pub fn source(&self) -> &str {
-        &self.source
     }
 
     pub fn parsed_markdown(&self) -> &ParsedMarkdown {

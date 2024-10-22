@@ -153,6 +153,22 @@ impl WorktreeStore {
         None
     }
 
+    pub fn find_or_create_worktree(
+        &mut self,
+        abs_path: impl AsRef<Path>,
+        visible: bool,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<(Model<Worktree>, PathBuf)>> {
+        let abs_path = abs_path.as_ref();
+        if let Some((tree, relative_path)) = self.find_worktree(abs_path, cx) {
+            Task::ready(Ok((tree, relative_path)))
+        } else {
+            let worktree = self.create_worktree(abs_path, visible, cx);
+            cx.background_executor()
+                .spawn(async move { Ok((worktree.await?, PathBuf::new())) })
+        }
+    }
+
     pub fn entry_for_id<'a>(
         &'a self,
         entry_id: ProjectEntryId,
@@ -231,16 +247,17 @@ impl WorktreeStore {
         if abs_path.starts_with("/~") {
             abs_path = abs_path[1..].to_string();
         }
-        let root_name = PathBuf::from(abs_path.clone())
-            .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .to_string();
+        if abs_path.is_empty() || abs_path == "/" {
+            abs_path = "~/".to_string();
+        }
         cx.spawn(|this, mut cx| async move {
+            let this = this.upgrade().context("Dropped worktree store")?;
+
             let response = client
                 .request(proto::AddWorktree {
                     project_id: SSH_PROJECT_ID,
                     path: abs_path.clone(),
+                    visible,
                 })
                 .await?;
 
@@ -250,15 +267,20 @@ impl WorktreeStore {
                 return Ok(existing_worktree);
             }
 
+            let root_name = PathBuf::from(&response.canonicalized_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(response.canonicalized_path.to_string());
+
             let worktree = cx.update(|cx| {
                 Worktree::remote(
-                    0,
+                    SSH_PROJECT_ID,
                     0,
                     proto::WorktreeMetadata {
                         id: response.worktree_id,
                         root_name,
                         visible,
-                        abs_path,
+                        abs_path: response.canonicalized_path,
                     },
                     client,
                     cx,
@@ -509,11 +531,6 @@ impl WorktreeStore {
         for worktree in &self.worktrees {
             if let Some(worktree) = worktree.upgrade() {
                 worktree.update(cx, |worktree, _| {
-                    println!(
-                        "worktree. is_local: {:?}, is_remote: {:?}",
-                        worktree.is_local(),
-                        worktree.is_remote()
-                    );
                     if let Some(worktree) = worktree.as_remote_mut() {
                         worktree.disconnected_from_host();
                     }
@@ -956,7 +973,7 @@ impl WorktreeStore {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum WorktreeHandle {
     Strong(Model<Worktree>),
     Weak(WeakModel<Worktree>),

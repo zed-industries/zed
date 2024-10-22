@@ -2575,4 +2575,9 @@ impl ScrollHandle {
     pub fn set_logical_scroll_top(&self, ix: usize, px: Pixels) {
         self.0.borrow_mut().requested_scroll_top = Some((ix, px));
     }
+
+    /// Get the count of children for scrollable item.
+    pub fn children_count(&self) -> usize {
+        self.0.borrow().child_bounds.len()
+    }
 }

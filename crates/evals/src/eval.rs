@@ -12,6 +12,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
+use reqwest_client::ReqwestClient;
 use semantic_index::{
     EmbeddingProvider, OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status,
 };
@@ -100,7 +101,7 @@ fn main() -> Result<()> {
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
-        let client = isahc_http_client::IsahcHttpClient::new(None, None);
+        let client = Arc::new(ReqwestClient::user_agent("Zed LLM evals").unwrap());
         cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {

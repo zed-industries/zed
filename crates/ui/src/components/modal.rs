@@ -77,6 +77,7 @@ impl RenderOnce for Modal {
                 v_flex()
                     .id(self.container_id.clone())
                     .w_full()
+                    .flex_1()
                     .gap(Spacing::Large.rems(cx))
                     .when_some(
                         self.container_scroll_handler,
@@ -344,6 +345,7 @@ impl RenderOnce for Section {
         } else {
             v_flex()
                 .w_full()
+                .flex_1()
                 .gap_y(Spacing::Small.rems(cx))
                 .when(self.padded, |this| {
                     this.px(Spacing::Medium.rems(cx) + Spacing::Medium.rems(cx))

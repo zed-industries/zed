@@ -175,7 +175,7 @@ pub fn serialize_cursor_shape(cursor_shape: &CursorShape) -> proto::CursorShape 
     match cursor_shape {
         CursorShape::Bar => proto::CursorShape::CursorBar,
         CursorShape::Block => proto::CursorShape::CursorBlock,
-        CursorShape::Underscore => proto::CursorShape::CursorUnderscore,
+        CursorShape::Underline => proto::CursorShape::CursorUnderscore,
         CursorShape::Hollow => proto::CursorShape::CursorHollow,
     }
 }
@@ -185,7 +185,7 @@ pub fn deserialize_cursor_shape(cursor_shape: proto::CursorShape) -> CursorShape
     match cursor_shape {
         proto::CursorShape::CursorBar => CursorShape::Bar,
         proto::CursorShape::CursorBlock => CursorShape::Block,
-        proto::CursorShape::CursorUnderscore => CursorShape::Underscore,
+        proto::CursorShape::CursorUnderscore => CursorShape::Underline,
         proto::CursorShape::CursorHollow => CursorShape::Hollow,
     }
 }
