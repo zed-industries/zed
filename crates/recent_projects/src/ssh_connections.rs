@@ -130,6 +130,7 @@ pub struct SshPrompt {
 
 pub struct SshConnectionModal {
     pub(crate) prompt: View<SshPrompt>,
+    paths: Vec<PathBuf>,
     finished: bool,
 }
 
@@ -140,6 +141,7 @@ impl SshPrompt {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let connection_string = connection_options.connection_string().into();
+
         Self {
             connection_string,
             nickname,
@@ -257,12 +259,14 @@ impl Render for SshPrompt {
 impl SshConnectionModal {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
+        paths: Vec<PathBuf>,
         nickname: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
             prompt: cx.new_view(|cx| SshPrompt::new(connection_options, nickname, cx)),
             finished: false,
+            paths,
         }
     }
 
@@ -329,6 +333,12 @@ impl Render for SshConnectionModal {
         let theme = cx.theme().clone();
         let body_color = theme.colors().editor_background;
 
+        let mut header_string = format!("{} ", &connection_string);
+        for path in &self.paths {
+            header_string.push_str(&path.to_string_lossy());
+            header_string.push(' ');
+        }
+
         v_flex()
             .elevation_3(cx)
             .w(rems(34.))
@@ -340,7 +350,7 @@ impl Render for SshConnectionModal {
             .on_action(cx.listener(Self::confirm))
             .child(
                 SshConnectionHeader {
-                    connection_string,
+                    connection_string: header_string.into(),
                     nickname,
                 }
                 .render(cx),
@@ -652,10 +662,11 @@ pub async fn open_ssh_project(
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
             let nickname = nickname.clone();
+            let paths = paths.clone();
             move |workspace, cx| {
                 cx.activate_window();
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, nickname.clone(), cx)
+                    SshConnectionModal::new(&connection_options, paths, nickname.clone(), cx)
                 });
 
                 let ui = workspace

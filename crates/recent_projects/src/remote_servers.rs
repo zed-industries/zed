@@ -519,7 +519,7 @@ impl RemoteServerProjects {
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, nickname, cx)
+                    SshConnectionModal::new(&connection_options, Vec::new(), nickname, cx)
                 });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
