@@ -259,6 +259,9 @@ struct Cell {
 
 impl RenderOnce for Cell {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let source = self.source.clone();
+        let cell_type = self.cell_type.clone();
+
         h_flex()
             .w_full()
             .items_start()
@@ -298,19 +301,30 @@ impl RenderOnce for Cell {
                             .child(action)
                     })),
             )
-            .child(
-                v_flex()
-                    .size_full()
-                    .flex_1()
-                    .p_3()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
-                    .font_buffer(cx)
-                    .text_size(TextSize::Editor.rems(cx))
-                    .children(self.source),
-            )
+            .when(cell_type == NotebookCellKind::Markdown, |this| {
+                this.child(
+                    v_flex()
+                        .w_full()
+                        .max_w(px(MAX_TEXT_BLOCK_WIDTH))
+                        .px(px(CODE_BLOCK_INSET))
+                        .children(source.clone()),
+                )
+            })
+            .when(cell_type == NotebookCellKind::Code, |this| {
+                this.child(
+                    v_flex()
+                        .size_full()
+                        .flex_1()
+                        .p_3()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
+                        .font_buffer(cx)
+                        .text_size(TextSize::Editor.rems(cx))
+                        .children(source),
+                )
+            })
     }
 }
 
@@ -461,21 +475,21 @@ impl RenderOnce for NotebookMarkdownCell {
 fn sample_cells() -> Vec<Cell> {
     vec![
         Cell::markdown(vec![
-            "## Table of Contents\n".to_string(),
-            "1.\tIntroduction\n".to_string(),
-            "2.\tOverview of Python Data Visualization Tools\n".to_string(),
-            "3.\tIntroduction to Matplotlib\n".to_string(),
-            "4.\tImport Matplotlib\n".to_string(),
-            "5.\tDisplaying Plots in Matplotlib\n".to_string(),
-            "6.\tMatplotlib Object Hierarchy\n".to_string(),
-            "7.\tMatplotlib interfaces\n".to_string(),
+            "## Table of Contents".to_string(),
+            "1.\tIntroduction".to_string(),
+            "2.\tOverview of Python Data Visualization Tools".to_string(),
+            "3.\tIntroduction to Matplotlib".to_string(),
+            "4.\tImport Matplotlib".to_string(),
+            "5.\tDisplaying Plots in Matplotlib".to_string(),
+            "6.\tMatplotlib Object Hierarchy".to_string(),
+            "7.\tMatplotlib interfaces".to_string(),
         ]),
         Cell::markdown(vec![
-            "## 1. Introduction\n".to_string(),
+            "## 1. Introduction".to_string(),
             "\n".to_string(),
-            "When we want to convey some information to others, there are several ways to do so. The process of conveying the information with the help of plots and graphics is called **Data Visualization**. The plots and graphics take numerical data as input and display output in the form of charts, figures and tables. It helps to analyze and visualize the data clearly and make concrete decisions. It makes complex data more accessible and understandable. The goal of data visualization is to communicate information in a clear and efficient manner.\n".to_string(),
+            "When we want to convey some information to others, there are several ways to do so. The process of conveying the information with the help of plots and graphics is called **Data Visualization**. The plots and graphics take numerical data as input and display output in the form of charts, figures and tables. It helps to analyze and visualize the data clearly and make concrete decisions. It makes complex data more accessible and understandable. The goal of data visualization is to communicate information in a clear and efficient manner.".to_string(),
             "\n".to_string(),
-            "In this project, I shed some light on **Matplotlib**, which is the basic data visualization tool of Python programming language. Python has different data visualization tools available which are suitable for different purposes. First of all, I will list these data visualization tools and then I will discuss Matplotlib.\n".to_string()
+            "In this project, I shed some light on **Matplotlib**, which is the basic data visualization tool of Python programming language. Python has different data visualization tools available which are suitable for different purposes. First of all, I will list these data visualization tools and then I will discuss Matplotlib.".to_string()
         ])
     ]
 }
