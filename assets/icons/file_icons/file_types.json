@@ -58,7 +58,6 @@
     "gitignore": "vcs",
     "gitkeep": "vcs",
     "gitmodules": "vcs",
-    "gleam": "gleam",
     "go": "go",
     "gql": "graphql",
     "graphql": "graphql",
