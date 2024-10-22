@@ -728,12 +728,7 @@ impl Project {
             });
 
             let settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_ssh(
-                    ssh_proto.clone(),
-                    worktree_store.clone(),
-                    task_store.clone(),
-                    cx,
-                )
+                SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
