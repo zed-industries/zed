@@ -11,8 +11,8 @@ use ui::{
 use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
 use crate::{
-    dev_servers::reconnect_to_dev_server_project, open_dev_server_project, open_ssh_project,
-    DevServerProjects,
+    open_dev_server_project, open_ssh_project, remote_servers::reconnect_to_dev_server_project,
+    RemoteServerProjects,
 };
 
 enum Host {
@@ -130,7 +130,7 @@ impl DisconnectedOverlay {
         } else {
             return workspace.update(cx, |workspace, cx| {
                 let handle = cx.view().downgrade();
-                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, handle))
+                workspace.toggle_modal(cx, |cx| RemoteServerProjects::new(cx, handle))
             });
         }
     }

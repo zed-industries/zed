@@ -1,12 +1,10 @@
-mod dev_servers;
 pub mod disconnected_overlay;
+mod remote_servers;
 mod ssh_connections;
 use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
-use dev_servers::reconnect_to_dev_server_project;
-pub use dev_servers::DevServerProjects;
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
@@ -19,6 +17,8 @@ use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
 };
+use remote_servers::reconnect_to_dev_server_project;
+pub use remote_servers::RemoteServerProjects;
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use settings::Settings;
@@ -53,7 +53,8 @@ gpui::actions!(projects, [OpenRemote]);
 pub fn init(cx: &mut AppContext) {
     SshSettings::register(cx);
     cx.observe_new_views(RecentProjects::register).detach();
-    cx.observe_new_views(DevServerProjects::register).detach();
+    cx.observe_new_views(RemoteServerProjects::register)
+        .detach();
     cx.observe_new_views(DisconnectedOverlay::register).detach();
 }
 
@@ -359,7 +360,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             if response == 1 {
                                                 workspace.update(&mut cx, |workspace, cx| {
                                                     let handle = cx.view().downgrade();
-                                                    workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, handle))
+                                                    workspace.toggle_modal(cx, |cx| RemoteServerProjects::new(cx, handle))
                                                 })?;
                                             } else {
                                                 workspace.update(&mut cx, |workspace, cx| {
