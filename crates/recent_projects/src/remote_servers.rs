@@ -903,7 +903,6 @@ impl RemoteServerProjects {
                     .p_2()
                     .border_b_1()
                     .border_color(theme.colors().border_variant)
-                    // .bg(theme.colors().editor_background)
                     .child(state.address_editor.clone()),
             )
             .child(
@@ -1227,6 +1226,7 @@ impl RemoteServerProjects {
                 Section::new().padded(false).child(
                     v_flex()
                         .min_h(rems(20.))
+                        .group("remote-projects-section")
                         .size_full()
                         .relative()
                         .child(ListSeparator)
@@ -1248,13 +1248,14 @@ impl RemoteServerProjects {
                         )
                         .child(
                             div()
+                                .visible_on_hover("remote-projects-section")
                                 .occlude()
                                 .h_full()
                                 .absolute()
-                                .right_1()
                                 .top_1()
                                 .bottom_1()
-                                .w(px(12.))
+                                .right_1()
+                                .w(px(8.))
                                 .children(Scrollbar::vertical(scroll_state)),
                         ),
                 ),
