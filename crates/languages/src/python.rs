@@ -361,6 +361,7 @@ impl ToolchainLister for PythonToolchainProvider {
     }
     async fn activate(&self, _: Toolchain) {}
 }
+
 #[cfg(test)]
 mod tests {
     use gpui::{BorrowAppContext, Context, ModelContext, TestAppContext};

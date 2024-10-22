@@ -1256,29 +1256,31 @@ impl WorkspaceDb {
         .await
     }
 
-    pub(crate) async fn set_toolchain(
-        conn: &Connection,
+    pub async fn set_toolchain(
+        &self,
         workspace_id: WorkspaceId,
         toolchain: Toolchain,
     ) -> Result<()> {
-        let mut insert = conn
-            .exec_bound(sql!(
-                INSERT INTO toolchains(workspace_id, language_name, name, path) VALUES (?, ?, ?,  ?)
-                ON CONFLICT DO
-                UPDATE SET
-                    path = ?4,
-                    name = ?3
-            ))
-            .context("Preparing insertion")?;
+        self.write(move |conn| {
+            let mut insert = conn
+                .exec_bound(sql!(
+                    INSERT INTO toolchains(workspace_id, language_name, name, path) VALUES (?, ?, ?,  ?)
+                    ON CONFLICT DO
+                    UPDATE SET
+                        path = ?4,
+                        name = ?3
+                ))
+                .context("Preparing insertion")?;
 
-        insert((
-            workspace_id,
-            toolchain.language_name.0.as_ref(),
-            toolchain.label.as_ref(),
-            toolchain.path.as_ref(),
-        ))?;
+            insert((
+                workspace_id,
+                toolchain.language_name.0.as_ref(),
+                toolchain.label.as_ref(),
+                toolchain.path.as_ref(),
+            ))?;
 
-        Ok(())
+            Ok(())
+        }).await
     }
 }
 

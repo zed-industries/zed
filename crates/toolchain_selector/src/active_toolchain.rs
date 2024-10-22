@@ -60,17 +60,8 @@ impl ActiveToolchain {
                 .update(&mut cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
-            let toolchain = Self::active_toolchain(
-                workspace_id,
-                language_name,
-                lister,
-                active_file
-                    .read_with(&mut cx, |this, _| this.file().cloned())
-                    .ok()
-                    .flatten()?,
-                cx.clone(),
-            )
-            .await?;
+            let toolchain =
+                Self::active_toolchain(workspace_id, language_name, lister, cx.clone()).await?;
             let _ = this.update(&mut cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -99,16 +90,22 @@ impl ActiveToolchain {
         workspace_id: WorkspaceId,
         language_name: LanguageName,
         toolchain: Arc<dyn ToolchainLister>,
-        file: Arc<dyn File>,
-        mut cx: AsyncWindowContext,
+        cx: AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
         cx.spawn(move |_| async move {
-            let toolchain_for = workspace::WORKSPACE_DB
+            let selected_toolchain = workspace::WORKSPACE_DB
                 .toolchain(workspace_id, language_name)
-                .await;
+                .await
+                .ok()
+                .flatten();
 
-            let toolchains = toolchain.list().await;
-            toolchains.default_toolchain()
+            if let Some(toolchain) = selected_toolchain {
+                Some(toolchain)
+            } else {
+                dbg!("Else");
+                let toolchains = toolchain.list().await;
+                toolchains.default_toolchain()
+            }
         })
     }
 }

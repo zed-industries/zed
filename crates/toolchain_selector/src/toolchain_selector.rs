@@ -41,13 +41,15 @@ impl ToolchainSelector {
         let project = workspace.project().clone();
 
         let lister = buffer.read(cx).language()?.toolchain_lister().clone()?;
+        let weak = workspace.weak_handle();
         workspace.toggle_modal(cx, move |cx| {
-            ToolchainSelector::new(buffer, project, lister, cx)
+            ToolchainSelector::new(weak, buffer, project, lister, cx)
         });
         Some(())
     }
 
     fn new(
+        workspace: WeakView<Workspace>,
         buffer: Model<Buffer>,
         project: Model<Project>,
         lister: Arc<dyn ToolchainLister>,
@@ -55,7 +57,8 @@ impl ToolchainSelector {
     ) -> Self {
         let view = cx.view().downgrade();
         let picker = cx.new_view(|cx| {
-            let delegate = ToolchainSelectorDelegate::new(view, buffer, project, lister, cx);
+            let delegate =
+                ToolchainSelectorDelegate::new(view, workspace, buffer, project, lister, cx);
             Picker::uniform_list(delegate, cx)
         });
         Self { picker }
@@ -85,12 +88,14 @@ pub struct ToolchainSelectorDelegate {
     candidates: ToolchainList,
     matches: Vec<StringMatch>,
     selected_index: usize,
+    workspace: WeakView<Workspace>,
     _fetch_candidates_task: Task<()>,
 }
 
 impl ToolchainSelectorDelegate {
     fn new(
         language_selector: WeakView<ToolchainSelector>,
+        workspace: WeakView<Workspace>,
         buffer: Model<Buffer>,
         project: Model<Project>,
         lister: Arc<dyn ToolchainLister>,
@@ -115,6 +120,7 @@ impl ToolchainSelectorDelegate {
             candidates: Default::default(),
             matches: vec![],
             selected_index: 0,
+            workspace,
             _fetch_candidates_task,
         }
     }
@@ -132,9 +138,21 @@ impl PickerDelegate for ToolchainSelectorDelegate {
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(_) = self.matches.get(self.selected_index) {
-            cx.spawn(|_, _| async move { Result::<_, anyhow::Error>::Ok(()) })
+        if let Some(string_match) = self.matches.get(self.selected_index) {
+            let toolchain = self.candidates.toolchains[string_match.candidate_id].clone();
+            if let Some(workspace_id) = self
+                .workspace
+                .update(cx, |this, _| this.database_id())
+                .ok()
+                .flatten()
+            {
+                cx.spawn(|_, _| async move {
+                    workspace::WORKSPACE_DB
+                        .set_toolchain(workspace_id, toolchain)
+                        .await
+                })
                 .detach_and_log_err(cx);
+            }
         }
         self.dismissed(cx);
     }
