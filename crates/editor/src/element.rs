@@ -4954,7 +4954,7 @@ impl Element for EditorElement {
 
                     let blame_overflow = self.editor.update(cx, |editor, cx| {
                         if !editor.render_git_blame_inline(cx) {
-                            return px(0.);
+                            return None;
                         }
 
                         let cursor_position = editor.selections.newest_anchor().head();
@@ -4963,7 +4963,7 @@ impl Element for EditorElement {
                             MultiBufferRow(cursor_position.to_point(&buffer_snapshot).row);
                         let line_width = buffer_snapshot.line_len(buffer_row) as f32 * em_advance;
 
-                        let blame_length = editor.blame.as_ref().map_or(0.0, |blame| {
+                        let blame_length = editor.blame.as_ref().map_or(0., |blame| {
                             blame
                                 .update(cx, |blame, cx| {
                                     blame.blame_for_rows([Some(buffer_row)], cx).next()
@@ -4987,18 +4987,19 @@ impl Element for EditorElement {
                         let longest_line_width =
                             layout_line(snapshot.longest_row(), &snapshot, &style, text_width, cx)
                                 .width;
-                        let blame_overflow = if line_width > longest_line_width {
-                            // Blame is outside the scroll bounds.
-                            blame_width
-                        } else if line_width + blame_width > longest_line_width {
-                            // Blame is partially outside the scroll bounds.
-                            line_width + blame_width - longest_line_width
-                        } else {
-                            // Blame is inside the scroll bounds.
-                            px(0.)
-                        };
 
-                        blame_overflow
+                        // Blame is outside the scroll bounds.
+                        if line_width > longest_line_width {
+                            return Some(blame_width);
+                        }
+
+                        // Blame is partially outside the scroll bounds.
+                        if line_width + blame_width > longest_line_width {
+                            return Some(line_width + blame_width - longest_line_width);
+                        }
+
+                        // Blame is inside the scroll bounds.
+                        None
                     });
 
                     let right_margin = if snapshot.mode == EditorMode::Full {
@@ -5007,7 +5008,10 @@ impl Element for EditorElement {
                         px(0.)
                     };
 
-                    let overscroll = size(em_width + right_margin + blame_overflow, px(0.));
+                    let overscroll = size(
+                        em_width + right_margin + blame_overflow.unwrap_or_default(),
+                        px(0.),
+                    );
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - overscroll.width - em_width;
