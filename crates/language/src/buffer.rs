@@ -37,6 +37,7 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
@@ -335,6 +336,8 @@ pub enum BufferEvent {
     FileHandleChanged,
     /// The buffer was reloaded.
     Reloaded,
+    /// The buffer is in need of a reload
+    ReloadNeeded,
     /// The buffer's diff_base changed.
     DiffBaseChanged,
     /// Buffer's excerpts for a certain diff base were recalculated.
@@ -439,7 +442,7 @@ struct AutoindentRequest {
     is_block_mode: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct AutoindentRequestEntry {
     /// A range of the buffer whose indentation should be adjusted.
     range: Range<Anchor>,
@@ -1076,7 +1079,7 @@ impl Buffer {
                     file_changed = true;
 
                     if !self.is_dirty() {
-                        self.reload(cx).close();
+                        cx.emit(BufferEvent::ReloadNeeded);
                     }
                 }
             }
@@ -1417,24 +1420,17 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                // In block mode, only compute indentation suggestions for the first line
-                // of each insertion. Otherwise, compute suggestions for every inserted line.
-                let new_edited_row_ranges = contiguous_ranges(
-                    row_ranges.iter().flat_map(|(range, _)| {
-                        if request.is_block_mode {
-                            range.start..range.start + 1
-                        } else {
-                            range.clone()
-                        }
-                    }),
-                    max_rows_between_yields,
-                );
-
                 // Compute new suggestions for each line, but only include them in the result
                 // if they differ from the old suggestion for that line.
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
                 let mut language_indent_size = IndentSize::default();
-                for new_edited_row_range in new_edited_row_ranges {
+                for (row_range, original_indent_column) in row_ranges {
+                    let new_edited_row_range = if request.is_block_mode {
+                        row_range.start..row_range.start + 1
+                    } else {
+                        row_range.clone()
+                    };
+
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
                         .into_iter()
@@ -1468,22 +1464,9 @@ impl Buffer {
                             }
                         }
                     }
-                    yield_now().await;
-                }
 
-                // For each block of inserted text, adjust the indentation of the remaining
-                // lines of the block by the same amount as the first line was adjusted.
-                if request.is_block_mode {
-                    for (row_range, original_indent_column) in
-                        row_ranges
-                            .into_iter()
-                            .filter_map(|(range, original_indent_column)| {
-                                if range.len() > 1 {
-                                    Some((range, original_indent_column?))
-                                } else {
-                                    None
-                                }
-                            })
+                    if let (true, Some(original_indent_column)) =
+                        (request.is_block_mode, original_indent_column)
                     {
                         let new_indent = indent_sizes
                             .get(&row_range.start)
@@ -1508,6 +1491,8 @@ impl Buffer {
                             }
                         }
                     }
+
+                    yield_now().await;
                 }
             }
 
@@ -2490,7 +2475,11 @@ impl BufferSnapshot {
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
-        let settings = language_settings(self.language_at(position), self.file(), cx);
+        let settings = language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file(),
+            cx,
+        );
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -2823,11 +2812,15 @@ impl BufferSnapshot {
 
     /// Returns the settings for the language at the given location.
     pub fn settings_at<'a, D: ToOffset>(
-        &self,
+        &'a self,
         position: D,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
-        language_settings(self.language_at(position), self.file.as_ref(), cx)
+    ) -> Cow<'a, LanguageSettings> {
+        language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file.as_ref(),
+            cx,
+        )
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
@@ -3529,7 +3522,8 @@ impl BufferSnapshot {
         ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        let language_settings = language_settings(self.language(), self.file.as_ref(), cx);
+        let language_settings =
+            language_settings(self.language().map(|l| l.name()), self.file.as_ref(), cx);
         let settings = language_settings.indent_guides;
         if !ignore_disabled_for_language && !settings.enabled {
             return Vec::new();

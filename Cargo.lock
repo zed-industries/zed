@@ -3650,6 +3650,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d6ef0072f8a535281e4876be788938b528e9a1d43900b82c2569af7da799125"
 
 [[package]]
+name = "ec4rs"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acf65d056c7da9c971c2847ce250fd1f0f9659d5718845c3ec0ad95f5668352c"
+
+[[package]]
 name = "ecdsa"
 version = "0.14.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6210,6 +6216,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "ec4rs",
  "env_logger",
  "futures 0.3.30",
  "fuzzy",
@@ -6223,6 +6230,7 @@ dependencies = [
  "lsp",
  "parking_lot",
  "postage",
+ "pretty_assertions",
  "pulldown-cmark 0.12.1",
  "rand 0.8.5",
  "regex",
@@ -8978,6 +8986,7 @@ dependencies = [
  "itertools 0.13.0",
  "language",
  "log",
+ "markdown",
  "menu",
  "ordered-float 2.10.1",
  "paths",
@@ -8993,6 +9002,7 @@ dependencies = [
  "smol",
  "task",
  "terminal_view",
+ "theme",
  "ui",
  "util",
  "workspace",
@@ -10302,6 +10312,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "ec4rs",
  "fs",
  "futures 0.3.30",
  "gpui",

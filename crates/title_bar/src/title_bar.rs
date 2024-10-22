@@ -339,7 +339,7 @@ impl TitleBar {
                     .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {
-                            recent_projects::DevServerProjects::open(workspace, cx)
+                            recent_projects::RemoteServerProjects::open(workspace, cx)
                         }
                     }))
                     .into_any_element(),

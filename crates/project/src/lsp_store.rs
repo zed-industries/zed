@@ -30,8 +30,7 @@ use gpui::{
 use http_client::HttpClient;
 use language::{
     language_settings::{
-        all_language_settings, language_settings, AllLanguageSettings, FormatOnSave, Formatter,
-        LanguageSettings, SelectedFormatter,
+        language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
@@ -223,7 +222,8 @@ impl LocalLspStore {
                 })?;
 
             let settings = buffer.handle.update(&mut cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx).clone()
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                    .into_owned()
             })?;
 
             let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
@@ -280,7 +280,7 @@ impl LocalLspStore {
                 .zip(buffer.abs_path.as_ref());
 
             let prettier_settings = buffer.handle.read_with(&cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx)
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
                     .prettier
                     .clone()
             })?;
@@ -1225,7 +1225,8 @@ impl LspStore {
         });
 
         let buffer_file = buffer.read(cx).file().cloned();
-        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+        let settings =
+            language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -1400,15 +1401,17 @@ impl LspStore {
             let buffer = buffer.read(cx);
             let buffer_file = File::from_dyn(buffer.file());
             let buffer_language = buffer.language();
-            let settings = language_settings(buffer_language, buffer.file(), cx);
+            let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
             if let Some(language) = buffer_language {
                 if settings.enable_language_server {
                     if let Some(file) = buffer_file {
                         language_servers_to_start.push((file.worktree.clone(), language.name()));
                     }
                 }
-                language_formatters_to_check
-                    .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
+                language_formatters_to_check.push((
+                    buffer_file.map(|f| f.worktree_id(cx)),
+                    settings.into_owned(),
+                ));
             }
         }
 
@@ -1433,10 +1436,13 @@ impl LspStore {
             });
             if let Some((language, adapter)) = language {
                 let worktree = self.worktree_for_id(worktree_id, cx).ok();
-                let file = worktree.as_ref().and_then(|tree| {
-                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
+                let root_file = worktree.as_ref().and_then(|worktree| {
+                    worktree
+                        .update(cx, |tree, cx| tree.root_file(cx))
+                        .map(|f| f as _)
                 });
-                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
+                let settings = language_settings(Some(language.name()), root_file.as_ref(), cx);
+                if !settings.enable_language_server {
                     language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
                 } else if let Some(worktree) = worktree {
                     let server_name = &adapter.name;
@@ -1753,10 +1759,9 @@ impl LspStore {
             })
             .filter(|_| {
                 maybe!({
-                    let language_name = buffer.read(cx).language_at(position)?.name();
+                    let language = buffer.read(cx).language_at(position)?;
                     Some(
-                        AllLanguageSettings::get_global(cx)
-                            .language(Some(&language_name))
+                        language_settings(Some(language.name()), buffer.read(cx).file(), cx)
                             .linked_edits,
                     )
                 }) == Some(true)
@@ -1850,11 +1855,14 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         let options = buffer.update(cx, |buffer, cx| {
-            lsp_command::lsp_formatting_options(language_settings(
-                buffer.language_at(position).as_ref(),
-                buffer.file(),
-                cx,
-            ))
+            lsp_command::lsp_formatting_options(
+                language_settings(
+                    buffer.language_at(position).map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                )
+                .as_ref(),
+            )
         });
         self.request_lsp(
             buffer.clone(),
@@ -5288,23 +5296,16 @@ impl LspStore {
         })
     }
 
-    fn language_settings<'a>(
-        &'a self,
-        worktree: &'a Model<Worktree>,
-        language: &LanguageName,
-        cx: &'a mut ModelContext<Self>,
-    ) -> &'a LanguageSettings {
-        let root_file = worktree.update(cx, |tree, cx| tree.root_file(cx));
-        all_language_settings(root_file.map(|f| f as _).as_ref(), cx).language(Some(language))
-    }
-
     pub fn start_language_servers(
         &mut self,
         worktree: &Model<Worktree>,
         language: LanguageName,
         cx: &mut ModelContext<Self>,
     ) {
-        let settings = self.language_settings(worktree, &language, cx);
+        let root_file = worktree
+            .update(cx, |tree, cx| tree.root_file(cx))
+            .map(|f| f as _);
+        let settings = language_settings(Some(language.clone()), root_file.as_ref(), cx);
         if !settings.enable_language_server || self.mode.is_remote() {
             return;
         }

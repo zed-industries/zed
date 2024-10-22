@@ -186,7 +186,7 @@ impl SshConnectionOptions {
 
     // Uniquely identifies dev server projects on a remote host. Needs to be
     // stable for the same dev server project.
-    pub fn dev_server_identifier(&self) -> String {
+    pub fn remote_server_identifier(&self) -> String {
         let mut identifier = format!("dev-server-{:?}", self.host);
         if let Some(username) = self.username.as_ref() {
             identifier.push('-');
@@ -233,7 +233,6 @@ pub trait SshClientDelegate: Send + Sync {
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
-    fn set_error(&self, error_message: String, cx: &mut AsyncAppContext);
 }
 
 impl SshSocket {
@@ -355,6 +354,10 @@ impl State {
 
     fn is_reconnect_exhausted(&self) -> bool {
         matches!(self, Self::ReconnectExhausted { .. })
+    }
+
+    fn is_server_not_running(&self) -> bool {
+        matches!(self, Self::ServerNotRunning)
     }
 
     fn is_reconnecting(&self) -> bool {
@@ -485,7 +488,6 @@ impl SshRemoteClient {
 
             if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
                 log::error!("failed to establish connection: {}", error);
-                delegate.set_error(error.to_string(), &mut cx);
                 return Err(error);
             }
 
@@ -702,7 +704,6 @@ impl SshRemoteClient {
                 if this.state_is(State::is_reconnect_failed) {
                     this.reconnect(cx)
                 } else if this.state_is(State::is_reconnect_exhausted) {
-                    cx.emit(SshRemoteEvent::Disconnected);
                     Ok(())
                 } else {
                     log::debug!("State has transition from Reconnecting into new state while attempting reconnect.");
@@ -872,6 +873,9 @@ impl SshRemoteClient {
                 let len = child_stderr
                     .read(&mut stderr_buffer[stderr_offset..])
                     .await?;
+                if len == 0 {
+                    return Err(anyhow!("stderr is closed"));
+                }
 
                 stderr_offset += len;
                 let mut start_ix = 0;
@@ -931,7 +935,6 @@ impl SshRemoteClient {
                                 log::error!("failed to reconnect because server is not running");
                                 this.update(&mut cx, |this, cx| {
                                     this.set_state(State::ServerNotRunning, cx);
-                                    cx.emit(SshRemoteEvent::Disconnected);
                                 })?;
                             }
                         }
@@ -974,7 +977,14 @@ impl SshRemoteClient {
 
     fn set_state(&self, state: State, cx: &mut ModelContext<Self>) {
         log::info!("setting state to '{}'", &state);
+
+        let is_reconnect_exhausted = state.is_reconnect_exhausted();
+        let is_server_not_running = state.is_server_not_running();
         self.state.lock().replace(state);
+
+        if is_reconnect_exhausted || is_server_not_running {
+            cx.emit(SshRemoteEvent::Disconnected);
+        }
         cx.notify();
     }
 
@@ -1202,7 +1212,7 @@ impl SshRemoteConnection {
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
 
-        delegate.set_status(Some("connecting"), cx);
+        delegate.set_status(Some("Connecting"), cx);
 
         let url = connection_options.ssh_url();
         let temp_dir = tempfile::Builder::new()
@@ -1301,9 +1311,7 @@ impl SshRemoteConnection {
         };
 
         if let Err(e) = result {
-            let error_message = format!("Failed to connect to host: {}.", e);
-            delegate.set_error(error_message, cx);
-            return Err(e);
+            return Err(e.context("Failed to connect to host"));
         }
 
         drop(askpass_task);
@@ -1317,7 +1325,6 @@ impl SshRemoteConnection {
                 "failed to connect: {}",
                 String::from_utf8_lossy(&output).trim()
             );
-            delegate.set_error(error_message.clone(), cx);
             Err(anyhow!(error_message))?;
         }
 
@@ -1607,8 +1614,17 @@ impl ChannelClient {
         &self,
         payload: T,
     ) -> impl 'static + Future<Output = Result<T::Response>> {
+        self.request_internal(payload, true)
+    }
+
+    fn request_internal<T: RequestMessage>(
+        &self,
+        payload: T,
+        use_buffer: bool,
+    ) -> impl 'static + Future<Output = Result<T::Response>> {
         log::debug!("ssh request start. name:{}", T::NAME);
-        let response = self.request_dynamic(payload.into_envelope(0, None, None), T::NAME);
+        let response =
+            self.request_dynamic(payload.into_envelope(0, None, None), T::NAME, use_buffer);
         async move {
             let response = response.await?;
             log::debug!("ssh request finish. name:{}", T::NAME);
@@ -1620,7 +1636,9 @@ impl ChannelClient {
     pub async fn resync(&self, timeout: Duration) -> Result<()> {
         smol::future::or(
             async {
-                self.request(proto::FlushBufferedMessages {}).await?;
+                self.request_internal(proto::FlushBufferedMessages {}, false)
+                    .await?;
+
                 for envelope in self.buffer.lock().iter() {
                     self.outgoing_tx
                         .lock()
@@ -1656,10 +1674,11 @@ impl ChannelClient {
         self.send_dynamic(payload.into_envelope(0, None, None))
     }
 
-    pub fn request_dynamic(
+    fn request_dynamic(
         &self,
         mut envelope: proto::Envelope,
         type_name: &'static str,
+        use_buffer: bool,
     ) -> impl 'static + Future<Output = Result<proto::Envelope>> {
         envelope.id = self.next_message_id.fetch_add(1, SeqCst);
         let (tx, rx) = oneshot::channel();
@@ -1667,7 +1686,11 @@ impl ChannelClient {
         response_channels_lock.insert(MessageId(envelope.id), tx);
         drop(response_channels_lock);
 
-        let result = self.send_buffered(envelope);
+        let result = if use_buffer {
+            self.send_buffered(envelope)
+        } else {
+            self.send_unbuffered(envelope)
+        };
         async move {
             if let Err(error) = &result {
                 log::error!("failed to send message: {}", error);
@@ -1687,11 +1710,17 @@ impl ChannelClient {
         self.send_buffered(envelope)
     }
 
-    pub fn send_buffered(&self, mut envelope: proto::Envelope) -> Result<()> {
+    fn send_buffered(&self, mut envelope: proto::Envelope) -> Result<()> {
         envelope.ack_id = Some(self.max_received.load(SeqCst));
         self.buffer.lock().push_back(envelope.clone());
         // ignore errors on send (happen while we're reconnecting)
         // assume that the global "disconnected" overlay is sufficient.
+        self.outgoing_tx.lock().unbounded_send(envelope).ok();
+        Ok(())
+    }
+
+    fn send_unbuffered(&self, mut envelope: proto::Envelope) -> Result<()> {
+        envelope.ack_id = Some(self.max_received.load(SeqCst));
         self.outgoing_tx.lock().unbounded_send(envelope).ok();
         Ok(())
     }
@@ -1703,7 +1732,7 @@ impl ProtoClient for ChannelClient {
         envelope: proto::Envelope,
         request_type: &'static str,
     ) -> BoxFuture<'static, Result<proto::Envelope>> {
-        self.request_dynamic(envelope, request_type).boxed()
+        self.request_dynamic(envelope, request_type, true).boxed()
     }
 
     fn send(&self, envelope: proto::Envelope, _message_type: &'static str) -> Result<()> {
@@ -1860,9 +1889,6 @@ mod fake {
             unreachable!()
         }
         fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {
-            unreachable!()
-        }
-        fn set_error(&self, _: String, _: &mut AsyncAppContext) {
             unreachable!()
         }
     }

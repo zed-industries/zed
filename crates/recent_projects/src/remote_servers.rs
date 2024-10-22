@@ -55,7 +55,7 @@ use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
 use crate::OpenRemote;
 
-pub struct DevServerProjects {
+pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
     scroll_handle: ScrollHandle,
@@ -63,14 +63,14 @@ pub struct DevServerProjects {
     selectable_items: SelectableItemList,
 }
 
-struct CreateDevServer {
+struct CreateRemoteServer {
     address_editor: View<Editor>,
     address_error: Option<SharedString>,
     ssh_prompt: Option<View<SshPrompt>>,
     _creating: Option<Task<Option<()>>>,
 }
 
-impl CreateDevServer {
+impl CreateRemoteServer {
     fn new(cx: &mut WindowContext<'_>) -> Self {
         let address_editor = cx.new_view(Editor::single_line);
         address_editor.update(cx, |this, cx| {
@@ -92,7 +92,7 @@ struct ProjectPicker {
 }
 
 type SelectedItemCallback =
-    Box<dyn Fn(&mut DevServerProjects, &mut ViewContext<DevServerProjects>) + 'static>;
+    Box<dyn Fn(&mut RemoteServerProjects, &mut ViewContext<RemoteServerProjects>) + 'static>;
 
 /// Used to implement keyboard navigation for SSH modal.
 #[derive(Default)]
@@ -171,9 +171,13 @@ impl SelectableItemList {
         self.active_item == self.items.len().checked_sub(1)
     }
 
-    fn confirm(&self, dev_modal: &mut DevServerProjects, cx: &mut ViewContext<DevServerProjects>) {
+    fn confirm(
+        &self,
+        remote_modal: &mut RemoteServerProjects,
+        cx: &mut ViewContext<RemoteServerProjects>,
+    ) {
         if let Some(active_item) = self.active_item.and_then(|ix| self.items.get(ix)) {
-            active_item(dev_modal, cx);
+            active_item(remote_modal, cx);
         }
     }
 }
@@ -184,7 +188,7 @@ impl ProjectPicker {
         connection_string: SharedString,
         project: Model<Project>,
         workspace: WeakView<Workspace>,
-        cx: &mut ViewContext<DevServerProjects>,
+        cx: &mut ViewContext<RemoteServerProjects>,
     ) -> View<Self> {
         let (tx, rx) = oneshot::channel();
         let lister = project::DirectoryLister::Project(project.clone());
@@ -208,7 +212,7 @@ impl ProjectPicker {
                                 .update(&mut cx, |workspace, cx| {
                                     let weak = cx.view().downgrade();
                                     workspace
-                                        .toggle_modal(cx, |cx| DevServerProjects::new(cx, weak));
+                                        .toggle_modal(cx, |cx| RemoteServerProjects::new(cx, weak));
                                 })
                                 .log_err()?;
                             return None;
@@ -306,7 +310,7 @@ enum Mode {
     ViewServerOptions(usize, SshConnection),
     EditNickname(EditNicknameState),
     ProjectPicker(View<ProjectPicker>),
-    CreateDevServer(CreateDevServer),
+    CreateRemoteServer(CreateRemoteServer),
 }
 
 impl Mode {
@@ -315,7 +319,7 @@ impl Mode {
         Self::Default(ScrollbarState::new(handle))
     }
 }
-impl DevServerProjects {
+impl RemoteServerProjects {
     pub fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, _: &OpenRemote, cx| {
             let handle = cx.view().downgrade();
@@ -388,7 +392,7 @@ impl DevServerProjects {
         let connection_options = match SshConnectionOptions::parse_command_line(&input) {
             Ok(c) => c,
             Err(e) => {
-                self.mode = Mode::CreateDevServer(CreateDevServer {
+                self.mode = Mode::CreateRemoteServer(CreateRemoteServer {
                     address_editor: editor,
                     address_error: Some(format!("could not parse: {:?}", e).into()),
                     ssh_prompt: None,
@@ -400,7 +404,7 @@ impl DevServerProjects {
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
         let connection = connect_over_ssh(
-            connection_options.dev_server_identifier(),
+            connection_options.remote_server_identifier(),
             connection_options.clone(),
             ssh_prompt.clone(),
             cx,
@@ -430,7 +434,7 @@ impl DevServerProjects {
                         address_editor.update(cx, |this, _| {
                             this.set_read_only(false);
                         });
-                        this.mode = Mode::CreateDevServer(CreateDevServer {
+                        this.mode = Mode::CreateRemoteServer(CreateRemoteServer {
                             address_editor,
                             address_error: None,
                             ssh_prompt: None,
@@ -446,7 +450,7 @@ impl DevServerProjects {
         editor.update(cx, |this, _| {
             this.set_read_only(true);
         });
-        self.mode = Mode::CreateDevServer(CreateDevServer {
+        self.mode = Mode::CreateRemoteServer(CreateRemoteServer {
             address_editor: editor,
             address_error: None,
             ssh_prompt: Some(ssh_prompt.clone()),
@@ -477,9 +481,7 @@ impl DevServerProjects {
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, false, cx)
-                });
+                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
                     .unwrap()
@@ -488,18 +490,30 @@ impl DevServerProjects {
                     .clone();
 
                 let connect = connect_over_ssh(
-                    connection_options.dev_server_identifier(),
+                    connection_options.remote_server_identifier(),
                     connection_options.clone(),
                     prompt,
                     cx,
                 )
                 .prompt_err("Failed to connect", cx, |_, _| None);
+
                 cx.spawn(move |workspace, mut cx| async move {
-                    let Some(session) = connect.await else {
+                    let session = connect.await;
+
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            if let Some(prompt) = workspace.active_modal::<SshConnectionModal>(cx) {
+                                prompt.update(cx, |prompt, cx| prompt.finished(cx))
+                            }
+                        })
+                        .ok();
+
+                    let Some(session) = session else {
                         workspace
                             .update(&mut cx, |workspace, cx| {
                                 let weak = cx.view().downgrade();
-                                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, weak));
+                                workspace
+                                    .toggle_modal(cx, |cx| RemoteServerProjects::new(cx, weak));
                             })
                             .log_err();
                         return;
@@ -519,7 +533,7 @@ impl DevServerProjects {
                                 cx,
                             );
                             workspace.toggle_modal(cx, |cx| {
-                                DevServerProjects::project_picker(
+                                RemoteServerProjects::project_picker(
                                     ix,
                                     connection_options,
                                     project,
@@ -543,7 +557,7 @@ impl DevServerProjects {
                 self.selectable_items = items;
             }
             Mode::ProjectPicker(_) => {}
-            Mode::CreateDevServer(state) => {
+            Mode::CreateRemoteServer(state) => {
                 if let Some(prompt) = state.ssh_prompt.as_ref() {
                     prompt.update(cx, |prompt, cx| {
                         prompt.confirm(cx);
@@ -575,8 +589,8 @@ impl DevServerProjects {
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
         match &self.mode {
             Mode::Default(_) => cx.emit(DismissEvent),
-            Mode::CreateDevServer(state) if state.ssh_prompt.is_some() => {
-                self.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
+            Mode::CreateRemoteServer(state) if state.ssh_prompt.is_some() => {
+                self.mode = Mode::CreateRemoteServer(CreateRemoteServer::new(cx));
                 self.selectable_items.reset_selection();
                 cx.notify();
             }
@@ -818,9 +832,9 @@ impl DevServerProjects {
         });
     }
 
-    fn render_create_dev_server(
+    fn render_create_remote_server(
         &self,
-        state: &CreateDevServer,
+        state: &CreateRemoteServer,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let ssh_prompt = state.ssh_prompt.clone();
@@ -834,7 +848,7 @@ impl DevServerProjects {
         let theme = cx.theme();
 
         v_flex()
-            .id("create-dev-server")
+            .id("create-remote-server")
             .overflow_hidden()
             .size_full()
             .flex_1()
@@ -995,7 +1009,7 @@ impl DevServerProjects {
                     })
                     .child({
                         fn remove_ssh_server(
-                            dev_servers: View<DevServerProjects>,
+                            remote_servers: View<RemoteServerProjects>,
                             index: usize,
                             connection_string: SharedString,
                             cx: &mut WindowContext<'_>,
@@ -1011,7 +1025,7 @@ impl DevServerProjects {
 
                             cx.spawn(|mut cx| async move {
                                 if confirmation.await.ok() == Some(0) {
-                                    dev_servers
+                                    remote_servers
                                         .update(&mut cx, |this, cx| {
                                             this.delete_ssh_server(index, cx);
                                             this.mode = Mode::default_mode();
@@ -1108,21 +1122,21 @@ impl DevServerProjects {
             .ssh_connections()
             .collect::<Vec<_>>();
         self.selectable_items.add_item(Box::new(|this, cx| {
-            this.mode = Mode::CreateDevServer(CreateDevServer::new(cx));
+            this.mode = Mode::CreateRemoteServer(CreateRemoteServer::new(cx));
             cx.notify();
         }));
 
         let is_selected = self.selectable_items.is_selected();
 
-        let connect_button = ListItem::new("register-dev-server-button")
+        let connect_button = ListItem::new("register-remove-server-button")
             .selected(is_selected)
             .inset(true)
             .spacing(ui::ListItemSpacing::Sparse)
             .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
             .child(Label::new("Connect New Server"))
             .on_click(cx.listener(|this, _, cx| {
-                let state = CreateDevServer::new(cx);
-                this.mode = Mode::CreateDevServer(state);
+                let state = CreateRemoteServer::new(cx);
+                this.mode = Mode::CreateRemoteServer(state);
 
                 cx.notify();
             }));
@@ -1145,7 +1159,7 @@ impl DevServerProjects {
                                 .child(ListSeparator)
                                 .child(
                                     div().px_3().child(
-                                        Label::new("No dev servers registered yet.")
+                                        Label::new("No remote servers registered yet.")
                                             .color(Color::Muted),
                                     ),
                                 )
@@ -1209,23 +1223,23 @@ fn get_text(element: &View<Editor>, cx: &mut WindowContext) -> String {
     element.read(cx).text(cx).trim().to_string()
 }
 
-impl ModalView for DevServerProjects {}
+impl ModalView for RemoteServerProjects {}
 
-impl FocusableView for DevServerProjects {
+impl FocusableView for RemoteServerProjects {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl EventEmitter<DismissEvent> for DevServerProjects {}
+impl EventEmitter<DismissEvent> for RemoteServerProjects {}
 
-impl Render for DevServerProjects {
+impl Render for RemoteServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.selectable_items.reset();
         div()
             .track_focus(&self.focus_handle)
             .elevation_3(cx)
-            .key_context("DevServerModal")
+            .key_context("RemoteServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
             .on_action(cx.listener(Self::prev_item))
@@ -1245,9 +1259,9 @@ impl Render for DevServerProjects {
                     .render_view_options(*index, connection.clone(), cx)
                     .into_any_element(),
                 Mode::ProjectPicker(element) => element.clone().into_any_element(),
-                Mode::CreateDevServer(state) => {
-                    self.render_create_dev_server(state, cx).into_any_element()
-                }
+                Mode::CreateRemoteServer(state) => self
+                    .render_create_remote_server(state, cx)
+                    .into_any_element(),
                 Mode::EditNickname(state) => {
                     self.render_edit_nickname(state, cx).into_any_element()
                 }
