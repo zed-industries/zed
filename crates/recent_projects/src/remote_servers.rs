@@ -312,6 +312,7 @@ impl gpui::Render for ProjectPicker {
             .child(
                 SshConnectionHeader {
                     connection_string: self.connection_string.clone(),
+                    paths: Default::default(),
                     nickname: self.nickname.clone(),
                 }
                 .render(cx),
@@ -519,7 +520,7 @@ impl RemoteServerProjects {
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, nickname, cx)
+                    SshConnectionModal::new(&connection_options, Vec::new(), nickname, cx)
                 });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
@@ -965,6 +966,7 @@ impl RemoteServerProjects {
             .child(
                 SshConnectionHeader {
                     connection_string: connection_string.clone(),
+                    paths: Default::default(),
                     nickname: connection.nickname.clone(),
                 }
                 .render(cx),
@@ -1152,6 +1154,7 @@ impl RemoteServerProjects {
             .child(
                 SshConnectionHeader {
                     connection_string,
+                    paths: Default::default(),
                     nickname: connection.nickname.clone(),
                 }
                 .render(cx),

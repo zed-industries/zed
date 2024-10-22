@@ -130,6 +130,7 @@ pub struct SshPrompt {
 
 pub struct SshConnectionModal {
     pub(crate) prompt: View<SshPrompt>,
+    paths: Vec<PathBuf>,
     finished: bool,
 }
 
@@ -140,6 +141,7 @@ impl SshPrompt {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let connection_string = connection_options.connection_string().into();
+
         Self {
             connection_string,
             nickname,
@@ -257,12 +259,14 @@ impl Render for SshPrompt {
 impl SshConnectionModal {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
+        paths: Vec<PathBuf>,
         nickname: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
             prompt: cx.new_view(|cx| SshPrompt::new(connection_options, nickname, cx)),
             finished: false,
+            paths,
         }
     }
 
@@ -288,6 +292,7 @@ impl SshConnectionModal {
 
 pub(crate) struct SshConnectionHeader {
     pub(crate) connection_string: SharedString,
+    pub(crate) paths: Vec<PathBuf>,
     pub(crate) nickname: Option<SharedString>,
 }
 
@@ -316,7 +321,16 @@ impl RenderOnce for SshConnectionHeader {
                 h_flex()
                     .gap_1()
                     .child(Headline::new(main_label).size(HeadlineSize::XSmall))
-                    .children(meta_label.map(|label| Label::new(label).color(Color::Muted))),
+                    .children(
+                        meta_label.map(|label| {
+                            Label::new(label).color(Color::Muted).size(LabelSize::Small)
+                        }),
+                    )
+                    .children(self.paths.into_iter().map(|path| {
+                        Label::new(path.to_string_lossy().to_string())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    })),
             )
     }
 }
@@ -340,6 +354,7 @@ impl Render for SshConnectionModal {
             .on_action(cx.listener(Self::confirm))
             .child(
                 SshConnectionHeader {
+                    paths: self.paths.clone(),
                     connection_string,
                     nickname,
                 }
@@ -652,10 +667,11 @@ pub async fn open_ssh_project(
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
             let nickname = nickname.clone();
+            let paths = paths.clone();
             move |workspace, cx| {
                 cx.activate_window();
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, nickname.clone(), cx)
+                    SshConnectionModal::new(&connection_options, paths, nickname.clone(), cx)
                 });
 
                 let ui = workspace
