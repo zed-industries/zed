@@ -9168,6 +9168,7 @@ dependencies = [
  "http_client",
  "language",
  "languages",
+ "libc",
  "log",
  "lsp",
  "node_runtime",

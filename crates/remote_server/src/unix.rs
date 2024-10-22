@@ -27,6 +27,7 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::ops::ControlFlow;
 use std::{
     io::Write,
     mem,
@@ -307,12 +308,9 @@ pub fn execute_run(
 ) -> Result<()> {
     init_paths()?;
 
-    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
-        fork::Fork::Parent(pid) => {
-            log::debug!("Fork succeeded, child pid: {}", pid);
-            return Ok(());
-        },
-        fork::Fork::Child => {},
+    match daemonize()? {
+        ControlFlow::Break(_) => return Ok(()),
+        ControlFlow::Continue(_) => {},
     }
 
     init_panic_hook();
@@ -748,4 +746,38 @@ fn read_proxy_settings(cx: &mut ModelContext<'_, HeadlessProject>) -> Option<Uri
         })
         .or_else(read_proxy_from_env);
     proxy_url
+}
+
+fn daemonize() -> Result<ControlFlow<()>> {
+    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
+        fork::Fork::Parent(_) => {
+            return Ok(ControlFlow::Break(()));
+        },
+        fork::Fork::Child => {},
+    }
+
+    // Once we've detached from the parent, we want to close stdout/stderr/stdin
+    // so that the outer SSH process is not attached to us in any way anymore.
+    unsafe { redirect_standard_streams() }?;
+
+    Ok(ControlFlow::Continue(()))
+}
+
+unsafe fn redirect_standard_streams() -> Result<()> {
+    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+    anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
+
+    let process_stdio = |name, fd| {
+        let reopened_fd = libc::dup2(devnull_fd, fd);
+        anyhow::ensure!(reopened_fd != -1, format!("failed to redirect {} to /dev/null", name));
+        Ok(())
+    };
+
+    process_stdio("stdin", libc::STDIN_FILENO)?;
+    process_stdio("stdout", libc::STDOUT_FILENO)?;
+    process_stdio("stderr", libc::STDERR_FILENO)?;
+
+    anyhow::ensure!(libc::close(devnull_fd) != -1, "failed to close /dev/null fd after redirecting");
+
+    Ok(())
 }

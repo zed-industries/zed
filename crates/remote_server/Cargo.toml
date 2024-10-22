@@ -37,6 +37,7 @@ gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
 languages.workspace = true
+libc.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
