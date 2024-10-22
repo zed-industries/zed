@@ -2,13 +2,16 @@ use std::sync::Arc;
 
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, IntoElement, ParentElement, Render, Subscription, Task, View,
-    ViewContext, WeakView,
+    div, AsyncWindowContext, Entity, IntoElement, ParentElement, Render, Subscription, Task, View,
+    ViewContext, WeakModel, WeakView,
 };
-use language::{language_settings::all_language_settings, File, Toolchain, ToolchainLister};
+use language::{
+    language_settings::all_language_settings, Buffer, File, LanguageName, Toolchain,
+    ToolchainLister,
+};
 use settings::SettingsStore;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, Workspace};
+use workspace::{item::ItemHandle, StatusItemView, Workspace, WorkspaceId};
 
 use crate::ToolchainSelector;
 
@@ -16,10 +19,9 @@ pub struct ActiveToolchain {
     lister: Option<Arc<dyn ToolchainLister>>,
     active_toolchain: Option<Toolchain>,
     workspace: WeakView<Workspace>,
-    active_file: Option<Arc<dyn File>>,
+    active_buffer: Option<WeakModel<Buffer>>,
     _observe_active_editor: Option<Subscription>,
     _observe_language_changes: Subscription,
-    _observe_setting_changes: Subscription,
     _update_toolchain_task: Task<Option<()>>,
 }
 
@@ -29,13 +31,10 @@ impl ActiveToolchain {
         Self {
             lister: None,
             active_toolchain: None,
-            active_file: None,
+            active_buffer: None,
             workspace: workspace.weak_handle(),
             _observe_active_editor: None,
             _observe_language_changes: cx.observe(&view, |this, _, cx| {
-                this._update_toolchain_task = Self::spawn_tracker_task(cx);
-            }),
-            _observe_setting_changes: cx.observe_global::<SettingsStore>(|this, cx| {
                 this._update_toolchain_task = Self::spawn_tracker_task(cx);
             }),
             _update_toolchain_task: Self::spawn_tracker_task(cx),
@@ -45,11 +44,33 @@ impl ActiveToolchain {
         cx.spawn(|this, mut cx| async move {
             let (lister, active_file) = this
                 .update(&mut cx, |this, _| {
-                    this.lister.clone().zip(this.active_file.clone())
+                    this.lister.clone().zip(this.active_buffer.clone())
                 })
                 .ok()
                 .flatten()?;
-            let toolchain = Self::active_toolchain(lister, active_file, cx.clone()).await?;
+            let workspace_id = this
+                .update(&mut cx, |this, cx| {
+                    this.workspace.update(cx, |this, _| this.database_id())
+                })
+                .ok()
+                .map(Result::ok)
+                .flatten()
+                .flatten()?;
+            let language_name = active_file
+                .update(&mut cx, |this, _| Some(this.language()?.name()))
+                .ok()
+                .flatten()?;
+            let toolchain = Self::active_toolchain(
+                workspace_id,
+                language_name,
+                lister,
+                active_file
+                    .read_with(&mut cx, |this, _| this.file().cloned())
+                    .ok()
+                    .flatten()?,
+                cx.clone(),
+            )
+            .await?;
             let _ = this.update(&mut cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -68,31 +89,24 @@ impl ActiveToolchain {
                 .read(cx)
                 .language()
                 .and_then(|language| language.toolchain_lister());
-            self.active_file = buffer.read(cx).file().cloned();
+            self.active_buffer = Some(buffer.downgrade());
         }
 
         cx.notify();
     }
+
     fn active_toolchain(
+        workspace_id: WorkspaceId,
+        language_name: LanguageName,
         toolchain: Arc<dyn ToolchainLister>,
         file: Arc<dyn File>,
         mut cx: AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
-        let language = toolchain.language_name();
-        let settings_for = cx
-            .update(|cx| {
-                let all_settings = all_language_settings(Some(&file), cx);
-                all_settings.language(Some(&language)).toolchain.clone()
-            })
-            .ok()
-            .flatten();
-        if let Some(toolchain) = settings_for {
-            return Task::ready(Some(Toolchain {
-                label: toolchain.name,
-                path: SharedString::from("whatever"),
-            }));
-        }
         cx.spawn(move |_| async move {
+            let toolchain_for = workspace::WORKSPACE_DB
+                .toolchain(workspace_id, language_name)
+                .await;
+
             let toolchains = toolchain.list().await;
             toolchains.default_toolchain()
         })

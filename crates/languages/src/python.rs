@@ -330,17 +330,13 @@ pub(crate) struct PythonToolchainProvider;
 
 #[async_trait(?Send)]
 impl ToolchainLister for PythonToolchainProvider {
-    fn language_name(&self) -> LanguageName {
-        LanguageName::new("Python")
-    }
     async fn list(&self) -> ToolchainList {
-        let process = smol::process::Command::new("pet")
+        let output = smol::process::Command::new("pet")
             .arg("find")
             .arg("--list")
-            .stdout(Stdio::piped())
-            .spawn()
+            .output()
+            .await
             .unwrap();
-        let output = process.output().await.unwrap();
         let mut toolchains = vec![];
         let mut current_venv = None;
         for line in std::str::from_utf8(&output.stdout).unwrap().lines() {
@@ -353,6 +349,7 @@ impl ToolchainLister for PythonToolchainProvider {
                 toolchains.push(Toolchain {
                     label: kind,
                     path: SharedString::from(path.to_string()),
+                    language_name: LanguageName::new("Python"),
                 });
             }
         }

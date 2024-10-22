@@ -15,11 +15,11 @@ pub struct Toolchain {
     /// User-facing label
     pub label: SharedString,
     pub path: SharedString,
+    pub language_name: LanguageName,
 }
 
 #[async_trait(?Send)]
 pub trait ToolchainLister: Send + Sync {
-    fn language_name(&self) -> LanguageName;
     async fn list(&self) -> ToolchainList;
     async fn activate(&self, _: Toolchain);
 }
