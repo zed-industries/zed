@@ -323,7 +323,7 @@ impl Render for ProposedChangesEditorToolbar {
             if let Some(editor) = &editor {
                 editor.update(cx, |editor, cx| {
                     editor.editor.update(cx, |editor, cx| {
-                        editor.apply_all_changes(cx);
+                        editor.apply_all_diff_hunks(cx);
                     })
                 });
             }
