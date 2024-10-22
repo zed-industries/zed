@@ -354,8 +354,8 @@ impl Render for SshConnectionModal {
             .on_action(cx.listener(Self::confirm))
             .child(
                 SshConnectionHeader {
-                    connection_string: connection_string.into(),
                     paths: self.paths.clone(),
+                    connection_string,
                     nickname,
                 }
                 .render(cx),
