@@ -5,7 +5,7 @@ use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, M
 use language::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
-    local_vscode_tasks_file_relative_path,
+    local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
@@ -287,14 +287,29 @@ impl SettingsObserver {
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, kind, content) in store.local_settings(worktree.read(cx).id()) {
+            for (path, content) in store.local_settings(worktree.read(cx).id()) {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
                         path: path.to_string_lossy().into(),
                         content: Some(content),
-                        kind: Some(local_settings_kind_to_proto(kind).into()),
+                        kind: Some(
+                            local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
+                        ),
+                    })
+                    .log_err();
+            }
+            for (path, content, _) in store.local_editorconfig_settings(worktree.read(cx).id()) {
+                downstream_client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id,
+                        worktree_id,
+                        path: path.to_string_lossy().into(),
+                        content: Some(content),
+                        kind: Some(
+                            local_settings_kind_to_proto(LocalSettingsKind::Editorconfig).into(),
+                        ),
                     })
                     .log_err();
             }
@@ -453,6 +468,11 @@ impl SettingsObserver {
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Tasks)
+            } else if path.ends_with(EDITORCONFIG_NAME) {
+                let Some(settings_dir) = path.parent().map(Arc::from) else {
+                    continue;
+                };
+                (settings_dir, LocalSettingsKind::Editorconfig)
             } else {
                 continue;
             };
@@ -538,26 +558,47 @@ impl SettingsObserver {
         let task_store = self.task_store.clone();
 
         for (directory, kind, file_content) in settings_contents {
-            let result = match kind {
+            match kind {
                 LocalSettingsKind::Settings | LocalSettingsKind::Editorconfig => cx
-                    .update_global::<SettingsStore, anyhow::Result<()>>(|store, cx| {
-                        store.set_local_settings(
+                    .update_global::<SettingsStore, _>(|store, cx| {
+                        let result = store.set_local_settings(
                             worktree_id,
                             directory.clone(),
                             kind,
                             file_content.as_deref(),
                             cx,
-                        )
+                        );
+
+                        match result {
+                            Err(InvalidSettingsError::LocalSettings { path, message }) => {
+                                log::error!(
+                                    "Failed to set local settings in {:?}: {:?}",
+                                    path,
+                                    message
+                                );
+                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(
+                                    InvalidSettingsError::LocalSettings { path, message },
+                                )));
+                            }
+                            Err(e) => {
+                                log::error!("Failed to set local settings: {e}");
+                            }
+                            Ok(_) => {
+                                cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
+                            }
+                        }
                     }),
                 LocalSettingsKind::Tasks => task_store.update(cx, |task_store, cx| {
-                    task_store.update_user_tasks(
-                        Some(SettingsLocation {
-                            worktree_id,
-                            path: directory.as_ref(),
-                        }),
-                        file_content.as_deref(),
-                        cx,
-                    )
+                    task_store
+                        .update_user_tasks(
+                            Some(SettingsLocation {
+                                worktree_id,
+                                path: directory.as_ref(),
+                            }),
+                            file_content.as_deref(),
+                            cx,
+                        )
+                        .log_err();
                 }),
             };
 
@@ -571,28 +612,6 @@ impl SettingsObserver {
                         kind: Some(local_settings_kind_to_proto(kind).into()),
                     })
                     .log_err();
-            }
-
-            match result {
-                Err(error) => {
-                    if let Ok(error) = error.downcast::<InvalidSettingsError>() {
-                        if let InvalidSettingsError::LocalSettings {
-                            ref path,
-                            ref message,
-                        } = error
-                        {
-                            log::error!(
-                                "Failed to set local settings in {:?}: {:?}",
-                                path,
-                                message
-                            );
-                            cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Err(error)));
-                        }
-                    }
-                }
-                Ok(()) => {
-                    cx.emit(SettingsObserverEvent::LocalSettingsUpdated(Ok(())));
-                }
             }
         }
     }

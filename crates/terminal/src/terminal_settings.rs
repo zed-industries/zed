@@ -151,7 +151,7 @@ pub struct TerminalSettingsContent {
     pub alternate_scroll: Option<AlternateScroll>,
     /// Sets whether the option key behaves as the meta key.
     ///
-    /// Default: true
+    /// Default: false
     pub option_as_meta: Option<bool>,
     /// Whether or not selecting text in the terminal will automatically
     /// copy to the system clipboard.

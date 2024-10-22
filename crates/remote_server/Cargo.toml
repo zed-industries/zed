@@ -18,9 +18,11 @@ name = "remote_server"
 
 [features]
 default = []
+debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
+async-watch.workspace = true
 anyhow.workspace = true
 backtrace = "0.3"
 clap.workspace = true
@@ -28,14 +30,21 @@ client.workspace = true
 env_logger.workspace = true
 fs.workspace = true
 futures.workspace = true
+git.workspace = true
+git_hosting_providers.workspace = true
 gpui.workspace = true
+http_client.workspace = true
 language.workspace = true
 languages.workspace = true
 log.workspace = true
+lsp.workspace = true
 node_runtime.workspace = true
 project.workspace = true
+paths = { workspace = true }
 remote.workspace = true
+reqwest_client.workspace = true
 rpc.workspace = true
+rust-embed = { workspace = true, optional = true, features = ["debug-embed"] }
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
@@ -43,6 +52,10 @@ shellexpand.workspace = true
 smol.workspace = true
 util.workspace = true
 worktree.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+fork.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
@@ -61,3 +74,6 @@ serde_json.workspace = true
 [build-dependencies]
 cargo_toml.workspace = true
 toml.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["rust-embed", "paths"]

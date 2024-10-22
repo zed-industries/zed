@@ -4905,6 +4905,12 @@ impl From<(&'static str, usize)> for ElementId {
     }
 }
 
+impl From<(SharedString, usize)> for ElementId {
+    fn from((name, id): (SharedString, usize)) -> Self {
+        ElementId::NamedInteger(name, id)
+    }
+}
+
 impl From<(&'static str, u64)> for ElementId {
     fn from((name, id): (&'static str, u64)) -> Self {
         ElementId::NamedInteger(name.into(), id as usize)

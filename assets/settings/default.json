@@ -494,7 +494,14 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": false
+    "file_icons": false,
+    // What to do after closing the current tab.
+    //
+    // 1. Activate the tab that was open previously (default)
+    //     "History"
+    // 2. Activate the neighbour tab (prefers the right one, if present)
+    //     "Neighbour"
+    "activate_on_close": "history"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -705,10 +712,10 @@
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
     //     this means generating certain unicode characters
-    //         "option_to_meta": false,
+    //         "option_as_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
-    //         "option_to_meta": true,
-    "option_as_meta": true,
+    //         "option_as_meta": true,
+    "option_as_meta": false,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
@@ -817,6 +824,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-astro"]
@@ -842,6 +850,10 @@
     },
     "Dart": {
       "tab_size": 2
+    },
+    "Diff": {
+      "remove_trailing_whitespace_on_save": false,
+      "ensure_final_newline_on_save": false
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]

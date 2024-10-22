@@ -27,6 +27,7 @@ use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 
+use project::lsp_store::FormatTarget;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -719,10 +720,19 @@ impl Item for Editor {
     ) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
+        let buffers = buffers
+            .into_iter()
+            .map(|handle| handle.read(cx).diff_base_buffer().unwrap_or(handle.clone()))
+            .collect::<HashSet<_>>();
         cx.spawn(|this, mut cx| async move {
             if format {
                 this.update(&mut cx, |editor, cx| {
-                    editor.perform_format(project.clone(), FormatTrigger::Save, cx)
+                    editor.perform_format(
+                        project.clone(),
+                        FormatTrigger::Save,
+                        FormatTarget::Buffer,
+                        cx,
+                    )
                 })?
                 .await?;
             }

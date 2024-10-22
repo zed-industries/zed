@@ -79,7 +79,7 @@ pub trait StyledTypography: Styled + Sized {
     ///
     /// This should only be used for text that is displayed in a buffer,
     /// or other places that text needs to match the user's buffer font size.
-    fn text_buffer(self, cx: &mut WindowContext) -> Self {
+    fn text_buffer(self, cx: &WindowContext) -> Self {
         let settings = ThemeSettings::get_global(cx);
         self.text_size(settings.buffer_font_size(cx))
     }

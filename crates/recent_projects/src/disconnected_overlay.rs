@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use dev_server_projects::DevServer;
 use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakView};
 use remote::SshConnectionOptions;
+use settings::Settings;
 use ui::{
     div, h_flex, rems, Button, ButtonCommon, ButtonStyle, Clickable, ElevationIndex, FluentBuilder,
     Headline, HeadlineSize, IconName, IconPosition, InteractiveElement, IntoElement, Label, Modal,
@@ -11,8 +12,8 @@ use ui::{
 use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
 use crate::{
-    dev_servers::reconnect_to_dev_server_project, open_dev_server_project, open_ssh_project,
-    DevServerProjects,
+    open_dev_server_project, open_ssh_project, remote_servers::reconnect_to_dev_server_project,
+    RemoteServerProjects, SshSettings,
 };
 
 enum Host {
@@ -130,7 +131,7 @@ impl DisconnectedOverlay {
         } else {
             return workspace.update(cx, |workspace, cx| {
                 let handle = cx.view().downgrade();
-                workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, handle))
+                workspace.toggle_modal(cx, |cx| RemoteServerProjects::new(cx, handle))
             });
         }
     }
@@ -157,6 +158,16 @@ impl DisconnectedOverlay {
         let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
         cx.spawn(move |_, mut cx| async move {
+            let nickname = cx
+                .update(|cx| {
+                    SshSettings::get_global(cx).nickname_for(
+                        &connection_options.host,
+                        connection_options.port,
+                        &connection_options.username,
+                    )
+                })
+                .ok()
+                .flatten();
             open_ssh_project(
                 connection_options,
                 paths,
@@ -165,6 +176,7 @@ impl DisconnectedOverlay {
                     replace_window: Some(window),
                     ..Default::default()
                 },
+                nickname,
                 &mut cx,
             )
             .await?;
