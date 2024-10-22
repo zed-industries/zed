@@ -33,10 +33,10 @@ use task::HideStrategy;
 use task::RevealStrategy;
 use task::SpawnInTerminal;
 use terminal_view::terminal_panel::TerminalPanel;
-use ui::Scrollbar;
-use ui::ScrollbarState;
-use ui::Section;
-use ui::{prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Tooltip};
+use ui::{
+    prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar,
+    ScrollbarState, Section, Tooltip,
+};
 use util::ResultExt;
 use workspace::notifications::NotificationId;
 use workspace::OpenOptions;
@@ -352,18 +352,34 @@ impl RemoteServerProjects {
         }
     }
 
+    fn scroll_to_selected(&self, _: &mut ViewContext<Self>) {
+        if let Mode::Default(scroll_state) = &self.mode {
+            if let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() {
+                if let Some(active_item) = self.selectable_items.active_item {
+                    scroll_handle.scroll_to_item(active_item);
+                }
+            }
+        }
+    }
+
     fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
         self.selectable_items.next(cx);
+        cx.notify();
+        self.scroll_to_selected(cx);
     }
+
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
         if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
         self.selectable_items.prev(cx);
+        cx.notify();
+        self.scroll_to_selected(cx);
     }
+
     pub fn project_picker(
         ix: usize,
         connection_options: remote::SshConnectionOptions,
@@ -617,12 +633,12 @@ impl RemoteServerProjects {
         };
         v_flex()
             .w_full()
-            .child(ListSeparator)
+            // .child(ListSeparator)
             .child(
                 h_flex()
                     .group("ssh-server")
                     .w_full()
-                    .pt_0p5()
+                    // .pt_0p5()
                     .px_3()
                     .gap_1()
                     .overflow_hidden()
@@ -630,7 +646,7 @@ impl RemoteServerProjects {
                     .child(
                         Label::new(main_label)
                             .size(LabelSize::Small)
-                            .weight(FontWeight::SEMIBOLD)
+                            // .weight(FontWeight::SEMIBOLD)
                             .color(Color::Muted),
                     )
                     .children(
@@ -857,6 +873,7 @@ impl RemoteServerProjects {
                     .p_2()
                     .border_b_1()
                     .border_color(theme.colors().border_variant)
+                    // .bg(theme.colors().editor_background)
                     .child(state.address_editor.clone()),
             )
             .child(
@@ -925,7 +942,7 @@ impl RemoteServerProjects {
             )
             .child(
                 v_flex()
-                    .py_1()
+                    .pb_1()
                     .child({
                         self.selectable_items.add_item(Box::new({
                             move |this, cx| {
@@ -1152,26 +1169,21 @@ impl RemoteServerProjects {
             .size_full()
             .child(connect_button)
             .child(
-                h_flex().child(
-                    List::new()
-                        .empty_message(
-                            v_flex()
-                                .child(ListSeparator)
-                                .child(
-                                    div().px_3().child(
-                                        Label::new("No remote servers registered yet.")
-                                            .color(Color::Muted),
-                                    ),
-                                )
-                                .into_any_element(),
-                        )
-                        .children(ssh_connections.iter().cloned().enumerate().map(
-                            |(ix, connection)| {
-                                self.render_ssh_connection(ix, connection, cx)
-                                    .into_any_element()
-                            },
-                        )),
-                ),
+                List::new()
+                    .empty_message(
+                        v_flex()
+                            // .child(ListSeparator)
+                            .child(div().px_3().child(
+                                Label::new("No remote servers registered yet.").color(Color::Muted),
+                            ))
+                            .into_any_element(),
+                    )
+                    .children(ssh_connections.iter().cloned().enumerate().map(
+                        |(ix, connection)| {
+                            self.render_ssh_connection(ix, connection, cx)
+                                .into_any_element()
+                        },
+                    )),
             )
             .into_any_element();
 
@@ -1182,26 +1194,26 @@ impl RemoteServerProjects {
             )
             .section(
                 Section::new().padded(false).child(
-                    h_flex()
+                    v_flex()
                         .min_h(rems(20.))
                         .size_full()
+                        .relative()
+                        .child(ListSeparator)
                         .child(
-                            v_flex().size_full().child(ListSeparator).child(
-                                canvas(
-                                    |bounds, cx| {
-                                        modal_section.prepaint_as_root(
-                                            bounds.origin,
-                                            bounds.size.into(),
-                                            cx,
-                                        );
-                                        modal_section
-                                    },
-                                    |_, mut modal_section, cx| {
-                                        modal_section.paint(cx);
-                                    },
-                                )
-                                .size_full(),
-                            ),
+                            canvas(
+                                |bounds, cx| {
+                                    modal_section.prepaint_as_root(
+                                        bounds.origin,
+                                        bounds.size.into(),
+                                        cx,
+                                    );
+                                    modal_section
+                                },
+                                |_, mut modal_section, cx| {
+                                    modal_section.paint(cx);
+                                },
+                            )
+                            .size_full(),
                         )
                         .child(
                             div()
@@ -1239,6 +1251,7 @@ impl Render for RemoteServerProjects {
         div()
             .track_focus(&self.focus_handle)
             .elevation_3(cx)
+            .w(rems(34.))
             .key_context("RemoteServerModal")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
@@ -1252,7 +1265,6 @@ impl Render for RemoteServerProjects {
                     cx.emit(DismissEvent)
                 }
             }))
-            .w(rems(34.))
             .child(match &self.mode {
                 Mode::Default(state) => self.render_default(state.clone(), cx).into_any_element(),
                 Mode::ViewServerOptions(index, connection) => self
