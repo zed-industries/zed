@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use dev_server_projects::DevServer;
 use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakView};
+use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
 use ui::{
@@ -26,6 +27,7 @@ pub struct DisconnectedOverlay {
     workspace: WeakView<Workspace>,
     host: Host,
     focus_handle: FocusHandle,
+    finished: bool,
 }
 
 impl EventEmitter<DismissEvent> for DisconnectedOverlay {}
@@ -35,6 +37,9 @@ impl FocusableView for DisconnectedOverlay {
     }
 }
 impl ModalView for DisconnectedOverlay {
+    fn on_before_dismiss(&mut self, _: &mut ViewContext<Self>) -> workspace::DismissDecision {
+        return workspace::DismissDecision::Dismiss(self.finished);
+    }
     fn fade_out_background(&self) -> bool {
         true
     }
@@ -70,6 +75,7 @@ impl DisconnectedOverlay {
             };
 
             workspace.toggle_modal(cx, |cx| DisconnectedOverlay {
+                finished: false,
                 workspace: handle,
                 host,
                 focus_handle: cx.focus_handle(),
@@ -79,6 +85,7 @@ impl DisconnectedOverlay {
     }
 
     fn handle_reconnect(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        self.finished = true;
         cx.emit(DismissEvent);
 
         match &self.host {
@@ -186,6 +193,7 @@ impl DisconnectedOverlay {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        self.finished = true;
         cx.emit(DismissEvent)
     }
 }
@@ -202,9 +210,17 @@ impl Render for DisconnectedOverlay {
                 "Your connection to the remote project has been lost.".to_string()
             }
             Host::SshRemoteProject(options) => {
+                let autosave = if ProjectSettings::get_global(cx)
+                    .session
+                    .restore_unsaved_buffers
+                {
+                    "\nUnsaved changes are stored locally."
+                } else {
+                    ""
+                };
                 format!(
-                    "Your connection to {} has been lost",
-                    options.connection_string()
+                    "Your connection to {} has been lost.{}",
+                    options.host, autosave
                 )
             }
         };
