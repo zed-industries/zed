@@ -21,8 +21,8 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
     PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED,
-    INLINE_BLAME_PADDING_EM_WIDTHS, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap};
@@ -71,6 +71,8 @@ use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
 use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
+
+const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
 struct SelectionLayout {
     head: DisplayPoint,
