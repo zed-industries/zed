@@ -356,6 +356,10 @@ impl State {
         matches!(self, Self::ReconnectExhausted { .. })
     }
 
+    fn is_server_not_running(&self) -> bool {
+        matches!(self, Self::ServerNotRunning)
+    }
+
     fn is_reconnecting(&self) -> bool {
         matches!(self, Self::Reconnecting { .. })
     }
@@ -700,7 +704,6 @@ impl SshRemoteClient {
                 if this.state_is(State::is_reconnect_failed) {
                     this.reconnect(cx)
                 } else if this.state_is(State::is_reconnect_exhausted) {
-                    cx.emit(SshRemoteEvent::Disconnected);
                     Ok(())
                 } else {
                     log::debug!("State has transition from Reconnecting into new state while attempting reconnect.");
@@ -870,6 +873,9 @@ impl SshRemoteClient {
                 let len = child_stderr
                     .read(&mut stderr_buffer[stderr_offset..])
                     .await?;
+                if len == 0 {
+                    return Err(anyhow!("stderr is closed"));
+                }
 
                 stderr_offset += len;
                 let mut start_ix = 0;
@@ -929,7 +935,6 @@ impl SshRemoteClient {
                                 log::error!("failed to reconnect because server is not running");
                                 this.update(&mut cx, |this, cx| {
                                     this.set_state(State::ServerNotRunning, cx);
-                                    cx.emit(SshRemoteEvent::Disconnected);
                                 })?;
                             }
                         }
@@ -972,7 +977,14 @@ impl SshRemoteClient {
 
     fn set_state(&self, state: State, cx: &mut ModelContext<Self>) {
         log::info!("setting state to '{}'", &state);
+
+        let is_reconnect_exhausted = state.is_reconnect_exhausted();
+        let is_server_not_running = state.is_server_not_running();
         self.state.lock().replace(state);
+
+        if is_reconnect_exhausted || is_server_not_running {
+            cx.emit(SshRemoteEvent::Disconnected);
+        }
         cx.notify();
     }
 
