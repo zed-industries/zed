@@ -298,6 +298,20 @@ impl Item for ProposedChangesEditor {
             Item::set_nav_history(editor, nav_history, cx)
         });
     }
+
+    fn can_save(&self, cx: &AppContext) -> bool {
+        self.editor.read(cx).can_save(cx)
+    }
+
+    fn save(
+        &mut self,
+        format: bool,
+        project: Model<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<gpui::Result<()>> {
+        self.editor
+            .update(cx, |editor, cx| Item::save(editor, format, project, cx))
+    }
 }
 
 impl ProposedChangesEditorToolbar {
