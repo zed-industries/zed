@@ -5038,12 +5038,6 @@ impl Element for EditorElement {
                     );
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
-                    let right_margin = if snapshot.mode == EditorMode::Full {
-                        EditorElement::SCROLLBAR_WIDTH
-                    } else {
-                        px(0.)
-                    };
-
                     let blame_overflow = self.editor.update(cx, |editor, cx| {
                         if !editor.render_git_blame_inline(cx) {
                             return px(0.);
@@ -5053,34 +5047,52 @@ impl Element for EditorElement {
                         let buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
                         let buffer_row =
                             MultiBufferRow(cursor_position.to_point(&buffer_snapshot).row);
-                        let line_length = buffer_snapshot.line_len(buffer_row) as f32;
+                        let line_width = buffer_snapshot.line_len(buffer_row) as f32 * em_advance;
 
-                        let blame_length = editor.blame.as_ref().map_or(0f32, |blame| {
+                        let blame_length = editor.blame.as_ref().map_or(0.0, |blame| {
                             blame
                                 .update(cx, |blame, cx| {
                                     blame.blame_for_rows([Some(buffer_row)], cx).next()
                                 })
                                 .flatten()
-                                .map_or(0f32, |entry| {
+                                .map_or(0.0, |entry| {
                                     let author_length =
-                                        entry.author.map_or(0f32, |author| author.len() as f32);
-                                    let max_char_count = author_length + 14.0 + 4.0; // author length + timestamp + gaps/gylphs
+                                        entry.author.map_or(0.0, |author| author.len() as f32);
+                                    let max_char_count = author_length + 14.0 + 5.0; // author length + max timestamp + gaps/glyphs
                                     max_char_count
                                 })
-                        });
+                        }) as f32;
 
-                        let text_width_with_blame =
-                            (line_length + INLINE_BLAME_PADDING_EM_WIDTHS + blame_length)
-                                * em_width;
-                        let blame_overflow = text_width.max(text_width_with_blame) - text_width;
+                        let blame_width =
+                            (INLINE_BLAME_PADDING_EM_WIDTHS + blame_length) * em_advance;
+
+                        let longest_line_width =
+                            layout_line(snapshot.longest_row(), &snapshot, &style, text_width, cx)
+                                .width;
+                        let blame_overflow = if line_width > longest_line_width {
+                            // blame is outside the scroll bounds
+                            blame_width
+                        } else if line_width + blame_width > longest_line_width {
+                            // blame is partially outside the scroll bounds
+                            line_width + blame_width - longest_line_width
+                        } else {
+                            // blame is inside the scroll bounds
+                            px(0.)
+                        };
 
                         blame_overflow
                     });
 
+                    let right_margin = if snapshot.mode == EditorMode::Full {
+                        EditorElement::SCROLLBAR_WIDTH
+                    } else {
+                        px(0.)
+                    };
+
                     let overscroll = size(em_width + right_margin + blame_overflow, px(0.));
 
                     let editor_width =
-                        text_width - gutter_dimensions.margin - em_width - overscroll.width;
+                        text_width - gutter_dimensions.margin - overscroll.width - em_width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);
