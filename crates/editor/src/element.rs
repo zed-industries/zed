@@ -1148,6 +1148,8 @@ impl EditorElement {
 
         cursor_layouts
     }
+    
+    // we need layout_minimap...
 
     fn layout_scrollbar(
         &self,
@@ -3572,27 +3574,77 @@ impl EditorElement {
         };
         
         let box_width = Pixels(100.0);
-        let box_height = Pixels(100.0);
+        let box_height = scrollbar_layout.hitbox.bounds.size.height;
         let box_right_padding = Pixels(20.0);
         
         let mut test_box_bounds = scrollbar_layout.hitbox.bounds.clone();
         test_box_bounds.origin -= point(box_width + box_right_padding, Pixels::ZERO);
         test_box_bounds.size = size(box_width, box_height);
         
+        // background
         cx.paint_layer(scrollbar_layout.hitbox.bounds, |cx| {
             cx.paint_quad(quad(
                 test_box_bounds,
+                Corners::default(),
+                cx.theme().colors().scrollbar_track_background,
+                Edges {
+                    top: Pixels::ZERO,
+                    right: ScrollbarLayout::BORDER_WIDTH,
+                    bottom: Pixels::ZERO,
+                    left: ScrollbarLayout::BORDER_WIDTH,
+                },
+                cx.theme().colors().scrollbar_track_border,
+            ));
+        });
+        
+        let style = self.style.clone();
+        let line_height = style.text.line_height_in_pixels(cx.rem_size());
+        
+        let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
+
+        // The scroll position is a fractional point, the whole number of which represents
+        // the top of the window in terms of display rows.
+        let scroll_position = snapshot.scroll_position();
+        
+        // visible area
+        let rows_per_page = test_box_bounds.size.height / line_height;
+        let visible_row_range = scroll_position.y..scroll_position.y + rows_per_page;
+        
+        let settings = EditorSettings::get_global(cx);
+        let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => rows_per_page,
+            ScrollBeyondLastLine::Off => 1.0,
+            ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
+        };
+        let total_rows =
+            (snapshot.max_point().row().as_f32() + scroll_beyond_last_line).max(rows_per_page);
+        
+        let height = test_box_bounds.size.height;
+        let px_per_row = height / total_rows;
+        let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
+        let row_height = (height - thumb_height) / (total_rows - rows_per_page).max(0.);
+        
+        let y_for_row = test_box_bounds.top() + visible_row_range.start * row_height;
+        let minimap_thumb_top = y_for_row;
+        let minimap_thumb_bottom = minimap_thumb_top + thumb_height;
+        let minimap_thumb_bounds = Bounds::from_corners(
+            point(test_box_bounds.left(), minimap_thumb_top),
+            point(test_box_bounds.right(), minimap_thumb_bottom),
+        );
+        
+        // "thumb" -- really its the visible area preview
+        cx.paint_layer(scrollbar_layout.hitbox.bounds, |cx| {
+            cx.paint_quad(quad(
+                minimap_thumb_bounds,
                 Corners::default(),
                 cx.theme().colors().scrollbar_thumb_background,
                 Edges {
                     top: Pixels::ZERO,
                     right: ScrollbarLayout::BORDER_WIDTH,
-                    bottom: ScrollbarLayout::BORDER_WIDTH,
+                    bottom: Pixels::ZERO,
                     left: ScrollbarLayout::BORDER_WIDTH,
                 },
                 cx.theme().colors().scrollbar_thumb_border,
-                // Edges::default(),
-                // Hsla::transparent_black(),
             ));
         });
     }
@@ -5462,7 +5514,7 @@ impl Element for EditorElement {
                         autoscroll_containing_element,
                         cx,
                     );
-
+                    
                     let scrollbar_layout = self.layout_scrollbar(
                         &snapshot,
                         bounds,
