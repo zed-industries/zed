@@ -5057,10 +5057,14 @@ impl Element for EditorElement {
                                     blame.blame_for_rows([Some(buffer_row)], cx).next()
                                 })
                                 .flatten()
-                                .map_or(0.0, |entry| {
+                                .map_or(0., |entry| {
+                                    const MAX_TIMESTAMP_LENGTH: f32 = 14.;
+                                    const GAP_AND_GLYPHS: f32 = 5.;
+
                                     let author_length =
-                                        entry.author.map_or(0.0, |author| author.len() as f32);
-                                    let max_char_count = author_length + 14.0 + 5.0; // author length + max timestamp + gaps/glyphs
+                                        entry.author.map_or(0., |author| author.len() as f32);
+                                    let max_char_count =
+                                        author_length + MAX_TIMESTAMP_LENGTH + GAP_AND_GLYPHS;
                                     max_char_count
                                 })
                         }) as f32;
@@ -5072,13 +5076,13 @@ impl Element for EditorElement {
                             layout_line(snapshot.longest_row(), &snapshot, &style, text_width, cx)
                                 .width;
                         let blame_overflow = if line_width > longest_line_width {
-                            // blame is outside the scroll bounds
+                            // Blame is outside the scroll bounds.
                             blame_width
                         } else if line_width + blame_width > longest_line_width {
-                            // blame is partially outside the scroll bounds
+                            // Blame is partially outside the scroll bounds.
                             line_width + blame_width - longest_line_width
                         } else {
-                            // blame is inside the scroll bounds
+                            // Blame is inside the scroll bounds.
                             px(0.)
                         };
 
