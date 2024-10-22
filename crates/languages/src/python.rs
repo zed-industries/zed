@@ -14,7 +14,6 @@ use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
 
-use std::process::Stdio;
 use std::{
     any::Any,
     borrow::Cow,

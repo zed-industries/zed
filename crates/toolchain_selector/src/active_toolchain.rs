@@ -2,15 +2,11 @@ use std::sync::Arc;
 
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, Entity, IntoElement, ParentElement, Render, Subscription, Task, View,
+    div, AsyncWindowContext, IntoElement, ParentElement, Render, Subscription, Task, View,
     ViewContext, WeakModel, WeakView,
 };
-use language::{
-    language_settings::all_language_settings, Buffer, File, LanguageName, Toolchain,
-    ToolchainLister,
-};
-use settings::SettingsStore;
-use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
+use language::{Buffer, LanguageName, Toolchain, ToolchainLister};
+use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace, WorkspaceId};
 
 use crate::ToolchainSelector;

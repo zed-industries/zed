@@ -5,7 +5,7 @@ use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
-use gpui::{AppContext, SharedString};
+use gpui::AppContext;
 use itertools::{Either, Itertools};
 use schemars::{
     schema::{InstanceType, ObjectValidation, Schema, SchemaObject, SingleOrVec},
