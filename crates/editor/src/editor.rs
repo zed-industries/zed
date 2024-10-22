@@ -2260,6 +2260,7 @@ impl Editor {
                 }
             })
             .flatten();
+
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
