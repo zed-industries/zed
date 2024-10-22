@@ -17,9 +17,9 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{
     display_map::ToDisplayPoint,
     items::{entry_git_aware_label_color, entry_label_color},
-    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor},
-    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, ExcerptId, ExcerptRange,
-    MultiBufferSnapshot, RangeToAnchorExt,
+    scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
+    AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
+    ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
 };
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
@@ -28,8 +28,8 @@ use gpui::{
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
     Div, ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
     IntoElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Render, SharedString, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View,
-    ViewContext, VisualContext, WeakView, WindowContext,
+    Render, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
+    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -51,7 +51,8 @@ use workspace::{
     ui::{
         h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Selectable, Spacing, StyledExt, StyledTypography, Tooltip,
+        LabelCommon, ListItem, Scrollbar, ScrollbarState, Selectable, Spacing, StyledExt,
+        StyledTypography, Tooltip,
     },
     OpenInTerminal, WeakItemHandle, Workspace,
 };
@@ -116,6 +117,11 @@ pub struct OutlinePanel {
     cached_entries: Vec<CachedEntry>,
     filter_editor: View<Editor>,
     mode: ItemsDisplayMode,
+    show_scrollbar: bool,
+    vertical_scrollbar_state: ScrollbarState,
+    horizontal_scrollbar_state: ScrollbarState,
+    hide_scrollbar_task: Option<Task<()>>,
+    max_width_item_index: Option<usize>,
 }
 
 enum ItemsDisplayMode {
@@ -624,6 +630,9 @@ impl OutlinePanel {
 
             let focus_handle = cx.focus_handle();
             let focus_subscription = cx.on_focus(&focus_handle, Self::focus_in);
+            let focus_out_subscription = cx.on_focus_out(&focus_handle, |outline_panel, _, cx| {
+                outline_panel.hide_scrollbar(cx);
+            });
             let workspace_subscription = cx.subscribe(
                 &workspace
                     .weak_handle()
@@ -674,6 +683,8 @@ impl OutlinePanel {
                     }
                 });
 
+            let scroll_handle = UniformListScrollHandle::new();
+
             let mut outline_panel = Self {
                 mode: ItemsDisplayMode::Outline,
                 active: false,
@@ -681,7 +692,14 @@ impl OutlinePanel {
                 workspace: workspace_handle,
                 project,
                 fs: workspace.app_state().fs.clone(),
-                scroll_handle: UniformListScrollHandle::new(),
+                show_scrollbar: !Self::should_autohide_scrollbar(cx),
+                hide_scrollbar_task: None,
+                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(cx.view()),
+                horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(cx.view()),
+                max_width_item_index: None,
+                scroll_handle,
                 focus_handle,
                 filter_editor,
                 fs_entries: Vec::new(),
@@ -705,6 +723,7 @@ impl OutlinePanel {
                     settings_subscription,
                     icons_subscription,
                     focus_subscription,
+                    focus_out_subscription,
                     workspace_subscription,
                     filter_update_subscription,
                 ],
@@ -3591,6 +3610,165 @@ impl OutlinePanel {
         self.autoscroll(cx);
         cx.notify();
     }
+
+    fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+        if !Self::should_show_scrollbar(cx)
+            || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
+        {
+            return None;
+        }
+        Some(
+            div()
+                .occlude()
+                .id("project-panel-vertical-scroll")
+                .on_mouse_move(cx.listener(|_, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|outline_panel, _, cx| {
+                        if !outline_panel.vertical_scrollbar_state.is_dragging()
+                            && !outline_panel.focus_handle.contains_focused(cx)
+                        {
+                            outline_panel.hide_scrollbar(cx);
+                            cx.notify();
+                        }
+
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_1()
+                .top_1()
+                .bottom_1()
+                .w(px(12.))
+                .cursor_default()
+                .children(Scrollbar::vertical(
+                    // percentage as f32..end_offset as f32,
+                    self.vertical_scrollbar_state.clone(),
+                )),
+        )
+    }
+
+    fn render_horizontal_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+        if !Self::should_show_scrollbar(cx)
+            || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
+        {
+            return None;
+        }
+
+        let scroll_handle = self.scroll_handle.0.borrow();
+        let longest_item_width = scroll_handle
+            .last_item_size
+            .filter(|size| size.contents.width > size.item.width)?
+            .contents
+            .width
+            .0 as f64;
+        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
+            return None;
+        }
+
+        Some(
+            div()
+                .occlude()
+                .id("project-panel-horizontal-scroll")
+                .on_mouse_move(cx.listener(|_, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|outline_panel, _, cx| {
+                        if !outline_panel.horizontal_scrollbar_state.is_dragging()
+                            && !outline_panel.focus_handle.contains_focused(cx)
+                        {
+                            outline_panel.hide_scrollbar(cx);
+                            cx.notify();
+                        }
+
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                    cx.notify();
+                }))
+                .w_full()
+                .absolute()
+                .right_1()
+                .left_1()
+                .bottom_1()
+                .h(px(12.))
+                .cursor_default()
+                .when(self.width.is_some(), |this| {
+                    this.children(Scrollbar::horizontal(
+                        self.horizontal_scrollbar_state.clone(),
+                    ))
+                }),
+        )
+    }
+
+    fn should_show_scrollbar(cx: &AppContext) -> bool {
+        let show = OutlinePanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => true,
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        }
+    }
+
+    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+        let show = OutlinePanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => cx
+                .try_global::<ScrollbarAutoHide>()
+                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
+            ShowScrollbar::Always => false,
+            ShowScrollbar::Never => true,
+        }
+    }
+
+    fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
+        const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
+        if !Self::should_autohide_scrollbar(cx) {
+            return;
+        }
+        self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
+            cx.background_executor()
+                .timer(SCROLLBAR_SHOW_INTERVAL)
+                .await;
+            panel
+                .update(&mut cx, |panel, cx| {
+                    panel.show_scrollbar = false;
+                    cx.notify();
+                })
+                .log_err();
+        }))
+    }
 }
 
 fn workspace_active_editor(
@@ -3754,6 +3932,15 @@ impl Render for OutlinePanel {
             .id("outline-panel")
             .size_full()
             .relative()
+            .on_hover(cx.listener(|this, hovered, cx| {
+                if *hovered {
+                    this.show_scrollbar = true;
+                    this.hide_scrollbar_task.take();
+                    cx.notify();
+                } else if !this.focus_handle.contains_focused(cx) {
+                    this.hide_scrollbar(cx);
+                }
+            }))
             .key_context(self.dispatch_context(cx))
             .on_action(cx.listener(Self::open))
             .on_action(cx.listener(Self::cancel))
@@ -3913,6 +4100,8 @@ impl Render for OutlinePanel {
                         }
                     })
                     .size_full()
+                    // TODO kb
+                    // .with_width_from_item(self.max_width_item_index)
                     .track_scroll(self.scroll_handle.clone())
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
@@ -3971,6 +4160,10 @@ impl Render for OutlinePanel {
                     })
                 })
         }
+        .children(self.render_vertical_scrollbar(cx))
+        .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
+            this.pb_4().child(scrollbar)
+        })
         .children(self.context_menu.as_ref().map(|(menu, position, _)| {
             deferred(
                 anchored()
