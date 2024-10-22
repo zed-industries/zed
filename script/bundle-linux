@@ -37,16 +37,18 @@ commit=$(git rev-parse HEAD | cut -c 1-7)
 version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 target_triple=${host_line#*: }
+musl_triple=${target_triple%-gnu}-musl
 
 # Generate the licenses first, so they can be baked into the binaries
 script/generate-licenses
+rustup target add "$musl_triple"
 
 # Build binary in release mode
 export RUSTFLAGS="${RUSTFLAGS:-} -C link-args=-Wl,--disable-new-dtags,-rpath,\$ORIGIN/../lib"
 cargo build --release --target "${target_triple}" --package zed --package cli
 # Build remote_server in separate invocation to prevent feature unification from other crates
 # from influencing dynamic libraries required by it.
-cargo build --release --target "${target_triple}" --package remote_server
+cargo build --release --target "${musl_triple}" --package remote_server
 
 # Strip the binary of all debug symbols
 # Later, we probably want to do something like this: https://github.com/GabrielMajeri/separate-symbols
