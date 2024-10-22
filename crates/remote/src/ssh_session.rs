@@ -741,8 +741,6 @@ impl SshRemoteClient {
                                 return Ok(());
                             }
 
-                            keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
-
                             if missed_heartbeats != 0 {
                                 missed_heartbeats = 0;
                                 this.update(&mut cx, |this, mut cx| {
@@ -784,6 +782,8 @@ impl SshRemoteClient {
                             }
                         }
                     }
+
+                    keepalive_timer.set(cx.background_executor().timer(HEARTBEAT_INTERVAL).fuse());
                 }
             }
         })
@@ -874,7 +874,7 @@ impl SshRemoteClient {
                     .read(&mut stderr_buffer[stderr_offset..])
                     .await?;
                 if len == 0 {
-                    return Err(anyhow!("stderr is closed"));
+                    return anyhow::Ok(());
                 }
 
                 stderr_offset += len;
@@ -912,8 +912,9 @@ impl SshRemoteClient {
                 }
             };
 
+            let status = ssh_proxy_process.status().await?.code().unwrap_or(1);
             match result {
-                Ok(_) => Ok(ssh_proxy_process.status().await?.code().unwrap_or(1)),
+                Ok(_) => Ok(status),
                 Err(error) => Err(error),
             }
         })
