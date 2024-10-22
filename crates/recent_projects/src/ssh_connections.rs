@@ -292,6 +292,7 @@ impl SshConnectionModal {
 
 pub(crate) struct SshConnectionHeader {
     pub(crate) connection_string: SharedString,
+    pub(crate) paths: Vec<PathBuf>,
     pub(crate) nickname: Option<SharedString>,
 }
 
@@ -320,7 +321,16 @@ impl RenderOnce for SshConnectionHeader {
                 h_flex()
                     .gap_1()
                     .child(Headline::new(main_label).size(HeadlineSize::XSmall))
-                    .children(meta_label.map(|label| Label::new(label).color(Color::Muted))),
+                    .children(
+                        meta_label.map(|label| {
+                            Label::new(label).color(Color::Muted).size(LabelSize::Small)
+                        }),
+                    )
+                    .children(self.paths.into_iter().map(|path| {
+                        Label::new(path.to_string_lossy().to_string())
+                            .size(LabelSize::Small)
+                            .color(Color::Muted)
+                    })),
             )
     }
 }
@@ -333,12 +343,6 @@ impl Render for SshConnectionModal {
         let theme = cx.theme().clone();
         let body_color = theme.colors().editor_background;
 
-        let mut header_string = format!("{} ", &connection_string);
-        for path in &self.paths {
-            header_string.push_str(&path.to_string_lossy());
-            header_string.push(' ');
-        }
-
         v_flex()
             .elevation_3(cx)
             .w(rems(34.))
@@ -350,7 +354,8 @@ impl Render for SshConnectionModal {
             .on_action(cx.listener(Self::confirm))
             .child(
                 SshConnectionHeader {
-                    connection_string: header_string.into(),
+                    connection_string: connection_string.into(),
+                    paths: self.paths.clone(),
                     nickname,
                 }
                 .render(cx),
