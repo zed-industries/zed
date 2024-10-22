@@ -185,7 +185,7 @@ fn paint_line(
                 if glyph.index >= run_end {
                     let mut style_run = decoration_runs.next();
 
-                    // ignore stlye runs that apply to a partial glyph
+                    // ignore style runs that apply to a partial glyph
                     while let Some(run) = style_run {
                         if glyph.index < run_end + (run.len as usize) {
                             break;

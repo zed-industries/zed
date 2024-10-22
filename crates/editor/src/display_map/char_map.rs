@@ -138,10 +138,8 @@ impl CharMap {
                 let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
                 let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
                 tab_edits.push(TabEdit {
-                    old: old_snapshot.to_char_point(old_start)
-                        ..old_snapshot.to_char_point(old_end),
-                    new: new_snapshot.to_char_point(new_start)
-                        ..new_snapshot.to_char_point(new_end),
+                    old: old_snapshot.to_char_point(old_start)..old_snapshot.to_char_point(old_end),
+                    new: new_snapshot.to_char_point(new_start)..new_snapshot.to_char_point(new_end),
                 });
             }
         } else {
@@ -778,8 +776,7 @@ mod tests {
         for _ in 0..5 {
             let end_row = rng.gen_range(0..=text.max_point().row);
             let end_column = rng.gen_range(0..=text.line_len(end_row));
-            let mut end =
-                CharPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
+            let mut end = CharPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
             let start_row = rng.gen_range(0..=text.max_point().row);
             let start_column = rng.gen_range(0..=text.line_len(start_row));
             let mut start =

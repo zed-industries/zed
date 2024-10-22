@@ -1421,7 +1421,7 @@ fn offset_for_row(s: &str, target: u32) -> (u32, usize) {
 mod tests {
     use super::*;
     use crate::display_map::{
-        fold_map::FoldMap, inlay_map::InlayMap, char_map::CharMap, wrap_map::WrapMap,
+        char_map::CharMap, fold_map::FoldMap, inlay_map::InlayMap, wrap_map::WrapMap,
     };
     use gpui::{div, font, px, AppContext, Context as _, Element};
     use language::{Buffer, Capability};
@@ -1673,7 +1673,8 @@ mod tests {
         let (_, inlay_snapshot) = InlayMap::new(multi_buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, char_snapshot) = CharMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (_, wraps_snapshot) = WrapMap::new(char_snapshot, font, font_size, Some(wrap_width), cx);
+        let (_, wraps_snapshot) =
+            WrapMap::new(char_snapshot, font, font_size, Some(wrap_width), cx);
 
         let block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 1);
         let snapshot = block_map.read(wraps_snapshot, Default::default());
@@ -1817,7 +1818,13 @@ mod tests {
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (_, char_snapshot) = CharMap::new(fold_snapshot, 4.try_into().unwrap());
         let (_, wraps_snapshot) = cx.update(|cx| {
-            WrapMap::new(char_snapshot, font("Helvetica"), px(14.0), Some(px(60.)), cx)
+            WrapMap::new(
+                char_snapshot,
+                font("Helvetica"),
+                px(14.0),
+                Some(px(60.)),
+                cx,
+            )
         });
         let mut block_map = BlockMap::new(wraps_snapshot.clone(), true, 1, 1, 0);
 
@@ -2084,7 +2091,10 @@ mod tests {
                     }
                 }
 
-                let soft_wrapped = wraps_snapshot.to_char_point(WrapPoint::new(row, 0)).column() > 0;
+                let soft_wrapped = wraps_snapshot
+                    .to_char_point(WrapPoint::new(row, 0))
+                    .column()
+                    > 0;
                 expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
                 expected_text.push_str(input_line);
 

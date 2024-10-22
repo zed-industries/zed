@@ -1,6 +1,6 @@
 use super::{
+    char_map::{self, CharPoint, CharSnapshot, TabEdit},
     fold_map::FoldBufferRows,
-    char_map::{self, TabEdit, CharPoint, CharSnapshot},
     Highlights,
 };
 use gpui::{AppContext, Context, Font, LineWrapper, Model, ModelContext, Pixels, Task};
@@ -319,7 +319,11 @@ impl WrapSnapshot {
         self.char_snapshot.buffer_snapshot()
     }
 
-    fn interpolate(&mut self, new_char_snapshot: CharSnapshot, tab_edits: &[TabEdit]) -> Patch<u32> {
+    fn interpolate(
+        &mut self,
+        new_char_snapshot: CharSnapshot,
+        tab_edits: &[TabEdit],
+    ) -> Patch<u32> {
         let mut new_transforms;
         if tab_edits.is_empty() {
             new_transforms = self.transforms.clone();
@@ -695,7 +699,10 @@ impl WrapSnapshot {
             }
         }
 
-        self.char_point_to_wrap_point(self.char_snapshot.clip_point(self.to_char_point(point), bias))
+        self.char_point_to_wrap_point(
+            self.char_snapshot
+                .clip_point(self.to_char_point(point), bias),
+        )
     }
 
     pub fn prev_row_boundary(&self, mut point: WrapPoint) -> u32 {
@@ -1048,7 +1055,7 @@ fn consolidate_wrap_edits(edits: Vec<WrapEdit>) -> Vec<WrapEdit> {
 mod tests {
     use super::*;
     use crate::{
-        display_map::{fold_map::FoldMap, inlay_map::InlayMap, char_map::CharMap},
+        display_map::{char_map::CharMap, fold_map::FoldMap, inlay_map::InlayMap},
         MultiBuffer,
     };
     use gpui::{font, px, test::observe};
