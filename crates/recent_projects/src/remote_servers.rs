@@ -481,9 +481,7 @@ impl RemoteServerProjects {
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, false, cx)
-                });
+                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
                     .unwrap()
@@ -498,8 +496,19 @@ impl RemoteServerProjects {
                     cx,
                 )
                 .prompt_err("Failed to connect", cx, |_, _| None);
+
                 cx.spawn(move |workspace, mut cx| async move {
-                    let Some(session) = connect.await else {
+                    let session = connect.await;
+
+                    workspace
+                        .update(&mut cx, |workspace, cx| {
+                            if let Some(prompt) = workspace.active_modal::<SshConnectionModal>(cx) {
+                                prompt.update(cx, |prompt, cx| prompt.finished(cx))
+                            }
+                        })
+                        .ok();
+
+                    let Some(session) = session else {
                         workspace
                             .update(&mut cx, |workspace, cx| {
                                 let weak = cx.view().downgrade();
