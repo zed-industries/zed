@@ -547,7 +547,7 @@ impl RemoteServerProjects {
                         })
                         .ok();
 
-                    let Some(session) = session else {
+                    let Some(Some(session)) = session else {
                         workspace
                             .update(&mut cx, |workspace, cx| {
                                 let weak = cx.view().downgrade();
@@ -1071,7 +1071,7 @@ impl RemoteServerProjects {
                             );
 
                             cx.spawn(|mut cx| async move {
-                                if confirmation.await.ok() == Some(0) {
+                                if confirmation.await.ok() == Some(1) {
                                     remote_servers
                                         .update(&mut cx, |this, cx| {
                                             this.delete_ssh_server(index, cx);

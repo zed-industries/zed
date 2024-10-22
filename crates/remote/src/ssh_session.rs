@@ -14,7 +14,7 @@ use futures::{
         oneshot,
     },
     future::BoxFuture,
-    select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
+    select, select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
     AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, SemanticVersion, Task,
@@ -455,54 +455,65 @@ impl SshRemoteClient {
     pub fn new(
         unique_identifier: String,
         connection_options: SshConnectionOptions,
+        cancellation: oneshot::Receiver<()>,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &AppContext,
-    ) -> Task<Result<Model<Self>>> {
+    ) -> Task<Result<Option<Model<Self>>>> {
         cx.spawn(|mut cx| async move {
-            let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
-            let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
-            let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
+            let success = Box::pin(async move {
+                let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
+                let (incoming_tx, incoming_rx) = mpsc::unbounded::<Envelope>();
+                let (connection_activity_tx, connection_activity_rx) = mpsc::channel::<()>(1);
 
-            let client =
-                cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
-            let this = cx.new_model(|_| Self {
-                client: client.clone(),
-                unique_identifier: unique_identifier.clone(),
-                connection_options: connection_options.clone(),
-                state: Arc::new(Mutex::new(Some(State::Connecting))),
-            })?;
+                let client =
+                    cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "client"))?;
+                let this = cx.new_model(|_| Self {
+                    client: client.clone(),
+                    unique_identifier: unique_identifier.clone(),
+                    connection_options: connection_options.clone(),
+                    state: Arc::new(Mutex::new(Some(State::Connecting))),
+                })?;
 
-            let (ssh_connection, io_task) = Self::establish_connection(
-                unique_identifier,
-                false,
-                connection_options,
-                incoming_tx,
-                outgoing_rx,
-                connection_activity_tx,
-                delegate.clone(),
-                &mut cx,
-            )
-            .await?;
+                let (ssh_connection, io_task) = Self::establish_connection(
+                    unique_identifier,
+                    false,
+                    connection_options,
+                    incoming_tx,
+                    outgoing_rx,
+                    connection_activity_tx,
+                    delegate.clone(),
+                    &mut cx,
+                )
+                .await?;
 
-            let multiplex_task = Self::monitor(this.downgrade(), io_task, &cx);
+                let multiplex_task = Self::monitor(this.downgrade(), io_task, &cx);
 
-            if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
-                log::error!("failed to establish connection: {}", error);
-                return Err(error);
+                if let Err(error) = client.ping(HEARTBEAT_TIMEOUT).await {
+                    log::error!("failed to establish connection: {}", error);
+                    return Err(error);
+                }
+
+                let heartbeat_task =
+                    Self::heartbeat(this.downgrade(), connection_activity_rx, &mut cx);
+
+                this.update(&mut cx, |this, _| {
+                    *this.state.lock() = Some(State::Connected {
+                        ssh_connection,
+                        delegate,
+                        multiplex_task,
+                        heartbeat_task,
+                    });
+                })?;
+
+                Ok(Some(this))
+            });
+
+            select! {
+                _ = cancellation.fuse() => {
+                    Ok(None)
+                }
+                result = success.fuse() =>  result
             }
-
-            let heartbeat_task = Self::heartbeat(this.downgrade(), connection_activity_rx, &mut cx);
-
-            this.update(&mut cx, |this, _| {
-                *this.state.lock() = Some(State::Connected {
-                    ssh_connection,
-                    delegate,
-                    multiplex_task,
-                    heartbeat_task,
-                });
-            })?;
-
-            Ok(this)
         })
     }
 
@@ -1128,6 +1139,7 @@ impl SshRemoteClient {
 
     #[cfg(any(test, feature = "test-support"))]
     pub async fn fake_client(port: u16, client_cx: &mut gpui::TestAppContext) -> Model<Self> {
+        let (_tx, rx) = oneshot::channel();
         client_cx
             .update(|cx| {
                 Self::new(
@@ -1137,11 +1149,13 @@ impl SshRemoteClient {
                         port: Some(port),
                         ..Default::default()
                     },
+                    rx,
                     Arc::new(fake::Delegate),
                     cx,
                 )
             })
             .await
+            .unwrap()
             .unwrap()
     }
 }
