@@ -243,7 +243,7 @@ impl TransportDelegate {
             }
 
             for (kind, log_handler) in log_handlers.lock().iter_mut() {
-                if matches!(kind, LogKind::Rpc) {
+                if matches!(kind, LogKind::Adapter) {
                     log_handler(IoKind::StdErr, buffer.as_str());
                 }
             }
