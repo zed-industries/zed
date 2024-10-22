@@ -480,14 +480,6 @@ impl BlockMap {
     }
 
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: Patch<u32>) {
-        println!("====================");
-        println!("buffer: {:?}", wrap_snapshot.buffer_snapshot().text());
-        println!("wraps: {:?}", wrap_snapshot.text());
-        println!("edits: {:?}", edits);
-        println!(
-            "transforms before edit: {}",
-            debug_transforms(&self.transforms.borrow())
-        );
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
@@ -649,10 +641,6 @@ impl BlockMap {
 
             debug_assert!(blocks_in_edit.is_empty());
 
-            dbg!(self.custom_blocks[start_block_ix..end_block_ix]
-                .iter()
-                .map(|block| block.placement.as_ref().map(|p| p.to_point(buffer)))
-                .collect::<Vec<_>>());
             blocks_in_edit.extend(
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
@@ -677,8 +665,6 @@ impl BlockMap {
             }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
-
-            dbg!(&blocks_in_edit, preserved_blocks_above_edit);
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
@@ -726,11 +712,6 @@ impl BlockMap {
         }
 
         new_transforms.append(cursor.suffix(&()), &());
-
-        println!(
-            "transforms after edit: {}",
-            debug_transforms(&new_transforms)
-        );
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1
@@ -841,7 +822,12 @@ impl BlockMap {
                 range.start <= *row && range.end > *row
             }
             (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
-                range_a.end >= range_b.start && range_a.start <= range_b.end
+                if range_a.end >= range_b.start && range_a.start <= range_b.end {
+                    range_a.end = range_a.end.max(range_b.end);
+                    true
+                } else {
+                    false
+                }
             }
             _ => false,
         });
