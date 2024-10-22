@@ -68,6 +68,7 @@ impl SshSettings {
             })
             .next()
             .flatten()
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]

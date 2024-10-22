@@ -87,6 +87,7 @@ impl CreateRemoteServer {
 
 struct ProjectPicker {
     connection_string: SharedString,
+    nickname: Option<SharedString>,
     picker: View<Picker<OpenPathDelegate>>,
     _path_task: Shared<Task<Option<()>>>,
 }
@@ -185,7 +186,7 @@ impl SelectableItemList {
 impl ProjectPicker {
     fn new(
         ix: usize,
-        connection_string: SharedString,
+        connection: SshConnectionOptions,
         project: Model<Project>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<RemoteServerProjects>,
@@ -202,6 +203,12 @@ impl ProjectPicker {
             picker.set_query(query, cx);
             picker
         });
+        let connection_string = connection.connection_string().into();
+        let nickname = SshSettings::get_global(cx).nickname_for(
+            &connection.host,
+            connection.port,
+            &connection.username,
+        );
         cx.new_view(|cx| {
             let _path_task = cx
                 .spawn({
@@ -287,6 +294,7 @@ impl ProjectPicker {
                 _path_task,
                 picker,
                 connection_string,
+                nickname,
             }
         })
     }
@@ -298,7 +306,7 @@ impl gpui::Render for ProjectPicker {
             .child(
                 SshConnectionHeader {
                     connection_string: self.connection_string.clone(),
-                    nickname: None,
+                    nickname: self.nickname.clone(),
                 }
                 .render(cx),
             )
@@ -374,7 +382,7 @@ impl RemoteServerProjects {
         let mut this = Self::new(cx, workspace.clone());
         this.mode = Mode::ProjectPicker(ProjectPicker::new(
             ix,
-            connection_options.connection_string().into(),
+            connection_options,
             project,
             workspace,
             cx,
