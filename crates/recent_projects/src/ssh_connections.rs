@@ -657,9 +657,9 @@ pub async fn open_ssh_project(
                 workspace.toggle_modal(cx, |cx| {
                     SshConnectionModal::new(&connection_options, nickname.clone(), cx)
                 });
+
                 let ui = workspace
-                    .active_modal::<SshConnectionModal>(cx)
-                    .unwrap()
+                    .active_modal::<SshConnectionModal>(cx)?
                     .read(cx)
                     .prompt
                     .clone();
@@ -668,13 +668,15 @@ pub async fn open_ssh_project(
                     ui.set_cancellation_tx(cancel_tx);
                 });
 
-                Arc::new(SshClientDelegate {
+                Some(Arc::new(SshClientDelegate {
                     window: cx.window_handle(),
                     ui,
                     known_password: connection_options.password.clone(),
-                })
+                }))
             }
         })?;
+
+        let Some(delegate) = delegate else { break };
 
         let did_open_ssh_project = cx
             .update(|cx| {
