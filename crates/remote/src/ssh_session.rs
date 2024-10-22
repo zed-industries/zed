@@ -1623,7 +1623,8 @@ impl ChannelClient {
         use_buffer: bool,
     ) -> impl 'static + Future<Output = Result<T::Response>> {
         log::debug!("ssh request start. name:{}", T::NAME);
-        let response = self.request_dynamic(payload.into_envelope(0, None, None), T::NAME, use_buffer);
+        let response =
+            self.request_dynamic(payload.into_envelope(0, None, None), T::NAME, use_buffer);
         async move {
             let response = response.await?;
             log::debug!("ssh request finish. name:{}", T::NAME);
@@ -1635,7 +1636,8 @@ impl ChannelClient {
     pub async fn resync(&self, timeout: Duration) -> Result<()> {
         smol::future::or(
             async {
-                self.request_internal(proto::FlushBufferedMessages {}, false).await?;
+                self.request_internal(proto::FlushBufferedMessages {}, false)
+                    .await?;
 
                 for envelope in self.buffer.lock().iter() {
                     self.outgoing_tx
@@ -1686,7 +1688,7 @@ impl ChannelClient {
 
         let result = if use_buffer {
             self.send_buffered(envelope)
-        }  else {
+        } else {
             self.send_unbuffered(envelope)
         };
         async move {
