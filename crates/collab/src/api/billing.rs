@@ -714,7 +714,9 @@ struct GetMonthlySpendParams {
 
 #[derive(Debug, Serialize)]
 struct GetMonthlySpendResponse {
-    monthly_spend_in_cents: i32,
+    monthly_free_tier_spend_in_cents: u32,
+    monthly_free_tier_allowance_in_cents: u32,
+    monthly_spend_in_cents: u32,
 }
 
 async fn get_monthly_spend(
@@ -739,13 +741,17 @@ async fn get_monthly_spend(
         .map(|allowance| Cents(allowance as u32))
         .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT);
 
-    let monthly_spend = llm_db
+    let spending_for_month = llm_db
         .get_user_spending_for_month(user.id, Utc::now())
-        .await?
-        .saturating_sub(free_tier);
+        .await?;
+
+    let free_tier_spend = Cents::min(spending_for_month, free_tier);
+    let monthly_spend = spending_for_month.saturating_sub(free_tier);
 
     Ok(Json(GetMonthlySpendResponse {
-        monthly_spend_in_cents: monthly_spend.0 as i32,
+        monthly_free_tier_spend_in_cents: free_tier_spend.0,
+        monthly_free_tier_allowance_in_cents: free_tier.0,
+        monthly_spend_in_cents: monthly_spend.0,
     }))
 }
 
