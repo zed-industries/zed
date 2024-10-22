@@ -401,7 +401,7 @@ impl RemoteServerProjects {
                 return;
             }
         };
-        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
+        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, None, cx));
 
         let connection = connect_over_ssh(
             connection_options.remote_server_identifier(),
@@ -478,10 +478,13 @@ impl RemoteServerProjects {
             return;
         };
 
+        let nickname = ssh_connection.nickname.clone();
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+                workspace.toggle_modal(cx, |cx| {
+                    SshConnectionModal::new(&connection_options, nickname, cx)
+                });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
                     .unwrap()
