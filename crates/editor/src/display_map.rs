@@ -65,7 +65,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use text::LineIndent;
-use ui::WindowContext;
+use ui::{px, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
@@ -694,6 +694,11 @@ impl DisplaySnapshot {
             if chunk.is_invisible {
                 let invisible_highlight = HighlightStyle {
                     background_color: Some(editor_style.status.error_background),
+                    underline: Some(UnderlineStyle {
+                        color: Some(editor_style.status.error),
+                        thickness: px(1.),
+                        wavy: false,
+                    }),
                     ..Default::default()
                 };
                 if let Some(highlight_style) = highlight_style.as_mut() {
