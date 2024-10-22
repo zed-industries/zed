@@ -1538,8 +1538,11 @@ impl ProjectPanel {
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let abs_path = match &entry.canonical_path {
-                Some(canonical_path) => Some(canonical_path.to_path_buf()),
-                None => worktree.absolutize(&entry.path).ok(),
+                Some(canonical_path) => Some(canonical_path.as_raw_path_buf().clone()),
+                None => worktree
+                    .absolutize(&entry.relative_path)
+                    .ok()
+                    .map(Into::into),
             };
 
             let working_directory = if entry.is_dir() {

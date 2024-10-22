@@ -139,6 +139,12 @@ impl From<SanitizedPathBuf> for PathBuf {
     }
 }
 
+impl From<String> for SanitizedPathBuf {
+    fn from(value: String) -> Self {
+        PathBuf::from(value).into()
+    }
+}
+
 // impl AsRef<Path> for SanitizedPathBuf {
 //     fn as_ref(&self) -> &Path {
 //         &self.raw

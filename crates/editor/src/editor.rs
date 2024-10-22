@@ -6266,8 +6266,8 @@ impl Editor {
             let project = self.project.as_ref()?.read(cx);
             let entry = project.entry_for_path(&project_path, cx)?;
             let parent = match &entry.canonical_path {
-                Some(canonical_path) => canonical_path.to_path_buf(),
-                None => project.absolute_path(&project_path, cx)?,
+                Some(canonical_path) => canonical_path.as_raw_path_buf().clone(),
+                None => project.absolute_path(&project_path, cx)?.into(),
             }
             .parent()?
             .to_path_buf();

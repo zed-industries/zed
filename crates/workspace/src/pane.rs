@@ -1740,8 +1740,11 @@ impl Pane {
             .read(cx);
         let entry = worktree.entry_for_id(entry)?;
         match &entry.canonical_path {
-            Some(canonical_path) => Some(canonical_path.to_path_buf()),
-            None => worktree.absolutize(&entry.path).ok(),
+            Some(canonical_path) => Some(canonical_path.as_raw_path_buf().clone()),
+            None => worktree
+                .absolutize(&entry.relative_path)
+                .ok()
+                .map(|path| path.into()),
         }
     }
 

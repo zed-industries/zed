@@ -5397,10 +5397,7 @@ impl<'a> From<&'a Entry> for proto::Entry {
             git_status: entry.git_status.map(git_status_to_proto),
             is_fifo: entry.is_fifo,
             size: Some(entry.size),
-            canonical_path: entry
-                .canonical_path
-                .as_ref()
-                .map(|path| path.to_string_lossy().to_string()),
+            canonical_path: entry.canonical_path.as_ref().map(|path| path.to_string()),
         }
     }
 }
@@ -5425,7 +5422,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             size: entry.size.unwrap_or(0),
             canonical_path: entry
                 .canonical_path
-                .map(|path_string| Box::from(Path::new(&path_string))),
+                .map(|path_string| SanitizedPathBuf::from(path_string)),
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: git_status_from_proto(entry.git_status),
