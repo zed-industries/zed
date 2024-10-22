@@ -5420,9 +5420,7 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             size: entry.size.unwrap_or(0),
-            canonical_path: entry
-                .canonical_path
-                .map(|path_string| SanitizedPathBuf::from(path_string)),
+            canonical_path: entry.canonical_path.map(SanitizedPathBuf::from),
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: git_status_from_proto(entry.git_status),
