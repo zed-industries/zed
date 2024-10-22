@@ -9159,6 +9159,7 @@ dependencies = [
  "client",
  "clock",
  "env_logger",
+ "fork",
  "fs",
  "futures 0.3.30",
  "git",

@@ -305,10 +305,18 @@ pub fn execute_run(
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
 ) -> Result<()> {
-    let log_rx = init_logging_server(log_file)?;
-    init_panic_hook();
     init_paths()?;
 
+    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
+        fork::Fork::Parent(pid) => {
+            log::debug!("Fork succeeded, child pid: {}", pid);
+            return Ok(());
+        },
+        fork::Fork::Child => {},
+    }
+
+    init_panic_hook();
+    let log_rx = init_logging_server(log_file)?;
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
@@ -321,8 +329,6 @@ pub fn execute_run(
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
-
-    log::info!("starting headless gpui app");
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
@@ -523,7 +529,8 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     }
 
     let binary_name = std::env::current_exe()?;
-    let server_process = smol::process::Command::new(binary_name)
+    let mut server_process = std::process::Command::new(binary_name);
+    server_process
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -534,13 +541,10 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg("--stdout-socket")
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
-        .arg(&paths.stderr_socket)
-        .spawn()?;
+        .arg(&paths.stderr_socket);
 
-    log::info!(
-        "proxy spawned server process. PID: {:?}",
-        server_process.id()
-    );
+    let status = server_process.status().context("failed to launch server process")?;
+    anyhow::ensure!(status.success(), "failed to launch and detach server process");
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
