@@ -2363,6 +2363,13 @@ mod tests {
             let mut expected_block_positions = Vec::new();
             let input_text = wraps_snapshot.text();
 
+            // Loop over the input lines, creating (N - 1) empty lines for
+            // blocks of height N.
+            //
+            // It's important to note that output *starts* as one empty line,
+            // so we special case row 0 to assume a leading '\n'.
+            //
+            // Linehood is the birthright of strings.
             let mut input_text_lines = input_text.split('\n').enumerate().peekable();
             let mut block_row = 0;
             while let Some((wrap_row, input_line)) = input_text_lines.next() {
