@@ -727,11 +727,13 @@ impl RemoteServerProjects {
                 let project = project.clone();
                 let server = server.clone();
                 cx.spawn(|_, mut cx| async move {
+                    let nickname = server.nickname.clone();
                     let result = open_ssh_project(
                         server.into(),
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions::default(),
+                        nickname,
                         &mut cx,
                     )
                     .await;

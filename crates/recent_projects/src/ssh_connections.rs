@@ -52,6 +52,22 @@ impl SshSettings {
             })
             .next()
     }
+    pub fn nickname_for(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        user: &Option<String>,
+    ) -> Option<SharedString> {
+        self.ssh_connections()
+            .filter_map(|conn| {
+                if conn.host == host && &conn.username == user && conn.port == port {
+                    Some(conn.nickname)
+                } else {
+                    None
+                }
+            })
+            .next()
+            .flatten()
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -597,6 +613,7 @@ pub async fn open_ssh_project(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
+    nickname: Option<SharedString>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let window = if let Some(window) = open_options.replace_window {
@@ -620,10 +637,11 @@ pub async fn open_ssh_project(
     loop {
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
+            let nickname = nickname.clone();
             move |workspace, cx| {
                 cx.activate_window();
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, None, cx)
+                    SshConnectionModal::new(&connection_options, nickname.clone(), cx)
                 });
                 let ui = workspace
                     .active_modal::<SshConnectionModal>(cx)
