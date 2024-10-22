@@ -122,18 +122,34 @@ impl<T> BlockPlacement<T> {
 
 impl BlockPlacement<Anchor> {
     fn cmp(&self, other: &Self, buffer: &MultiBufferSnapshot) -> Ordering {
-        self.start()
-            .cmp(other.start(), buffer)
-            .then_with(|| other.end().cmp(self.end(), buffer))
-            .then_with(|| match (self, other) {
-                (BlockPlacement::Above(_), BlockPlacement::Above(_))
-                | (BlockPlacement::Below(_), BlockPlacement::Below(_))
-                | (BlockPlacement::Replace(_), BlockPlacement::Replace(_)) => Ordering::Equal,
-                (BlockPlacement::Above(_), _) => Ordering::Less,
-                (BlockPlacement::Below(_), _) => Ordering::Greater,
-                (BlockPlacement::Replace(_), BlockPlacement::Above(_)) => Ordering::Greater,
-                (BlockPlacement::Replace(_), BlockPlacement::Below(_)) => Ordering::Less,
-            })
+        match (self, other) {
+            (BlockPlacement::Above(anchor_a), BlockPlacement::Above(anchor_b))
+            | (BlockPlacement::Below(anchor_a), BlockPlacement::Below(anchor_b)) => {
+                anchor_a.cmp(anchor_b, buffer)
+            }
+            (BlockPlacement::Above(anchor_a), BlockPlacement::Below(anchor_b)) => {
+                anchor_a.cmp(anchor_b, buffer).then(Ordering::Less)
+            }
+            (BlockPlacement::Below(anchor_a), BlockPlacement::Above(anchor_b)) => {
+                anchor_a.cmp(anchor_b, buffer).then(Ordering::Greater)
+            }
+            (BlockPlacement::Above(anchor), BlockPlacement::Replace(range)) => {
+                anchor.cmp(&range.start, buffer).then(Ordering::Less)
+            }
+            (BlockPlacement::Replace(range), BlockPlacement::Above(anchor)) => {
+                range.start.cmp(anchor, buffer).then(Ordering::Greater)
+            }
+            (BlockPlacement::Below(anchor), BlockPlacement::Replace(range)) => {
+                anchor.cmp(&range.start, buffer).then(Ordering::Greater)
+            }
+            (BlockPlacement::Replace(range), BlockPlacement::Below(anchor)) => {
+                range.start.cmp(anchor, buffer).then(Ordering::Less)
+            }
+            (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
+                .start
+                .cmp(&range_b.start, buffer)
+                .then_with(|| range_b.end.cmp(&range_a.end, buffer)),
+        }
     }
 
     fn to_wrap_row(&self, wrap_snapshot: &WrapSnapshot) -> Option<BlockPlacement<WrapRow>> {
@@ -172,18 +188,32 @@ impl BlockPlacement<Anchor> {
 
 impl Ord for BlockPlacement<WrapRow> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.start()
-            .cmp(other.start())
-            .then_with(|| other.end().cmp(self.end()))
-            .then_with(|| match (self, other) {
-                (BlockPlacement::Above(_), BlockPlacement::Above(_))
-                | (BlockPlacement::Below(_), BlockPlacement::Below(_))
-                | (BlockPlacement::Replace(_), BlockPlacement::Replace(_)) => Ordering::Equal,
-                (BlockPlacement::Above(_), _) => Ordering::Less,
-                (BlockPlacement::Below(_), _) => Ordering::Greater,
-                (BlockPlacement::Replace(_), BlockPlacement::Above(_)) => Ordering::Greater,
-                (BlockPlacement::Replace(_), BlockPlacement::Below(_)) => Ordering::Less,
-            })
+        match (self, other) {
+            (BlockPlacement::Above(row_a), BlockPlacement::Above(row_b))
+            | (BlockPlacement::Below(row_a), BlockPlacement::Below(row_b)) => row_a.cmp(row_b),
+            (BlockPlacement::Above(row_a), BlockPlacement::Below(row_b)) => {
+                row_a.cmp(row_b).then(Ordering::Less)
+            }
+            (BlockPlacement::Below(row_a), BlockPlacement::Above(row_b)) => {
+                row_a.cmp(row_b).then(Ordering::Greater)
+            }
+            (BlockPlacement::Above(row), BlockPlacement::Replace(range)) => {
+                row.cmp(&range.start).then(Ordering::Less)
+            }
+            (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
+                range.start.cmp(row).then(Ordering::Greater)
+            }
+            (BlockPlacement::Below(row), BlockPlacement::Replace(range)) => {
+                row.cmp(&range.start).then(Ordering::Greater)
+            }
+            (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
+                range.start.cmp(row).then(Ordering::Less)
+            }
+            (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => range_a
+                .start
+                .cmp(&range_b.start)
+                .then_with(|| range_b.end.cmp(&range_a.end)),
+        }
     }
 }
 
@@ -634,14 +664,16 @@ impl BlockMap {
             }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
-            if preserved_blocks_above_edit {
-                blocks_in_edit
-                    .retain(|(placement, _)| *placement != BlockPlacement::Above(old_start));
-            }
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
             for (block_placement, block) in blocks_in_edit.drain(..) {
+                if preserved_blocks_above_edit
+                    && block_placement == BlockPlacement::Above(old_start)
+                {
+                    continue;
+                }
+
                 let mut summary = TransformSummary {
                     input_rows: 0,
                     output_rows: block.height(),
@@ -675,7 +707,6 @@ impl BlockMap {
             let rows_after_last_block = new_end
                 .0
                 .saturating_sub(new_transforms.summary().input_rows);
-
             push_isomorphic(&mut new_transforms, rows_after_last_block);
         }
 
@@ -783,10 +814,17 @@ impl BlockMap {
         blocks.sort_unstable_by_key(|(placement, block)| {
             (placement.clone(), block.priority(), block.id())
         });
-        blocks.dedup_by(|(a, _), (b, _)| {
-            let a_range = *a.start()..*a.end();
-            let b_range = *b.start()..*b.end();
-            a_range.contains(&b_range.start) || a_range.contains(&b_range.end)
+        blocks.dedup_by(|(right, _), (left, _)| match (left, right) {
+            (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
+                range.start < *row && range.end >= *row
+            }
+            (BlockPlacement::Replace(range), BlockPlacement::Below(row)) => {
+                range.start <= *row && range.end > *row
+            }
+            (BlockPlacement::Replace(range_a), BlockPlacement::Replace(range_b)) => {
+                range_a.end > range_b.start && range_a.start < range_b.end
+            }
+            _ => false,
         });
     }
 }
@@ -2073,6 +2111,55 @@ mod tests {
         });
         let blocks_snapshot = block_map.read(wraps_snapshot.clone(), wrap_edits);
         assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\nline5");
+
+        // Ensure blocks inserted above the start or below the end of the replaced region are shown.
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 3))),
+                height: 1,
+                render: Box::new(|_| div().into_any()),
+                priority: 0,
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(6, 2))),
+                height: 1,
+                render: Box::new(|_| div().into_any()),
+                priority: 0,
+            },
+        ]);
+        let blocks_snapshot = block_map.read(wraps_snapshot.clone(), Default::default());
+        assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\n\n\nline5");
+
+        // Ensure blocks inserted *inside* replaced region are hidden.
+        let mut writer = block_map.write(wraps_snapshot.clone(), Default::default());
+        writer.insert(vec![
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 3))),
+                height: 1,
+                render: Box::new(|_| div().into_any()),
+                priority: 0,
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 1))),
+                height: 1,
+                render: Box::new(|_| div().into_any()),
+                priority: 0,
+            },
+            BlockProperties {
+                style: BlockStyle::Fixed,
+                placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(6, 1))),
+                height: 1,
+                render: Box::new(|_| div().into_any()),
+                priority: 0,
+            },
+        ]);
+        let blocks_snapshot = block_map.read(wraps_snapshot, Default::default());
+        assert_eq!(blocks_snapshot.text(), "line1\n\n\n\n\n\n\nline5");
     }
 
     #[gpui::test(iterations = 100)]
