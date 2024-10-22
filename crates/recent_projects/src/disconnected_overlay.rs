@@ -162,7 +162,7 @@ impl DisconnectedOverlay {
                 .update(|cx| {
                     SshSettings::get_global(cx).nickname_for(
                         &connection_options.host,
-                        connection_options.port.clone(),
+                        connection_options.port,
                         &connection_options.username,
                     )
                 })
