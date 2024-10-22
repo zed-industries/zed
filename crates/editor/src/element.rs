@@ -3565,7 +3565,38 @@ impl EditorElement {
             cursor.paint(layout.content_origin, cx);
         }
     }
-
+    
+    fn paint_minimap(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+        let Some(scrollbar_layout) = layout.scrollbar_layout.as_ref() else {
+            return;
+        };
+        
+        let box_width = Pixels(100.0);
+        let box_height = Pixels(100.0);
+        let box_right_padding = Pixels(20.0);
+        
+        let mut test_box_bounds = scrollbar_layout.hitbox.bounds.clone();
+        test_box_bounds.origin -= point(box_width + box_right_padding, Pixels::ZERO);
+        test_box_bounds.size = size(box_width, box_height);
+        
+        cx.paint_layer(scrollbar_layout.hitbox.bounds, |cx| {
+            cx.paint_quad(quad(
+                test_box_bounds,
+                Corners::default(),
+                cx.theme().colors().scrollbar_thumb_background,
+                Edges {
+                    top: Pixels::ZERO,
+                    right: ScrollbarLayout::BORDER_WIDTH,
+                    bottom: ScrollbarLayout::BORDER_WIDTH,
+                    left: ScrollbarLayout::BORDER_WIDTH,
+                },
+                cx.theme().colors().scrollbar_thumb_border,
+                // Edges::default(),
+                // Hsla::transparent_black(),
+            ));
+        });
+    }
+    
     fn paint_scrollbar(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         let Some(scrollbar_layout) = layout.scrollbar_layout.as_ref() else {
             return;
@@ -5750,6 +5781,7 @@ impl Element for EditorElement {
                         });
                     }
 
+                    self.paint_minimap(layout, cx);
                     self.paint_scrollbar(layout, cx);
                     self.paint_mouse_context_menu(layout, cx);
                 });
