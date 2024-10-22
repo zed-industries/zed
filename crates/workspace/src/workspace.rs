@@ -4350,9 +4350,7 @@ impl Workspace {
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
-                if workspace.unfollow_in_pane(&pane, cx).is_none() {
-                    cx.propagate();
-                }
+                workspace.unfollow_in_pane(&pane, cx);
             }))
             .on_action(cx.listener(|workspace, action: &Save, cx| {
                 workspace
