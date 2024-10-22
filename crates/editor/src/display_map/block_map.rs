@@ -1589,7 +1589,7 @@ mod tests {
     use multi_buffer::{ExcerptRange, MultiBuffer};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::env;
+    use std::{char::REPLACEMENT_CHARACTER, env};
     use util::RandomCharIter;
 
     #[gpui::test]
@@ -2145,15 +2145,21 @@ mod tests {
                     let block_properties = (0..block_count)
                         .map(|_| {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
-                            let position = buffer.anchor_after(
-                                buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left),
-                            );
-
-                            let placement = if rng.gen() {
-                                BlockPlacement::Above(position)
-                            } else {
-                                BlockPlacement::Below(position)
+                            let offset =
+                                buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left);
+                            let placement = match rng.gen_range(0..3) {
+                                0 => {
+                                    let start = buffer.anchor_after(offset);
+                                    let end = buffer.anchor_after(buffer.clip_offset(
+                                        rng.gen_range(offset..=buffer.len()),
+                                        Bias::Left,
+                                    ));
+                                    BlockPlacement::Replace(start..end)
+                                }
+                                1 => BlockPlacement::Above(buffer.anchor_after(offset)),
+                                _ => BlockPlacement::Below(buffer.anchor_after(offset)),
                             };
+
                             let height = rng.gen_range(0..5);
                             log::info!(
                                 "inserting block {:?} with height {}",
@@ -2253,6 +2259,14 @@ mod tests {
 
             BlockMap::sort_blocks(&mut expected_blocks);
 
+            for (placement, block) in &expected_blocks {
+                log::info!(
+                    "Block placement: {:?} Height: {:?}",
+                    placement,
+                    block.height()
+                );
+            }
+
             let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
 
             let input_buffer_rows = buffer_snapshot
@@ -2262,16 +2276,16 @@ mod tests {
             let mut expected_text = String::new();
             let mut expected_block_positions = Vec::new();
             let input_text = wraps_snapshot.text();
-            for (row, input_line) in input_text.split('\n').enumerate() {
+
+            dbg!(&input_text);
+
+            let mut input_text_lines = input_text.split('\n').enumerate().peekable();
+            while let Some((row, input_line)) = input_text_lines.next() {
+                dbg!(row, input_line);
+
                 let row = row as u32;
-                if row > 0 {
-                    expected_text.push('\n');
-                }
 
-                let buffer_row = input_buffer_rows[wraps_snapshot
-                    .to_point(WrapPoint::new(row, 0), Bias::Left)
-                    .row as usize];
-
+                // Create empty lines for the above block
                 while let Some((placement, block)) = sorted_blocks_iter.peek() {
                     if placement.start().0 == row && block.place_above() {
                         let (_, block) = sorted_blocks_iter.next().unwrap();
@@ -2288,12 +2302,39 @@ mod tests {
                     }
                 }
 
-                let soft_wrapped = wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
-                expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
-                expected_text.push_str(input_line);
+                // Skip lines within replace blocks, then create empty lines for the replace block's height
+                let mut is_in_replace_block = false;
+                if let Some((BlockPlacement::Replace(replace_range), block)) =
+                    sorted_blocks_iter.peek()
+                {
+                    if row >= replace_range.start.0 {
+                        is_in_replace_block = true;
+                        if row == replace_range.end.0 {
+                            let text = "\n".repeat(block.height() as usize);
+                            expected_text.push_str(&text);
+                            sorted_blocks_iter.next();
+                        }
+                    }
+                }
+
+                if !is_in_replace_block {
+                    let buffer_row = input_buffer_rows[wraps_snapshot
+                        .to_point(WrapPoint::new(row, 0), Bias::Left)
+                        .row as usize];
+
+                    let soft_wrapped =
+                        wraps_snapshot.to_tab_point(WrapPoint::new(row, 0)).column() > 0;
+                    expected_buffer_rows.push(if soft_wrapped { None } else { buffer_row });
+                    expected_text.push_str(input_line);
+                    if input_text_lines.peek().is_some() {
+                        expected_text.push('\n');
+                    }
+                }
 
                 while let Some((placement, block)) = sorted_blocks_iter.peek() {
                     if placement.end().0 == row && block.place_below() {
+                        dbg!("hitting below block", row);
+
                         let (_, block) = sorted_blocks_iter.next().unwrap();
                         let height = block.height() as usize;
                         expected_block_positions
