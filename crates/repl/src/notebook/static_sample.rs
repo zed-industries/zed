@@ -1,3 +1,57 @@
+pub fn simple_example() -> &'static str {
+    r#"{
+        "cells": [
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": [
+                    "Simple Example Notebook\n===",
+                    "\n",
+                    "This is a markdown cell."
+                ]
+            },
+            {
+                "cell_type": "code",
+                "metadata": {},
+                "execution_count": 1,
+                "source": [
+                    "print('This is a code cell')\n",
+                    "x = 5\n",
+                    "y = 10\n",
+                    "print(f'The sum of {x} and {y} is {x + y}')"
+                ],
+                "outputs": [
+                    {
+                        "name": "stdout",
+                        "output_type": "stream",
+                        "text": [
+                            "This is a code cell\n",
+                            "The sum of 5 and 10 is 15\n"
+                        ]
+                    }
+                ]
+            },
+            {
+                "cell_type": "raw",
+                "metadata": {},
+                "source": [
+                    "This is a raw cell.\n",
+                    "Its contents are displayed as-is without any formatting."
+                ]
+            }
+        ],
+        "metadata": {
+            "kernelspec": {
+                "display_name": "Python 3",
+                "language": "python",
+                "name": "python3"
+            }
+        },
+        "nbformat": 4,
+        "nbformat_minor": 4
+    }"#
+}
+
 pub fn _deserializable_sample_notebook() -> &'static str {
     r#"{
      "cells": [

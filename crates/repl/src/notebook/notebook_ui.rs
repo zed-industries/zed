@@ -11,9 +11,10 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
-use crate::notebook::NotebookData;
-
-use super::{Cell, CellId};
+use super::{
+    deserialize_notebook, static_sample::simple_example, Cell, CellId, DeserializedMetadata,
+    Notebook, DEFAULT_NOTEBOOK_FORMAT, DEFAULT_NOTEBOOK_FORMAT_MINOR,
+};
 
 actions!(
     notebook,
@@ -41,22 +42,27 @@ pub fn init(cx: &mut AppContext) {
         workspace.register_action(|_, _: &OpenNotebook, cx| {
             let workspace = cx.view().clone();
             cx.window_context()
-                .defer(move |cx| Notebook::open(workspace, cx).detach_and_log_err(cx));
+                .defer(move |cx| NotebookEditor::open(workspace, cx).detach_and_log_err(cx));
         });
     })
     .detach();
 }
 
-pub struct Notebook {
+pub struct NotebookEditor {
     focus_handle: FocusHandle,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     remote_id: Option<ViewId>,
+
+    metadata: DeserializedMetadata,
+    nbformat: i32,
+    nbformat_minor: i32,
     selected_cell: usize,
-    data: Model<NotebookData>,
+    cell_order: Vec<CellId>,
+    cell_map: HashMap<CellId, Cell>,
 }
 
-impl Notebook {
+impl NotebookEditor {
     pub fn open(
         workspace_view: View<Workspace>,
         cx: &mut WindowContext,
@@ -94,9 +100,36 @@ impl Notebook {
     ) -> Self {
         let this = cx.view().downgrade();
         let focus_handle = cx.focus_handle();
-        let data = cx.new_model(|_| NotebookData::default());
+        // let notebook = Notebook::default();
 
-        // let cells = sample_cells();
+        let mut metadata: DeserializedMetadata = Default::default();
+        let mut nbformat = DEFAULT_NOTEBOOK_FORMAT;
+        let mut nbformat_minor = DEFAULT_NOTEBOOK_FORMAT_MINOR;
+        let mut cell_order = vec![];
+        let mut cell_map = HashMap::default();
+
+        let deserialized_notebook = deserialize_notebook(simple_example());
+
+        if let Ok(notebook) = deserialized_notebook {
+            metadata = notebook.metadata;
+            nbformat = notebook.nbformat;
+            nbformat_minor = notebook.nbformat_minor;
+            for cell in notebook.cells {
+                let id = match &cell {
+                    super::DeserializedCell::Markdown { id, .. } => id,
+                    super::DeserializedCell::Code { id, .. } => id,
+                    super::DeserializedCell::Raw { id, .. } => id,
+                };
+                let id = CellId::from(id.clone());
+                cell_order.push(id.clone());
+                cell_map.insert(id, Cell::load(cell, cx));
+            }
+        } else {
+            println!(
+                "Error deserializing notebook: {:?}",
+                deserialized_notebook.err()
+            );
+        }
 
         Self {
             focus_handle,
@@ -104,9 +137,16 @@ impl Notebook {
             project,
             remote_id: None,
             selected_cell: 0,
-            // cells,
-            data,
+            metadata: Default::default(),
+            nbformat: DEFAULT_NOTEBOOK_FORMAT,
+            nbformat_minor: DEFAULT_NOTEBOOK_FORMAT_MINOR,
+            cell_order: vec![],
+            cell_map: HashMap::default(),
         }
+    }
+
+    fn cells(&self) -> Vec<Cell> {
+        self.cell_map.values().cloned().collect()
     }
 
     fn open_notebook(&mut self, _: &OpenNotebook, _cx: &mut ViewContext<Self>) {
@@ -190,7 +230,7 @@ impl Notebook {
     }
 }
 
-impl Render for Notebook {
+impl Render for NotebookEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         // cell bar
         // scrollbar
@@ -219,10 +259,12 @@ impl Render for Notebook {
                     .flex_1()
                     .size_full()
                     .overflow_hidden()
-                    .gap_6(), // .children(self.cells.iter().enumerate().map(|(ix, cell)| {
-                              //     let mut c = cell.clone(); // Clone the Cell while iterating
-                              //     c.selected(self.selected_cell == ix) // Set the selected state
-                              // })),
+                    .gap_6()
+                    .children(self.cells().iter().map(|cell| match cell {
+                        Cell::Code(view) => view.clone().into_any_element(),
+                        Cell::Markdown(view) => view.clone().into_any_element(),
+                        Cell::Raw(view) => view.clone().into_any_element(),
+                    })),
             )
             .child(
                 div()
@@ -238,15 +280,15 @@ impl Render for Notebook {
     }
 }
 
-impl FocusableView for Notebook {
+impl FocusableView for NotebookEditor {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl EventEmitter<()> for Notebook {}
+impl EventEmitter<()> for NotebookEditor {}
 
-impl Item for Notebook {
+impl Item for NotebookEditor {
     type Event = ();
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {

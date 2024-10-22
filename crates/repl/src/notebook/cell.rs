@@ -7,24 +7,33 @@ use uuid::Uuid;
 use crate::notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH};
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct CellId(pub Uuid);
-
-impl CellId {
-    fn parse_id_or_default(id: Option<String>) -> Self {
-        id.map(|id| CellId(Uuid::parse_str(&id).unwrap_or_default()))
-            .unwrap_or_default()
-    }
-}
+pub struct CellId(String);
 
 impl Default for CellId {
     fn default() -> Self {
-        Self(Uuid::new_v4())
+        Self(Uuid::new_v4().to_string())
     }
 }
 
 impl From<Uuid> for CellId {
     fn from(uuid: Uuid) -> Self {
-        Self(uuid)
+        Self(uuid.to_string())
+    }
+}
+
+impl From<String> for CellId {
+    fn from(string: String) -> Self {
+        Self(string)
+    }
+}
+
+impl From<Option<String>> for CellId {
+    fn from(string: Option<String>) -> Self {
+        if string.is_some() {
+            string.into()
+        } else {
+            Self::default()
+        }
     }
 }
 
@@ -140,69 +149,52 @@ pub enum DeserializedOutput {
 }
 
 /// A notebook cell
+#[derive(Clone)]
 pub enum Cell {
-    Code(CodeCell),
-    Markdown(MarkdownCell),
-    Raw(RawCell),
+    Code(View<CodeCell>),
+    Markdown(View<MarkdownCell>),
+    Raw(View<RawCell>),
 }
 
 impl Cell {
-    pub fn load(cell: DeserializedCell) -> Self {
+    pub fn load(cell: DeserializedCell, cx: &mut WindowContext) -> Self {
         match cell {
             DeserializedCell::Markdown {
                 id,
                 metadata,
                 source,
                 attachments,
-            } => Cell::Markdown(MarkdownCell {
-                id: CellId::parse_id_or_default(id),
+            } => Cell::Markdown(cx.new_view(|cx| MarkdownCell {
+                id: id.into(),
                 cell_type: CellType::Markdown,
                 metadata,
                 source,
-            }),
+            })),
             DeserializedCell::Code {
                 id,
                 metadata,
                 execution_count,
                 source,
                 outputs,
-            } => Cell::Code(CodeCell {
-                id: CellId::parse_id_or_default(id),
+            } => Cell::Code(cx.new_view(|_| CodeCell {
+                id: id.into(),
                 cell_type: CellType::Code,
                 metadata,
                 execution_count,
                 source,
                 outputs,
-            }),
+            })),
             DeserializedCell::Raw {
                 id,
                 metadata,
                 source,
-            } => Cell::Raw(RawCell {
-                id: CellId::parse_id_or_default(id),
+            } => Cell::Raw(cx.new_view(|_| RawCell {
+                id: id.into(),
                 cell_type: CellType::Raw,
                 metadata,
                 source,
-            }),
+            })),
         }
-    }
-}
-
-impl From<CodeCell> for Cell {
-    fn from(cell: CodeCell) -> Self {
-        Self::Code(cell)
-    }
-}
-
-impl From<MarkdownCell> for Cell {
-    fn from(cell: MarkdownCell) -> Self {
-        Self::Markdown(cell)
-    }
-}
-
-impl From<RawCell> for Cell {
-    fn from(cell: RawCell) -> Self {
-        Self::Raw(cell)
     }
 }
 

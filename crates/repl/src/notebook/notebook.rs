@@ -10,16 +10,14 @@ use super::{Cell, CellId};
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
 
-pub struct NotebookData {
+pub struct Notebook {
     metadata: DeserializedMetadata,
     nbformat: i32,
     nbformat_minor: i32,
     cells: HashMap<CellId, View<Cell>>,
 }
 
-impl NotebookData {}
-
-impl Default for NotebookData {
+impl Default for Notebook {
     fn default() -> Self {
         Self {
             metadata: Default::default(),
@@ -41,10 +39,10 @@ impl Default for DeserializedMetadata {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct DeserializedNotebook {
-    metadata: DeserializedMetadata,
-    nbformat: i32,
-    nbformat_minor: i32,
-    cells: Vec<DeserializedCell>,
+    pub metadata: DeserializedMetadata,
+    pub nbformat: i32,
+    pub nbformat_minor: i32,
+    pub cells: Vec<DeserializedCell>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -66,6 +64,6 @@ pub struct DeserializedLanguageInfo {
     codemirror_mode: Option<String>,
 }
 
-fn deserialize_notebook(notebook: &str) -> Result<DeserializedNotebook, serde_json::Error> {
+pub fn deserialize_notebook(notebook: &str) -> Result<DeserializedNotebook, serde_json::Error> {
     serde_json::from_str(notebook)
 }
