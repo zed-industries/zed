@@ -717,7 +717,7 @@ fn handle_open_request(
                 .update(|cx| {
                     SshSettings::get_global(cx).nickname_for(
                         &connection_info.host,
-                        connection_info.port.clone(),
+                        connection_info.port,
                         &connection_info.username,
                     )
                 })
