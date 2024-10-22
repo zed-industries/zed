@@ -18,8 +18,10 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects};
+use recent_projects::{OpenRemote, RecentProjects, SshSettings};
+use remote::SshConnectionOptions;
 use rpc::proto::{self, DevServerStatus};
+use settings::Settings;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -27,7 +29,7 @@ use ui::{
     h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
-use util::ResultExt;
+use util::{maybe, ResultExt};
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -263,7 +265,18 @@ impl TitleBar {
     }
 
     fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        let host = self.project.read(cx).ssh_connection_string(cx)?;
+        let options = self.project.read(cx).ssh_connection_options(cx)?;
+        let host: SharedString = options.connection_string().into();
+
+        let nickname = maybe!({
+            SshSettings::get_global(cx)
+                .ssh_connections
+                .as_ref()?
+                .into_iter()
+                .find(|connection| SshConnectionOptions::from((*connection).clone()) == options)
+                .and_then(|connection| connection.nickname.clone())
+        })
+        .unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
@@ -295,11 +308,21 @@ impl TitleBar {
             ButtonLike::new("ssh-server-icon")
                 .child(
                     IconWithIndicator::new(
-                        Icon::new(IconName::Server).color(icon_color),
+                        Icon::new(IconName::Server)
+                            .size(IconSize::XSmall)
+                            .color(icon_color),
                         Some(Indicator::dot().color(indicator_color)),
                     )
                     .indicator_border_color(Some(cx.theme().colors().title_bar_background))
                     .into_any_element(),
+                )
+                .child(
+                    div()
+                        .max_w_32()
+                        .overflow_hidden()
+                        .truncate()
+                        .text_ellipsis()
+                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
                 )
                 .tooltip(move |cx| {
                     Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)

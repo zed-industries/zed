@@ -52,6 +52,23 @@ impl SshSettings {
             })
             .next()
     }
+    pub fn nickname_for(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        user: &Option<String>,
+    ) -> Option<SharedString> {
+        self.ssh_connections()
+            .filter_map(|conn| {
+                if conn.host == host && &conn.username == user && conn.port == port {
+                    Some(conn.nickname)
+                } else {
+                    None
+                }
+            })
+            .next()
+            .flatten()
+    }
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -103,6 +120,7 @@ impl Settings for SshSettings {
 
 pub struct SshPrompt {
     connection_string: SharedString,
+    nickname: Option<SharedString>,
     status_message: Option<SharedString>,
     prompt: Option<(View<Markdown>, oneshot::Sender<Result<String>>)>,
     editor: View<Editor>,
@@ -116,11 +134,13 @@ pub struct SshConnectionModal {
 impl SshPrompt {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
+        nickname: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let connection_string = connection_options.connection_string().into();
         Self {
             connection_string,
+            nickname,
             status_message: None,
             prompt: None,
             editor: cx.new_view(Editor::single_line),
@@ -228,9 +248,13 @@ impl Render for SshPrompt {
 }
 
 impl SshConnectionModal {
-    pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
+    pub(crate) fn new(
+        connection_options: &SshConnectionOptions,
+        nickname: Option<SharedString>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
-            prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
+            prompt: cx.new_view(|cx| SshPrompt::new(connection_options, nickname, cx)),
             finished: false,
         }
     }
@@ -297,6 +321,7 @@ impl RenderOnce for SshConnectionHeader {
 
 impl Render for SshConnectionModal {
     fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+        let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
         let theme = cx.theme();
 
@@ -313,7 +338,7 @@ impl Render for SshConnectionModal {
             .child(
                 SshConnectionHeader {
                     connection_string,
-                    nickname: None,
+                    nickname,
                 }
                 .render(cx),
             )
@@ -589,6 +614,7 @@ pub async fn open_ssh_project(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
+    nickname: Option<SharedString>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let window = if let Some(window) = open_options.replace_window {
@@ -612,9 +638,12 @@ pub async fn open_ssh_project(
     loop {
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
+            let nickname = nickname.clone();
             move |workspace, cx| {
                 cx.activate_window();
-                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+                workspace.toggle_modal(cx, |cx| {
+                    SshConnectionModal::new(&connection_options, nickname.clone(), cx)
+                });
                 let ui = workspace
                     .active_modal::<SshConnectionModal>(cx)
                     .unwrap()
