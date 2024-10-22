@@ -66,6 +66,7 @@ async fn test_billing_limit_exceeded(db: &mut LlmDatabase) {
         usage,
         true,
         max_monthly_spend,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
@@ -103,6 +104,7 @@ async fn test_billing_limit_exceeded(db: &mut LlmDatabase) {
         usage_2,
         true,
         max_monthly_spend,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         now,
     )
     .await
@@ -132,6 +134,7 @@ async fn test_billing_limit_exceeded(db: &mut LlmDatabase) {
         model,
         usage_exceeding,
         true,
+        FREE_TIER_MONTHLY_SPENDING_LIMIT,
         max_monthly_spend,
         now,
     )

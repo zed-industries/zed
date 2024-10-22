@@ -27,6 +27,7 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::ops::ControlFlow;
 use std::{
     io::Write,
     mem,
@@ -305,10 +306,15 @@ pub fn execute_run(
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
 ) -> Result<()> {
-    let log_rx = init_logging_server(log_file)?;
-    init_panic_hook();
     init_paths()?;
 
+    match daemonize()? {
+        ControlFlow::Break(_) => return Ok(()),
+        ControlFlow::Continue(_) => {}
+    }
+
+    init_panic_hook();
+    let log_rx = init_logging_server(log_file)?;
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
@@ -321,8 +327,6 @@ pub fn execute_run(
         .with_context(|| format!("failed to write pid file: {:?}", &pid_file))?;
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
-
-    log::info!("starting headless gpui app");
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
@@ -471,19 +475,13 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
-            result = stdin_task.fuse() => result,
-            result = stdout_task.fuse() => result,
-            result = stderr_task.fuse() => result,
+            result = stdin_task.fuse() => result.context("stdin_task failed"),
+            result = stdout_task.fuse() => result.context("stdout_task failed"),
+            result = stderr_task.fuse() => result.context("stderr_task failed"),
         }
     }) {
-        if let Some(error) = forwarding_result.downcast_ref::<std::io::Error>() {
-            if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                log::error!("connection to server closed due to unexpected EOF");
-                return Err(anyhow!("connection to server closed"));
-            }
-        }
         log::error!(
-            "failed to forward messages: {:?}, terminating...",
+            "encountered error while forwarding messages: {:?}, terminating...",
             forwarding_result
         );
         return Err(forwarding_result);
@@ -523,7 +521,8 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     }
 
     let binary_name = std::env::current_exe()?;
-    let server_process = smol::process::Command::new(binary_name)
+    let mut server_process = std::process::Command::new(binary_name);
+    server_process
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -534,12 +533,14 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg("--stdout-socket")
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
-        .arg(&paths.stderr_socket)
-        .spawn()?;
+        .arg(&paths.stderr_socket);
 
-    log::info!(
-        "proxy spawned server process. PID: {:?}",
-        server_process.id()
+    let status = server_process
+        .status()
+        .context("failed to launch server process")?;
+    anyhow::ensure!(
+        status.success(),
+        "failed to launch and detach server process"
     );
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
@@ -744,4 +745,44 @@ fn read_proxy_settings(cx: &mut ModelContext<'_, HeadlessProject>) -> Option<Uri
         })
         .or_else(read_proxy_from_env);
     proxy_url
+}
+
+fn daemonize() -> Result<ControlFlow<()>> {
+    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
+        fork::Fork::Parent(_) => {
+            return Ok(ControlFlow::Break(()));
+        }
+        fork::Fork::Child => {}
+    }
+
+    // Once we've detached from the parent, we want to close stdout/stderr/stdin
+    // so that the outer SSH process is not attached to us in any way anymore.
+    unsafe { redirect_standard_streams() }?;
+
+    Ok(ControlFlow::Continue(()))
+}
+
+unsafe fn redirect_standard_streams() -> Result<()> {
+    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+    anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
+
+    let process_stdio = |name, fd| {
+        let reopened_fd = libc::dup2(devnull_fd, fd);
+        anyhow::ensure!(
+            reopened_fd != -1,
+            format!("failed to redirect {} to /dev/null", name)
+        );
+        Ok(())
+    };
+
+    process_stdio("stdin", libc::STDIN_FILENO)?;
+    process_stdio("stdout", libc::STDOUT_FILENO)?;
+    process_stdio("stderr", libc::STDERR_FILENO)?;
+
+    anyhow::ensure!(
+        libc::close(devnull_fd) != -1,
+        "failed to close /dev/null fd after redirecting"
+    );
+
+    Ok(())
 }

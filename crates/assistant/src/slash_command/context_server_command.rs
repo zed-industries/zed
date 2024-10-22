@@ -145,7 +145,28 @@ impl SlashCommand for ContextServerSlashCommand {
                     return Err(anyhow!("Context server not initialized"));
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
-                let mut prompt = result.prompt;
+
+                // Check that there are only user roles
+                if result
+                    .messages
+                    .iter()
+                    .any(|msg| !matches!(msg.role, context_servers::types::SamplingRole::User))
+                {
+                    return Err(anyhow!(
+                        "Prompt contains non-user roles, which is not supported"
+                    ));
+                }
+
+                // Extract text from user messages into a single prompt string
+                let mut prompt = result
+                    .messages
+                    .into_iter()
+                    .filter_map(|msg| match msg.content {
+                        context_servers::types::SamplingContent::Text { text } => Some(text),
+                        _ => None,
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n\n");
 
                 // We must normalize the line endings here, since servers might return CR characters.
                 LineEnding::normalize(&mut prompt);
