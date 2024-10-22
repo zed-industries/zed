@@ -20,18 +20,14 @@ use collections::HashMap;
 // * An invisible Nonspacing Mark character (like U+034F, or variation selectors)
 //
 // We don't consider unassigned codepoints invisible as the font renderer already shows
-// a replacement character in that case.
+// a replacement character in that case (and there are a *lot* of them)
 //
 // Control characters are mostly fine to highlight; except:
-// * U+E0020..=U+E007F are used in emoji flags. We don't highlight them right now, but we coudl if we tightened our heuristics.
+// * U+E0020..=U+E007F are used in emoji flags. We don't highlight them right now, but we could if we tightened our heuristics.
 // * U+200D is used to join characters. We highlight this but don't replace it. As our font system ignores mid-glyph highlights this mostly works to highlight unexpected uses.
 //
-// Nonspacing marks is a bit of a risk.
-// * U+034F is handled like U+200D.
-// * Everything else we currently highlight as a space.
-//
-// This almost certainly causes issues with some non-ASCII text; and I think we should
-// feel free to exclude more characters from the 'Cf' and 'Mn' lists as needed.
+// Nonspacing marks are handled like U+200D. This means that mid-glyph we ignore them, but
+// probably causes issues with end-of-glyph usage.
 //
 // ref: https://invisible-characters.com
 // ref: https://www.compart.com/en/unicode/category/Cf
