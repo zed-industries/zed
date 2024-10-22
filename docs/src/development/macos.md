@@ -129,3 +129,24 @@ Then clean and rebuild the project:
 cargo clean
 cargo run
 ```
+
+### Error: 'ld: symbol(s) not found for architecture arm64'
+
+If you encounter an error similar to:
+
+```sh
+     __swift_FORCE_LOAD_$_swiftunistd_$_Promises in liblive_kit_client-ad5d7624b0732fb4.rlib[200](Promise+All.swift.o)
+     __swift_FORCE_LOAD_$_swiftunistd_$_SwiftProtobuf in liblive_kit_client-ad5d7624b0732fb4.rlib[219](AnyMessageStorage.swift.o)
+ld: symbol(s) not found for architecture arm64
+clang: error: linker command failed with exit code 1 (use -v to see invocation)
+```
+
+It's probably because you're using mac silicon cpu and you need to update your cargo config, add this to your `.cargo/config.toml` settings file:
+
+```sh
+[target.aarch64-apple-darwin]
+rustflags = [
+  "-C", "link-arg=-undefined",
+  "-C", "link-arg=dynamic_lookup",
+]
+```
