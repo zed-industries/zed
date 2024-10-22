@@ -39,7 +39,7 @@ Extensions that provide language servers may also provide default settings for t
 
 `float` values
 
-## Autoinstall extensions
+## Auto Install extensions
 
 - Description: Define extensions to be autoinstalled or never be installed.
 - Setting: `auto_install_extension`
