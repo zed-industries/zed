@@ -28,7 +28,6 @@ backtrace = "0.3"
 clap.workspace = true
 client.workspace = true
 env_logger.workspace = true
-fork.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
@@ -37,7 +36,6 @@ gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
 languages.workspace = true
-libc.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
@@ -54,6 +52,10 @@ shellexpand.workspace = true
 smol.workspace = true
 util.workspace = true
 worktree.workspace = true
+
+[target.'cfg(not(windows))'.dependencies]
+fork.workspace = true
+libc.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
