@@ -21,8 +21,8 @@ use crate::{
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
     HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
     PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
-    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED,
+    INLINE_BLAME_PADDING_EM_WIDTHS, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -5043,10 +5043,44 @@ impl Element for EditorElement {
                     } else {
                         px(0.)
                     };
-                    let overscroll = size(em_width + right_margin, px(0.));
+
+                    let blame_overflow = self.editor.update(cx, |editor, cx| {
+                        if !editor.render_git_blame_inline(cx) {
+                            return px(0.);
+                        }
+
+                        let cursor_position = editor.selections.newest_anchor().head();
+                        let buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+                        let buffer_row =
+                            MultiBufferRow(cursor_position.to_point(&buffer_snapshot).row);
+                        let line_length = buffer_snapshot.line_len(buffer_row) as f32;
+
+                        let blame_length = editor.blame.as_ref().map_or(0f32, |blame| {
+                            blame
+                                .update(cx, |blame, cx| {
+                                    blame.blame_for_rows([Some(buffer_row)], cx).next()
+                                })
+                                .flatten()
+                                .map_or(0f32, |entry| {
+                                    let author_length =
+                                        entry.author.map_or(0f32, |author| author.len() as f32);
+                                    let max_char_count = author_length + 14.0 + 4.0; // author length + timestamp + gaps/gylphs
+                                    max_char_count
+                                })
+                        });
+
+                        let text_width_with_blame =
+                            (line_length + INLINE_BLAME_PADDING_EM_WIDTHS + blame_length)
+                                * em_width;
+                        let blame_overflow = text_width.max(text_width_with_blame) - text_width;
+
+                        blame_overflow
+                    });
+
+                    let overscroll = size(em_width + right_margin + blame_overflow, px(0.));
 
                     let editor_width =
-                        text_width - gutter_dimensions.margin - overscroll.width - em_width;
+                        text_width - gutter_dimensions.margin - em_width - overscroll.width;
 
                     snapshot = self.editor.update(cx, |editor, cx| {
                         editor.last_bounds = Some(bounds);

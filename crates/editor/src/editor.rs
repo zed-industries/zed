@@ -710,6 +710,7 @@ pub struct EditorSnapshot {
 }
 
 const GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED: usize = 20;
+const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
 
 #[derive(Default, Debug, Clone, Copy)]
 pub struct GutterDimensions {
@@ -2405,7 +2406,7 @@ impl Editor {
                 }
             })
             .flatten();
-
+            
         EditorSnapshot {
             mode: self.mode,
             show_gutter: self.show_gutter,
