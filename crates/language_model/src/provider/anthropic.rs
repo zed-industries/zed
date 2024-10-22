@@ -26,7 +26,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
 
-const PROVIDER_ID: &str = "anthropic";
+pub const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -354,6 +354,10 @@ impl LanguageModel for AnthropicModel {
 
     fn telemetry_id(&self) -> String {
         format!("anthropic/{}", self.model.id())
+    }
+
+    fn api_key(&self, cx: &AppContext) -> Option<String> {
+        self.state.read(cx).api_key.clone()
     }
 
     fn max_token_count(&self) -> usize {

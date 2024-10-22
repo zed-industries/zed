@@ -229,7 +229,7 @@ pub struct RateLimitInfo {
 }
 
 impl RateLimitInfo {
-    fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
+    pub fn from_headers(headers: &HeaderMap<HeaderValue>) -> Result<Self> {
         let tokens_limit = get_header("anthropic-ratelimit-tokens-limit", headers)?.parse()?;
         let requests_limit = get_header("anthropic-ratelimit-requests-limit", headers)?.parse()?;
         let tokens_remaining =
