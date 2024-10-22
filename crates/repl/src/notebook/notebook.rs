@@ -1,18 +1,20 @@
+#![allow(unused)]
+use collections::HashMap;
+use gpui::View;
 use serde::{Deserialize, Serialize};
 
-use super::cell::DeserializedCell;
+use crate::notebook::DeserializedCell;
+
+use super::{Cell, CellId};
 
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
 
-#[derive(Serialize, Deserialize, Debug)]
 pub struct NotebookData {
     metadata: DeserializedMetadata,
     nbformat: i32,
     nbformat_minor: i32,
-    // move to hash map
-    // serialize cell ids
-    cells: Vec<DeserializedCell>,
+    cells: HashMap<CellId, View<Cell>>,
 }
 
 impl NotebookData {}
@@ -23,7 +25,7 @@ impl Default for NotebookData {
             metadata: Default::default(),
             nbformat: DEFAULT_NOTEBOOK_FORMAT,
             nbformat_minor: DEFAULT_NOTEBOOK_FORMAT_MINOR,
-            cells: vec![],
+            cells: HashMap::default(),
         }
     }
 }

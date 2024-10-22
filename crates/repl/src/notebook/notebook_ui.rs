@@ -1,6 +1,7 @@
 #![allow(unused)]
 use anyhow::Result;
 use client::proto::ViewId;
+use collections::HashMap;
 use gpui::{
     actions, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, Model, Task, View,
     WeakView,
@@ -10,7 +11,9 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
-use crate::notebook::notebook::NotebookData;
+use crate::notebook::NotebookData;
+
+use super::{Cell, CellId};
 
 actions!(
     notebook,
@@ -50,7 +53,6 @@ pub struct Notebook {
     project: Model<Project>,
     remote_id: Option<ViewId>,
     selected_cell: usize,
-    // cells: Vec<Cell>,
     data: Model<NotebookData>,
 }
 

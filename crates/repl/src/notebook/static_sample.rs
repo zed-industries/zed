@@ -1,4 +1,4 @@
-pub fn deserializable_sample_notebook() -> &'static str {
+pub fn _deserializable_sample_notebook() -> &'static str {
     r#"{
      "cells": [
       {

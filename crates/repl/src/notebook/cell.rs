@@ -1,12 +1,20 @@
-use gpui::prelude::*;
+#![allow(unused, dead_code)]
+use gpui::{prelude::*, View};
 use serde::{Deserialize, Serialize};
 use ui::prelude::*;
 use uuid::Uuid;
 
-use crate::notebook_ui::{CODE_BLOCK_INSET, GUTTER_WIDTH};
+use crate::notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH};
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct CellId(pub Uuid);
+
+impl CellId {
+    fn parse_id_or_default(id: Option<String>) -> Self {
+        id.map(|id| CellId(Uuid::parse_str(&id).unwrap_or_default()))
+            .unwrap_or_default()
+    }
+}
 
 impl Default for CellId {
     fn default() -> Self {
@@ -53,6 +61,7 @@ impl RenderOnce for CellControl {
 pub enum DeserializedCell {
     #[serde(rename = "markdown")]
     Markdown {
+        id: Option<String>,
         metadata: DeserializedCellMetadata,
         source: String,
         #[serde(default)]
@@ -60,6 +69,7 @@ pub enum DeserializedCell {
     },
     #[serde(rename = "code")]
     Code {
+        id: Option<String>,
         metadata: DeserializedCellMetadata,
         execution_count: Option<i32>,
         source: String,
@@ -67,6 +77,7 @@ pub enum DeserializedCell {
     },
     #[serde(rename = "raw")]
     Raw {
+        id: Option<String>,
         metadata: DeserializedCellMetadata,
         source: String,
     },
@@ -87,6 +98,21 @@ pub struct DeserializedCellMetadata {
     format: Option<String>,
     name: Option<String>,
     tags: Option<Vec<String>>,
+}
+
+impl Default for DeserializedCellMetadata {
+    fn default() -> Self {
+        Self {
+            id: None,
+            collapsed: None,
+            scrolled: None,
+            deletable: None,
+            editable: None,
+            format: None,
+            name: None,
+            tags: None,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -113,9 +139,76 @@ pub enum DeserializedOutput {
     },
 }
 
+/// A notebook cell
+pub enum Cell {
+    Code(CodeCell),
+    Markdown(MarkdownCell),
+    Raw(RawCell),
+}
+
+impl Cell {
+    pub fn load(cell: DeserializedCell) -> Self {
+        match cell {
+            DeserializedCell::Markdown {
+                id,
+                metadata,
+                source,
+                attachments,
+            } => Cell::Markdown(MarkdownCell {
+                id: CellId::parse_id_or_default(id),
+                cell_type: CellType::Markdown,
+                metadata,
+                source,
+            }),
+            DeserializedCell::Code {
+                id,
+                metadata,
+                execution_count,
+                source,
+                outputs,
+            } => Cell::Code(CodeCell {
+                id: CellId::parse_id_or_default(id),
+                cell_type: CellType::Code,
+                metadata,
+                execution_count,
+                source,
+                outputs,
+            }),
+            DeserializedCell::Raw {
+                id,
+                metadata,
+                source,
+            } => Cell::Raw(RawCell {
+                id: CellId::parse_id_or_default(id),
+                cell_type: CellType::Raw,
+                metadata,
+                source,
+            }),
+        }
+    }
+}
+
+impl From<CodeCell> for Cell {
+    fn from(cell: CodeCell) -> Self {
+        Self::Code(cell)
+    }
+}
+
+impl From<MarkdownCell> for Cell {
+    fn from(cell: MarkdownCell) -> Self {
+        Self::Markdown(cell)
+    }
+}
+
+impl From<RawCell> for Cell {
+    fn from(cell: RawCell) -> Self {
+        Self::Raw(cell)
+    }
+}
+
 pub trait RenderableCell: Render {
     const CELL_TYPE: CellType;
-    // fn new(cx: &ViewContext<Self>) -> Self;
+    // fn new(cx: &mut WindowContext) -> View<Self>;
     fn id(&self) -> &CellId;
     fn cell_type(&self) -> &CellType;
     fn metadata(&self) -> &DeserializedCellMetadata;
@@ -173,8 +266,23 @@ pub struct MarkdownCell {
     source: String,
 }
 
+impl Default for MarkdownCell {
+    fn default() -> Self {
+        Self {
+            id: Default::default(),
+            cell_type: CellType::Markdown,
+            metadata: Default::default(),
+            source: "".to_string(),
+        }
+    }
+}
+
 impl RenderableCell for MarkdownCell {
     const CELL_TYPE: CellType = CellType::Markdown;
+
+    // fn new(cx: &mut WindowContext) -> View<Self> {
+    //     cx.new_view(|cx| MarkdownCell::default())
+    // }
 
     fn id(&self) -> &CellId {
         &self.id
@@ -211,6 +319,82 @@ pub struct CodeCell {
     id: CellId,
     cell_type: CellType,
     metadata: DeserializedCellMetadata,
+    execution_count: Option<i32>,
     source: String,
     outputs: Vec<DeserializedOutput>,
+}
+
+impl RenderableCell for CodeCell {
+    const CELL_TYPE: CellType = CellType::Code;
+
+    fn id(&self) -> &CellId {
+        &self.id
+    }
+
+    fn cell_type(&self) -> &CellType {
+        &self.cell_type
+    }
+
+    fn metadata(&self) -> &DeserializedCellMetadata {
+        &self.metadata
+    }
+
+    fn source(&self) -> &String {
+        &self.source
+    }
+
+    fn selected(&self) -> bool {
+        false
+    }
+
+    fn control(&self) -> Option<CellControl> {
+        Some(CellControl::RunCell)
+    }
+}
+
+impl Render for CodeCell {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+pub struct RawCell {
+    id: CellId,
+    cell_type: CellType,
+    metadata: DeserializedCellMetadata,
+    source: String,
+}
+
+impl RenderableCell for RawCell {
+    const CELL_TYPE: CellType = CellType::Raw;
+
+    fn id(&self) -> &CellId {
+        &self.id
+    }
+
+    fn cell_type(&self) -> &CellType {
+        &self.cell_type
+    }
+
+    fn metadata(&self) -> &DeserializedCellMetadata {
+        &self.metadata
+    }
+
+    fn source(&self) -> &String {
+        &self.source
+    }
+
+    fn selected(&self) -> bool {
+        false
+    }
+
+    fn control(&self) -> Option<CellControl> {
+        None
+    }
+}
+
+impl Render for RawCell {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+    }
 }
