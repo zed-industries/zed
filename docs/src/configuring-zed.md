@@ -39,6 +39,42 @@ Extensions that provide language servers may also provide default settings for t
 
 `float` values
 
+## Autoinstall extensions
+
+- Description: Define extensions to be autoinstalled or never be installed.
+- Setting: `auto_install_extension`
+- Default: `-`
+
+**Options**
+
+By default `html` extension is installed, see: [html extension page](./languages/html.md).
+To determine the name of the extension, you have to install the extension manually and copy the name of the
+extension folder in the [installation location](./extensions/installing-extensions#installation-location)
+
+On MacOS:
+
+```bash
+ls -l ~/Library/Application\ Support/Zed/extensions/installed/
+```
+
+On Linux:
+
+```bash
+ls -l ~/.local/share/zed/extensions/installed
+```
+
+Define extensions which should be installed (`true`) or never installed (`false`).
+
+```json
+{
+  "auto_install_extensions": {
+    "html": true,
+    "dockerfile": true,
+    "docker-compose": false
+  }
+}
+```
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
