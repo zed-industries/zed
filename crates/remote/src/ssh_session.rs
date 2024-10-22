@@ -873,6 +873,9 @@ impl SshRemoteClient {
                 let len = child_stderr
                     .read(&mut stderr_buffer[stderr_offset..])
                     .await?;
+                if len == 0 {
+                    return Err(anyhow!("stderr is closed"));
+                }
 
                 stderr_offset += len;
                 let mut start_ix = 0;
