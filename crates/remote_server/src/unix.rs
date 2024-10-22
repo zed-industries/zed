@@ -310,7 +310,7 @@ pub fn execute_run(
 
     match daemonize()? {
         ControlFlow::Break(_) => return Ok(()),
-        ControlFlow::Continue(_) => {},
+        ControlFlow::Continue(_) => {}
     }
 
     init_panic_hook();
@@ -541,8 +541,13 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg("--stderr-socket")
         .arg(&paths.stderr_socket);
 
-    let status = server_process.status().context("failed to launch server process")?;
-    anyhow::ensure!(status.success(), "failed to launch and detach server process");
+    let status = server_process
+        .status()
+        .context("failed to launch server process")?;
+    anyhow::ensure!(
+        status.success(),
+        "failed to launch and detach server process"
+    );
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
@@ -752,8 +757,8 @@ fn daemonize() -> Result<ControlFlow<()>> {
     match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
         fork::Fork::Parent(_) => {
             return Ok(ControlFlow::Break(()));
-        },
-        fork::Fork::Child => {},
+        }
+        fork::Fork::Child => {}
     }
 
     // Once we've detached from the parent, we want to close stdout/stderr/stdin
@@ -769,7 +774,10 @@ unsafe fn redirect_standard_streams() -> Result<()> {
 
     let process_stdio = |name, fd| {
         let reopened_fd = libc::dup2(devnull_fd, fd);
-        anyhow::ensure!(reopened_fd != -1, format!("failed to redirect {} to /dev/null", name));
+        anyhow::ensure!(
+            reopened_fd != -1,
+            format!("failed to redirect {} to /dev/null", name)
+        );
         Ok(())
     };
 
@@ -777,7 +785,10 @@ unsafe fn redirect_standard_streams() -> Result<()> {
     process_stdio("stdout", libc::STDOUT_FILENO)?;
     process_stdio("stderr", libc::STDERR_FILENO)?;
 
-    anyhow::ensure!(libc::close(devnull_fd) != -1, "failed to close /dev/null fd after redirecting");
+    anyhow::ensure!(
+        libc::close(devnull_fd) != -1,
+        "failed to close /dev/null fd after redirecting"
+    );
 
     Ok(())
 }
