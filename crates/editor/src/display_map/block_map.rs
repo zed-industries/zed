@@ -480,6 +480,14 @@ impl BlockMap {
     }
 
     fn sync(&self, wrap_snapshot: &WrapSnapshot, mut edits: Patch<u32>) {
+        println!("====================");
+        println!("buffer: {:?}", wrap_snapshot.buffer_snapshot().text());
+        println!("wraps: {:?}", wrap_snapshot.text());
+        println!("edits: {:?}", edits);
+        println!(
+            "transforms before edit: {}",
+            debug_transforms(&self.transforms.borrow())
+        );
         let buffer = wrap_snapshot.buffer_snapshot();
 
         // Handle changing the last excerpt if it is empty.
@@ -640,6 +648,11 @@ impl BlockMap {
             last_block_ix = end_block_ix;
 
             debug_assert!(blocks_in_edit.is_empty());
+
+            dbg!(self.custom_blocks[start_block_ix..end_block_ix]
+                .iter()
+                .map(|block| block.placement.as_ref().map(|p| p.to_point(buffer)))
+                .collect::<Vec<_>>());
             blocks_in_edit.extend(
                 self.custom_blocks[start_block_ix..end_block_ix]
                     .iter()
@@ -664,6 +677,8 @@ impl BlockMap {
             }
 
             BlockMap::sort_blocks(&mut blocks_in_edit);
+
+            dbg!(&blocks_in_edit, preserved_blocks_above_edit);
 
             // For each of these blocks, insert a new isomorphic transform preceding the block,
             // and then insert the block itself.
@@ -712,6 +727,10 @@ impl BlockMap {
 
         new_transforms.append(cursor.suffix(&()), &());
 
+        println!(
+            "transforms after edit: {}",
+            debug_transforms(&new_transforms)
+        );
         debug_assert_eq!(
             new_transforms.summary().input_rows,
             wrap_snapshot.max_point().row() + 1
@@ -1626,7 +1645,7 @@ mod tests {
     use multi_buffer::{ExcerptRange, MultiBuffer};
     use rand::prelude::*;
     use settings::SettingsStore;
-    use std::{char::REPLACEMENT_CHARACTER, env};
+    use std::env;
     use util::RandomCharIter;
 
     #[gpui::test]
@@ -2184,7 +2203,8 @@ mod tests {
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
         log::info!("Excerpt Footer Height: {:?}", excerpt_footer_height);
 
-        let buffer = if rng.gen() {
+        let buffer = if true {
+            let todo = (); // make the above random again
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial singleton buffer text: {:?}", text);
@@ -2300,7 +2320,8 @@ mod tests {
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
-                        let mutation_count = rng.gen_range(1..=5);
+                        // let mutation_count = rng.gen_range(1..=5);
+                        let mutation_count = 1; // todo!("make this random")
                         let subscription = buffer.subscribe();
                         buffer.randomly_mutate(&mut rng, mutation_count, cx);
                         buffer_snapshot = buffer.snapshot(cx);
