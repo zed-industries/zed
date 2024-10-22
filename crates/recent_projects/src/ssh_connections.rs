@@ -124,6 +124,7 @@ pub struct SshPrompt {
     nickname: Option<SharedString>,
     status_message: Option<SharedString>,
     prompt: Option<(View<Markdown>, oneshot::Sender<Result<String>>)>,
+    cancellation: Option<oneshot::Sender<()>>,
     editor: View<Editor>,
 }
 
@@ -144,8 +145,13 @@ impl SshPrompt {
             nickname,
             editor: cx.new_view(Editor::single_line),
             status_message: None,
+            cancellation: None,
             prompt: None,
         }
+    }
+
+    pub fn set_cancellation_tx(&mut self, tx: oneshot::Sender<()>) {
+        self.cancellation = Some(tx);
     }
 
     pub fn set_prompt(
@@ -270,7 +276,13 @@ impl SshConnectionModal {
     }
 
     fn dismiss(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        cx.emit(DismissEvent);
+        if let Some(tx) = self
+            .prompt
+            .update(cx, |prompt, _cx| prompt.cancellation.take())
+        {
+            tx.send(()).ok();
+        }
+        self.finished(cx);
     }
 }
 
@@ -322,6 +334,7 @@ impl Render for SshConnectionModal {
             .w(rems(34.))
             .border_1()
             .border_color(theme.colors().border)
+            .key_context("SshConnectionModal")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
@@ -486,7 +499,11 @@ impl SshClientDelegate {
         use smol::process::{Command, Stdio};
 
         async fn run_cmd(command: &mut Command) -> Result<()> {
-            let output = command.stderr(Stdio::inherit()).output().await?;
+            let output = command
+                .kill_on_drop(true)
+                .stderr(Stdio::inherit())
+                .output()
+                .await?;
             if !output.status.success() {
                 Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
             }
@@ -585,13 +602,16 @@ pub fn connect_over_ssh(
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
     cx: &mut WindowContext,
-) -> Task<Result<Model<SshRemoteClient>>> {
+) -> Task<Result<Option<Model<SshRemoteClient>>>> {
     let window = cx.window_handle();
     let known_password = connection_options.password.clone();
+    let (tx, rx) = oneshot::channel();
+    ui.update(cx, |ui, _cx| ui.set_cancellation_tx(tx));
 
     remote::SshRemoteClient::new(
         unique_identifier,
         connection_options,
+        rx,
         Arc::new(SshClientDelegate {
             window,
             ui,
@@ -628,6 +648,7 @@ pub async fn open_ssh_project(
     };
 
     loop {
+        let (cancel_tx, cancel_rx) = oneshot::channel();
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
             let nickname = nickname.clone();
@@ -643,6 +664,10 @@ pub async fn open_ssh_project(
                     .prompt
                     .clone();
 
+                ui.update(cx, |ui, _cx| {
+                    ui.set_cancellation_tx(cancel_tx);
+                });
+
                 Arc::new(SshClientDelegate {
                     window: cx.window_handle(),
                     ui,
@@ -656,6 +681,7 @@ pub async fn open_ssh_project(
                 workspace::open_ssh_project(
                     window,
                     connection_options.clone(),
+                    cancel_rx,
                     delegate.clone(),
                     app_state.clone(),
                     paths.clone(),

@@ -547,7 +547,7 @@ impl RemoteServerProjects {
                         })
                         .ok();
 
-                    let Some(session) = session else {
+                    let Some(Some(session)) = session else {
                         workspace
                             .update(&mut cx, |workspace, cx| {
                                 let weak = cx.view().downgrade();
