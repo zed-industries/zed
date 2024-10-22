@@ -1577,7 +1577,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "proc-macro2",
@@ -5587,7 +5587,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.5.7",
+ "socket2 0.4.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -6472,7 +6472,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -13425,9 +13425,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-wasi"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "545ae8298ffce025604f7480f9c7d6948c985bef7ce9aee249ef79307813e83c"
+checksum = "fda03f5bfd5c4cc09f75c7e44846663f25f2c48a2d688fbfb5c7a33af6cf34f5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -13680,9 +13680,9 @@ dependencies = [
 
 [[package]]
 name = "wiggle"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc850ca3c02c5835934d23f28cec4c5a3fb66fe0b4ecd968bbb35609dda5ddc0"
+checksum = "2d3b31bd2b4d2d82a4b747b8dbc45f566214214a4ffdc5690429a73bc221dc8a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -13695,9 +13695,9 @@ dependencies = [
 
 [[package]]
 name = "wiggle-generate"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "634b8804a67200bcb43ea8af5f7c53e862439a086b68b16fd333454bc74d5aab"
+checksum = "e2c6136b195fc12067aa9d4e7a5baf118729394df7bc7cbf8c63119bc9f2a7cd"
 dependencies = [
  "anyhow",
  "heck 0.4.1",
@@ -13710,9 +13710,9 @@ dependencies = [
 
 [[package]]
 name = "wiggle-macro"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "474b7cbdb942c74031e619d66c600bba7f73867c5800fc2c2306cf307649be2f"
+checksum = "8a41eaceee468da976ac43b85c4eb82e482f828d5e8e56f49f90dfac2d9bc3b4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13742,7 +13742,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

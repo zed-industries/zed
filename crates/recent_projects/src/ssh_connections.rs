@@ -20,8 +20,9 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, ActiveTheme, Color, Icon, IconName, IconSize, InteractiveElement, IntoElement,
-    Label, LabelCommon, ListSeparator, Styled, ViewContext, VisualContext, WindowContext,
+    div, h_flex, prelude::*, v_flex, ActiveTheme, Color, Icon, IconName, IconSize,
+    InteractiveElement, IntoElement, Label, LabelCommon, Styled, ViewContext, VisualContext,
+    WindowContext,
 };
 use workspace::{AppState, ModalView, Workspace};
 
@@ -50,6 +51,23 @@ impl SshSettings {
                 }
             })
             .next()
+    }
+    pub fn nickname_for(
+        &self,
+        host: &str,
+        port: Option<u16>,
+        user: &Option<String>,
+    ) -> Option<SharedString> {
+        self.ssh_connections()
+            .filter_map(|conn| {
+                if conn.host == host && &conn.username == user && conn.port == port {
+                    Some(conn.nickname)
+                } else {
+                    None
+                }
+            })
+            .next()
+            .flatten()
     }
 }
 
@@ -102,6 +120,7 @@ impl Settings for SshSettings {
 
 pub struct SshPrompt {
     connection_string: SharedString,
+    nickname: Option<SharedString>,
     status_message: Option<SharedString>,
     prompt: Option<(View<Markdown>, oneshot::Sender<Result<String>>)>,
     editor: View<Editor>,
@@ -115,11 +134,13 @@ pub struct SshConnectionModal {
 impl SshPrompt {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
+        nickname: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let connection_string = connection_options.connection_string().into();
         Self {
             connection_string,
+            nickname,
             status_message: None,
             prompt: None,
             editor: cx.new_view(Editor::single_line),
@@ -184,18 +205,15 @@ impl SshPrompt {
 impl Render for SshPrompt {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let cx = cx.window_context();
-        // let theme = cx.theme();
-
+        let theme = cx.theme();
         v_flex()
             .key_context("PasswordPrompt")
-            .py_2()
-            .px_3()
             .size_full()
-            .text_buffer(cx)
             .when_some(self.status_message.clone(), |el, status_message| {
                 el.child(
                     h_flex()
-                        .gap_1()
+                        .p_2()
+                        .flex()
                         .child(
                             Icon::new(IconName::ArrowCircle)
                                 .size(IconSize::Medium)
@@ -207,12 +225,9 @@ impl Render for SshPrompt {
                                     },
                                 ),
                         )
-                        .child(
-                            div()
-                                .text_ellipsis()
-                                .overflow_x_hidden()
-                                .child(format!("{}…", status_message)),
-                        ),
+                        .child(div().ml_1().text_ellipsis().overflow_x_hidden().child(
+                            Label::new(format!("{}…", status_message)).size(LabelSize::Small),
+                        )),
                 )
             })
             .when_some(self.prompt.as_ref(), |el, prompt| {
@@ -220,6 +235,11 @@ impl Render for SshPrompt {
                     div()
                         .size_full()
                         .overflow_hidden()
+                        .p_4()
+                        .border_t_1()
+                        .border_color(theme.colors().border_variant)
+                        .font_buffer(cx)
+                        .text_buffer(cx)
                         .child(prompt.0.clone())
                         .child(self.editor.clone()),
                 )
@@ -228,9 +248,13 @@ impl Render for SshPrompt {
 }
 
 impl SshConnectionModal {
-    pub fn new(connection_options: &SshConnectionOptions, cx: &mut ViewContext<Self>) -> Self {
+    pub(crate) fn new(
+        connection_options: &SshConnectionOptions,
+        nickname: Option<SharedString>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         Self {
-            prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
+            prompt: cx.new_view(|cx| SshPrompt::new(connection_options, nickname, cx)),
             finished: false,
         }
     }
@@ -268,51 +292,61 @@ impl RenderOnce for SshConnectionHeader {
         };
 
         h_flex()
-            .px(Spacing::XLarge.rems(cx))
-            .pt(Spacing::Large.rems(cx))
-            .pb(Spacing::Small.rems(cx))
+            .p_1()
             .rounded_t_md()
             .w_full()
-            .gap_1p5()
+            .gap_2()
+            .justify_center()
+            .border_b_1()
+            .border_color(theme.colors().border_variant)
+            .bg(header_color)
             .child(Icon::new(IconName::Server).size(IconSize::XSmall))
             .child(
                 h_flex()
                     .gap_1()
-                    .child(Headline::new(main_label).size(HeadlineSize::XSmall))
-                    .children(meta_label.map(|label| Label::new(label).color(Color::Muted))),
+                    .child(
+                        Label::new(main_label)
+                            .size(ui::LabelSize::Small)
+                            .single_line(),
+                    )
+                    .children(meta_label.map(|label| {
+                        Label::new(label)
+                            .size(ui::LabelSize::Small)
+                            .single_line()
+                            .color(Color::Muted)
+                    })),
             )
     }
 }
 
 impl Render for SshConnectionModal {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+        let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
+        let theme = cx.theme();
 
-        let theme = cx.theme().clone();
         let body_color = theme.colors().editor_background;
 
         v_flex()
             .elevation_3(cx)
-            .w(rems(34.))
-            .border_1()
-            .border_color(theme.colors().border)
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::dismiss))
             .on_action(cx.listener(Self::confirm))
+            .w(px(500.))
+            .border_1()
+            .border_color(theme.colors().border)
             .child(
                 SshConnectionHeader {
                     connection_string,
-                    nickname: None,
+                    nickname,
                 }
                 .render(cx),
             )
             .child(
-                div()
-                    .w_full()
-                    .rounded_b_lg()
+                h_flex()
+                    .rounded_b_md()
                     .bg(body_color)
-                    .border_t_1()
-                    .border_color(theme.colors().border_variant)
+                    .w_full()
                     .child(self.prompt.clone()),
             )
     }
@@ -580,6 +614,7 @@ pub async fn open_ssh_project(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
+    nickname: Option<SharedString>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let window = if let Some(window) = open_options.replace_window {
@@ -603,9 +638,12 @@ pub async fn open_ssh_project(
     loop {
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
+            let nickname = nickname.clone();
             move |workspace, cx| {
                 cx.activate_window();
-                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+                workspace.toggle_modal(cx, |cx| {
+                    SshConnectionModal::new(&connection_options, nickname.clone(), cx)
+                });
                 let ui = workspace
                     .active_modal::<SshConnectionModal>(cx)
                     .unwrap()

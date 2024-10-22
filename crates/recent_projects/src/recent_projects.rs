@@ -388,6 +388,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             };
 
                             let args = SshSettings::get_global(cx).args_for(&ssh_project.host, ssh_project.port, &ssh_project.user);
+                            let nickname = SshSettings::get_global(cx).nickname_for(&ssh_project.host, ssh_project.port, &ssh_project.user);
                             let connection_options = SshConnectionOptions {
                                 host: ssh_project.host.clone(),
                                 username: ssh_project.user.clone(),
@@ -399,7 +400,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                             let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
                             cx.spawn(|_, mut cx| async move {
-                                open_ssh_project(connection_options, paths, app_state, open_options, &mut cx).await
+                                open_ssh_project(connection_options, paths, app_state, open_options, nickname, &mut cx).await
                             })
                         }
                     }
