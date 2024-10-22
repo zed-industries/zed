@@ -47,6 +47,7 @@ pub struct Notebook {
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     remote_id: Option<ViewId>,
+    selected_cell: usize,
 }
 
 impl Notebook {
@@ -92,6 +93,7 @@ impl Notebook {
             workspace,
             project,
             remote_id: None,
+            selected_cell: 0,
         }
     }
 
@@ -206,11 +208,12 @@ impl Render for Notebook {
                     .size_full()
                     .overflow_y_scroll()
                     .gap_6()
-                    .children(sample_cells().into_iter().map(|cell| cell))
-                    .child(NotebookMarkdownCell::new())
-                    .child(NotebookCodeCell::new())
-                    .child(NotebookMarkdownCell::new())
-                    .child(NotebookCodeCell::new()),
+                    .children(
+                        sample_cells()
+                            .into_iter()
+                            .enumerate()
+                            .map(|(ix, cell)| cell.selected(self.selected_cell == ix)),
+                    ),
             )
             .child(div().flex_none().child("cell bar").child("scrollbar"))
 
@@ -255,12 +258,16 @@ struct Cell {
     cell_type: NotebookCellKind,
     control: Option<IconButton>,
     source: Vec<String>,
+    selected: bool,
 }
 
 impl RenderOnce for Cell {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let source = self.source.clone();
         let cell_type = self.cell_type.clone();
+        let is_selected = self.selected.clone();
+        let mut selected_bg = cx.theme().colors().icon_accent;
+        selected_bg.fade_out(0.9);
 
         h_flex()
             .w_full()
@@ -283,7 +290,10 @@ impl RenderOnce for Cell {
                                     .flex_none()
                                     .w(px(1.))
                                     .h_full()
-                                    .bg(cx.theme().colors().border),
+                                    .when(is_selected, |this| {
+                                        this.bg(cx.theme().colors().icon_accent)
+                                    })
+                                    .when(!is_selected, |this| this.bg(cx.theme().colors().border)),
                             ),
                     )
                     .children(self.control.map(|action| {
@@ -297,7 +307,10 @@ impl RenderOnce for Cell {
                             .h(px(GUTTER_WIDTH + 12.0))
                             .items_center()
                             .justify_center()
-                            .bg(cx.theme().colors().tab_bar_background)
+                            .when(is_selected, |this| this.bg(selected_bg))
+                            .when(!is_selected, |this| {
+                                this.bg(cx.theme().colors().tab_bar_background)
+                            })
                             .child(action)
                     })),
             )
@@ -334,6 +347,7 @@ impl Cell {
             control: None,
             cell_type: NotebookCellKind::Markdown,
             source,
+            selected: false,
         }
     }
 
@@ -342,6 +356,7 @@ impl Cell {
             control: None,
             cell_type: NotebookCellKind::Code,
             source,
+            selected: false,
         }
     }
 
@@ -352,6 +367,11 @@ impl Cell {
 
     pub fn control(mut self, control: IconButton) -> Self {
         self.control = Some(control);
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 }
@@ -486,9 +506,7 @@ fn sample_cells() -> Vec<Cell> {
         ]),
         Cell::markdown(vec![
             "## 1. Introduction".to_string(),
-            "\n".to_string(),
             "When we want to convey some information to others, there are several ways to do so. The process of conveying the information with the help of plots and graphics is called **Data Visualization**. The plots and graphics take numerical data as input and display output in the form of charts, figures and tables. It helps to analyze and visualize the data clearly and make concrete decisions. It makes complex data more accessible and understandable. The goal of data visualization is to communicate information in a clear and efficient manner.".to_string(),
-            "\n".to_string(),
             "In this project, I shed some light on **Matplotlib**, which is the basic data visualization tool of Python programming language. Python has different data visualization tools available which are suitable for different purposes. First of all, I will list these data visualization tools and then I will discuss Matplotlib.".to_string()
         ])
     ]
