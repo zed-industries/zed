@@ -6260,28 +6260,6 @@ impl Editor {
         }
     }
 
-    fn apply_selected_diff_hunks(&mut self, _: &ApplyDiffHunk, cx: &mut ViewContext<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
-        let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, |editor, cx| {
-            for hunk in hunks {
-                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
-                    ranges_by_buffer
-                        .entry(buffer.clone())
-                        .or_insert_with(Vec::new)
-                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
-                }
-            }
-
-            for (buffer, ranges) in ranges_by_buffer {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.merge_into_base(ranges, cx);
-                });
-            }
-        });
-    }
-
     pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some(working_directory) = self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;

@@ -475,19 +475,13 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
-            result = stdin_task.fuse() => result,
-            result = stdout_task.fuse() => result,
-            result = stderr_task.fuse() => result,
+            result = stdin_task.fuse() => result.context("stdin_task failed"),
+            result = stdout_task.fuse() => result.context("stdout_task failed"),
+            result = stderr_task.fuse() => result.context("stderr_task failed"),
         }
     }) {
-        if let Some(error) = forwarding_result.downcast_ref::<std::io::Error>() {
-            if error.kind() == std::io::ErrorKind::UnexpectedEof {
-                log::error!("connection to server closed due to unexpected EOF");
-                return Err(anyhow!("connection to server closed"));
-            }
-        }
         log::error!(
-            "failed to forward messages: {:?}, terminating...",
+            "encountered error while forwarding messages: {:?}, terminating...",
             forwarding_result
         );
         return Err(forwarding_result);
