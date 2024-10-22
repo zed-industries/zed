@@ -150,7 +150,7 @@ impl Render for TitleBar {
                                     let workspace = workspace.clone();
                                     // TODO: This def is not the right way to do this
                                     if let Some(workspace) = workspace.clone().upgrade() {
-                                        repl::notebook_ui::Notebook::open(workspace, cx)
+                                        repl::notebook::Notebook::open(workspace, cx)
                                             .detach_and_log_err(cx);
                                     } else {
                                         println!("title_bar: Workspace is not available");
