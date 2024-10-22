@@ -10,7 +10,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
-actions!(notebook, [OpenNotebook]);
+actions!(notebook, [OpenNotebook, RunAll, ClearOutputs, MoveCellUp, MoveCellDown, AddMarkdownBlock, AddCodeBlock]);
 
 const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
 const SMALL_SPACING_SIZE: f32 = 8.0;
@@ -18,6 +18,7 @@ const MEDIUM_SPACING_SIZE: f32 = 12.0;
 const LARGE_SPACING_SIZE: f32 = 16.0;
 const GUTTER_WIDTH: f32 = 19.0;
 const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
+const CONTROL_SIZE: f32 = 20.0;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -86,6 +87,82 @@ impl Notebook {
     fn open_notebook(&mut self, _: &OpenNotebook, _cx: &mut ViewContext<Self>) {
         println!("Open notebook triggered");
     }
+
+    fn button_group(cx: &ViewContext<Self>) -> Div {
+        v_flex()
+            .gap(Spacing::Small.rems(cx))
+            .items_center()
+            .w(px(CONTROL_SIZE + 4.0))
+            .overflow_hidden()
+            .rounded(px(5.))
+            .bg(cx.theme().colors().title_bar_background)
+            .p_px()
+            .border_1()
+            .border_color(cx.theme().colors().border)
+    }
+
+    fn notebook_control(
+        id: impl Into<SharedString>,
+        icon: IconName,
+        cx: &ViewContext<Self>,
+    ) -> IconButton {
+        let id: ElementId = ElementId::Name(id.into());
+        IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
+    }
+
+    fn render_controls(cx: &ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .max_w(px(CONTROL_SIZE + 4.0))
+            .items_center()
+            .gap(Spacing::XXLarge.rems(cx))
+            .justify_between()
+            .flex_none()
+            .h_full()
+            .child(
+                v_flex()
+                    .gap(Spacing::Large.rems(cx))
+                    .child(
+                        Self::button_group(cx)
+                            .child(Self::notebook_control("run-all-cells", IconName::Play, cx))
+                            .child(Self::notebook_control(
+                                "clear-all-outputs",
+                                IconName::Close,
+                                cx,
+                            )),
+                    )
+                    .child(
+                        Self::button_group(cx)
+                            .child(
+                                Self::notebook_control("move-cell-up", IconName::ChevronUp, cx)
+                                    .disabled(true),
+                            )
+                            .child(Self::notebook_control(
+                                "move-cell-down",
+                                IconName::ChevronDown,
+                                cx,
+                            )),
+                    )
+                    .child(
+                        Self::button_group(cx)
+                            .child(Self::notebook_control(
+                                "new-markdown-cell",
+                                IconName::Plus,
+                                cx,
+                            ))
+                            .child(Self::notebook_control("new-code-cell", IconName::Code, cx)),
+                    ),
+            )
+            .child(
+                v_flex()
+                    .gap(Spacing::Large.rems(cx))
+                    .items_center()
+                    .child(Self::notebook_control("more-menu", IconName::Ellipsis, cx))
+                    .child(
+                        Self::button_group(cx)
+                            .child(IconButton::new("repl", IconName::ReplNeutral)),
+                    ),
+            )
+    }
 }
 
 impl Render for Notebook {
@@ -109,25 +186,7 @@ impl Render for Notebook {
             .p(large_gap)
             .gap(large_gap)
             .bg(cx.theme().colors().tab_bar_background)
-            .child(
-                // vertical control strip
-                v_flex()
-                    .gap(Spacing::XXLarge.rems(cx))
-                    .justify_between()
-                    .flex_none()
-                    .h_full()
-                    .child(
-                        v_flex()
-                            .gap(Spacing::Large.rems(cx))
-                            .child(IconButton::new("run", IconName::Play)),
-                    )
-                    .child(
-                        v_flex()
-                            .gap(Spacing::Large.rems(cx))
-                            .child(IconButton::new("more", IconName::Ellipsis))
-                            .child(IconButton::new("repl", IconName::ReplNeutral)),
-                    ),
-            )
+            .child(Self::render_controls(cx))
             .child(
                 // notebook cells
                 v_flex()
