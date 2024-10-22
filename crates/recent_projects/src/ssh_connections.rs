@@ -188,11 +188,13 @@ impl Render for SshPrompt {
 
         v_flex()
             .key_context("PasswordPrompt")
+            .py_2()
+            .px_3()
             .size_full()
+            .text_buffer(cx)
             .when_some(self.status_message.clone(), |el, status_message| {
                 el.child(
                     h_flex()
-                        .p_2()
                         .gap_1()
                         .child(
                             Icon::new(IconName::ArrowCircle)
@@ -207,10 +209,8 @@ impl Render for SshPrompt {
                         )
                         .child(
                             div()
-                                // .ml_1()
                                 .text_ellipsis()
                                 .overflow_x_hidden()
-                                .text_buffer(cx)
                                 .child(format!("{}…", status_message)),
                         ),
                 )
@@ -218,15 +218,8 @@ impl Render for SshPrompt {
             .when_some(self.prompt.as_ref(), |el, prompt| {
                 el.child(
                     div()
-                        .py_2()
-                        .px_3()
                         .size_full()
                         .overflow_hidden()
-                        .text_buffer(cx)
-                        // .border_t_1()
-                        // .border_color(theme.colors().border_variant)
-                        // .font_buffer(cx)
-                        // .text_buffer(cx)
                         .child(prompt.0.clone())
                         .child(self.editor.clone()),
                 )
@@ -274,44 +267,38 @@ impl RenderOnce for SshConnectionHeader {
             (self.connection_string, None)
         };
 
-        v_flex()
+        h_flex()
+            .px(Spacing::XLarge.rems(cx))
+            .pt(Spacing::Large.rems(cx))
+            .pb(Spacing::Small.rems(cx))
+            .rounded_t_md()
+            .w_full()
+            .gap_1p5()
+            .child(Icon::new(IconName::Server).size(IconSize::XSmall))
             .child(
                 h_flex()
-                    .px(Spacing::XLarge.rems(cx))
-                    .pt(Spacing::Large.rems(cx))
-                    .pb(Spacing::Small.rems(cx))
-                    .rounded_t_md()
-                    .w_full()
-                    .gap_2()
-                    .child(Icon::new(IconName::Server).size(IconSize::XSmall))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .child(Headline::new(main_label).size(HeadlineSize::XSmall))
-                            .children(
-                                meta_label.map(|label| Label::new(label).color(Color::Muted)),
-                            ),
-                    ),
+                    .gap_1()
+                    .child(Headline::new(main_label).size(HeadlineSize::XSmall))
+                    .children(meta_label.map(|label| Label::new(label).color(Color::Muted))),
             )
-            .child(ListSeparator)
     }
 }
 
 impl Render for SshConnectionModal {
-    fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let connection_string = self.prompt.read(cx).connection_string.clone();
-        let theme = cx.theme();
 
+        let theme = cx.theme().clone();
         let body_color = theme.colors().editor_background;
 
         v_flex()
             .elevation_3(cx)
-            .track_focus(&self.focus_handle(cx))
-            .on_action(cx.listener(Self::dismiss))
-            .on_action(cx.listener(Self::confirm))
             .w(rems(34.))
             .border_1()
             .border_color(theme.colors().border)
+            .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::dismiss))
+            .on_action(cx.listener(Self::confirm))
             .child(
                 SshConnectionHeader {
                     connection_string,
@@ -319,12 +306,13 @@ impl Render for SshConnectionModal {
                 }
                 .render(cx),
             )
-            // .child(ListSeparator)
             .child(
-                h_flex()
-                    .rounded_b_md()
-                    .bg(body_color)
+                div()
                     .w_full()
+                    .rounded_b_lg()
+                    .bg(body_color)
+                    .border_t_1()
+                    .border_color(theme.colors().border_variant)
                     .child(self.prompt.clone()),
             )
     }

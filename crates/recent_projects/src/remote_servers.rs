@@ -308,7 +308,12 @@ impl gpui::Render for ProjectPicker {
                 }
                 .render(cx),
             )
-            .child(self.picker.clone())
+            .child(
+                div()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(self.picker.clone()),
+            )
     }
 }
 enum Mode {
@@ -646,12 +651,12 @@ impl RemoteServerProjects {
         };
         v_flex()
             .w_full()
-            // .child(ListSeparator)
+            .child(ListSeparator)
             .child(
                 h_flex()
                     .group("ssh-server")
                     .w_full()
-                    // .pt_0p5()
+                    .pt_0p5()
                     .px_3()
                     .gap_1()
                     .overflow_hidden()
@@ -659,7 +664,6 @@ impl RemoteServerProjects {
                     .child(
                         Label::new(main_label)
                             .size(LabelSize::Small)
-                            // .weight(FontWeight::SEMIBOLD)
                             .color(Color::Muted),
                     )
                     .children(
@@ -956,6 +960,7 @@ impl RemoteServerProjects {
             .child(
                 v_flex()
                     .pb_1()
+                    .child(ListSeparator)
                     .child({
                         self.selectable_items.add_item(Box::new({
                             move |this, cx| {
