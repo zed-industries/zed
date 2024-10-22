@@ -16,6 +16,7 @@ use crate::{language_settings::all_language_settings, File, LanguageName};
 pub struct Toolchain {
     /// User-facing label
     pub label: SharedString,
+    pub path: SharedString,
 }
 
 #[async_trait(?Send)]

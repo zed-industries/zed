@@ -182,11 +182,14 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .toolchains
                     .into_iter()
                     .enumerate()
-                    .map(|(index, candidate)| StringMatch {
-                        candidate_id: index,
-                        string: candidate.label.into(),
-                        positions: Vec::new(),
-                        score: 0.0,
+                    .map(|(index, candidate)| {
+                        let string = format!("{}{}", candidate.label, candidate.path);
+                        StringMatch {
+                            candidate_id: index,
+                            string,
+                            positions: Vec::new(),
+                            score: 0.0,
+                        }
                     })
                     .collect()
             } else {
@@ -195,7 +198,8 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .into_iter()
                     .enumerate()
                     .map(|(candidate_id, toolchain)| {
-                        StringMatchCandidate::new(candidate_id, toolchain.label.to_string())
+                        let string = format!("{}{}", toolchain.label, toolchain.path);
+                        StringMatchCandidate::new(candidate_id, string)
                     })
                     .collect::<Vec<_>>();
                 match_strings(
@@ -228,18 +232,29 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
-        let buffer_language_name = self.buffer.read(cx).language().map(|l| l.name());
-        let mut label = mat.string.clone();
-        if buffer_language_name.map(|n| n.0).as_deref() == Some(mat.string.as_str()) {
-            label.push_str(" (current)");
-        }
+        let toolchain = &self.candidates.toolchains[mat.candidate_id];
 
+        let label = toolchain.label.clone();
+        let path = toolchain.path.clone();
+        let (name_highlights, mut path_highlights) = mat
+            .positions
+            .iter()
+            .cloned()
+            .partition::<Vec<_>, _>(|index| *index < label.len());
+        path_highlights.iter_mut().for_each(|index| {
+            *index -= label.len();
+        });
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
-                .child(HighlightedLabel::new(label, mat.positions.clone())),
+                .child(HighlightedLabel::new(label, name_highlights))
+                .child(
+                    HighlightedLabel::new(path, path_highlights)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                ),
         )
     }
 }

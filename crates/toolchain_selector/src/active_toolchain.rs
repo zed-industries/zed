@@ -7,7 +7,7 @@ use gpui::{
 };
 use language::{language_settings::all_language_settings, File, Toolchain, ToolchainLister};
 use settings::SettingsStore;
-use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
+use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::ToolchainSelector;
@@ -89,6 +89,7 @@ impl ActiveToolchain {
         if let Some(toolchain) = settings_for {
             return Task::ready(Some(Toolchain {
                 label: toolchain.name,
+                path: SharedString::from("whatever"),
             }));
         }
         cx.spawn(move |_| async move {

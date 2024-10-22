@@ -12124,6 +12124,7 @@ dependencies = [
  "editor",
  "fuzzy",
  "gpui",
+ "itertools 0.13.0",
  "language",
  "picker",
  "project",

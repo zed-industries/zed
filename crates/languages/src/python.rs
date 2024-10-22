@@ -343,20 +343,18 @@ impl ToolchainLister for PythonToolchainProvider {
             .unwrap();
         let output = process.output().await.unwrap();
         let mut toolchains = vec![];
-        let mut is_environment = false;
-        let executable_path =
+        let mut current_venv = None;
         for line in std::str::from_utf8(&output.stdout).unwrap().lines() {
-            if line.starts_with("Environment") {
-                is_environment = true;
-            } else if let Some(path) = is_environment
-                .then_some(())
-                .and_then(|_| line.strip_prefix("   Executable  :"))
-            {
+            if let Some(flavour) = line.strip_prefix("Environment (") {
+                current_venv = Some(SharedString::from(flavour.trim_end_matches(')').to_owned()));
+            } else if let Some((path, kind)) = current_venv.take().and_then(|kind| {
+                line.strip_prefix("   Executable  :")
+                    .map(|path| (path, kind))
+            }) {
                 toolchains.push(Toolchain {
-                    label: SharedString::from(path.to_string()),
+                    label: kind,
+                    path: SharedString::from(path.to_string()),
                 });
-            } else {
-                is_environment = false;
             }
         }
         ToolchainList {
