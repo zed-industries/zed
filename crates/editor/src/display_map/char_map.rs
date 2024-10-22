@@ -1,5 +1,6 @@
 use super::{
     fold_map::{self, FoldChunks, FoldEdit, FoldPoint, FoldSnapshot},
+    invisibles::{is_invisible, replacement},
     Highlights,
 };
 use language::{Chunk, Point};
@@ -9,14 +10,14 @@ use sum_tree::Bias;
 
 const MAX_EXPANSION_COLUMN: u32 = 256;
 
-/// Keeps track of hard tabs in a text buffer.
+/// Keeps track of hard tabs and non-printable characters in a text buffer.
 ///
 /// See the [`display_map` module documentation](crate::display_map) for more information.
-pub struct TabMap(TabSnapshot);
+pub struct CharMap(CharSnapshot);
 
-impl TabMap {
-    pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, TabSnapshot) {
-        let snapshot = TabSnapshot {
+impl CharMap {
+    pub fn new(fold_snapshot: FoldSnapshot, tab_size: NonZeroU32) -> (Self, CharSnapshot) {
+        let snapshot = CharSnapshot {
             fold_snapshot,
             tab_size,
             max_expansion_column: MAX_EXPANSION_COLUMN,
@@ -26,7 +27,7 @@ impl TabMap {
     }
 
     #[cfg(test)]
-    pub fn set_max_expansion_column(&mut self, column: u32) -> TabSnapshot {
+    pub fn set_max_expansion_column(&mut self, column: u32) -> CharSnapshot {
         self.0.max_expansion_column = column;
         self.0.clone()
     }
@@ -36,9 +37,9 @@ impl TabMap {
         fold_snapshot: FoldSnapshot,
         mut fold_edits: Vec<FoldEdit>,
         tab_size: NonZeroU32,
-    ) -> (TabSnapshot, Vec<TabEdit>) {
+    ) -> (CharSnapshot, Vec<TabEdit>) {
         let old_snapshot = &mut self.0;
-        let mut new_snapshot = TabSnapshot {
+        let mut new_snapshot = CharSnapshot {
             fold_snapshot,
             tab_size,
             max_expansion_column: old_snapshot.max_expansion_column,
@@ -137,15 +138,15 @@ impl TabMap {
                 let new_start = fold_edit.new.start.to_point(&new_snapshot.fold_snapshot);
                 let new_end = fold_edit.new.end.to_point(&new_snapshot.fold_snapshot);
                 tab_edits.push(TabEdit {
-                    old: old_snapshot.to_tab_point(old_start)..old_snapshot.to_tab_point(old_end),
-                    new: new_snapshot.to_tab_point(new_start)..new_snapshot.to_tab_point(new_end),
+                    old: old_snapshot.to_char_point(old_start)..old_snapshot.to_char_point(old_end),
+                    new: new_snapshot.to_char_point(new_start)..new_snapshot.to_char_point(new_end),
                 });
             }
         } else {
             new_snapshot.version += 1;
             tab_edits.push(TabEdit {
-                old: TabPoint::zero()..old_snapshot.max_point(),
-                new: TabPoint::zero()..new_snapshot.max_point(),
+                old: CharPoint::zero()..old_snapshot.max_point(),
+                new: CharPoint::zero()..new_snapshot.max_point(),
             });
         }
 
@@ -155,14 +156,14 @@ impl TabMap {
 }
 
 #[derive(Clone)]
-pub struct TabSnapshot {
+pub struct CharSnapshot {
     pub fold_snapshot: FoldSnapshot,
     pub tab_size: NonZeroU32,
     pub max_expansion_column: u32,
     pub version: usize,
 }
 
-impl TabSnapshot {
+impl CharSnapshot {
     pub fn buffer_snapshot(&self) -> &MultiBufferSnapshot {
         &self.fold_snapshot.inlay_snapshot.buffer
     }
@@ -170,7 +171,7 @@ impl TabSnapshot {
     pub fn line_len(&self, row: u32) -> u32 {
         let max_point = self.max_point();
         if row < max_point.row() {
-            self.to_tab_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
+            self.to_char_point(FoldPoint::new(row, self.fold_snapshot.line_len(row)))
                 .0
                 .column
         } else {
@@ -179,10 +180,10 @@ impl TabSnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.text_summary_for_range(TabPoint::zero()..self.max_point())
+        self.text_summary_for_range(CharPoint::zero()..self.max_point())
     }
 
-    pub fn text_summary_for_range(&self, range: Range<TabPoint>) -> TextSummary {
+    pub fn text_summary_for_range(&self, range: Range<CharPoint>) -> TextSummary {
         let input_start = self.to_fold_point(range.start, Bias::Left).0;
         let input_end = self.to_fold_point(range.end, Bias::Right).0;
         let input_summary = self
@@ -211,7 +212,7 @@ impl TabSnapshot {
         } else {
             for _ in self
                 .chunks(
-                    TabPoint::new(range.end.row(), 0)..range.end,
+                    CharPoint::new(range.end.row(), 0)..range.end,
                     false,
                     Highlights::default(),
                 )
@@ -232,7 +233,7 @@ impl TabSnapshot {
 
     pub fn chunks<'a>(
         &'a self,
-        range: Range<TabPoint>,
+        range: Range<CharPoint>,
         language_aware: bool,
         highlights: Highlights<'a>,
     ) -> TabChunks<'a> {
@@ -278,7 +279,7 @@ impl TabSnapshot {
     #[cfg(test)]
     pub fn text(&self) -> String {
         self.chunks(
-            TabPoint::zero()..self.max_point(),
+            CharPoint::zero()..self.max_point(),
             false,
             Highlights::default(),
         )
@@ -286,24 +287,24 @@ impl TabSnapshot {
         .collect()
     }
 
-    pub fn max_point(&self) -> TabPoint {
-        self.to_tab_point(self.fold_snapshot.max_point())
+    pub fn max_point(&self) -> CharPoint {
+        self.to_char_point(self.fold_snapshot.max_point())
     }
 
-    pub fn clip_point(&self, point: TabPoint, bias: Bias) -> TabPoint {
-        self.to_tab_point(
+    pub fn clip_point(&self, point: CharPoint, bias: Bias) -> CharPoint {
+        self.to_char_point(
             self.fold_snapshot
                 .clip_point(self.to_fold_point(point, bias).0, bias),
         )
     }
 
-    pub fn to_tab_point(&self, input: FoldPoint) -> TabPoint {
+    pub fn to_char_point(&self, input: FoldPoint) -> CharPoint {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(input.row(), 0));
         let expanded = self.expand_tabs(chars, input.column());
-        TabPoint::new(input.row(), expanded)
+        CharPoint::new(input.row(), expanded)
     }
 
-    pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
+    pub fn to_fold_point(&self, output: CharPoint, bias: Bias) -> (FoldPoint, u32, u32) {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
         let expanded = output.column();
         let (collapsed, expanded_char_column, to_next_stop) =
@@ -315,13 +316,13 @@ impl TabSnapshot {
         )
     }
 
-    pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {
+    pub fn make_char_point(&self, point: Point, bias: Bias) -> CharPoint {
         let inlay_point = self.fold_snapshot.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
-        self.to_tab_point(fold_point)
+        self.to_char_point(fold_point)
     }
 
-    pub fn to_point(&self, point: TabPoint, bias: Bias) -> Point {
+    pub fn to_point(&self, point: CharPoint, bias: Bias) -> Point {
         let fold_point = self.to_fold_point(point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&self.fold_snapshot);
         self.fold_snapshot
@@ -344,6 +345,9 @@ impl TabSnapshot {
                 let tab_len = tab_size - expanded_chars % tab_size;
                 expanded_bytes += tab_len;
                 expanded_chars += tab_len;
+            } else if let Some(replacement) = replacement(c) {
+                expanded_chars += replacement.chars().count() as u32;
+                expanded_bytes += replacement.len() as u32;
             } else {
                 expanded_bytes += c.len_utf8() as u32;
                 expanded_chars += 1;
@@ -383,6 +387,9 @@ impl TabSnapshot {
                         Bias::Right => (collapsed_bytes + 1, expanded_chars, 0),
                     };
                 }
+            } else if let Some(replacement) = replacement(c) {
+                expanded_chars += replacement.chars().count() as u32;
+                expanded_bytes += replacement.len() as u32;
             } else {
                 expanded_chars += 1;
                 expanded_bytes += c.len_utf8() as u32;
@@ -404,9 +411,9 @@ impl TabSnapshot {
 }
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
-pub struct TabPoint(pub Point);
+pub struct CharPoint(pub Point);
 
-impl TabPoint {
+impl CharPoint {
     pub fn new(row: u32, column: u32) -> Self {
         Self(Point::new(row, column))
     }
@@ -424,13 +431,13 @@ impl TabPoint {
     }
 }
 
-impl From<Point> for TabPoint {
+impl From<Point> for CharPoint {
     fn from(point: Point) -> Self {
         Self(point)
     }
 }
 
-pub type TabEdit = text::Edit<TabPoint>;
+pub type TabEdit = text::Edit<CharPoint>;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
@@ -551,6 +558,37 @@ impl<'a> Iterator for TabChunks<'a> {
                     self.input_column = 0;
                     self.output_position += Point::new(1, 0);
                 }
+                _ if is_invisible(c) => {
+                    if ix > 0 {
+                        let (prefix, suffix) = self.chunk.text.split_at(ix);
+                        self.chunk.text = suffix;
+                        return Some(Chunk {
+                            text: prefix,
+                            is_invisible: false,
+                            ..self.chunk.clone()
+                        });
+                    }
+                    let c_len = c.len_utf8();
+                    let replacement = replacement(c).unwrap_or(&self.chunk.text[..c_len]);
+                    if self.chunk.text.len() >= c_len {
+                        self.chunk.text = &self.chunk.text[c_len..];
+                    } else {
+                        self.chunk.text = "";
+                    }
+                    let len = replacement.chars().count() as u32;
+                    let next_output_position = cmp::min(
+                        self.output_position + Point::new(0, len),
+                        self.max_output_position,
+                    );
+                    self.column += len;
+                    self.input_column += 1;
+                    self.output_position = next_output_position;
+                    return Some(Chunk {
+                        text: replacement,
+                        is_invisible: true,
+                        ..self.chunk.clone()
+                    });
+                }
                 _ => {
                     self.column += 1;
                     if !self.inside_leading_tab {
@@ -580,11 +618,11 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, char_snapshot) = CharMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 0), 0);
-        assert_eq!(tab_snapshot.expand_tabs("\t".chars(), 1), 4);
-        assert_eq!(tab_snapshot.expand_tabs("\ta".chars(), 2), 5);
+        assert_eq!(char_snapshot.expand_tabs("\t".chars(), 0), 0);
+        assert_eq!(char_snapshot.expand_tabs("\t".chars(), 1), 4);
+        assert_eq!(char_snapshot.expand_tabs("\ta".chars(), 2), 5);
     }
 
     #[gpui::test]
@@ -597,16 +635,16 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, mut char_snapshot) = CharMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        tab_snapshot.max_expansion_column = max_expansion_column;
-        assert_eq!(tab_snapshot.text(), output);
+        char_snapshot.max_expansion_column = max_expansion_column;
+        assert_eq!(char_snapshot.text(), output);
 
         for (ix, c) in input.char_indices() {
             assert_eq!(
-                tab_snapshot
+                char_snapshot
                     .chunks(
-                        TabPoint::new(0, ix as u32)..tab_snapshot.max_point(),
+                        CharPoint::new(0, ix as u32)..char_snapshot.max_point(),
                         false,
                         Highlights::default(),
                     )
@@ -620,13 +658,13 @@ mod tests {
                 let input_point = Point::new(0, ix as u32);
                 let output_point = Point::new(0, output.find(c).unwrap() as u32);
                 assert_eq!(
-                    tab_snapshot.to_tab_point(FoldPoint(input_point)),
-                    TabPoint(output_point),
-                    "to_tab_point({input_point:?})"
+                    char_snapshot.to_char_point(FoldPoint(input_point)),
+                    CharPoint(output_point),
+                    "to_char_point({input_point:?})"
                 );
                 assert_eq!(
-                    tab_snapshot
-                        .to_fold_point(TabPoint(output_point), Bias::Left)
+                    char_snapshot
+                        .to_fold_point(CharPoint(output_point), Bias::Left)
                         .0,
                     FoldPoint(input_point),
                     "to_fold_point({output_point:?})"
@@ -644,10 +682,10 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, mut tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, mut char_snapshot) = CharMap::new(fold_snapshot, 4.try_into().unwrap());
 
-        tab_snapshot.max_expansion_column = max_expansion_column;
-        assert_eq!(tab_snapshot.text(), input);
+        char_snapshot.max_expansion_column = max_expansion_column;
+        assert_eq!(char_snapshot.text(), input);
     }
 
     #[gpui::test]
@@ -658,10 +696,10 @@ mod tests {
         let buffer_snapshot = buffer.read(cx).snapshot(cx);
         let (_, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (_, fold_snapshot) = FoldMap::new(inlay_snapshot);
-        let (_, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
+        let (_, char_snapshot) = CharMap::new(fold_snapshot, 4.try_into().unwrap());
 
         assert_eq!(
-            chunks(&tab_snapshot, TabPoint::zero()),
+            chunks(&char_snapshot, CharPoint::zero()),
             vec![
                 ("    ".to_string(), true),
                 (" ".to_string(), false),
@@ -670,7 +708,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            chunks(&tab_snapshot, TabPoint::new(0, 2)),
+            chunks(&char_snapshot, CharPoint::new(0, 2)),
             vec![
                 ("  ".to_string(), true),
                 (" ".to_string(), false),
@@ -679,7 +717,7 @@ mod tests {
             ]
         );
 
-        fn chunks(snapshot: &TabSnapshot, start: TabPoint) -> Vec<(String, bool)> {
+        fn chunks(snapshot: &CharSnapshot, start: CharPoint) -> Vec<(String, bool)> {
             let mut chunks = Vec::new();
             let mut was_tab = false;
             let mut text = String::new();
@@ -725,12 +763,12 @@ mod tests {
         let (inlay_snapshot, _) = inlay_map.randomly_mutate(&mut 0, &mut rng);
         log::info!("InlayMap text: {:?}", inlay_snapshot.text());
 
-        let (mut tab_map, _) = TabMap::new(fold_snapshot.clone(), tab_size);
-        let tabs_snapshot = tab_map.set_max_expansion_column(32);
+        let (mut char_map, _) = CharMap::new(fold_snapshot.clone(), tab_size);
+        let tabs_snapshot = char_map.set_max_expansion_column(32);
 
         let text = text::Rope::from(tabs_snapshot.text().as_str());
         log::info!(
-            "TabMap text (tab size: {}): {:?}",
+            "CharMap text (tab size: {}): {:?}",
             tab_size,
             tabs_snapshot.text(),
         );
@@ -738,11 +776,11 @@ mod tests {
         for _ in 0..5 {
             let end_row = rng.gen_range(0..=text.max_point().row);
             let end_column = rng.gen_range(0..=text.line_len(end_row));
-            let mut end = TabPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
+            let mut end = CharPoint(text.clip_point(Point::new(end_row, end_column), Bias::Right));
             let start_row = rng.gen_range(0..=text.max_point().row);
             let start_column = rng.gen_range(0..=text.line_len(start_row));
             let mut start =
-                TabPoint(text.clip_point(Point::new(start_row, start_column), Bias::Left));
+                CharPoint(text.clip_point(Point::new(start_row, start_column), Bias::Left));
             if start > end {
                 mem::swap(&mut start, &mut end);
             }
