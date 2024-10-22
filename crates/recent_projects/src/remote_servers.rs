@@ -18,8 +18,8 @@ use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
-    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    Model, PromptLevel, ScrollHandle, View, ViewContext,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    PromptLevel, ScrollHandle, View, ViewContext,
 };
 use picker::Picker;
 use project::terminals::wrap_for_ssh;
