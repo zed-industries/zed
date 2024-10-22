@@ -3277,6 +3277,11 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         range: Range<text::Anchor>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<CodeAction>>> {
+        // Don't suggest assistant code actions if the assistant is disabled in settings.
+        if !AssistantSettings::get_global(cx).enabled {
+            return Task::ready(Ok(Vec::new()));
+        }
+
         let snapshot = buffer.read(cx).snapshot();
         let mut range = range.to_point(&snapshot);
 
