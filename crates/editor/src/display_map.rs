@@ -693,9 +693,9 @@ impl DisplaySnapshot {
 
             if chunk.is_invisible {
                 let invisible_highlight = HighlightStyle {
-                    background_color: Some(editor_style.status.error_background),
+                    background_color: Some(editor_style.status.hint_background),
                     underline: Some(UnderlineStyle {
-                        color: Some(editor_style.status.error),
+                        color: Some(editor_style.status.hint),
                         thickness: px(1.),
                         wavy: false,
                     }),

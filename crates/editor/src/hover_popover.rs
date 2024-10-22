@@ -292,7 +292,7 @@ fn show_hover(
                 );
                 local_diagnostic = Some(DiagnosticEntry {
                     diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
+                        severity: DiagnosticSeverity::HINT,
                         message: format!("Unicode character U+{:02X}", invisible as u32),
                         ..Default::default()
                     },
@@ -309,7 +309,7 @@ fn show_hover(
                 );
                 local_diagnostic = Some(DiagnosticEntry {
                     diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::ERROR,
+                        severity: DiagnosticSeverity::HINT,
                         message: format!("Unicode character U+{:02X}", invisible as u32),
                         ..Default::default()
                     },
