@@ -1156,7 +1156,13 @@ impl RemoteServerProjects {
                 }
                 .render(cx),
             )
-            .child(h_flex().p_2().child(state.editor.clone()))
+            .child(
+                h_flex()
+                    .p_2()
+                    .border_t_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .child(state.editor.clone()),
+            )
     }
 
     fn render_default(
