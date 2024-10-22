@@ -142,9 +142,9 @@ impl SshPrompt {
         Self {
             connection_string,
             nickname,
+            editor: cx.new_view(Editor::single_line),
             status_message: None,
             prompt: None,
-            editor: cx.new_view(Editor::single_line),
         }
     }
 
