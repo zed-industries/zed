@@ -5067,7 +5067,7 @@ impl Element for EditorElement {
                                         author_length + MAX_TIMESTAMP_LENGTH + GAP_AND_GLYPHS;
                                     max_char_count
                                 })
-                        }) as f32;
+                        });
 
                         let blame_width =
                             (INLINE_BLAME_PADDING_EM_WIDTHS + blame_length) * em_advance;
