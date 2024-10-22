@@ -1,7 +1,6 @@
 mod active_toolchain;
 
 pub use active_toolchain::ActiveToolchain;
-use anyhow::anyhow;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -34,7 +33,6 @@ impl ToolchainSelector {
     }
 
     fn toggle(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> Option<()> {
-        let registry = workspace.app_state().languages.clone();
         let (_, buffer, _) = workspace
             .active_item(cx)?
             .act_as::<Editor>(cx)?
@@ -134,23 +132,9 @@ impl PickerDelegate for ToolchainSelectorDelegate {
     }
 
     fn confirm(&mut self, _: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(mat) = self.matches.get(self.selected_index) {
-            let toolchain = &self.candidates.toolchains()[mat.candidate_id];
-            let project = self.project.downgrade();
-            let buffer = self.buffer.downgrade();
-            cx.spawn(|_, mut cx| async move {
-                let project = project
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("project was dropped"))?;
-                let buffer = buffer
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("buffer was dropped"))?;
-                // project.update(&mut cx, |project, cx| {
-                //     project.set_language_for_buffer(&buffer, language, cx);
-                // })
-                Result::<_, anyhow::Error>::Ok(())
-            })
-            .detach_and_log_err(cx);
+        if let Some(_) = self.matches.get(self.selected_index) {
+            cx.spawn(|_, _| async move { Result::<_, anyhow::Error>::Ok(()) })
+                .detach_and_log_err(cx);
         }
         self.dismissed(cx);
     }
@@ -229,7 +213,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = &self.matches[ix];
         let toolchain = &self.candidates.toolchains[mat.candidate_id];

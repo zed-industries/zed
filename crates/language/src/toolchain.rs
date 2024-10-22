@@ -4,12 +4,10 @@
 //! which is a set of tools used to interact with the projects written in said language.
 //! For example, a Python project can have an associated virtual environment; a Rust project can have a toolchain override.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
-use gpui::{AppContext, SharedString};
+use gpui::SharedString;
 
-use crate::{language_settings::all_language_settings, File, LanguageName};
+use crate::LanguageName;
 
 /// Represents a single toolchain.
 #[derive(Clone)]
