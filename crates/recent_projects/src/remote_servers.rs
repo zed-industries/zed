@@ -597,7 +597,13 @@ impl RemoteServerProjects {
         match &self.mode {
             Mode::Default(_) => cx.emit(DismissEvent),
             Mode::CreateRemoteServer(state) if state.ssh_prompt.is_some() => {
-                self.mode = Mode::CreateRemoteServer(CreateRemoteServer::new(cx));
+                let new_state = CreateRemoteServer::new(cx);
+                let old_prompt = state.address_editor.read(cx).text(cx);
+                new_state.address_editor.update(cx, |this, cx| {
+                    this.set_text(old_prompt, cx);
+                });
+
+                self.mode = Mode::CreateRemoteServer(new_state);
                 self.selectable_items.reset_selection();
                 cx.notify();
             }
