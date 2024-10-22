@@ -1,3 +1,4 @@
+pub mod logging;
 mod model;
 pub mod provider;
 mod rate_limiter;
@@ -59,6 +60,7 @@ pub enum LanguageModelCompletionEvent {
     Stop(StopReason),
     Text(String),
     ToolUse(LanguageModelToolUse),
+    StartMessage { message_id: String },
 }
 
 #[derive(Debug, PartialEq, Clone, Serialize, Deserialize)]
@@ -76,6 +78,11 @@ pub struct LanguageModelToolUse {
     pub input: serde_json::Value,
 }
 
+pub struct LanguageModelTextStream {
+    pub message_id: Option<String>,
+    pub stream: BoxStream<'static, Result<String>>,
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -86,6 +93,10 @@ pub trait LanguageModel: Send + Sync {
     fn provider_id(&self) -> LanguageModelProviderId;
     fn provider_name(&self) -> LanguageModelProviderName;
     fn telemetry_id(&self) -> String;
+
+    fn api_key(&self, _cx: &AppContext) -> Option<String> {
+        None
+    }
 
     /// Returns the availability of this language model.
     fn availability(&self) -> LanguageModelAvailability {
@@ -113,21 +124,35 @@ pub trait LanguageModel: Send + Sync {
         &self,
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+    ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
         let events = self.stream_completion(request, cx);
+        let mut message_id = None;
 
         async move {
-            Ok(events
+            let events = events.await?.peekable();
+
+            let mut message_id = None;
+            if let Some(first_event) = events.get_ref().peek().await {
+                if let LanguageModelCompletionEvent::StartMessage { message_id: id } = first_event {
+                    message_id = Some(id);
+                    events.next().await;
+                }
+            }
+
+            let stream = events
                 .await?
                 .filter_map(|result| async move {
                     match result {
+                        Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
                         Ok(LanguageModelCompletionEvent::Stop(_)) => None,
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                         Err(err) => Some(Err(err)),
                     }
                 })
-                .boxed())
+                .boxed();
+
+            Ok(LanguageModelTextStream { message_id, stream })
         }
         .boxed()
     }

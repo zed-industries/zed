@@ -47,6 +47,7 @@ pub struct EventWrapper {
 pub enum AssistantKind {
     Panel,
     Inline,
+    InlineTerminal,
 }
 impl Display for AssistantKind {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -56,6 +57,7 @@ impl Display for AssistantKind {
             match self {
                 Self::Panel => "panel",
                 Self::Inline => "inline",
+                Self::InlineTerminal => "inline_terminal",
             }
         )
     }
@@ -140,6 +142,8 @@ pub struct CallEvent {
 pub struct AssistantEvent {
     /// Unique random identifier for each assistant tab (None for inline assist)
     pub conversation_id: Option<String>,
+    /// Server-generated message ID (only supported for some providers)
+    pub message_id: Option<String>,
     /// The kind of assistant (Panel, Inline)
     pub kind: AssistantKind,
     #[serde(default)]

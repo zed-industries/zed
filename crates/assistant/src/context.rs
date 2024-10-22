@@ -23,6 +23,7 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
+    logging::report_assistant_event,
     provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
@@ -1928,6 +1929,7 @@ impl Context {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
@@ -2033,23 +2035,28 @@ impl Context {
                         None
                     };
 
-                    if let Some(telemetry) = this.telemetry.as_ref() {
-                        let language_name = this
-                            .buffer
-                            .read(cx)
-                            .language()
-                            .map(|language| language.name());
-                        telemetry.report_assistant_event(AssistantEvent {
+                    let language_name = this
+                        .buffer
+                        .read(cx)
+                        .language()
+                        .map(|language| language.name());
+                    report_assistant_event(
+                        AssistantEvent {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
+                            message_id: None,
                             model: model.telemetry_id(),
                             model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
                             language_name: language_name.map(|name| name.to_proto()),
-                        });
-                    }
+                        },
+                        this.telemetry.clone(),
+                        cx.http_client(),
+                        model.api_key(cx),
+                        cx.background_executor(),
+                    );
 
                     if let Ok(stop_reason) = result {
                         match stop_reason {
