@@ -10,6 +10,8 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
+use crate::notebook::notebook::NotebookData;
+
 actions!(
     notebook,
     [
@@ -23,13 +25,13 @@ actions!(
     ]
 );
 
-const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
-const SMALL_SPACING_SIZE: f32 = 8.0;
-const MEDIUM_SPACING_SIZE: f32 = 12.0;
-const LARGE_SPACING_SIZE: f32 = 16.0;
-const GUTTER_WIDTH: f32 = 19.0;
-const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
-const CONTROL_SIZE: f32 = 20.0;
+pub(crate) const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
+pub(crate) const SMALL_SPACING_SIZE: f32 = 8.0;
+pub(crate) const MEDIUM_SPACING_SIZE: f32 = 12.0;
+pub(crate) const LARGE_SPACING_SIZE: f32 = 16.0;
+pub(crate) const GUTTER_WIDTH: f32 = 19.0;
+pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
+pub(crate) const CONTROL_SIZE: f32 = 20.0;
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
@@ -48,6 +50,8 @@ pub struct Notebook {
     project: Model<Project>,
     remote_id: Option<ViewId>,
     selected_cell: usize,
+    // cells: Vec<Cell>,
+    data: Model<NotebookData>,
 }
 
 impl Notebook {
@@ -88,12 +92,18 @@ impl Notebook {
     ) -> Self {
         let this = cx.view().downgrade();
         let focus_handle = cx.focus_handle();
+        let data = cx.new_model(|_| NotebookData::default());
+
+        // let cells = sample_cells();
+
         Self {
             focus_handle,
             workspace,
             project,
             remote_id: None,
             selected_cell: 0,
+            // cells,
+            data,
         }
     }
 
@@ -195,7 +205,7 @@ impl Render for Notebook {
             .flex()
             .items_start()
             .size_full()
-            .overflow_y_hidden()
+            .overflow_hidden()
             .p(large_gap)
             .gap(large_gap)
             .bg(cx.theme().colors().tab_bar_background)
@@ -206,16 +216,21 @@ impl Render for Notebook {
                     .id("notebook-cells")
                     .flex_1()
                     .size_full()
-                    .overflow_y_scroll()
-                    .gap_6()
-                    .children(
-                        sample_cells()
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, cell)| cell.selected(self.selected_cell == ix)),
-                    ),
+                    .overflow_hidden()
+                    .gap_6(), // .children(self.cells.iter().enumerate().map(|(ix, cell)| {
+                              //     let mut c = cell.clone(); // Clone the Cell while iterating
+                              //     c.selected(self.selected_cell == ix) // Set the selected state
+                              // })),
             )
-            .child(div().flex_none().child("cell bar").child("scrollbar"))
+            .child(
+                div()
+                    .w(px(GUTTER_WIDTH))
+                    .h_full()
+                    .flex_none()
+                    .overflow_hidden()
+                    .child("cell bar")
+                    .child("scrollbar"),
+            )
 
         // .child("settings")
     }
@@ -244,270 +259,4 @@ impl Item for Notebook {
     fn show_toolbar(&self) -> bool {
         false
     }
-}
-
-#[derive(Debug, Default, Clone, PartialEq)]
-enum NotebookCellKind {
-    Code,
-    #[default]
-    Markdown,
-}
-
-#[derive(IntoElement)]
-struct Cell {
-    cell_type: NotebookCellKind,
-    control: Option<IconButton>,
-    source: Vec<String>,
-    selected: bool,
-}
-
-impl RenderOnce for Cell {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let source = self.source.clone();
-        let cell_type = self.cell_type.clone();
-        let is_selected = self.selected.clone();
-        let mut selected_bg = cx.theme().colors().icon_accent;
-        selected_bg.fade_out(0.9);
-
-        h_flex()
-            .w_full()
-            .items_start()
-            .gap(Spacing::Large.rems(cx))
-            .child(
-                div()
-                    .relative()
-                    .h_full()
-                    .w(px(GUTTER_WIDTH))
-                    .child(
-                        div()
-                            .w(px(GUTTER_WIDTH))
-                            .flex()
-                            .flex_none()
-                            .justify_center()
-                            .h_full()
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .w(px(1.))
-                                    .h_full()
-                                    .when(is_selected, |this| {
-                                        this.bg(cx.theme().colors().icon_accent)
-                                    })
-                                    .when(!is_selected, |this| this.bg(cx.theme().colors().border)),
-                            ),
-                    )
-                    .children(self.control.map(|action| {
-                        div()
-                            .absolute()
-                            .top(px(CODE_BLOCK_INSET - 2.0))
-                            .left_0()
-                            .flex()
-                            .flex_none()
-                            .w(px(GUTTER_WIDTH))
-                            .h(px(GUTTER_WIDTH + 12.0))
-                            .items_center()
-                            .justify_center()
-                            .when(is_selected, |this| this.bg(selected_bg))
-                            .when(!is_selected, |this| {
-                                this.bg(cx.theme().colors().tab_bar_background)
-                            })
-                            .child(action)
-                    })),
-            )
-            .when(cell_type == NotebookCellKind::Markdown, |this| {
-                this.child(
-                    v_flex()
-                        .w_full()
-                        .max_w(px(MAX_TEXT_BLOCK_WIDTH))
-                        .px(px(CODE_BLOCK_INSET))
-                        .children(source.clone()),
-                )
-            })
-            .when(cell_type == NotebookCellKind::Code, |this| {
-                this.child(
-                    v_flex()
-                        .size_full()
-                        .flex_1()
-                        .p_3()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
-                        .font_buffer(cx)
-                        .text_size(TextSize::Editor.rems(cx))
-                        .children(source),
-                )
-            })
-    }
-}
-
-impl Cell {
-    pub fn markdown(source: Vec<String>) -> Self {
-        Self {
-            control: None,
-            cell_type: NotebookCellKind::Markdown,
-            source,
-            selected: false,
-        }
-    }
-
-    pub fn code(source: Vec<String>) -> Self {
-        Self {
-            control: None,
-            cell_type: NotebookCellKind::Code,
-            source,
-            selected: false,
-        }
-    }
-
-    pub fn kind(mut self, kind: NotebookCellKind) -> Self {
-        self.cell_type = kind;
-        self
-    }
-
-    pub fn control(mut self, control: IconButton) -> Self {
-        self.control = Some(control);
-        self
-    }
-
-    pub fn selected(mut self, selected: bool) -> Self {
-        self.selected = selected;
-        self
-    }
-}
-
-// impl FollowableItem for Notebook {}
-
-enum NotebookCell {
-    Code(NotebookCodeCell),
-    Markdown(NotebookMarkdownCell),
-}
-
-#[derive(IntoElement)]
-struct NotebookCodeCell {}
-
-impl NotebookCodeCell {
-    fn new() -> Self {
-        Self {}
-    }
-}
-
-impl RenderOnce for NotebookCodeCell {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
-            .w_full()
-            .h(px(280.))
-            .items_start()
-            .gap(Spacing::Large.rems(cx))
-            .child(
-                div()
-                    .relative()
-                    .h_full()
-                    .w(px(GUTTER_WIDTH))
-                    .child(
-                        div()
-                            .w(px(GUTTER_WIDTH))
-                            .flex()
-                            .flex_none()
-                            .justify_center()
-                            .h_full()
-                            .child(
-                                div()
-                                    .flex_none()
-                                    .w(px(1.))
-                                    .h_full()
-                                    .bg(cx.theme().colors().border),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .top(px(CODE_BLOCK_INSET - 2.0))
-                            .left_0()
-                            .flex()
-                            .flex_none()
-                            .w(px(GUTTER_WIDTH))
-                            .h(px(GUTTER_WIDTH + 12.0))
-                            .items_center()
-                            .justify_center()
-                            .bg(cx.theme().colors().tab_bar_background)
-                            .child(IconButton::new("run", IconName::Play)),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .size_full()
-                    .flex_1()
-                    .p_3()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
-                    .font_buffer(cx)
-                    .text_size(TextSize::Editor.rems(cx))
-                    .child("Code cell"),
-            )
-    }
-}
-
-#[derive(IntoElement)]
-struct NotebookMarkdownCell {}
-
-impl NotebookMarkdownCell {
-    fn new() -> Self {
-        Self {}
-    }
-}
-
-impl RenderOnce for NotebookMarkdownCell {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        h_flex()
-            .w_full()
-            .items_start()
-            .gap(Spacing::Large.rems(cx))
-            .child(
-                div()
-                    .w(px(GUTTER_WIDTH))
-                    .flex()
-                    .flex_none()
-                    .justify_center()
-                    .h_full()
-                    .child(
-                        div()
-                            .flex_none()
-                            .w(px(1.))
-                            .h_full()
-                            .bg(cx.theme().colors().border),
-                    ),
-            )
-            .child(
-                v_flex()
-                    .w_full()
-                    .max_w(px(MAX_TEXT_BLOCK_WIDTH))
-                    .px(px(CODE_BLOCK_INSET))
-                    .child(Headline::new("Population Data from CSV").size(HeadlineSize::Large))
-                    .child("This notebook reads sample population data from `data/atlantis.csv` and plots it using matplotlib. Edit `data/atlantis.csv` and re-run this cell to see how the plots change!"),
-            )
-    }
-}
-
-fn sample_cells() -> Vec<Cell> {
-    vec![
-        Cell::markdown(vec![
-            "## Table of Contents".to_string(),
-            "1.\tIntroduction".to_string(),
-            "2.\tOverview of Python Data Visualization Tools".to_string(),
-            "3.\tIntroduction to Matplotlib".to_string(),
-            "4.\tImport Matplotlib".to_string(),
-            "5.\tDisplaying Plots in Matplotlib".to_string(),
-            "6.\tMatplotlib Object Hierarchy".to_string(),
-            "7.\tMatplotlib interfaces".to_string(),
-        ]),
-        Cell::markdown(vec![
-            "## 1. Introduction".to_string(),
-            "When we want to convey some information to others, there are several ways to do so. The process of conveying the information with the help of plots and graphics is called **Data Visualization**. The plots and graphics take numerical data as input and display output in the form of charts, figures and tables. It helps to analyze and visualize the data clearly and make concrete decisions. It makes complex data more accessible and understandable. The goal of data visualization is to communicate information in a clear and efficient manner.".to_string(),
-            "In this project, I shed some light on **Matplotlib**, which is the basic data visualization tool of Python programming language. Python has different data visualization tools available which are suitable for different purposes. First of all, I will list these data visualization tools and then I will discuss Matplotlib.".to_string()
-        ])
-    ]
 }
