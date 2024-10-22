@@ -10,7 +10,18 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
-actions!(notebook, [OpenNotebook, RunAll, ClearOutputs, MoveCellUp, MoveCellDown, AddMarkdownBlock, AddCodeBlock]);
+actions!(
+    notebook,
+    [
+        OpenNotebook,
+        RunAll,
+        ClearOutputs,
+        MoveCellUp,
+        MoveCellDown,
+        AddMarkdownBlock,
+        AddCodeBlock
+    ]
+);
 
 const MAX_TEXT_BLOCK_WIDTH: f32 = 9999.0;
 const SMALL_SPACING_SIZE: f32 = 8.0;
@@ -101,7 +112,7 @@ impl Notebook {
             .border_color(cx.theme().colors().border)
     }
 
-    fn notebook_control(
+    fn render_control(
         id: impl Into<SharedString>,
         icon: IconName,
         cx: &ViewContext<Self>,
@@ -123,8 +134,8 @@ impl Notebook {
                     .gap(Spacing::Large.rems(cx))
                     .child(
                         Self::button_group(cx)
-                            .child(Self::notebook_control("run-all-cells", IconName::Play, cx))
-                            .child(Self::notebook_control(
+                            .child(Self::render_control("run-all-cells", IconName::Play, cx))
+                            .child(Self::render_control(
                                 "clear-all-outputs",
                                 IconName::Close,
                                 cx,
@@ -133,10 +144,10 @@ impl Notebook {
                     .child(
                         Self::button_group(cx)
                             .child(
-                                Self::notebook_control("move-cell-up", IconName::ChevronUp, cx)
+                                Self::render_control("move-cell-up", IconName::ChevronUp, cx)
                                     .disabled(true),
                             )
-                            .child(Self::notebook_control(
+                            .child(Self::render_control(
                                 "move-cell-down",
                                 IconName::ChevronDown,
                                 cx,
@@ -144,19 +155,19 @@ impl Notebook {
                     )
                     .child(
                         Self::button_group(cx)
-                            .child(Self::notebook_control(
+                            .child(Self::render_control(
                                 "new-markdown-cell",
                                 IconName::Plus,
                                 cx,
                             ))
-                            .child(Self::notebook_control("new-code-cell", IconName::Code, cx)),
+                            .child(Self::render_control("new-code-cell", IconName::Code, cx)),
                     ),
             )
             .child(
                 v_flex()
                     .gap(Spacing::Large.rems(cx))
                     .items_center()
-                    .child(Self::notebook_control("more-menu", IconName::Ellipsis, cx))
+                    .child(Self::render_control("more-menu", IconName::Ellipsis, cx))
                     .child(
                         Self::button_group(cx)
                             .child(IconButton::new("repl", IconName::ReplNeutral)),
@@ -194,7 +205,8 @@ impl Render for Notebook {
                     .flex_1()
                     .size_full()
                     .overflow_y_scroll()
-                    .gap(large_gap)
+                    .gap_6()
+                    .children(sample_cells().into_iter().map(|cell| cell))
                     .child(NotebookMarkdownCell::new())
                     .child(NotebookCodeCell::new())
                     .child(NotebookMarkdownCell::new())
@@ -228,6 +240,105 @@ impl Item for Notebook {
 
     fn show_toolbar(&self) -> bool {
         false
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+enum NotebookCellKind {
+    Code,
+    #[default]
+    Markdown,
+}
+
+#[derive(IntoElement)]
+struct Cell {
+    cell_type: NotebookCellKind,
+    control: Option<IconButton>,
+    source: Vec<String>,
+}
+
+impl RenderOnce for Cell {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap(Spacing::Large.rems(cx))
+            .child(
+                div()
+                    .relative()
+                    .h_full()
+                    .w(px(GUTTER_WIDTH))
+                    .child(
+                        div()
+                            .w(px(GUTTER_WIDTH))
+                            .flex()
+                            .flex_none()
+                            .justify_center()
+                            .h_full()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .w(px(1.))
+                                    .h_full()
+                                    .bg(cx.theme().colors().border),
+                            ),
+                    )
+                    .children(self.control.map(|action| {
+                        div()
+                            .absolute()
+                            .top(px(CODE_BLOCK_INSET - 2.0))
+                            .left_0()
+                            .flex()
+                            .flex_none()
+                            .w(px(GUTTER_WIDTH))
+                            .h(px(GUTTER_WIDTH + 12.0))
+                            .items_center()
+                            .justify_center()
+                            .bg(cx.theme().colors().tab_bar_background)
+                            .child(action)
+                    })),
+            )
+            .child(
+                v_flex()
+                    .size_full()
+                    .flex_1()
+                    .p_3()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .font_buffer(cx)
+                    .text_size(TextSize::Editor.rems(cx))
+                    .children(self.source),
+            )
+    }
+}
+
+impl Cell {
+    pub fn markdown(source: Vec<String>) -> Self {
+        Self {
+            control: None,
+            cell_type: NotebookCellKind::Markdown,
+            source,
+        }
+    }
+
+    pub fn code(source: Vec<String>) -> Self {
+        Self {
+            control: None,
+            cell_type: NotebookCellKind::Code,
+            source,
+        }
+    }
+
+    pub fn kind(mut self, kind: NotebookCellKind) -> Self {
+        self.cell_type = kind;
+        self
+    }
+
+    pub fn control(mut self, control: IconButton) -> Self {
+        self.control = Some(control);
+        self
     }
 }
 
@@ -345,4 +456,26 @@ impl RenderOnce for NotebookMarkdownCell {
                     .child("This notebook reads sample population data from `data/atlantis.csv` and plots it using matplotlib. Edit `data/atlantis.csv` and re-run this cell to see how the plots change!"),
             )
     }
+}
+
+fn sample_cells() -> Vec<Cell> {
+    vec![
+        Cell::markdown(vec![
+            "## Table of Contents\n".to_string(),
+            "1.\tIntroduction\n".to_string(),
+            "2.\tOverview of Python Data Visualization Tools\n".to_string(),
+            "3.\tIntroduction to Matplotlib\n".to_string(),
+            "4.\tImport Matplotlib\n".to_string(),
+            "5.\tDisplaying Plots in Matplotlib\n".to_string(),
+            "6.\tMatplotlib Object Hierarchy\n".to_string(),
+            "7.\tMatplotlib interfaces\n".to_string(),
+        ]),
+        Cell::markdown(vec![
+            "## 1. Introduction\n".to_string(),
+            "\n".to_string(),
+            "When we want to convey some information to others, there are several ways to do so. The process of conveying the information with the help of plots and graphics is called **Data Visualization**. The plots and graphics take numerical data as input and display output in the form of charts, figures and tables. It helps to analyze and visualize the data clearly and make concrete decisions. It makes complex data more accessible and understandable. The goal of data visualization is to communicate information in a clear and efficient manner.\n".to_string(),
+            "\n".to_string(),
+            "In this project, I shed some light on **Matplotlib**, which is the basic data visualization tool of Python programming language. Python has different data visualization tools available which are suitable for different purposes. First of all, I will list these data visualization tools and then I will discuss Matplotlib.\n".to_string()
+        ])
+    ]
 }
