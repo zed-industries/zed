@@ -43,7 +43,7 @@ Extensions that provide language servers may also provide default settings for t
 
 - Description: Define extensions to be autoinstalled or never be installed.
 - Setting: `auto_install_extension`
-- Default: `-`
+- Default: `{"html": true}`
 
 **Options**
 
