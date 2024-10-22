@@ -2487,7 +2487,8 @@ impl Context {
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![
-                    "Summarize the context into a short title without punctuation.".into(),
+                    "Generate a concise 3-7 word title for this conversation, omitting punctuation"
+                        .into(),
                 ],
                 cache: false,
             });

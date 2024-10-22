@@ -182,6 +182,12 @@ impl SelectableItemList {
     }
 }
 
+impl FocusableView for ProjectPicker {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
 impl ProjectPicker {
     fn new(
         ix: usize,
@@ -395,6 +401,7 @@ impl RemoteServerProjects {
             workspace,
             cx,
         ));
+        cx.notify();
 
         this
     }
@@ -606,7 +613,13 @@ impl RemoteServerProjects {
         match &self.mode {
             Mode::Default(_) => cx.emit(DismissEvent),
             Mode::CreateRemoteServer(state) if state.ssh_prompt.is_some() => {
-                self.mode = Mode::CreateRemoteServer(CreateRemoteServer::new(cx));
+                let new_state = CreateRemoteServer::new(cx);
+                let old_prompt = state.address_editor.read(cx).text(cx);
+                new_state.address_editor.update(cx, |this, cx| {
+                    this.set_text(old_prompt, cx);
+                });
+
+                self.mode = Mode::CreateRemoteServer(new_state);
                 self.selectable_items.reset_selection();
                 cx.notify();
             }
@@ -1238,8 +1251,11 @@ fn get_text(element: &View<Editor>, cx: &mut WindowContext) -> String {
 impl ModalView for RemoteServerProjects {}
 
 impl FocusableView for RemoteServerProjects {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        match &self.mode {
+            Mode::ProjectPicker(picker) => picker.focus_handle(cx),
+            _ => self.focus_handle.clone(),
+        }
     }
 }
 
