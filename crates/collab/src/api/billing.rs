@@ -34,7 +34,7 @@ use crate::{
     db::{billing_subscription::StripeSubscriptionStatus, UserId},
     llm::db::LlmDatabase,
 };
-use crate::{AppState, Error, Result};
+use crate::{AppState, Cents, Error, Result};
 
 pub fn router() -> Router {
     Router::new()
@@ -700,10 +700,15 @@ async fn get_monthly_spend(
         ));
     };
 
+    let free_tier = user
+        .custom_llm_monthly_allowance_in_cents
+        .map(|allowance| Cents(allowance as u32))
+        .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT);
+
     let monthly_spend = llm_db
         .get_user_spending_for_month(user.id, Utc::now())
         .await?
-        .saturating_sub(FREE_TIER_MONTHLY_SPENDING_LIMIT);
+        .saturating_sub(free_tier);
 
     Ok(Json(GetMonthlySpendResponse {
         monthly_spend_in_cents: monthly_spend.0 as i32,

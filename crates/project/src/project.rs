@@ -1243,6 +1243,10 @@ impl Project {
         self.client.clone()
     }
 
+    pub fn ssh_client(&self) -> Option<Model<SshRemoteClient>> {
+        self.ssh_client.clone()
+    }
+
     pub fn user_store(&self) -> Model<UserStore> {
         self.user_store.clone()
     }
@@ -2219,8 +2223,10 @@ impl Project {
                 cx.emit(Event::WorktreeAdded);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
-                self.on_worktree_removed(*id, cx);
                 cx.emit(Event::WorktreeRemoved(*id));
+            }
+            WorktreeStoreEvent::WorktreeReleased(_, id) => {
+                self.on_worktree_released(*id, cx);
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
             WorktreeStoreEvent::WorktreeUpdateSent(_) => {}
@@ -2257,7 +2263,7 @@ impl Project {
         cx.notify();
     }
 
-    fn on_worktree_removed(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
+    fn on_worktree_released(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
         if let Some(dev_server_project_id) = self.dev_server_project_id {
             let paths: Vec<String> = self
                 .visible_worktrees(cx)
@@ -2308,6 +2314,12 @@ impl Project {
 
         let buffer_id = buffer.read(cx).remote_id();
         match event {
+            BufferEvent::ReloadNeeded => {
+                if !self.is_via_collab() {
+                    self.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
+                        .detach_and_log_err(cx);
+                }
+            }
             BufferEvent::Operation {
                 operation,
                 is_local: true,

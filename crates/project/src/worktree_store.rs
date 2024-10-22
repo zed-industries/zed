@@ -62,6 +62,7 @@ pub struct WorktreeStore {
 pub enum WorktreeStoreEvent {
     WorktreeAdded(Model<Worktree>),
     WorktreeRemoved(EntityId, WorktreeId),
+    WorktreeReleased(EntityId, WorktreeId),
     WorktreeOrderChanged,
     WorktreeUpdateSent(Model<Worktree>),
 }
@@ -394,6 +395,10 @@ impl WorktreeStore {
 
         let handle_id = worktree.entity_id();
         cx.observe_release(worktree, move |this, worktree, cx| {
+            cx.emit(WorktreeStoreEvent::WorktreeReleased(
+                handle_id,
+                worktree.id(),
+            ));
             cx.emit(WorktreeStoreEvent::WorktreeRemoved(
                 handle_id,
                 worktree.id(),

@@ -2256,6 +2256,7 @@ pub enum CodegenEvent {
 pub struct Codegen {
     alternatives: Vec<Model<CodegenAlternative>>,
     active_alternative: usize,
+    seen_alternatives: HashSet<usize>,
     subscriptions: Vec<Subscription>,
     buffer: Model<MultiBuffer>,
     range: Range<Anchor>,
@@ -2286,6 +2287,7 @@ impl Codegen {
         let mut this = Self {
             alternatives: vec![codegen],
             active_alternative: 0,
+            seen_alternatives: HashSet::default(),
             subscriptions: Vec::new(),
             buffer,
             range,
@@ -2338,6 +2340,7 @@ impl Codegen {
     fn activate(&mut self, index: usize, cx: &mut ModelContext<Self>) {
         self.active_alternative()
             .update(cx, |codegen, cx| codegen.set_active(false, cx));
+        self.seen_alternatives.insert(index);
         self.active_alternative = index;
         self.active_alternative()
             .update(cx, |codegen, cx| codegen.set_active(true, cx));
@@ -2467,6 +2470,8 @@ pub struct CodegenAlternative {
     active: bool,
     edits: Vec<(Range<Anchor>, String)>,
     line_operations: Vec<LineOperation>,
+    request: Option<LanguageModelRequest>,
+    elapsed_time: Option<f64>,
 }
 
 enum CodegenStatus {
@@ -2538,6 +2543,8 @@ impl CodegenAlternative {
             edits: Vec::new(),
             line_operations: Vec::new(),
             range,
+            request: None,
+            elapsed_time: None,
         }
     }
 
@@ -2634,6 +2641,7 @@ impl CodegenAlternative {
                 async { Ok(stream::empty().boxed()) }.boxed_local()
             } else {
                 let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
+                self.request = Some(request.clone());
 
                 let chunks = cx
                     .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
@@ -2707,6 +2715,7 @@ impl CodegenAlternative {
         stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
         cx: &mut ModelContext<Self>,
     ) {
+        let start_time = Instant::now();
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)
@@ -2923,6 +2932,8 @@ impl CodegenAlternative {
                 };
 
                 let result = generate.await;
+                let elapsed_time = start_time.elapsed().as_secs_f64();
+
                 codegen
                     .update(&mut cx, |this, cx| {
                         this.last_equal_ranges.clear();
@@ -2931,6 +2942,7 @@ impl CodegenAlternative {
                         } else {
                             this.status = CodegenStatus::Done;
                         }
+                        this.elapsed_time = Some(elapsed_time);
                         cx.emit(CodegenEvent::Finished);
                         cx.notify();
                     })
@@ -3277,6 +3289,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         range: Range<text::Anchor>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<CodeAction>>> {
+        if !AssistantSettings::get_global(cx).enabled {
+            return Task::ready(Ok(Vec::new()));
+        }
+
         let snapshot = buffer.read(cx).snapshot();
         let mut range = range.to_point(&snapshot);
 

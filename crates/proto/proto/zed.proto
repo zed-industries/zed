@@ -12,6 +12,7 @@ message Envelope {
     uint32 id = 1;
     optional uint32 responding_to = 2;
     optional PeerId original_sender_id = 3;
+    optional uint32 ack_id = 266;
 
     oneof payload {
         Hello hello = 4;
@@ -295,7 +296,9 @@ message Envelope {
         OpenServerSettings open_server_settings = 263;
 
         GetPermalinkToLine get_permalink_to_line = 264;
-        GetPermalinkToLineResponse get_permalink_to_line_response = 265;  // current max
+        GetPermalinkToLineResponse get_permalink_to_line_response = 265;
+
+        FlushBufferedMessages flush_buffered_messages = 267;
     }
 
     reserved 87 to 88;
@@ -1867,12 +1870,13 @@ message Entry {
     string path = 3;
     uint64 inode = 4;
     Timestamp mtime = 5;
-    bool is_symlink = 6;
     bool is_ignored = 7;
     bool is_external = 8;
+    reserved 6;
     optional GitStatus git_status = 9;
     bool is_fifo = 10;
     optional uint64 size = 11;
+    optional string canonical_path = 12;
 }
 
 message RepositoryEntry {
@@ -2521,3 +2525,6 @@ message GetPermalinkToLine {
 message GetPermalinkToLineResponse {
     string permalink = 1;
 }
+
+message FlushBufferedMessages {}
+message FlushBufferedMessagesResponse {}

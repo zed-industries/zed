@@ -5,7 +5,7 @@ use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, M
 use language::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
-    local_vscode_tasks_file_relative_path,
+    local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
@@ -287,14 +287,29 @@ impl SettingsObserver {
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, kind, content) in store.local_settings(worktree.read(cx).id()) {
+            for (path, content) in store.local_settings(worktree.read(cx).id()) {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
                         path: path.to_string_lossy().into(),
                         content: Some(content),
-                        kind: Some(local_settings_kind_to_proto(kind).into()),
+                        kind: Some(
+                            local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
+                        ),
+                    })
+                    .log_err();
+            }
+            for (path, content, _) in store.local_editorconfig_settings(worktree.read(cx).id()) {
+                downstream_client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id,
+                        worktree_id,
+                        path: path.to_string_lossy().into(),
+                        content: Some(content),
+                        kind: Some(
+                            local_settings_kind_to_proto(LocalSettingsKind::Editorconfig).into(),
+                        ),
                     })
                     .log_err();
             }
@@ -453,6 +468,11 @@ impl SettingsObserver {
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Tasks)
+            } else if path.ends_with(EDITORCONFIG_NAME) {
+                let Some(settings_dir) = path.parent().map(Arc::from) else {
+                    continue;
+                };
+                (settings_dir, LocalSettingsKind::Editorconfig)
             } else {
                 continue;
             };

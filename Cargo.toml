@@ -158,12 +158,10 @@ members = [
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
-    "extensions/svelte",
     "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
     "extensions/uiua",
-    "extensions/vue",
     "extensions/zig",
 
     #
@@ -349,6 +347,7 @@ ctor = "0.2.6"
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
+ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
@@ -391,7 +390,14 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = ["charset", "http2", "macos-system-configuration", "rustls-tls-native-roots", "stream"]}
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = [
+    "charset",
+    "http2",
+    "macos-system-configuration",
+    "rustls-tls-native-roots",
+    "socks",
+    "stream",
+] }
 rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
@@ -462,7 +468,7 @@ tree-sitter-typescript = "0.23"
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
 unindent = "0.1.7"
-unicode-segmentation = "1.10"
+unicode-segmentation = "1.11"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.215"

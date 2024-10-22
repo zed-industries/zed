@@ -4,6 +4,10 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
+use ec4rs::{
+    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
+    Properties as EditorconfigProperties,
+};
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
@@ -16,8 +20,10 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
-use std::{num::NonZeroU32, path::Path, sync::Arc};
+use settings::{
+    add_references_to_properties, Settings, SettingsLocation, SettingsSources, SettingsStore,
+};
+use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
 /// Initializes the language settings.
@@ -27,17 +33,20 @@ pub fn init(cx: &mut AppContext) {
 
 /// Returns the settings for the specified language from the provided file.
 pub fn language_settings<'a>(
-    language: Option<&Arc<Language>>,
-    file: Option<&Arc<dyn File>>,
+    language: Option<LanguageName>,
+    file: Option<&'a Arc<dyn File>>,
     cx: &'a AppContext,
-) -> &'a LanguageSettings {
-    let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_ref())
+) -> Cow<'a, LanguageSettings> {
+    let location = file.map(|f| SettingsLocation {
+        worktree_id: f.worktree_id(cx),
+        path: f.path().as_ref(),
+    });
+    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
 }
 
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
-    file: Option<&Arc<dyn File>>,
+    file: Option<&'a Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| SettingsLocation {
@@ -810,13 +819,27 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
-        if let Some(name) = language_name {
-            if let Some(overrides) = self.languages.get(name) {
-                return overrides;
-            }
+    pub fn language<'a>(
+        &'a self,
+        location: Option<SettingsLocation<'a>>,
+        language_name: Option<&LanguageName>,
+        cx: &'a AppContext,
+    ) -> Cow<'a, LanguageSettings> {
+        let settings = language_name
+            .and_then(|name| self.languages.get(name))
+            .unwrap_or(&self.defaults);
+
+        let editorconfig_properties = location.and_then(|location| {
+            cx.global::<SettingsStore>()
+                .editorconfig_properties(location.worktree_id, location.path)
+        });
+        if let Some(editorconfig_properties) = editorconfig_properties {
+            let mut settings = settings.clone();
+            merge_with_editorconfig(&mut settings, &editorconfig_properties);
+            Cow::Owned(settings)
+        } else {
+            Cow::Borrowed(settings)
         }
-        &self.defaults
     }
 
     /// Returns whether inline completions are enabled for the given path.
@@ -833,6 +856,7 @@ impl AllLanguageSettings {
         &self,
         language: Option<&Arc<Language>>,
         path: Option<&Path>,
+        cx: &AppContext,
     ) -> bool {
         if let Some(path) = path {
             if !self.inline_completions_enabled_for_path(path) {
@@ -840,9 +864,62 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()).as_ref())
+        self.language(None, language.map(|l| l.name()).as_ref(), cx)
             .show_inline_completions
     }
+}
+
+fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
+    let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
+    let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
+        IndentSize::Value(u) => NonZeroU32::new(u as u32),
+        IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
+            TabWidth::Value(u) => NonZeroU32::new(u as u32),
+        }),
+    });
+    let hard_tabs = cfg
+        .get::<IndentStyle>()
+        .map(|v| v.eq(&IndentStyle::Tabs))
+        .ok();
+    let ensure_final_newline_on_save = cfg
+        .get::<FinalNewline>()
+        .map(|v| match v {
+            FinalNewline::Value(b) => b,
+        })
+        .ok();
+    let remove_trailing_whitespace_on_save = cfg
+        .get::<TrimTrailingWs>()
+        .map(|v| match v {
+            TrimTrailingWs::Value(b) => b,
+        })
+        .ok();
+    let preferred_line_length = max_line_length;
+    let soft_wrap = if max_line_length.is_some() {
+        Some(SoftWrap::PreferredLineLength)
+    } else {
+        None
+    };
+
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+    merge(&mut settings.tab_size, tab_size);
+    merge(&mut settings.hard_tabs, hard_tabs);
+    merge(
+        &mut settings.remove_trailing_whitespace_on_save,
+        remove_trailing_whitespace_on_save,
+    );
+    merge(
+        &mut settings.ensure_final_newline_on_save,
+        ensure_final_newline_on_save,
+    );
+    merge(&mut settings.preferred_line_length, preferred_line_length);
+    merge(&mut settings.soft_wrap, soft_wrap);
 }
 
 /// The kind of an inlay hint.

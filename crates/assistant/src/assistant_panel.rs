@@ -356,8 +356,10 @@ impl AssistantPanel {
             let project = workspace.project().clone();
             pane.set_custom_drop_handle(cx, move |_, dropped_item, cx| {
                 let action = maybe!({
-                    if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                        return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                    if project.read(cx).is_local() {
+                        if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                            return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                        }
                     }
 
                     let project_paths = if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>()
@@ -2219,6 +2221,7 @@ impl ContextEditor {
                     merge_adjacent: false,
                 };
 
+                let should_refold;
                 if let Some(state) = self.patches.get_mut(&range) {
                     replaced_blocks.insert(state.footer_block_id, render_block);
                     if let Some(editor_state) = &state.editor {
@@ -2233,6 +2236,9 @@ impl ContextEditor {
                             });
                         }
                     }
+
+                    should_refold =
+                        snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
                     let block_ids = editor.insert_blocks(
                         [BlockProperties {
@@ -2266,10 +2272,14 @@ impl ContextEditor {
                             update_task: None,
                         },
                     );
+
+                    should_refold = true;
                 }
 
-                editor.unfold_ranges([patch_start..patch_end], true, false, cx);
-                editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
+                if should_refold {
+                    editor.unfold_ranges([patch_start..patch_end], true, false, cx);
+                    editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
+                }
             }
 
             editor.remove_creases(removed_crease_ids, cx);

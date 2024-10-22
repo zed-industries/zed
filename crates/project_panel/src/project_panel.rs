@@ -91,7 +91,6 @@ struct EditState {
     entry_id: ProjectEntryId,
     is_new_entry: bool,
     is_dir: bool,
-    is_symlink: bool,
     depth: usize,
     processing_filename: Option<String>,
 }
@@ -987,7 +986,6 @@ impl ProjectPanel {
                 is_new_entry: true,
                 is_dir,
                 processing_filename: None,
-                is_symlink: false,
                 depth: 0,
             });
             self.filename_editor.update(cx, |editor, cx| {
@@ -1027,7 +1025,6 @@ impl ProjectPanel {
                         is_new_entry: false,
                         is_dir: entry.is_dir(),
                         processing_filename: None,
-                        is_symlink: entry.is_symlink,
                         depth: 0,
                     });
                     let file_name = entry
@@ -1533,16 +1530,15 @@ impl ProjectPanel {
 
     fn open_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            let abs_path = worktree.abs_path().join(&entry.path);
+            let abs_path = match &entry.canonical_path {
+                Some(canonical_path) => Some(canonical_path.to_path_buf()),
+                None => worktree.absolutize(&entry.path).ok(),
+            };
+
             let working_directory = if entry.is_dir() {
-                Some(abs_path)
+                abs_path
             } else {
-                if entry.is_symlink {
-                    abs_path.canonicalize().ok()
-                } else {
-                    Some(abs_path)
-                }
-                .and_then(|path| Some(path.parent()?.to_path_buf()))
+                abs_path.and_then(|path| Some(path.parent()?.to_path_buf()))
             };
             if let Some(working_directory) = working_directory {
                 cx.dispatch_action(workspace::OpenTerminal { working_directory }.boxed_clone())
@@ -1830,7 +1826,6 @@ impl ProjectPanel {
                         .unwrap_or_default();
                     if let Some(edit_state) = &mut self.edit_state {
                         if edit_state.entry_id == entry.id {
-                            edit_state.is_symlink = entry.is_symlink;
                             edit_state.depth = depth;
                         }
                     }
@@ -1861,7 +1856,6 @@ impl ProjectPanel {
                         is_private: false,
                         git_status: entry.git_status,
                         canonical_path: entry.canonical_path.clone(),
-                        is_symlink: entry.is_symlink,
                         char_bag: entry.char_bag,
                         is_fifo: entry.is_fifo,
                     });
@@ -1920,7 +1914,7 @@ impl ProjectPanel {
                 let width_estimate = item_width_estimate(
                     depth,
                     path.to_string_lossy().chars().count(),
-                    entry.is_symlink,
+                    entry.canonical_path.is_some(),
                 );
 
                 match max_width_item.as_mut() {
@@ -2333,6 +2327,7 @@ impl ProjectPanel {
         let depth = details.depth;
         let worktree_id = details.worktree_id;
         let selections = Arc::new(self.marked_entries.clone());
+        let is_local = self.project.read(cx).is_local();
 
         let dragged_selection = DraggedSelection {
             active_selection: selection,
@@ -2340,57 +2335,59 @@ impl ProjectPanel {
         };
         div()
             .id(entry_id.to_proto() as usize)
-            .on_drag_move::<ExternalPaths>(cx.listener(
-                move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
-                    if event.bounds.contains(&event.event.position) {
-                        if this.last_external_paths_drag_over_entry == Some(entry_id) {
-                            return;
-                        }
-                        this.last_external_paths_drag_over_entry = Some(entry_id);
-                        this.marked_entries.clear();
+            .when(is_local, |div| {
+                div.on_drag_move::<ExternalPaths>(cx.listener(
+                    move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
+                        if event.bounds.contains(&event.event.position) {
+                            if this.last_external_paths_drag_over_entry == Some(entry_id) {
+                                return;
+                            }
+                            this.last_external_paths_drag_over_entry = Some(entry_id);
+                            this.marked_entries.clear();
 
-                        let Some((worktree, path, entry)) = maybe!({
-                            let worktree = this
-                                .project
-                                .read(cx)
-                                .worktree_for_id(selection.worktree_id, cx)?;
-                            let worktree = worktree.read(cx);
-                            let abs_path = worktree.absolutize(&path).log_err()?;
-                            let path = if abs_path.is_dir() {
-                                path.as_ref()
-                            } else {
-                                path.parent()?
+                            let Some((worktree, path, entry)) = maybe!({
+                                let worktree = this
+                                    .project
+                                    .read(cx)
+                                    .worktree_for_id(selection.worktree_id, cx)?;
+                                let worktree = worktree.read(cx);
+                                let abs_path = worktree.absolutize(&path).log_err()?;
+                                let path = if abs_path.is_dir() {
+                                    path.as_ref()
+                                } else {
+                                    path.parent()?
+                                };
+                                let entry = worktree.entry_for_path(path)?;
+                                Some((worktree, path, entry))
+                            }) else {
+                                return;
                             };
-                            let entry = worktree.entry_for_path(path)?;
-                            Some((worktree, path, entry))
-                        }) else {
-                            return;
-                        };
 
-                        this.marked_entries.insert(SelectedEntry {
-                            entry_id: entry.id,
-                            worktree_id: worktree.id(),
-                        });
-
-                        for entry in worktree.child_entries(path) {
                             this.marked_entries.insert(SelectedEntry {
                                 entry_id: entry.id,
                                 worktree_id: worktree.id(),
                             });
-                        }
 
-                        cx.notify();
-                    }
-                },
-            ))
-            .on_drop(
-                cx.listener(move |this, external_paths: &ExternalPaths, cx| {
-                    this.last_external_paths_drag_over_entry = None;
-                    this.marked_entries.clear();
-                    this.drop_external_files(external_paths.paths(), entry_id, cx);
-                    cx.stop_propagation();
-                }),
-            )
+                            for entry in worktree.child_entries(path) {
+                                this.marked_entries.insert(SelectedEntry {
+                                    entry_id: entry.id,
+                                    worktree_id: worktree.id(),
+                                });
+                            }
+
+                            cx.notify();
+                        }
+                    },
+                ))
+                .on_drop(cx.listener(
+                    move |this, external_paths: &ExternalPaths, cx| {
+                        this.last_external_paths_drag_over_entry = None;
+                        this.marked_entries.clear();
+                        this.drop_external_files(external_paths.paths(), entry_id, cx);
+                        cx.stop_propagation();
+                    },
+                ))
+            })
             .on_drag(dragged_selection, move |selection, cx| {
                 cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),
@@ -2701,7 +2698,6 @@ impl ProjectPanel {
                 .cursor_default()
                 .when(self.width.is_some(), |this| {
                     this.children(Scrollbar::horizontal(
-                        //percentage as f32..end_offset as f32,
                         self.horizontal_scrollbar_state.clone(),
                     ))
                 }),
@@ -2809,6 +2805,7 @@ impl Render for ProjectPanel {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
+        let is_local = project.is_local();
 
         if has_worktree {
             let item_count = self
@@ -2918,7 +2915,9 @@ impl Render for ProjectPanel {
                     .track_scroll(self.scroll_handle.clone()),
                 )
                 .children(self.render_vertical_scrollbar(cx))
-                .children(self.render_horizontal_scrollbar(cx))
+                .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
+                    this.pb_4().child(scrollbar)
+                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()
@@ -2944,29 +2943,31 @@ impl Render for ProjectPanel {
                                 .log_err();
                         })),
                 )
-                .drag_over::<ExternalPaths>(|style, _, cx| {
-                    style.bg(cx.theme().colors().drop_target_background)
+                .when(is_local, |div| {
+                    div.drag_over::<ExternalPaths>(|style, _, cx| {
+                        style.bg(cx.theme().colors().drop_target_background)
+                    })
+                    .on_drop(cx.listener(
+                        move |this, external_paths: &ExternalPaths, cx| {
+                            this.last_external_paths_drag_over_entry = None;
+                            this.marked_entries.clear();
+                            if let Some(task) = this
+                                .workspace
+                                .update(cx, |workspace, cx| {
+                                    workspace.open_workspace_for_paths(
+                                        true,
+                                        external_paths.paths().to_owned(),
+                                        cx,
+                                    )
+                                })
+                                .log_err()
+                            {
+                                task.detach_and_log_err(cx);
+                            }
+                            cx.stop_propagation();
+                        },
+                    ))
                 })
-                .on_drop(
-                    cx.listener(move |this, external_paths: &ExternalPaths, cx| {
-                        this.last_external_paths_drag_over_entry = None;
-                        this.marked_entries.clear();
-                        if let Some(task) = this
-                            .workspace
-                            .update(cx, |workspace, cx| {
-                                workspace.open_workspace_for_paths(
-                                    true,
-                                    external_paths.paths().to_owned(),
-                                    cx,
-                                )
-                            })
-                            .log_err()
-                        {
-                            task.detach_and_log_err(cx);
-                        }
-                        cx.stop_propagation();
-                    }),
-                )
         }
     }
 }
