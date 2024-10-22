@@ -87,6 +87,7 @@ impl CreateRemoteServer {
 
 struct ProjectPicker {
     connection_string: SharedString,
+    nickname: Option<SharedString>,
     picker: View<Picker<OpenPathDelegate>>,
     _path_task: Shared<Task<Option<()>>>,
 }
@@ -182,10 +183,16 @@ impl SelectableItemList {
     }
 }
 
+impl FocusableView for ProjectPicker {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
 impl ProjectPicker {
     fn new(
         ix: usize,
-        connection_string: SharedString,
+        connection: SshConnectionOptions,
         project: Model<Project>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<RemoteServerProjects>,
@@ -202,6 +209,12 @@ impl ProjectPicker {
             picker.set_query(query, cx);
             picker
         });
+        let connection_string = connection.connection_string().into();
+        let nickname = SshSettings::get_global(cx).nickname_for(
+            &connection.host,
+            connection.port,
+            &connection.username,
+        );
         cx.new_view(|cx| {
             let _path_task = cx
                 .spawn({
@@ -287,6 +300,7 @@ impl ProjectPicker {
                 _path_task,
                 picker,
                 connection_string,
+                nickname,
             }
         })
     }
@@ -298,7 +312,7 @@ impl gpui::Render for ProjectPicker {
             .child(
                 SshConnectionHeader {
                     connection_string: self.connection_string.clone(),
-                    nickname: None,
+                    nickname: self.nickname.clone(),
                 }
                 .render(cx),
             )
@@ -374,11 +388,12 @@ impl RemoteServerProjects {
         let mut this = Self::new(cx, workspace.clone());
         this.mode = Mode::ProjectPicker(ProjectPicker::new(
             ix,
-            connection_options.connection_string().into(),
+            connection_options,
             project,
             workspace,
             cx,
         ));
+        cx.notify();
 
         this
     }
@@ -401,7 +416,7 @@ impl RemoteServerProjects {
                 return;
             }
         };
-        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
+        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, None, cx));
 
         let connection = connect_over_ssh(
             connection_options.remote_server_identifier(),
@@ -478,10 +493,13 @@ impl RemoteServerProjects {
             return;
         };
 
+        let nickname = ssh_connection.nickname.clone();
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
-                workspace.toggle_modal(cx, |cx| SshConnectionModal::new(&connection_options, cx));
+                workspace.toggle_modal(cx, |cx| {
+                    SshConnectionModal::new(&connection_options, nickname, cx)
+                });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
                     .unwrap()
@@ -590,7 +608,13 @@ impl RemoteServerProjects {
         match &self.mode {
             Mode::Default(_) => cx.emit(DismissEvent),
             Mode::CreateRemoteServer(state) if state.ssh_prompt.is_some() => {
-                self.mode = Mode::CreateRemoteServer(CreateRemoteServer::new(cx));
+                let new_state = CreateRemoteServer::new(cx);
+                let old_prompt = state.address_editor.read(cx).text(cx);
+                new_state.address_editor.update(cx, |this, cx| {
+                    this.set_text(old_prompt, cx);
+                });
+
+                self.mode = Mode::CreateRemoteServer(new_state);
                 self.selectable_items.reset_selection();
                 cx.notify();
             }
@@ -724,11 +748,13 @@ impl RemoteServerProjects {
                 let project = project.clone();
                 let server = server.clone();
                 cx.spawn(|_, mut cx| async move {
+                    let nickname = server.nickname.clone();
                     let result = open_ssh_project(
                         server.into(),
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions::default(),
+                        nickname,
                         &mut cx,
                     )
                     .await;
@@ -1226,8 +1252,11 @@ fn get_text(element: &View<Editor>, cx: &mut WindowContext) -> String {
 impl ModalView for RemoteServerProjects {}
 
 impl FocusableView for RemoteServerProjects {
-    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
-        self.focus_handle.clone()
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        match &self.mode {
+            Mode::ProjectPicker(picker) => picker.focus_handle(cx),
+            _ => self.focus_handle.clone(),
+        }
     }
 }
 

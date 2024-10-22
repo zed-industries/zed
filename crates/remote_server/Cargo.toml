@@ -53,6 +53,10 @@ smol.workspace = true
 util.workspace = true
 worktree.workspace = true
 
+[target.'cfg(not(windows))'.dependencies]
+fork.workspace = true
+libc.workspace = true
+
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
 clock = { workspace = true, features = ["test-support"] }

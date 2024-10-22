@@ -437,12 +437,19 @@ async fn open_workspaces(
                         port: ssh.port,
                         password: None,
                     };
+                    let nickname = cx
+                        .update(|cx| {
+                            SshSettings::get_global(cx).nickname_for(&ssh.host, ssh.port, &ssh.user)
+                        })
+                        .ok()
+                        .flatten();
                     cx.spawn(|mut cx| async move {
                         open_ssh_project(
                             connection_options,
                             ssh.paths.into_iter().map(PathBuf::from).collect(),
                             app_state,
                             OpenOptions::default(),
+                            nickname,
                             &mut cx,
                         )
                         .await
