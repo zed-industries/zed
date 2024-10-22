@@ -353,6 +353,7 @@ impl ToolchainLister for PythonToolchainProvider {
                 });
             }
         }
+        toolchains.sort_by(|lhs, rhs| lhs.label.cmp(&rhs.label));
         ToolchainList {
             toolchains,
             default: Some(1),
