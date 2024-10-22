@@ -693,7 +693,7 @@ pub async fn open_ssh_project(
                 })?
                 .await;
 
-            if response == Ok(1) {
+            if response == Ok(0) {
                 continue;
             }
         }
