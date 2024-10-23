@@ -47,8 +47,8 @@ use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
     CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation, File as _, Language,
-    LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    LanguageName, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16,
+    Toolchain, ToolchainList, Transaction, Unclipped,
 };
 use lsp::{
     CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
@@ -2453,6 +2453,44 @@ impl Project {
             .map_err(|e| anyhow!(e))
     }
 
+    pub fn available_toolchains(
+        &self,
+        language_name: LanguageName,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ToolchainList>> {
+        if self.is_local() {
+            let registry = self.languages.clone();
+            let Some(root) = self
+                .worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path())
+            else {
+                return Task::ready(None);
+            };
+            cx.spawn(|_, _| async move {
+                let language = registry.language_for_name(&language_name.0).await.ok()?;
+                let toolchains = language.toolchain_lister()?.list(root.to_path_buf()).await;
+                Some(toolchains)
+            })
+        } else {
+            Task::ready(None)
+        }
+    }
+    pub fn activate_toolchain(&self, toolchain: Toolchain, cx: &AppContext) -> Task<Option<()>> {
+        if self.is_local() {
+            let registry = self.languages.clone();
+            cx.spawn(|_| async move {
+                let language = registry
+                    .language_for_name(&toolchain.language_name.0)
+                    .await
+                    .ok()?;
+                language.toolchain_lister()?.activate(toolchain).await;
+                Some(())
+            })
+        } else {
+            Task::ready(None)
+        }
+    }
     pub fn language_server_statuses<'a>(
         &'a self,
         cx: &'a AppContext,
