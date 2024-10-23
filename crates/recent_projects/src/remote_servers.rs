@@ -660,11 +660,12 @@ impl RemoteServerProjects {
                     .px_3()
                     .gap_1()
                     .overflow_hidden()
-                    .whitespace_nowrap()
                     .child(
-                        Label::new(main_label)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
+                        div().max_w_96().overflow_hidden().text_ellipsis().child(
+                            Label::new(main_label)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
                     )
                     .children(
                         aux_label.map(|label| {
