@@ -1,11 +1,11 @@
 #![allow(unused)]
+use anyhow::{Context, Result};
 use collections::HashMap;
 use gpui::View;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::notebook::DeserializedCell;
-
-use super::{Cell, CellId};
+use super::{deserialize_cells, Cell, CellId, DeserializedCell};
 
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
@@ -37,38 +37,39 @@ impl Default for DeserializedMetadata {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct DeserializedNotebook {
     pub metadata: DeserializedMetadata,
     pub nbformat: i32,
     pub nbformat_minor: i32,
+    #[serde(deserialize_with = "deserialize_cells")]
     pub cells: Vec<DeserializedCell>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct DeserializedMetadata {
-    kernelspec: Option<DeserializedKernelSpec>,
-    language_info: Option<DeserializedLanguageInfo>,
+    pub kernelspec: Option<DeserializedKernelSpec>,
+    pub language_info: Option<DeserializedLanguageInfo>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct DeserializedKernelSpec {
-    name: String,
+    pub name: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 pub struct DeserializedLanguageInfo {
-    name: String,
-    version: Option<String>,
+    pub name: String,
+    pub version: Option<String>,
     #[serde(default)]
-    codemirror_mode: Option<CodemirrorMode>,
+    pub codemirror_mode: Option<CodemirrorMode>,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 #[serde(untagged)]
 pub enum CodemirrorMode {
     String(String),
-    Object(serde_json::Value),
+    Object(Value),
 }
 
 impl Default for CodemirrorMode {
@@ -77,17 +78,8 @@ impl Default for CodemirrorMode {
     }
 }
 
-pub fn deserialize_notebook(notebook: &str) -> Result<DeserializedNotebook, serde_json::Error> {
-    match serde_json::from_str(notebook) {
-        Ok(deserialized) => Ok(deserialized),
-        Err(e) => {
-            eprintln!("Error deserializing notebook: {:?}", e);
-            eprintln!("Error occurs at line {}, column {}", e.line(), e.column());
-            eprintln!(
-                "Nearby JSON: {}",
-                &notebook[e.column().saturating_sub(20)..e.column().saturating_add(20)]
-            );
-            Err(e)
-        }
-    }
+pub fn deserialize_notebook(notebook: &str) -> Result<DeserializedNotebook> {
+    let deserialized: DeserializedNotebook =
+        serde_json::from_str(notebook).context("Failed to deserialize notebook")?;
+    Ok(deserialized)
 }

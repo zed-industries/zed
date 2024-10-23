@@ -1,6 +1,7 @@
 #![allow(unused, dead_code)]
 use gpui::{prelude::*, View};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use ui::prelude::*;
 use uuid::Uuid;
 
@@ -68,8 +69,7 @@ impl RenderOnce for CellControl {
     }
 }
 
-// On disk format
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Deserialize, Debug)]
 #[serde(tag = "cell_type")]
 pub enum DeserializedCell {
     #[serde(rename = "markdown")]
@@ -78,7 +78,7 @@ pub enum DeserializedCell {
         metadata: DeserializedCellMetadata,
         source: Vec<String>,
         #[serde(default)]
-        attachments: Option<serde_json::Value>,
+        attachments: Option<Value>,
     },
     #[serde(rename = "code")]
     Code {
@@ -86,6 +86,7 @@ pub enum DeserializedCell {
         metadata: DeserializedCellMetadata,
         execution_count: Option<i32>,
         source: Vec<String>,
+        #[serde(deserialize_with = "deserialize_outputs")]
         outputs: Vec<DeserializedOutput>,
     },
     #[serde(rename = "raw")]
@@ -94,6 +95,25 @@ pub enum DeserializedCell {
         metadata: DeserializedCellMetadata,
         source: Vec<String>,
     },
+}
+
+pub fn deserialize_cells<'de, D>(deserializer: D) -> Result<Vec<DeserializedCell>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let cells: Vec<serde_json::Value> = Deserialize::deserialize(deserializer)?;
+    cells
+        .into_iter()
+        .filter_map(
+            |cell| match serde_json::from_value::<DeserializedCell>(cell) {
+                Ok(cell) => Some(Ok(cell)),
+                Err(e) => {
+                    eprintln!("Warning: Failed to deserialize cell: {}", e);
+                    None
+                }
+            },
+        )
+        .collect()
 }
 
 // importing a notebook -> deserialize
@@ -139,6 +159,25 @@ pub enum DeserializedOutput {
     ExecuteResult(ExecuteResult),
     #[serde(rename = "error")]
     Error(ErrorOutput),
+}
+
+pub fn deserialize_outputs<'de, D>(deserializer: D) -> Result<Vec<DeserializedOutput>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let outputs: Vec<serde_json::Value> = Deserialize::deserialize(deserializer)?;
+    outputs
+        .into_iter()
+        .filter_map(
+            |output| match serde_json::from_value::<DeserializedOutput>(output) {
+                Ok(output) => Some(Ok(output)),
+                Err(e) => {
+                    eprintln!("Warning: Failed to deserialize output: {}", e);
+                    None
+                }
+            },
+        )
+        .collect()
 }
 
 /// A notebook cell
