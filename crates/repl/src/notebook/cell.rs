@@ -72,7 +72,7 @@ pub enum DeserializedCell {
     Markdown {
         id: Option<String>,
         metadata: DeserializedCellMetadata,
-        source: String,
+        source: Vec<String>,
         #[serde(default)]
         attachments: Option<serde_json::Value>,
     },
@@ -81,14 +81,14 @@ pub enum DeserializedCell {
         id: Option<String>,
         metadata: DeserializedCellMetadata,
         execution_count: Option<i32>,
-        source: String,
+        source: Vec<String>,
         outputs: Vec<DeserializedOutput>,
     },
     #[serde(rename = "raw")]
     Raw {
         id: Option<String>,
         metadata: DeserializedCellMetadata,
-        source: String,
+        source: Vec<String>,
     },
 }
 
@@ -128,7 +128,7 @@ impl Default for DeserializedCellMetadata {
 #[serde(tag = "output_type")]
 pub enum DeserializedOutput {
     #[serde(rename = "stream")]
-    Stream { name: String, text: String },
+    Stream { name: String, text: Vec<String> },
     #[serde(rename = "display_data")]
     DisplayData {
         data: serde_json::Value,
@@ -168,7 +168,7 @@ impl Cell {
                 id: id.into(),
                 cell_type: CellType::Markdown,
                 metadata,
-                source,
+                source: source.join("\n"),
             })),
             DeserializedCell::Code {
                 id,
@@ -181,7 +181,7 @@ impl Cell {
                 cell_type: CellType::Code,
                 metadata,
                 execution_count,
-                source,
+                source: source.join("\n"),
                 outputs,
             })),
             DeserializedCell::Raw {
@@ -192,7 +192,7 @@ impl Cell {
                 id: id.into(),
                 cell_type: CellType::Raw,
                 metadata,
-                source,
+                source: source.join("\n"),
             })),
         }
     }
@@ -303,7 +303,7 @@ impl RenderableCell for MarkdownCell {
 
 impl Render for MarkdownCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        div().child(self.source.clone())
     }
 }
 
@@ -346,7 +346,7 @@ impl RenderableCell for CodeCell {
 
 impl Render for CodeCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        div().child(self.source.clone())
     }
 }
 
@@ -387,6 +387,6 @@ impl RenderableCell for RawCell {
 
 impl Render for RawCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
+        div().child(self.source.clone())
     }
 }

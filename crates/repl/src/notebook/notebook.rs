@@ -60,10 +60,34 @@ pub struct DeserializedKernelSpec {
 pub struct DeserializedLanguageInfo {
     name: String,
     version: Option<String>,
-    // Zed can ignore this field, only writing to it for compatibility
-    codemirror_mode: Option<String>,
+    #[serde(default)]
+    codemirror_mode: Option<CodemirrorMode>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+pub enum CodemirrorMode {
+    String(String),
+    Object(serde_json::Value),
+}
+
+impl Default for CodemirrorMode {
+    fn default() -> Self {
+        CodemirrorMode::String(String::new())
+    }
 }
 
 pub fn deserialize_notebook(notebook: &str) -> Result<DeserializedNotebook, serde_json::Error> {
-    serde_json::from_str(notebook)
+    match serde_json::from_str(notebook) {
+        Ok(deserialized) => Ok(deserialized),
+        Err(e) => {
+            eprintln!("Error deserializing notebook: {:?}", e);
+            eprintln!("Error occurs at line {}, column {}", e.line(), e.column());
+            eprintln!(
+                "Nearby JSON: {}",
+                &notebook[e.column().saturating_sub(20)..e.column().saturating_add(20)]
+            );
+            Err(e)
+        }
+    }
 }

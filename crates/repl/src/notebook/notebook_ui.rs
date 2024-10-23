@@ -12,8 +12,10 @@ use util::ResultExt;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
 use super::{
-    deserialize_notebook, static_sample::simple_example, Cell, CellId, DeserializedMetadata,
-    Notebook, DEFAULT_NOTEBOOK_FORMAT, DEFAULT_NOTEBOOK_FORMAT_MINOR,
+    deserialize_notebook,
+    static_sample::{no_cells_example, simple_example},
+    Cell, CellId, DeserializedMetadata, Notebook, DEFAULT_NOTEBOOK_FORMAT,
+    DEFAULT_NOTEBOOK_FORMAT_MINOR,
 };
 
 actions!(
@@ -108,6 +110,7 @@ impl NotebookEditor {
         let mut cell_order = vec![];
         let mut cell_map = HashMap::default();
 
+        // let deserialized_notebook = deserialize_notebook(no_cells_example());
         let deserialized_notebook = deserialize_notebook(simple_example());
 
         if let Ok(notebook) = deserialized_notebook {
@@ -137,11 +140,11 @@ impl NotebookEditor {
             project,
             remote_id: None,
             selected_cell: 0,
-            metadata: Default::default(),
-            nbformat: DEFAULT_NOTEBOOK_FORMAT,
-            nbformat_minor: DEFAULT_NOTEBOOK_FORMAT_MINOR,
-            cell_order: vec![],
-            cell_map: HashMap::default(),
+            metadata,
+            nbformat,
+            nbformat_minor,
+            cell_order,
+            cell_map,
         }
     }
 
@@ -260,6 +263,7 @@ impl Render for NotebookEditor {
                     .size_full()
                     .overflow_hidden()
                     .gap_6()
+                    .child(self.nbformat_minor.to_string())
                     .children(self.cells().iter().map(|cell| match cell {
                         Cell::Code(view) => view.clone().into_any_element(),
                         Cell::Markdown(view) => view.clone().into_any_element(),
