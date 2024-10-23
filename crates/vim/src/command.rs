@@ -628,10 +628,12 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("tabo", "nly"),
             workspace::CloseInactiveItems {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseInactiveItems {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: false,
         }),
         VimCommand::new(
             ("on", "ly"),
