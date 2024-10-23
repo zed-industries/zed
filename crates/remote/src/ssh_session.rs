@@ -1494,6 +1494,7 @@ impl SshRemoteConnection {
                 if installed_version.trim() == version.to_string() {
                     server_binary_exists = true;
                 }
+                log::info!("checked remote server binary for version. latest version: {}. remote server version: {}", version.to_string(), installed_version.trim());
             }
         }
 
