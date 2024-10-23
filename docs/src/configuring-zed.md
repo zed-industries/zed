@@ -47,7 +47,6 @@ Extensions that provide language servers may also provide default settings for t
 
 **Options**
 
-By default `html` extension is installed, see: [html extension page](./languages/html.md).
 To determine the name of the extension, you have to install the extension manually and copy the name of the
 extension folder in the [installation location](./extensions/installing-extensions#installation-location)
 
