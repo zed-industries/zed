@@ -33,21 +33,21 @@ pub enum AssistantEditKind {
     Update {
         old_text: String,
         new_text: String,
-        description: String,
+        description: Option<String>,
     },
     Create {
         new_text: String,
-        description: String,
+        description: Option<String>,
     },
     InsertBefore {
         old_text: String,
         new_text: String,
-        description: String,
+        description: Option<String>,
     },
     InsertAfter {
         old_text: String,
         new_text: String,
-        description: String,
+        description: Option<String>,
     },
     Delete {
         old_text: String,
@@ -187,23 +187,23 @@ impl AssistantEdit {
             "update" => AssistantEditKind::Update {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
-                description: description.ok_or_else(|| anyhow!("missing description"))?,
+                description,
             },
             "insert_before" => AssistantEditKind::InsertBefore {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
-                description: description.ok_or_else(|| anyhow!("missing description"))?,
+                description,
             },
             "insert_after" => AssistantEditKind::InsertAfter {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
-                description: description.ok_or_else(|| anyhow!("missing description"))?,
+                description,
             },
             "delete" => AssistantEditKind::Delete {
                 old_text: old_text.ok_or_else(|| anyhow!("missing old_text"))?,
             },
             "create" => AssistantEditKind::Create {
-                description: description.ok_or_else(|| anyhow!("missing description"))?,
+                description,
                 new_text: new_text.ok_or_else(|| anyhow!("missing new_text"))?,
             },
             _ => Err(anyhow!("unknown operation {operation:?}"))?,
@@ -264,7 +264,7 @@ impl AssistantEditKind {
                 ResolvedEdit {
                     range,
                     new_text,
-                    description: Some(description),
+                    description,
                 }
             }
             Self::Create {
@@ -272,7 +272,7 @@ impl AssistantEditKind {
                 description,
             } => ResolvedEdit {
                 range: text::Anchor::MIN..text::Anchor::MAX,
-                description: Some(description),
+                description,
                 new_text,
             },
             Self::InsertBefore {
@@ -285,7 +285,7 @@ impl AssistantEditKind {
                 ResolvedEdit {
                     range: range.start..range.start,
                     new_text,
-                    description: Some(description),
+                    description,
                 }
             }
             Self::InsertAfter {
@@ -298,7 +298,7 @@ impl AssistantEditKind {
                 ResolvedEdit {
                     range: range.end..range.end,
                     new_text,
-                    description: Some(description),
+                    description,
                 }
             }
             Self::Delete { old_text } => {
@@ -675,7 +675,7 @@ mod tests {
                         last_name: String,
                     "
                     .unindent(),
-                    description: "".into(),
+                    description: None,
                 },
                 AssistantEditKind::Update {
                     old_text: "
@@ -690,7 +690,7 @@ mod tests {
                         }
                     "
                     .unindent(),
-                    description: "".into(),
+                    description: None,
                 },
             ],
             "
@@ -734,7 +734,7 @@ mod tests {
                             qux();
                         }"
                     .unindent(),
-                    description: "implement bar".into(),
+                    description: Some("implement bar".into()),
                 },
                 AssistantEditKind::Update {
                     old_text: "
@@ -747,7 +747,7 @@ mod tests {
                             bar();
                         }"
                     .unindent(),
-                    description: "call bar in foo".into(),
+                    description: Some("call bar in foo".into()),
                 },
                 AssistantEditKind::InsertAfter {
                     old_text: "
@@ -762,7 +762,7 @@ mod tests {
                         }
                     "
                     .unindent(),
-                    description: "implement qux".into(),
+                    description: Some("implement qux".into()),
                 },
             ],
             "
@@ -814,7 +814,7 @@ mod tests {
                         }
                     "
                     .unindent(),
-                    description: "pick better number".into(),
+                    description: None,
                 },
                 AssistantEditKind::Update {
                     old_text: "
@@ -829,7 +829,7 @@ mod tests {
                         }
                     "
                     .unindent(),
-                    description: "pick better number".into(),
+                    description: None,
                 },
                 AssistantEditKind::Update {
                     old_text: "
@@ -844,7 +844,7 @@ mod tests {
                         }
                     "
                     .unindent(),
-                    description: "pick better number".into(),
+                    description: None,
                 },
             ],
             "
