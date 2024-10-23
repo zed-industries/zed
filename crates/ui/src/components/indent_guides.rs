@@ -22,7 +22,7 @@ pub struct IndentGuides {
             dyn Fn(
                 RenderIndentGuideParams,
                 &mut WindowContext,
-            ) -> SmallVec<[RenderedIndentGuide; 16]>,
+            ) -> SmallVec<[RenderedIndentGuide; 12]>,
         >,
     >,
     on_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
@@ -62,7 +62,7 @@ impl IndentGuides {
                 &mut V,
                 RenderIndentGuideParams,
                 &mut WindowContext,
-            ) -> SmallVec<[RenderedIndentGuide; 16]>
+            ) -> SmallVec<[RenderedIndentGuide; 12]>
             + 'static,
     ) -> Self {
         let render_fn = move |params, cx: &mut WindowContext| {
@@ -74,7 +74,7 @@ impl IndentGuides {
 }
 
 pub struct RenderIndentGuideParams {
-    pub indent_guides: SmallVec<[IndentGuideLayout; 16]>,
+    pub indent_guides: SmallVec<[IndentGuideLayout; 12]>,
     pub indent_size: Pixels,
     pub item_height: Pixels,
 }
@@ -94,7 +94,7 @@ pub struct IndentGuideLayout {
 }
 
 mod uniform_list {
-    use gpui::{DispatchPhase, Hitbox, MouseButton, MouseDownEvent};
+    use gpui::{DispatchPhase, Hitbox, MouseButton, MouseDownEvent, MouseMoveEvent};
 
     use super::*;
 
@@ -132,7 +132,7 @@ mod uniform_list {
                                 px(layout.offset.x as f32) * self.indent_size,
                                 px(layout.offset.y as f32) * item_height,
                             ),
-                            size(px(1.), px(layout.length as f32) * -item_height),
+                            size(px(1.), px(layout.length as f32) * item_height),
                         ),
                         layout,
                         is_active: false,
@@ -158,12 +158,12 @@ mod uniform_list {
 
     struct IndentGuidesElement {
         colors: IndentGuideColors,
-        indent_guides: Rc<SmallVec<[RenderedIndentGuide; 16]>>,
+        indent_guides: Rc<SmallVec<[RenderedIndentGuide; 12]>>,
         on_hovered_indent_guide_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
     }
 
     struct IndentGuidesElementPrepaintState {
-        hitboxes: SmallVec<[Hitbox; 16]>,
+        hitboxes: SmallVec<[Hitbox; 12]>,
     }
 
     impl Element for IndentGuidesElement {
@@ -189,9 +189,9 @@ mod uniform_list {
             _request_layout: &mut Self::RequestLayoutState,
             cx: &mut WindowContext,
         ) -> Self::PrepaintState {
-            let mut hitboxes = SmallVec::<[Hitbox; 16]>::new();
+            let mut hitboxes = SmallVec::new();
             for guide in self.indent_guides.as_ref().iter() {
-                hitboxes.push(cx.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), true));
+                hitboxes.push(cx.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false));
             }
             Self::PrepaintState { hitboxes }
         }
@@ -233,10 +233,12 @@ mod uniform_list {
                 });
             }
 
+            let mut hovered_hitbox_id = None;
             for (i, hitbox) in prepaint.hitboxes.iter().enumerate() {
                 cx.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
                 let indent_guide = &self.indent_guides[i];
                 let fill_color = if hitbox.is_hovered(cx) {
+                    hovered_hitbox_id = Some(hitbox.id);
                     self.colors.hovered
                 } else if indent_guide.is_active {
                     self.colors.active
@@ -246,6 +248,37 @@ mod uniform_list {
 
                 cx.paint_quad(fill(indent_guide.bounds, fill_color));
             }
+
+            cx.on_mouse_event({
+                let prev_hovered_hitbox_id = hovered_hitbox_id;
+                let hitboxes = prepaint.hitboxes.clone();
+                move |_: &MouseMoveEvent, phase, cx| {
+                    let mut hovered_hitbox_id = None;
+                    for hitbox in &hitboxes {
+                        if hitbox.is_hovered(cx) {
+                            hovered_hitbox_id = Some(hitbox.id);
+                            break;
+                        }
+                    }
+                    if phase == DispatchPhase::Capture {
+                        // If the hovered hitbox has changed, we need to re-paint the indent guides.
+                        match (prev_hovered_hitbox_id, hovered_hitbox_id) {
+                            (Some(prev_id), Some(id)) => {
+                                if prev_id != id {
+                                    cx.refresh();
+                                }
+                            }
+                            (None, Some(_)) => {
+                                cx.refresh();
+                            }
+                            (Some(_), None) => {
+                                cx.refresh();
+                            }
+                            (None, None) => {}
+                        }
+                    }
+                }
+            });
         }
     }
 
@@ -262,8 +295,8 @@ fn compute_indent_guides(
     indents: &[usize],
     offset: usize,
     includes_trailing_indent: bool,
-) -> SmallVec<[IndentGuideLayout; 16]> {
-    let mut indent_guides = SmallVec::<[IndentGuideLayout; 16]>::new();
+) -> SmallVec<[IndentGuideLayout; 12]> {
+    let mut indent_guides = SmallVec::<[IndentGuideLayout; 12]>::new();
     let mut indent_stack = SmallVec::<[IndentGuideLayout; 8]>::new();
 
     let mut min_depth = usize::MAX;
