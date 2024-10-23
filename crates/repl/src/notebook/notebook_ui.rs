@@ -9,12 +9,13 @@ use gpui::{
 use project::Project;
 use ui::prelude::*;
 use util::ResultExt;
+use uuid::Uuid;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
 use super::{
     deserialize_notebook,
     static_sample::{no_cells_example, simple_example},
-    Cell, CellId, DeserializedMetadata, Notebook, DEFAULT_NOTEBOOK_FORMAT,
+    Cell, CellId, DeserializedCell, DeserializedMetadata, Notebook, DEFAULT_NOTEBOOK_FORMAT,
     DEFAULT_NOTEBOOK_FORMAT_MINOR,
 };
 
@@ -100,9 +101,7 @@ impl NotebookEditor {
         project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let this = cx.view().downgrade();
         let focus_handle = cx.focus_handle();
-        // let notebook = Notebook::default();
 
         let mut metadata: DeserializedMetadata = Default::default();
         let mut nbformat = DEFAULT_NOTEBOOK_FORMAT;
@@ -110,22 +109,23 @@ impl NotebookEditor {
         let mut cell_order = vec![];
         let mut cell_map = HashMap::default();
 
-        // let deserialized_notebook = deserialize_notebook(no_cells_example());
         let deserialized_notebook = deserialize_notebook(simple_example());
 
         if let Ok(notebook) = deserialized_notebook {
             metadata = notebook.metadata;
             nbformat = notebook.nbformat;
             nbformat_minor = notebook.nbformat_minor;
-            for cell in notebook.cells {
+            for (index, cell) in notebook.cells.into_iter().enumerate() {
                 let id = match &cell {
-                    super::DeserializedCell::Markdown { id, .. } => id,
-                    super::DeserializedCell::Code { id, .. } => id,
-                    super::DeserializedCell::Raw { id, .. } => id,
+                    DeserializedCell::Markdown { id, .. }
+                    | DeserializedCell::Code { id, .. }
+                    | DeserializedCell::Raw { id, .. } => {
+                        id.clone().unwrap_or_else(|| Uuid::new_v4().to_string())
+                    }
                 };
-                let id = CellId::from(id.clone());
-                cell_order.push(id.clone());
-                cell_map.insert(id, Cell::load(cell, cx));
+                let cell_id = CellId::from(id.clone());
+                cell_order.push(cell_id.clone());
+                cell_map.insert(cell_id, Cell::load(cell, cx));
             }
         } else {
             println!(
@@ -149,7 +149,10 @@ impl NotebookEditor {
     }
 
     fn cells(&self) -> Vec<Cell> {
-        self.cell_map.values().cloned().collect()
+        self.cell_order
+            .iter()
+            .filter_map(|id| self.cell_map.get(id).cloned())
+            .collect()
     }
 
     fn open_notebook(&mut self, _: &OpenNotebook, _cx: &mut ViewContext<Self>) {
@@ -265,7 +268,7 @@ impl Render for NotebookEditor {
                     .size_full()
                     .overflow_y_scroll()
                     .gap_6()
-                    .children(self.cells().iter().map(|cell| match cell {
+                    .children(self.cells().into_iter().map(|cell| match cell {
                         Cell::Code(view) => view.clone().into_any_element(),
                         Cell::Markdown(view) => view.clone().into_any_element(),
                         Cell::Raw(view) => view.clone().into_any_element(),
