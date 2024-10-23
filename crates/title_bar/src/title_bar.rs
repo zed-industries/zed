@@ -320,7 +320,6 @@ impl TitleBar {
                     div()
                         .max_w_32()
                         .overflow_hidden()
-                        .truncate()
                         .text_ellipsis()
                         .child(Label::new(nickname.clone()).size(LabelSize::Small)),
                 )
