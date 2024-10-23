@@ -4930,8 +4930,7 @@ async fn get_llm_api_token(
     let billing_preferences = db.get_billing_preferences(user.id).await?;
 
     let token = LlmTokenClaims::create(
-        user.id,
-        user.github_login.clone(),
+        &user,
         session.is_staff(),
         billing_preferences,
         has_llm_closed_beta_feature_flag,

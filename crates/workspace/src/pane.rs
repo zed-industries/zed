@@ -2570,6 +2570,7 @@ impl Render for Pane {
 
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(cx);
+        let is_local = self.project.read(cx).is_local();
 
         v_flex()
             .key_context(key_context)
@@ -2697,7 +2698,9 @@ impl Render for Pane {
                     .group("")
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
-                    .on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
+                    .when(is_local, |div| {
+                        div.on_drag_move::<ExternalPaths>(cx.listener(Self::handle_drag_move))
+                    })
                     .map(|div| {
                         if let Some(item) = self.active_item() {
                             div.v_flex()
@@ -2723,7 +2726,9 @@ impl Render for Pane {
                             .bg(cx.theme().colors().drop_target_background)
                             .group_drag_over::<DraggedTab>("", |style| style.visible())
                             .group_drag_over::<DraggedSelection>("", |style| style.visible())
-                            .group_drag_over::<ExternalPaths>("", |style| style.visible())
+                            .when(is_local, |div| {
+                                div.group_drag_over::<ExternalPaths>("", |style| style.visible())
+                            })
                             .when_some(self.can_drop_predicate.clone(), |this, p| {
                                 this.can_drop(move |a, cx| p(a, cx))
                             })

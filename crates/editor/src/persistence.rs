@@ -11,7 +11,7 @@ use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct SerializedEditor {
-    pub(crate) path: Option<PathBuf>,
+    pub(crate) abs_path: Option<PathBuf>,
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
     pub(crate) mtime: Option<SystemTime>,
@@ -25,7 +25,7 @@ impl StaticColumnCount for SerializedEditor {
 
 impl Bind for SerializedEditor {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let start_index = statement.bind(&self.path, start_index)?;
+        let start_index = statement.bind(&self.abs_path, start_index)?;
         let start_index = statement.bind(&self.contents, start_index)?;
         let start_index = statement.bind(&self.language, start_index)?;
 
@@ -51,7 +51,8 @@ impl Bind for SerializedEditor {
 
 impl Column for SerializedEditor {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (path, start_index): (Option<PathBuf>, i32) = Column::column(statement, start_index)?;
+        let (abs_path, start_index): (Option<PathBuf>, i32) =
+            Column::column(statement, start_index)?;
         let (contents, start_index): (Option<String>, i32) =
             Column::column(statement, start_index)?;
         let (language, start_index): (Option<String>, i32) =
@@ -66,7 +67,7 @@ impl Column for SerializedEditor {
             .map(|(seconds, nanos)| UNIX_EPOCH + Duration::new(seconds as u64, nanos as u32));
 
         let editor = Self {
-            path,
+            abs_path,
             contents,
             language,
             mtime,
@@ -226,7 +227,7 @@ mod tests {
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
         let serialized_editor = SerializedEditor {
-            path: Some(PathBuf::from("testing.txt")),
+            abs_path: Some(PathBuf::from("testing.txt")),
             contents: None,
             language: None,
             mtime: None,
@@ -244,7 +245,7 @@ mod tests {
 
         // Now update contents and language
         let serialized_editor = SerializedEditor {
-            path: Some(PathBuf::from("testing.txt")),
+            abs_path: Some(PathBuf::from("testing.txt")),
             contents: Some("Test".to_owned()),
             language: Some("Go".to_owned()),
             mtime: None,
@@ -262,7 +263,7 @@ mod tests {
 
         // Now set all the fields to NULL
         let serialized_editor = SerializedEditor {
-            path: None,
+            abs_path: None,
             contents: None,
             language: None,
             mtime: None,
@@ -281,7 +282,7 @@ mod tests {
         // Storing and retrieving mtime
         let now = SystemTime::now();
         let serialized_editor = SerializedEditor {
-            path: None,
+            abs_path: None,
             contents: None,
             language: None,
             mtime: Some(now),

@@ -68,6 +68,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use unicode_segmentation::UnicodeSegmentation;
 use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
@@ -1025,23 +1026,21 @@ impl EditorElement {
                     }
                     let block_text = if let CursorShape::Block = selection.cursor_shape {
                         snapshot
-                            .display_chars_at(cursor_position)
-                            .next()
+                            .grapheme_at(cursor_position)
                             .or_else(|| {
                                 if cursor_column == 0 {
-                                    snapshot
-                                        .placeholder_text()
-                                        .and_then(|s| s.chars().next())
-                                        .map(|c| (c, cursor_position))
+                                    snapshot.placeholder_text().and_then(|s| {
+                                        s.graphemes(true).next().map(|s| s.to_owned())
+                                    })
                                 } else {
                                     None
                                 }
                             })
-                            .and_then(|(character, _)| {
-                                let text = if character == '\n' {
+                            .and_then(|grapheme| {
+                                let text = if grapheme == "\n" {
                                     SharedString::from(" ")
                                 } else {
-                                    SharedString::from(character.to_string())
+                                    SharedString::from(grapheme)
                                 };
                                 let len = text.len();
 

@@ -381,6 +381,11 @@ impl MacPlatform {
                 }
                 item.setSubmenu_(submenu);
                 item.setTitle_(ns_string(&name));
+                if name == "Services" {
+                    let app: id = msg_send![APP_CLASS, sharedApplication];
+                    app.setServicesMenu_(item);
+                }
+
                 item
             }
         }

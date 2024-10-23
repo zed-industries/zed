@@ -299,6 +299,9 @@ message Envelope {
         GetPermalinkToLineResponse get_permalink_to_line_response = 265;
 
         FlushBufferedMessages flush_buffered_messages = 267;
+
+        LanguageServerPromptRequest language_server_prompt_request = 268;
+        LanguageServerPromptResponse language_server_prompt_response = 269; // current max
     }
 
     reserved 87 to 88;
@@ -2528,3 +2531,25 @@ message GetPermalinkToLineResponse {
 
 message FlushBufferedMessages {}
 message FlushBufferedMessagesResponse {}
+
+message LanguageServerPromptRequest {
+    uint64 project_id = 1;
+
+    oneof level {
+        Info info = 2;
+        Warning warning = 3;
+        Critical critical = 4;
+    }
+
+    message Info {}
+    message Warning {}
+    message Critical {}
+
+    string message = 5;
+    repeated string actions = 6;
+    string lsp_name = 7;
+}
+
+message LanguageServerPromptResponse {
+    optional uint64 action_response = 1;
+}
