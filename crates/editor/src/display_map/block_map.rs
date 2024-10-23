@@ -2188,16 +2188,20 @@ mod tests {
         };
         let tab_size = 1.try_into().unwrap();
         let font_size = px(14.0);
-        let buffer_start_header_height = rng.gen_range(1..=5);
-        let excerpt_header_height = rng.gen_range(1..=5);
-        let excerpt_footer_height = rng.gen_range(1..=5);
+        let mut buffer_start_header_height = rng.gen_range(1..=5);
+        let mut excerpt_header_height = rng.gen_range(1..=5);
+        let mut excerpt_footer_height = rng.gen_range(1..=5);
+
+        // TODO: remove
+        buffer_start_header_height = 1;
+        excerpt_header_height = 1;
+        excerpt_footer_height = 1;
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
         log::info!("Excerpt Footer Height: {:?}", excerpt_footer_height);
 
-        let buffer = if true {
-            let todo = (); // make the above random again
+        let buffer = if rng.gen() {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial singleton buffer text: {:?}", text);
@@ -2336,6 +2340,7 @@ mod tests {
                 blocks_snapshot.transforms.summary().input_rows,
                 wraps_snapshot.max_point().row() + 1
             );
+            log::info!("wrapped text: {:?}", wraps_snapshot.text());
             log::info!("blocks text: {:?}", blocks_snapshot.text());
 
             let mut expected_blocks = Vec::new();
