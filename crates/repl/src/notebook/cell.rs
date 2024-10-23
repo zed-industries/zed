@@ -5,6 +5,7 @@ use ui::prelude::*;
 use uuid::Uuid;
 
 use crate::notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH};
+use runtimelib::{DisplayData, ErrorOutput, ExecuteResult, StreamContent};
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct CellId(String);
@@ -128,24 +129,13 @@ impl Default for DeserializedCellMetadata {
 #[serde(tag = "output_type")]
 pub enum DeserializedOutput {
     #[serde(rename = "stream")]
-    Stream { name: String, text: Vec<String> },
+    Stream(StreamContent),
     #[serde(rename = "display_data")]
-    DisplayData {
-        data: serde_json::Value,
-        metadata: serde_json::Value,
-    },
+    DisplayData(DisplayData),
     #[serde(rename = "execute_result")]
-    ExecuteResult {
-        execution_count: i32,
-        data: serde_json::Value,
-        metadata: serde_json::Value,
-    },
+    ExecuteResult(ExecuteResult),
     #[serde(rename = "error")]
-    Error {
-        ename: String,
-        evalue: String,
-        traceback: Vec<String>,
-    },
+    Error(ErrorOutput),
 }
 
 /// A notebook cell
