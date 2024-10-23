@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandRegistry,
+    SlashCommandRegistry, SlashCommandResult,
 };
 use collections::HashSet;
 use fs::FakeFs;
@@ -1416,7 +1416,7 @@ impl SlashCommand for FakeSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),
             sections: vec![],
