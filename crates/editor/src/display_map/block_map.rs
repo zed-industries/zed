@@ -20,7 +20,7 @@ use std::{
         Arc,
     },
 };
-use sum_tree::{Bias, SumTree, TreeMap};
+use sum_tree::{Bias, SumTree, Summary, TreeMap};
 use text::Edit;
 use ui::ElementId;
 
@@ -383,6 +383,8 @@ impl Debug for Block {
 struct TransformSummary {
     input_rows: u32,
     output_rows: u32,
+    longest_row: u32,
+    longest_row_chars: u32,
 }
 
 pub struct BlockChunks<'a> {
@@ -436,11 +438,13 @@ impl BlockMap {
         excerpt_footer_height: u32,
     ) -> Self {
         let row_count = wrap_snapshot.max_point().row() + 1;
+        let mut transforms = SumTree::default();
+        push_isomorphic(&mut transforms, row_count, &wrap_snapshot);
         let map = Self {
             next_block_id: AtomicUsize::new(0),
             custom_blocks: Vec::new(),
             custom_blocks_by_id: TreeMap::default(),
-            transforms: RefCell::new(SumTree::from_item(Transform::isomorphic(row_count), &())),
+            transforms: RefCell::new(transforms),
             wrap_snapshot: RefCell::new(wrap_snapshot.clone()),
             show_excerpt_controls,
             buffer_header_height,
@@ -547,7 +551,11 @@ impl BlockMap {
             if transform_rows_before_edit > 0 {
                 if transform.block.is_none() {
                     // Preserve any portion of the old isomorphic transform that precedes this edit.
-                    push_isomorphic(&mut new_transforms, transform_rows_before_edit);
+                    push_isomorphic(
+                        &mut new_transforms,
+                        transform_rows_before_edit,
+                        wrap_snapshot,
+                    );
                 } else {
                     // We landed within a block that replaces some lines, so we
                     // extend the edit to start at the beginning of the
@@ -678,6 +686,8 @@ impl BlockMap {
                 let mut summary = TransformSummary {
                     input_rows: 0,
                     output_rows: block.height(),
+                    longest_row: 0,
+                    longest_row_chars: 0,
                 };
 
                 let rows_before_block;
@@ -694,7 +704,7 @@ impl BlockMap {
                     }
                 }
 
-                push_isomorphic(&mut new_transforms, rows_before_block);
+                push_isomorphic(&mut new_transforms, rows_before_block, wrap_snapshot);
                 new_transforms.push(
                     Transform {
                         summary,
@@ -708,7 +718,7 @@ impl BlockMap {
             let rows_after_last_block = new_end
                 .0
                 .saturating_sub(new_transforms.summary().input_rows);
-            push_isomorphic(&mut new_transforms, rows_after_last_block);
+            push_isomorphic(&mut new_transforms, rows_after_last_block, wrap_snapshot);
         }
 
         new_transforms.append(cursor.suffix(&()), &());
@@ -834,24 +844,38 @@ impl BlockMap {
     }
 }
 
-fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32) {
+fn push_isomorphic(tree: &mut SumTree<Transform>, rows: u32, wrap_snapshot: &WrapSnapshot) {
     if rows == 0 {
         return;
     }
 
+    let wrap_row_start = tree.summary().input_rows;
+    let wrap_row_end = wrap_row_start + rows;
+    let wrap_summary = wrap_snapshot.text_summary_for_range(wrap_row_start..wrap_row_end);
+    let summary = TransformSummary {
+        input_rows: rows,
+        output_rows: rows,
+        longest_row: wrap_summary.longest_row,
+        longest_row_chars: wrap_summary.longest_row_chars,
+    };
     let mut merged = false;
     tree.update_last(
         |last_transform| {
             if last_transform.block.is_none() {
-                last_transform.summary.input_rows += rows;
-                last_transform.summary.output_rows += rows;
+                last_transform.summary.add_summary(&summary, &());
                 merged = true;
             }
         },
         &(),
     );
     if !merged {
-        tree.push(Transform::isomorphic(rows), &());
+        tree.push(
+            Transform {
+                summary,
+                block: None,
+            },
+            &(),
+        );
     }
 }
 
@@ -1244,8 +1268,7 @@ impl BlockSnapshot {
     }
 
     pub fn longest_row(&self) -> u32 {
-        let input_row = self.wrap_snapshot.longest_row();
-        self.to_block_point(WrapPoint::new(input_row, 0)).row
+        self.transforms.summary().longest_row
     }
 
     pub(super) fn line_len(&self, row: BlockRow) -> u32 {
@@ -1360,18 +1383,6 @@ impl BlockSnapshot {
             }
         } else {
             self.wrap_snapshot.max_point()
-        }
-    }
-}
-
-impl Transform {
-    fn isomorphic(rows: u32) -> Self {
-        Self {
-            summary: TransformSummary {
-                input_rows: rows,
-                output_rows: rows,
-            },
-            block: None,
         }
     }
 }
@@ -1536,6 +1547,10 @@ impl sum_tree::Summary for TransformSummary {
     }
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
+        if summary.longest_row_chars > self.longest_row_chars {
+            self.longest_row = self.output_rows + summary.longest_row;
+            self.longest_row_chars = summary.longest_row_chars;
+        }
         self.input_rows += summary.input_rows;
         self.output_rows += summary.output_rows;
     }

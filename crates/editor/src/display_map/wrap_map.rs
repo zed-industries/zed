@@ -631,6 +631,67 @@ impl WrapSnapshot {
         }
     }
 
+    pub fn text_summary_for_range(&self, rows: Range<u32>) -> TextSummary {
+        let mut summary = TextSummary::default();
+
+        let start = WrapPoint::new(rows.start, 0);
+        let end = WrapPoint::new(rows.end, 0);
+
+        let mut cursor = self.transforms.cursor::<(WrapPoint, CharPoint)>(&());
+        cursor.seek(&start, Bias::Right, &());
+        if let Some(transform) = cursor.item() {
+            let start_in_transform = start.0 - cursor.start().0 .0;
+            let end_in_transform = cmp::min(end, cursor.end(&()).0).0 - cursor.start().0 .0;
+            if transform.is_isomorphic() {
+                let tab_start = CharPoint(cursor.start().1 .0 + start_in_transform);
+                let tab_end = CharPoint(cursor.start().1 .0 + end_in_transform);
+                summary += &self
+                    .char_snapshot
+                    .text_summary_for_range(tab_start..tab_end);
+            } else {
+                debug_assert_eq!(start_in_transform.row, end_in_transform.row);
+                let indent_len = end_in_transform.column - start_in_transform.column;
+                summary += &TextSummary {
+                    lines: Point::new(0, indent_len),
+                    first_line_chars: indent_len,
+                    last_line_chars: indent_len,
+                    longest_row: 0,
+                    longest_row_chars: indent_len,
+                };
+            }
+
+            cursor.next(&());
+        }
+
+        if rows.end > cursor.start().0.row() {
+            summary += &cursor
+                .summary::<_, TransformSummary>(&WrapPoint::new(rows.end, 0), Bias::Right, &())
+                .output;
+
+            if let Some(transform) = cursor.item() {
+                let end_in_transform = end.0 - cursor.start().0 .0;
+                if transform.is_isomorphic() {
+                    let tab_start = cursor.start().1;
+                    let tab_end = CharPoint(tab_start.0 + end_in_transform);
+                    summary += &self
+                        .char_snapshot
+                        .text_summary_for_range(tab_start..tab_end);
+                } else {
+                    debug_assert_eq!(end_in_transform, Point::new(1, 0));
+                    summary += &TextSummary {
+                        lines: Point::new(1, 0),
+                        first_line_chars: 0,
+                        last_line_chars: 0,
+                        longest_row: 0,
+                        longest_row_chars: 0,
+                    };
+                }
+            }
+        }
+
+        summary
+    }
+
     pub fn soft_wrap_indent(&self, row: u32) -> Option<u32> {
         let mut cursor = self.transforms.cursor::<WrapPoint>(&());
         cursor.seek(&WrapPoint::new(row + 1, 0), Bias::Right, &());
