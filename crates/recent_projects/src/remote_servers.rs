@@ -1222,7 +1222,6 @@ impl RemoteServerProjects {
                 List::new()
                     .empty_message(
                         v_flex()
-                            // .child(ListSeparator)
                             .child(div().px_3().child(
                                 Label::new("No remote servers registered yet.").color(Color::Muted),
                             ))
