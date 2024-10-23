@@ -670,7 +670,7 @@ impl BlockMap {
             // and then insert the block itself.
             for (block_placement, block) in blocks_in_edit.drain(..) {
                 if preserved_blocks_above_edit
-                    && block_placement == BlockPlacement::Above(old_start)
+                    && block_placement == BlockPlacement::Above(new_start)
                 {
                     continue;
                 }
@@ -2188,20 +2188,15 @@ mod tests {
         };
         let tab_size = 1.try_into().unwrap();
         let font_size = px(14.0);
-        let mut buffer_start_header_height = rng.gen_range(1..=5);
-        let mut excerpt_header_height = rng.gen_range(1..=5);
-        let mut excerpt_footer_height = rng.gen_range(1..=5);
-
-        // TODO: remove
-        buffer_start_header_height = 1;
-        excerpt_header_height = 1;
-        excerpt_footer_height = 1;
+        let buffer_start_header_height = rng.gen_range(1..=5);
+        let excerpt_header_height = rng.gen_range(1..=5);
+        let excerpt_footer_height = rng.gen_range(1..=5);
 
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
         log::info!("Excerpt Footer Height: {:?}", excerpt_footer_height);
-
-        let buffer = if rng.gen() {
+        let is_singleton = rng.gen();
+        let buffer = if is_singleton {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
             log::info!("initial singleton buffer text: {:?}", text);
@@ -2317,8 +2312,7 @@ mod tests {
                 }
                 _ => {
                     buffer.update(cx, |buffer, cx| {
-                        // let mutation_count = rng.gen_range(1..=5);
-                        let mutation_count = 1; // todo!("make this random")
+                        let mutation_count = rng.gen_range(1..=5);
                         let subscription = buffer.subscribe();
                         buffer.randomly_mutate(&mut rng, mutation_count, cx);
                         buffer_snapshot = buffer.snapshot(cx);
