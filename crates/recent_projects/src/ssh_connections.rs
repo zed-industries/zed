@@ -1,13 +1,13 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
     EventEmitter, FocusableView, ParentElement as _, PromptLevel, Render, SemanticVersion,
-    SharedString, Task, TextStyleRefinement, Transformation, View,
+    SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
 };
 use gpui::{AppContext, Model};
 
@@ -126,6 +126,14 @@ pub struct SshPrompt {
     prompt: Option<(View<Markdown>, oneshot::Sender<Result<String>>)>,
     cancellation: Option<oneshot::Sender<()>>,
     editor: View<Editor>,
+}
+
+impl Drop for SshPrompt {
+    fn drop(&mut self) {
+        if let Some(cancel) = self.cancellation.take() {
+            cancel.send(()).ok();
+        }
+    }
 }
 
 pub struct SshConnectionModal {
@@ -393,7 +401,7 @@ impl ModalView for SshConnectionModal {
 #[derive(Clone)]
 pub struct SshClientDelegate {
     window: AnyWindowHandle,
-    ui: View<SshPrompt>,
+    ui: WeakView<SshPrompt>,
     known_password: Option<String>,
 }
 
@@ -493,7 +501,7 @@ impl SshClientDelegate {
         )
         .await
         .map_err(|e| {
-            anyhow::anyhow!(
+            anyhow!(
                 "failed to download remote server binary (os: {}, arch: {}): {}",
                 platform.os,
                 platform.arch,
@@ -520,7 +528,7 @@ impl SshClientDelegate {
                 .output()
                 .await?;
             if !output.status.success() {
-                Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
+                Err(anyhow!("failed to run command: {:?}", command))?;
             }
             Ok(())
         }
@@ -629,7 +637,7 @@ pub fn connect_over_ssh(
         rx,
         Arc::new(SshClientDelegate {
             window,
-            ui,
+            ui: ui.downgrade(),
             known_password,
         }),
         cx,
@@ -686,7 +694,7 @@ pub async fn open_ssh_project(
 
                 Some(Arc::new(SshClientDelegate {
                     window: cx.window_handle(),
-                    ui,
+                    ui: ui.downgrade(),
                     known_password: connection_options.password.clone(),
                 }))
             }

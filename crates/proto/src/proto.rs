@@ -373,6 +373,8 @@ messages!(
     (GetPermalinkToLine, Foreground),
     (GetPermalinkToLineResponse, Foreground),
     (FlushBufferedMessages, Foreground),
+    (LanguageServerPromptRequest, Foreground),
+    (LanguageServerPromptResponse, Foreground),
 );
 
 request_messages!(
@@ -500,6 +502,7 @@ request_messages!(
     (OpenServerSettings, OpenBufferResponse),
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
+    (LanguageServerPromptRequest, LanguageServerPromptResponse),
 );
 
 entity_messages!(
@@ -577,6 +580,7 @@ entity_messages!(
     HideToast,
     OpenServerSettings,
     GetPermalinkToLine,
+    LanguageServerPromptRequest
 );
 
 entity_messages!(

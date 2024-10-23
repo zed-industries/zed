@@ -414,7 +414,7 @@ impl TerminalPanel {
                 }
             }
             Shell::Program(shell) => Some((shell, Vec::new())),
-            Shell::WithArguments { program, args } => Some((program, args)),
+            Shell::WithArguments { program, args, .. } => Some((program, args)),
         }) else {
             return;
         };
