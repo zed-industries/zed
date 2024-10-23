@@ -6,6 +6,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use futures::AsyncReadExt;
 use gpui::{Task, WeakView};
@@ -133,7 +134,7 @@ impl SlashCommand for FetchSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
         };

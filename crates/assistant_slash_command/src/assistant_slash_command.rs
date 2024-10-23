@@ -56,6 +56,8 @@ pub struct ArgumentCompletion {
     pub replace_previous_arguments: bool,
 }
 
+pub type SlashCommandResult = Result<SlashCommandOutput>;
+
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
     fn label(&self, _cx: &AppContext) -> CodeLabel {
@@ -87,7 +89,7 @@ pub trait SlashCommand: 'static + Send + Sync {
         // perhaps another kind of delegate is needed here.
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>>;
+    ) -> Task<SlashCommandResult>;
 }
 
 pub type RenderFoldPlaceholder = Arc<

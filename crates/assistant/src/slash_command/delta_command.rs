@@ -2,6 +2,7 @@ use crate::slash_command::file_command::{FileCommandMetadata, FileSlashCommand};
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use collections::HashSet;
 use futures::future;
@@ -48,7 +49,7 @@ impl SlashCommand for DeltaSlashCommand {
         workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let mut paths = HashSet::default();
         let mut file_command_old_outputs = Vec::new();
         let mut file_command_new_outputs = Vec::new();

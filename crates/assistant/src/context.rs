@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry,
+    SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
 use assistant_tool::ToolRegistry;
 use client::{self, proto, telemetry::Telemetry};
@@ -1677,7 +1677,7 @@ impl Context {
     pub fn insert_command_output(
         &mut self,
         command_range: Range<language::Anchor>,
-        output: Task<Result<SlashCommandOutput>>,
+        output: Task<SlashCommandResult>,
         ensure_trailing_newline: bool,
         expand_result: bool,
         cx: &mut ModelContext<Self>,

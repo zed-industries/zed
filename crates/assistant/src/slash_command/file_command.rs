@@ -1,6 +1,8 @@
-use super::{diagnostics_command::collect_buffer_diagnostics, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
+    SlashCommandOutputSection, SlashCommandResult,
+};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
@@ -15,6 +17,8 @@ use std::{
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
+
+use crate::slash_command::diagnostics_command::collect_buffer_diagnostics;
 
 pub(crate) struct FileSlashCommand;
 
@@ -181,7 +185,7 @@ impl SlashCommand for FileSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
@@ -198,7 +202,7 @@ fn collect_files(
     project: Model<Project>,
     glob_inputs: &[String],
     cx: &mut AppContext,
-) -> Task<Result<SlashCommandOutput>> {
+) -> Task<SlashCommandResult> {
     let Ok(matchers) = glob_inputs
         .into_iter()
         .map(|glob_input| {
