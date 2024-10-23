@@ -30,7 +30,7 @@ impl fmt::Display for ZedVersion {
 
 impl ZedVersion {
     pub fn can_collaborate(&self) -> bool {
-        self.0 >= SemanticVersion::new(0, 151, 0)
+        self.0 >= SemanticVersion::new(0, 157, 0)
     }
 }
 
