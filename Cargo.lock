@@ -2558,7 +2558,6 @@ dependencies = [
  "git_hosting_providers",
  "google_ai",
  "gpui",
- "headless",
  "hex",
  "http_client",
  "hyper 0.14.30",
@@ -5257,28 +5256,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7f66481bfee273957b1f20485a4ff3362987f85b2c236580d81b4eb7a326429"
 dependencies = [
  "http 0.2.12",
-]
-
-[[package]]
-name = "headless"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "extension",
- "fs",
- "futures 0.3.30",
- "gpui",
- "language",
- "log",
- "node_runtime",
- "postage",
- "project",
- "proto",
- "settings",
- "shellexpand 2.1.2",
- "signal-hook",
- "util",
 ]
 
 [[package]]
@@ -14623,7 +14600,6 @@ dependencies = [
  "git_hosting_providers",
  "go_to_line",
  "gpui",
- "headless",
  "http_client",
  "image_viewer",
  "inline_completion_button",
