@@ -81,7 +81,6 @@ impl ModalView for ToolchainSelector {}
 
 pub struct ToolchainSelectorDelegate {
     toolchain_selector: WeakView<ToolchainSelector>,
-    project: Model<Project>,
     candidates: ToolchainList,
     matches: Vec<StringMatch>,
     selected_index: usize,
@@ -118,8 +117,6 @@ impl ToolchainSelectorDelegate {
 
         Self {
             toolchain_selector: language_selector,
-            project,
-
             candidates: Default::default(),
             matches: vec![],
             selected_index: 0,
