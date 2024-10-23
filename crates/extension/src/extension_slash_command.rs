@@ -1,3 +1,5 @@
+use std::sync::{atomic::AtomicBool, Arc};
+
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutputSection, SlashCommandResult,
@@ -6,7 +8,6 @@ use assistant_slash_command::{SlashCommandContentType, SlashCommandEvent};
 use futures::{FutureExt, StreamExt};
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
-use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
@@ -113,22 +114,27 @@ impl SlashCommand for ExtensionSlashCommand {
                 .await
         });
         cx.foreground_executor().spawn(async move {
-            let _output = output.await?;
+            let output = output.await?;
+            let mut events = Vec::new();
 
-            let events = vec![
-                SlashCommandEvent::StartSection {
+            for section in output.sections {
+                events.push(SlashCommandEvent::StartSection {
                     icon: IconName::Code,
-                    label: "Code Output".into(),
+                    label: section.label.into(),
                     metadata: None,
-                },
-                SlashCommandEvent::Content(SlashCommandContentType::Text {
-                    text: "let x = 42;\nprintln!(\"The answer is {}\", x);".to_string(),
+                });
+                events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
+                    text: output
+                        .text
+                        .get(section.range.start as usize..section.range.end as usize)
+                        .unwrap_or_default()
+                        .to_string(),
                     run_commands_in_text: false,
-                }),
-                SlashCommandEvent::EndSection { metadata: None },
-            ];
+                }));
+                events.push(SlashCommandEvent::EndSection { metadata: None });
+            }
 
-            return Ok(futures::stream::iter(events).boxed());
+            Ok(futures::stream::iter(events).boxed())
         })
     }
 }
