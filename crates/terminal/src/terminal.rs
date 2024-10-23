@@ -1677,7 +1677,6 @@ impl Terminal {
                                     "".to_string()
                                 }
                             );
-                            dbg!(&process_file, &process_name);
                             let (process_file, process_name) = if truncate {
                                 (
                                     truncate_and_trailoff(&process_file, MAX_CHARS),

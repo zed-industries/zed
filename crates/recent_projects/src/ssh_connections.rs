@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use auto_update::AutoUpdater;
 use editor::Editor;
 use futures::channel::oneshot;
@@ -501,7 +501,7 @@ impl SshClientDelegate {
         )
         .await
         .map_err(|e| {
-            anyhow::anyhow!(
+            anyhow!(
                 "failed to download remote server binary (os: {}, arch: {}): {}",
                 platform.os,
                 platform.arch,
@@ -528,7 +528,7 @@ impl SshClientDelegate {
                 .output()
                 .await?;
             if !output.status.success() {
-                Err(anyhow::anyhow!("failed to run command: {:?}", command))?;
+                Err(anyhow!("failed to run command: {:?}", command))?;
             }
             Ok(())
         }

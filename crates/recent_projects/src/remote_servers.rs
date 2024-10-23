@@ -386,6 +386,7 @@ impl RemoteServerProjects {
         if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
+
         self.selectable_items.next(cx);
         cx.notify();
         self.scroll_to_selected(cx);
