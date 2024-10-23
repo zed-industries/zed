@@ -2,34 +2,66 @@
 
 Remote Development allows you to code at the speed of thought, even when your codebase is not on your local machine. You use Zed locally so the UI is immediately responsive, but offload heavy computation to the development server so that you can work effectively.
 
-> **Note:** Remoting is still "alpha". We are still refining the relaibility and performance.
+> **Note:** Remoting is still "beta". We are still refining the relaibility and performance.
 
 ## Overview
 
-Remote development requires two computers, your local machine that runs the Zed UI and the remote server which runs a small Zed server. The two communicate over SSH, so you will need to be able to SSH from your local machine into the remote server to use this feature.
+Remote development requires two computers, your local machine that runs the Zed UI and the remote server which runs a Zed headless server. The two communicate over SSH, so you will need to be able to SSH from your local machine into the remote server to use this feature.
 
-> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer configure new projects in this mode, and in Zed v0.159 support for these will be removed completely.
+> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use this mode.
 
 ## Setup
 
-1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You ned at least Zed v0.158.
+1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You ned at least Zed v0.159.
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
 1. Click "New Server" and enter the command you use to ssh into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, it will download the latest version of the Zed server and upload it to the remote over SSH.
 1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
+For simple cases where you don't need any SSH arguments, you can run `zed ssh://[<user>@]<host>[:<port>]/<path>` to open a remote folder/file directly.
+
 ## Supported platforms
 
 The remote machine must be able to run Zed's server. The following platforms should work, though note that we have not exhaustively tested every Linux distribution:
 
 - macOS Catalina or later (Intel or Apple Silicon)
-- Linux (x86_64 or arm64, we do not yet support 32-bit platforms). You must have `glibc` installed at version 2.29 (released in 2019) or greater and available globally.
+- Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
 - Windows is not yet supported.
 
 ## Settings
 
-The remote machine will by default inherit all your settings from your local machine's Zed configuration, additionally any project configuration from `.zed/settings.json` in the root of your project will be applied. If you want different settings (for example language server configuration) on a per-server basis you can use `cmd-shift-p Open Server Settings` while connected to a remote project to create a settings file for that server.
+When opening a remote project there are three relevant settings locations:
+* The local Zed settings (in `~/.zed/settings.json` on macOS or `~/.config/zed/settings.json` on Linux) on your local machine.
+* The server Zed settings (in the same place) on the remote server.
+* The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
+
+Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings.json.
+
+Depending on the kind of setting you want to make, which settings file you should use:
+* Project settings should be used for things that affect the project: indentation settings, which formatter / language server to use etc.
+* Server settings should be used for things that affect the server: paths to language servers, etc.
+* Local settings should be used for things that affect the UI: font size, etc.
+
+## Initializing the remote server
+
+Once you provide the SSH options, Zed shells out to `ssh` on your local machine to create a ControlMaster connection with the options you provide.
+
+Any prompts that SSH needs will be shown in the UI, so you can verify host keys, type key passwords, etc.
+
+Once the master connection is established, Zed will check to see if the remote server binary is present in `~/.zed_server` on the remote, and that its version matches the current version of Zed that you're using.
+
+If it is not there or the version mismatches, Zed will try to download the latest version. By default, it will download from `https://zed.dev` directly, but if you set: `{"remote_server": {"download":false}}` in your local settings, it will download the binary to your local machine and then upload it to the remote server.
+
+## Maintaining the SSH connection
+
+Once the server is initialized. Zed will create new SSH connections (reusing the existing ControlMaster) to run the remote development server.
+
+Each connection tries to run the development server in proxy mode. This mode will start the daemon if it is not runnning, and reconnect to it if it is. This way when your connection drops and is restarted, you can continue to work without interruption.
+
+In the case that reconnecting fails, the daemon will not be re-used. That said, unsaved changes are by default persisted locally, so that you do not lose work. You can always reconnect to the project at a later date and Zed will restore unsaved changes.
+
+If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
 
 ## Supported SSH Options
 
@@ -48,21 +80,6 @@ Supported options:
 
 Note that we deliberately disallow some options (for example `-t` or `-T`) that Zed will set for you.
 
-## Connecting & Reconnecting
-
-When you first connect to a remote project, the Zed running on your local machine will SSH in, and upload the latest version of the Zed server. If this fails you should see an error message.
-
-Once the remote server is uploaded, we run two copies of it:
-
-- The first is the "proxy" process. This is attached to the SSH tty and so is killed when your SSH connection closes.
-- The second is the "server" process. This process is backgrounded so it will continue running for about 10 minutes after the connection is closed. This allows us to recover quickly if your connection is lost.
-
-Your local Zed will continually ping the remote server and expect it to reply. If it hasn't replied for a few seconds, it will start a reconnect process. You can tell this is happening because the server icon in the top left will change color.
-
-If the reconnection is successful, and the "server" process is still running on the remote host, a new proxy process will be created and any pending edits uploaded. If reconnecting fails, Zed will show an error overlay, and give you the option to manually retry.
-
-If you are struggling with connection issues, you should be able to see more information in the Zed log `cmd-shift-p Open Log`. If you are seeing things that are unexpected, please file a [GitHub issue](https://github.com/zed-industries/zed/issues/new) or reach out in the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
-
 ## Known Limitations
 
 - Zed extensions are not yet supported on remotes, so languages that need them for support do not work.
@@ -72,7 +89,3 @@ If you are struggling with connection issues, you should be able to see more inf
 ## Feedback
 
 Please join the #remoting-feedback channel in the [Zed Discord](https://discord.gg/zed-community).
-
-## Troubleshooting
-
-When you create a new
