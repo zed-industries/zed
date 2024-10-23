@@ -215,93 +215,94 @@ impl ProjectPicker {
             connection.port,
             &connection.username,
         );
-        cx.new_view(|cx| {
-            let _path_task = cx
-                .spawn({
-                    let workspace = workspace.clone();
-                    move |_, mut cx| async move {
-                        let Ok(Some(paths)) = rx.await else {
-                            workspace
-                                .update(&mut cx, |workspace, cx| {
-                                    let weak = cx.view().downgrade();
-                                    workspace
-                                        .toggle_modal(cx, |cx| RemoteServerProjects::new(cx, weak));
-                                })
-                                .log_err()?;
-                            return None;
-                        };
-
-                        let app_state = workspace
-                            .update(&mut cx, |workspace, _| workspace.app_state().clone())
-                            .ok()?;
-                        let options = cx
-                            .update(|cx| (app_state.build_window_options)(None, cx))
+        let _path_task = cx
+            .spawn({
+                let workspace = workspace.clone();
+                move |this, mut cx| async move {
+                    let Ok(Some(paths)) = rx.await else {
+                        workspace
+                            .update(&mut cx, |workspace, cx| {
+                                let weak = cx.view().downgrade();
+                                workspace
+                                    .toggle_modal(cx, |cx| RemoteServerProjects::new(cx, weak));
+                            })
                             .log_err()?;
+                        return None;
+                    };
 
-                        cx.open_window(options, |cx| {
-                            cx.activate_window();
+                    let app_state = workspace
+                        .update(&mut cx, |workspace, _| workspace.app_state().clone())
+                        .ok()?;
+                    let options = cx
+                        .update(|cx| (app_state.build_window_options)(None, cx))
+                        .log_err()?;
 
-                            let fs = app_state.fs.clone();
-                            update_settings_file::<SshSettings>(fs, cx, {
-                                let paths = paths
-                                    .iter()
-                                    .map(|path| path.to_string_lossy().to_string())
-                                    .collect();
-                                move |setting, _| {
-                                    if let Some(server) = setting
-                                        .ssh_connections
-                                        .as_mut()
-                                        .and_then(|connections| connections.get_mut(ix))
-                                    {
-                                        server.projects.push(SshProject { paths })
-                                    }
+                    cx.open_window(options, |cx| {
+                        cx.activate_window();
+
+                        let fs = app_state.fs.clone();
+                        update_settings_file::<SshSettings>(fs, cx, {
+                            let paths = paths
+                                .iter()
+                                .map(|path| path.to_string_lossy().to_string())
+                                .collect();
+                            move |setting, _| {
+                                if let Some(server) = setting
+                                    .ssh_connections
+                                    .as_mut()
+                                    .and_then(|connections| connections.get_mut(ix))
+                                {
+                                    server.projects.push(SshProject { paths })
                                 }
-                            });
+                            }
+                        });
 
-                            let tasks = paths
-                                .into_iter()
-                                .map(|path| {
-                                    project.update(cx, |project, cx| {
-                                        project.find_or_create_worktree(&path, true, cx)
-                                    })
+                        let tasks = paths
+                            .into_iter()
+                            .map(|path| {
+                                project.update(cx, |project, cx| {
+                                    project.find_or_create_worktree(&path, true, cx)
                                 })
-                                .collect::<Vec<_>>();
-                            cx.spawn(|_| async move {
-                                for task in tasks {
-                                    task.await?;
-                                }
-                                Ok(())
                             })
-                            .detach_and_prompt_err(
-                                "Failed to open path",
-                                cx,
-                                |_, _| None,
-                            );
-
-                            cx.new_view(|cx| {
-                                let workspace =
-                                    Workspace::new(None, project.clone(), app_state.clone(), cx);
-
-                                workspace
-                                    .client()
-                                    .telemetry()
-                                    .report_app_event("create ssh project".to_string());
-
-                                workspace
-                            })
+                            .collect::<Vec<_>>();
+                        cx.spawn(|_| async move {
+                            for task in tasks {
+                                task.await?;
+                            }
+                            Ok(())
                         })
-                        .log_err();
-                        Some(())
-                    }
-                })
-                .shared();
+                        .detach_and_prompt_err(
+                            "Failed to open path",
+                            cx,
+                            |_, _| None,
+                        );
 
-            Self {
-                _path_task,
-                picker,
-                connection_string,
-                nickname,
-            }
+                        cx.new_view(|cx| {
+                            let workspace =
+                                Workspace::new(None, project.clone(), app_state.clone(), cx);
+
+                            workspace
+                                .client()
+                                .telemetry()
+                                .report_app_event("create ssh project".to_string());
+
+                            workspace
+                        })
+                    })
+                    .log_err();
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(DismissEvent);
+                    })
+                    .ok();
+                    Some(())
+                }
+            })
+            .shared();
+        cx.new_view(|_| Self {
+            _path_task,
+            picker,
+            connection_string,
+            nickname,
         })
     }
 }
