@@ -86,10 +86,6 @@ enum SearchDirection {
     Diagonal,
 }
 
-// A measure of the currently quality of an in-progress fuzzy search.
-//
-// Uses 60 bits to store a numeric cost, and 4 bits to store the preceding
-// operation in the search.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct SearchState {
     cost: u32,
@@ -99,6 +95,28 @@ struct SearchState {
 impl SearchState {
     fn new(cost: u32, direction: SearchDirection) -> Self {
         Self { cost, direction }
+    }
+}
+
+struct SearchMatrix {
+    cols: usize,
+    data: Vec<SearchState>,
+}
+
+impl SearchMatrix {
+    fn new(rows: usize, cols: usize) -> Self {
+        SearchMatrix {
+            cols,
+            data: vec![SearchState::new(0, SearchDirection::Diagonal); rows * cols],
+        }
+    }
+
+    fn get(&self, row: usize, col: usize) -> SearchState {
+        self.data[row * self.cols + col]
+    }
+
+    fn set(&mut self, row: usize, col: usize, cost: SearchState) {
+        self.data[row * self.cols + col] = cost;
     }
 }
 
@@ -318,31 +336,9 @@ impl AssistantEditKind {
         const WHITESPACE_INSERTION_COST: u32 = 1;
         const WHITESPACE_DELETION_COST: u32 = 1;
 
-        struct Matrix {
-            cols: usize,
-            data: Vec<SearchState>,
-        }
-
-        impl Matrix {
-            fn new(rows: usize, cols: usize) -> Self {
-                Matrix {
-                    cols,
-                    data: vec![SearchState::new(0, SearchDirection::Diagonal); rows * cols],
-                }
-            }
-
-            fn get(&self, row: usize, col: usize) -> SearchState {
-                self.data[row * self.cols + col]
-            }
-
-            fn set(&mut self, row: usize, col: usize, cost: SearchState) {
-                self.data[row * self.cols + col] = cost;
-            }
-        }
-
         let buffer_len = buffer.len();
         let query_len = search_query.len();
-        let mut matrix = Matrix::new(query_len + 1, buffer_len + 1);
+        let mut matrix = SearchMatrix::new(query_len + 1, buffer_len + 1);
         let mut leading_deletion_cost = 0_u32;
         for (row, query_byte) in search_query.bytes().enumerate() {
             let deletion_cost = if query_byte.is_ascii_whitespace() {
