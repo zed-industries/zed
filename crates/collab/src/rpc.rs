@@ -222,19 +222,6 @@ impl Debug for Session {
     }
 }
 
-fn user_message_handler<M: EnvelopedMessage, InnertRetFut>(
-    handler: impl 'static + Send + Sync + Fn(M, Session) -> InnertRetFut,
-) -> impl 'static + Send + Sync + Fn(M, Session) -> BoxFuture<'static, Result<()>>
-where
-    InnertRetFut: Send + Future<Output = Result<()>>,
-{
-    let handler = Arc::new(handler);
-    move |message, session| {
-        let handler = handler.clone();
-        Box::pin(async move { Ok(handler(message, session).await?) })
-    }
-}
-
 struct DbHandle(Arc<Database>);
 
 impl Deref for DbHandle {
