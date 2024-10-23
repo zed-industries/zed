@@ -750,7 +750,6 @@ impl LanguageServer {
                 (),
             );
             let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
-            outbound_tx.close();
 
             let server = self.server.clone();
             let name = self.name.clone();
@@ -761,18 +760,22 @@ impl LanguageServer {
 
                     select! {
                         request_result = shutdown_request.fuse() => {
-                            request_result?;
+                            match request_result {
+                                Ok(()) => {},
+                                // This will usually return `Canceled` error, hence log quietly.
+                                Err(e) => log::debug!("error shutting down language server {name}: {e}"),
+                            }
                         }
 
-                        _ = timer => {
-                            log::info!("timeout waiting for language server {name} to shutdown");
-                        },
+                        _ = timer => log::info!("timeout waiting for language server {name} to shutdown"),
                     }
 
                     response_handlers.lock().take();
-                    exit?;
                     output_done.recv().await;
                     server.lock().take().map(|mut child| child.kill());
+                    // This will usually return `Canceled` error.
+                    exit.ok();
+                    outbound_tx.close();
                     log::debug!("language server shutdown finished");
 
                     drop(tasks);
