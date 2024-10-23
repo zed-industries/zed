@@ -49,8 +49,8 @@ You can add custom models to the Anthropic provider by adding the following to y
     "anthropic": {
       "available_models": [
         {
-          "name": "some-model",
-          "display_name": "some-model",
+          "name": "claude-3-5-sonnet-20240620",
+          "display_name": "Sonnet 2024-June",
           "max_tokens": 128000,
           "max_output_tokens": 2560,
           "cache_configuration": {
