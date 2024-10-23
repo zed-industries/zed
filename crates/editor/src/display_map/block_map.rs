@@ -2360,7 +2360,8 @@ mod tests {
 
             for (placement, block) in &expected_blocks {
                 log::info!(
-                    "Block placement: {:?} Height: {:?}",
+                    "Block {:?} placement: {:?} Height: {:?}",
+                    block.id(),
                     placement,
                     block.height()
                 );
@@ -2392,8 +2393,8 @@ mod tests {
                 while let Some((placement, block)) = sorted_blocks_iter.peek() {
                     if placement.start().0 == wrap_row && block.place_above() {
                         let (_, block) = sorted_blocks_iter.next().unwrap();
+                        expected_block_positions.push((block_row, block.id()));
                         if block.height() > 0 {
-                            expected_block_positions.push((block_row, block.id()));
                             let text = "\n".repeat((block.height() - 1) as usize);
                             if block_row > 0 {
                                 expected_text.push('\n')
@@ -2417,13 +2418,13 @@ mod tests {
                     if wrap_row >= replace_range.start.0 {
                         is_in_replace_block = true;
                         if wrap_row == replace_range.end.0 {
+                            expected_block_positions.push((block_row, block.id()));
                             if block.height() > 0 {
                                 let text = "\n".repeat((block.height() - 1) as usize);
                                 if block_row > 0 {
                                     expected_text.push('\n');
                                 }
                                 expected_text.push_str(&text);
-                                expected_block_positions.push((block_row, block.id()));
                                 block_row += block.height();
                             }
 
@@ -2452,8 +2453,8 @@ mod tests {
                 while let Some((placement, block)) = sorted_blocks_iter.peek() {
                     if placement.end().0 == wrap_row && block.place_below() {
                         let (_, block) = sorted_blocks_iter.next().unwrap();
+                        expected_block_positions.push((block_row, block.id()));
                         if block.height() > 0 {
-                            expected_block_positions.push((block_row, block.id()));
                             let text = "\n".repeat((block.height() - 1) as usize);
                             if block_row > 0 {
                                 expected_text.push('\n')
