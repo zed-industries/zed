@@ -624,6 +624,7 @@ impl Project {
                     cx,
                 )
             });
+            cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
             let buffer_store = cx
                 .new_model(|cx| BufferStore::local(worktree_store.clone(), dap_store.clone(), cx));
@@ -662,8 +663,6 @@ impl Project {
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
-
-            cx.subscribe(&dap_store, Self::on_dap_store_event).detach();
 
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
@@ -2354,6 +2353,10 @@ impl Project {
                     message: message.clone(),
                 });
             }
+            DapStoreEvent::Notification(message) => cx.emit(Event::Toast {
+                notification_id: "dap".into(),
+                message: message.clone(),
+            }),
         }
     }
 

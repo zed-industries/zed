@@ -28,7 +28,19 @@ impl DebugAdapter for PhpDebugAdapter {
         }))
     }
 
-    async fn fetch_binary(
+    async fn fetch_latest_adapter_version(
+        &self,
+        delegate: &dyn DapDelegate,
+    ) -> Result<AdapterVersion> {
+        let github_repo = GithubRepo {
+            repo_name: Self::ADAPTER_NAME.into(),
+            repo_owner: "xdebug".to_string(),
+        };
+
+        adapters::fetch_latest_adapter_version_from_github(github_repo, delegate).await
+    }
+
+    async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
         _: &DebugAdapterConfig,
@@ -38,11 +50,20 @@ impl DebugAdapter for PhpDebugAdapter {
             .ok_or(anyhow!("Couldn't get npm runtime"))?;
 
         let adapter_path = paths::debug_adapters_dir().join(self.name());
+        let file_name_prefix = format!("{}_", self.name());
+
         let adapter_path = util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-            file_name.starts_with("vscode-php-debug_")
+            file_name.starts_with(&file_name_prefix)
         })
         .await
-        .ok_or_else(|| anyhow!("Couldn't find javascript dap directory"))?;
+        .ok_or_else(|| anyhow!("Couldn't find Php dap directory"))?;
+
+        let version = adapter_path
+            .file_name()
+            .and_then(|file_name| file_name.to_str())
+            .and_then(|file_name| file_name.strip_prefix(&file_name_prefix))
+            .ok_or_else(|| anyhow!("Php debug adapter has invalid file name"))?
+            .to_string();
 
         Ok(DebugAdapterBinary {
             command: node_runtime
@@ -55,17 +76,17 @@ impl DebugAdapter for PhpDebugAdapter {
                 "--server=8132".into(),
             ]),
             envs: None,
+            version,
         })
     }
 
-    async fn install_binary(&self, delegate: &dyn DapDelegate) -> Result<()> {
-        let github_repo = GithubRepo {
-            repo_name: "vscode-php-debug".to_string(),
-            repo_owner: "xdebug".to_string(),
-        };
-
+    async fn install_binary(
+        &self,
+        version: AdapterVersion,
+        delegate: &dyn DapDelegate,
+    ) -> Result<()> {
         let adapter_path =
-            adapters::download_adapter_from_github(self.name(), github_repo, delegate).await?;
+            adapters::download_adapter_from_github(self.name(), version, delegate).await?;
 
         let _ = delegate
             .node_runtime()

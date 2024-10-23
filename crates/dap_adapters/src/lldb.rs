@@ -26,11 +26,19 @@ impl DebugAdapter for LldbDebugAdapter {
         Box::new(StdioTransport::new())
     }
 
-    async fn install_binary(&self, _delegate: &dyn DapDelegate) -> Result<()> {
+    async fn install_binary(
+        &self,
+        _version: AdapterVersion,
+        _delegate: &dyn DapDelegate,
+    ) -> Result<()> {
         bail!("Install binary is not support for install_binary (yet)")
     }
 
-    async fn fetch_binary(
+    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
+        bail!("Fetch latest adapter version not implemented for lldb (yet)")
+    }
+
+    async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,

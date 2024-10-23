@@ -1,6 +1,7 @@
 use crate::ProjectPath;
 use anyhow::{anyhow, Context as _, Result};
-use collections::{HashMap, HashSet};
+use collections::HashSet;
+use dap::adapters::{DebugAdapterBinary, DebugAdapterName};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::messages::{Message, Response};
 use dap::requests::{
@@ -28,8 +29,9 @@ use language::{Buffer, BufferSnapshot};
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
 use settings::WorktreeId;
+use smol::lock::Mutex;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     hash::{Hash, Hasher},
     path::{Path, PathBuf},
     sync::{
@@ -48,6 +50,7 @@ pub enum DapStoreEvent {
         client_id: DebugAdapterClientId,
         message: Message,
     },
+    Notification(String),
 }
 
 pub enum DebugAdapterClientState {
@@ -64,6 +67,7 @@ pub struct DebugPosition {
 pub struct DapStore {
     next_client_id: AtomicUsize,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
+    cached_binaries: Arc<Mutex<HashMap<DebugAdapterName, DebugAdapterBinary>>>,
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
     capabilities: HashMap<DebugAdapterClientId, Capabilities>,
     active_debug_line: Option<(ProjectPath, DebugPosition)>,
@@ -86,6 +90,7 @@ impl DapStore {
         Self {
             active_debug_line: None,
             clients: Default::default(),
+            cached_binaries: Default::default(),
             breakpoints: Default::default(),
             capabilities: HashMap::default(),
             next_client_id: Default::default(),
@@ -242,6 +247,7 @@ impl DapStore {
             self.http_client.clone(),
             self.node_runtime.clone(),
             self.fs.clone(),
+            self.cached_binaries.clone(),
         );
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
@@ -251,21 +257,10 @@ impl DapStore {
                     .log_err()?,
             );
 
-            let mut binary = adapter.fetch_binary(&adapter_delegate, &config).await.ok();
-
-            if binary.is_none() {
-                let _ = adapter
-                    .install_binary(&adapter_delegate)
-                    .await
-                    .context("Failed to install debug adapter binary")
-                    .log_err()?;
-
-                binary = adapter
-                    .fetch_binary(&adapter_delegate, &config)
-                    .await
-                    .context("Failed to get debug adapter binary")
-                    .log_err();
-            }
+            let binary = adapter
+                .get_binary(&adapter_delegate, &config)
+                .await
+                .log_err()?;
 
             let mut request_args = json!({});
             if let Some(config_args) = config.initialize_args.clone() {
@@ -282,7 +277,7 @@ impl DapStore {
 
             client
                 .start(
-                    &binary?,
+                    &binary,
                     move |message, cx| {
                         dap_store
                             .update(cx, |_, cx| {
@@ -1238,6 +1233,7 @@ pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Option<Arc<dyn HttpClient>>,
     node_runtime: Option<NodeRuntime>,
+    cached_binaries: Arc<Mutex<HashMap<DebugAdapterName, DebugAdapterBinary>>>,
 }
 
 impl DapAdapterDelegate {
@@ -1245,11 +1241,13 @@ impl DapAdapterDelegate {
         http_client: Option<Arc<dyn HttpClient>>,
         node_runtime: Option<NodeRuntime>,
         fs: Arc<dyn Fs>,
+        cached_binaries: Arc<Mutex<HashMap<DebugAdapterName, DebugAdapterBinary>>>,
     ) -> Self {
         Self {
             fs,
             http_client,
             node_runtime,
+            cached_binaries,
         }
     }
 }
@@ -1265,5 +1263,9 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
 
     fn fs(&self) -> Arc<dyn Fs> {
         self.fs.clone()
+    }
+
+    fn cached_binaries(&self) -> Arc<Mutex<HashMap<DebugAdapterName, DebugAdapterBinary>>> {
+        self.cached_binaries.clone()
     }
 }

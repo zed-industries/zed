@@ -8,7 +8,8 @@ use anyhow::{anyhow, bail, Result};
 use async_trait::async_trait;
 use custom::CustomDebugAdapter;
 use dap::adapters::{
-    self, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName, GithubRepo,
+    self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
+    GithubRepo,
 };
 use javascript::JsDebugAdapter;
 use lldb::LldbDebugAdapter;
