@@ -7,11 +7,12 @@ use assistant_slash_command::{
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
-    types::{Prompt, SamplingContent, SamplingRole},
+    types::Prompt,
 };
-use futures::StreamExt;
-use gpui::{AppContext, Task, WeakView, WindowContext};
+use futures::stream;
+use gpui::{AppContext, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
+use smol::stream::StreamExt;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use text::LineEnding;
@@ -147,46 +148,48 @@ impl SlashCommand for ContextServerSlashCommand {
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
 
-                let mut events = Vec::new();
-
-                for message in result.messages {
-                    events.push(SlashCommandEvent::StartMessage {
-                        role: match message.role {
-                            SamplingRole::User => Role::User,
-                            SamplingRole::Assistant => Role::Assistant,
-                        },
-                        merge_same_roles: true,
-                    });
-
-                    events.push(SlashCommandEvent::StartSection {
-                        icon: IconName::Ai,
-                        label: "".into(),
-                        metadata: None,
-                    });
-
-                    match message.content {
-                        SamplingContent::Text { text } => {
-                            let mut normalized_text = text;
-                            LineEnding::normalize(&mut normalized_text);
-                            events.push(SlashCommandEvent::Content(
-                                SlashCommandContentType::Text {
-                                    text: normalized_text,
-                                    run_commands_in_text: false,
-                                },
-                            ));
-                        }
-                        SamplingContent::Image {
-                            data: _data,
-                            mime_type: _mime_type,
-                        } => {
-                            todo!("unsupported")
-                        }
-                    }
-
-                    events.push(SlashCommandEvent::EndSection { metadata: None });
+                // Check that there are only user roles
+                if result
+                    .messages
+                    .iter()
+                    .any(|msg| !matches!(msg.role, context_servers::types::SamplingRole::User))
+                {
+                    return Err(anyhow!(
+                        "Prompt contains non-user roles, which is not supported"
+                    ));
                 }
 
-                Ok(futures::stream::iter(events).boxed())
+                // Extract text from user messages into a single prompt string
+                let mut prompt = result
+                    .messages
+                    .into_iter()
+                    .filter_map(|msg| match msg.content {
+                        context_servers::types::SamplingContent::Text { text } => Some(text),
+                        _ => None,
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n\n");
+
+                // We must normalize the line endings here, since servers might return CR characters.
+                LineEnding::normalize(&mut prompt);
+
+                Ok(stream::iter(vec![
+                    SlashCommandEvent::StartSection {
+                        icon: IconName::ZedAssistant,
+                        label: SharedString::from(
+                            result
+                                .description
+                                .unwrap_or(format!("Result from {}", prompt_name)),
+                        ),
+                        metadata: None,
+                    },
+                    SlashCommandEvent::Content(SlashCommandContentType::Text {
+                        text: prompt,
+                        run_commands_in_text: false,
+                    }),
+                    SlashCommandEvent::EndSection { metadata: None },
+                ])
+                .boxed())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

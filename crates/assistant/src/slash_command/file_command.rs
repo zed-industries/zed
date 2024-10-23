@@ -5,10 +5,7 @@ use super::{
 // use super::diagnostics_command::collect_buffer_diagnostics;
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandContentType};
-use futures::{
-    channel::mpsc,
-    stream::{self, StreamExt},
-};
+use futures::{channel::mpsc, stream::StreamExt};
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};

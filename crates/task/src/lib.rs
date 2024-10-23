@@ -269,5 +269,7 @@ pub enum Shell {
         program: String,
         /// The arguments to pass to the program.
         args: Vec<String>,
+        /// An optional string to override the title of the terminal tab
+        title_override: Option<SharedString>,
     },
 }

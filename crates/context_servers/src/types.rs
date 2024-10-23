@@ -2,8 +2,6 @@ use collections::HashMap;
 use serde::{Deserialize, Serialize};
 use url::Url;
 
-pub const PROTOCOL_VERSION: u32 = 1;
-
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RequestType {
@@ -18,7 +16,6 @@ pub enum RequestType {
     PromptsList,
     CompletionComplete,
     Ping,
-    ToolsList,
 }
 
 impl RequestType {
@@ -35,15 +32,21 @@ impl RequestType {
             RequestType::PromptsList => "prompts/list",
             RequestType::CompletionComplete => "completion/complete",
             RequestType::Ping => "ping",
-            RequestType::ToolsList => "tools/list",
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProtocolVersion {
+    VersionString(String),
+    VersionNumber(u32),
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
-    pub protocol_version: u32,
+    pub protocol_version: ProtocolVersion,
     pub capabilities: ClientCapabilities,
     pub client_info: Implementation,
 }
@@ -132,27 +135,26 @@ pub struct CompletionArgument {
     pub value: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
-    pub protocol_version: u32,
+    pub protocol_version: ProtocolVersion,
     pub capabilities: ServerCapabilities,
     pub server_info: Implementation,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesReadResponse {
     pub contents: Vec<ResourceContent>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesListResponse {
+    pub resources: Vec<Resource>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_templates: Option<Vec<ResourceTemplate>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resources: Option<Vec<Resource>>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -178,7 +180,7 @@ pub enum SamplingContent {
     Image { data: String, mime_type: String },
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsGetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -186,19 +188,21 @@ pub struct PromptsGetResponse {
     pub messages: Vec<SamplingMessage>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
     pub prompts: Vec<Prompt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionCompleteResponse {
     pub completion: CompletionResult,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionResult {
     pub values: Vec<String>,

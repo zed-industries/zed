@@ -1,27 +1,28 @@
-mod dev_servers;
 pub mod disconnected_overlay;
+mod remote_servers;
 mod ssh_connections;
 use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
 use client::{DevServerProjectId, ProjectId};
-use dev_servers::reconnect_to_dev_server_project;
-pub use dev_servers::DevServerProjects;
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Subscription, Task, View, ViewContext, WeakView,
 };
+use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
 };
+use remote_servers::reconnect_to_dev_server_project;
+pub use remote_servers::RemoteServerProjects;
 use rpc::proto::DevServerStatus;
 use serde::Deserialize;
 use settings::Settings;
-use ssh_connections::SshSettings;
+pub use ssh_connections::SshSettings;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
@@ -52,7 +53,8 @@ gpui::actions!(projects, [OpenRemote]);
 pub fn init(cx: &mut AppContext) {
     SshSettings::register(cx);
     cx.observe_new_views(RecentProjects::register).detach();
-    cx.observe_new_views(DevServerProjects::register).detach();
+    cx.observe_new_views(RemoteServerProjects::register)
+        .detach();
     cx.observe_new_views(DisconnectedOverlay::register).detach();
 }
 
@@ -247,8 +249,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                     SerializedWorkspaceLocation::Local(paths, order) => order
                         .order()
                         .iter()
-                        .filter_map(|i| paths.paths().get(*i))
-                        .map(|path| path.compact().to_string_lossy().into_owned())
+                        .zip(paths.paths().iter())
+                        .sorted_by_key(|(i, _)| *i)
+                        .map(|(_, path)| path.compact().to_string_lossy().into_owned())
                         .collect::<Vec<_>>()
                         .join(""),
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
@@ -357,7 +360,7 @@ impl PickerDelegate for RecentProjectsDelegate {
                                             if response == 1 {
                                                 workspace.update(&mut cx, |workspace, cx| {
                                                     let handle = cx.view().downgrade();
-                                                    workspace.toggle_modal(cx, |cx| DevServerProjects::new(cx, handle))
+                                                    workspace.toggle_modal(cx, |cx| RemoteServerProjects::new(cx, handle))
                                                 })?;
                                             } else {
                                                 workspace.update(&mut cx, |workspace, cx| {
@@ -384,17 +387,20 @@ impl PickerDelegate for RecentProjectsDelegate {
                                 ..Default::default()
                             };
 
+                            let args = SshSettings::get_global(cx).args_for(&ssh_project.host, ssh_project.port, &ssh_project.user);
+                            let nickname = SshSettings::get_global(cx).nickname_for(&ssh_project.host, ssh_project.port, &ssh_project.user);
                             let connection_options = SshConnectionOptions {
                                 host: ssh_project.host.clone(),
                                 username: ssh_project.user.clone(),
                                 port: ssh_project.port,
                                 password: None,
+                                args,
                             };
 
                             let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
                             cx.spawn(|_, mut cx| async move {
-                                open_ssh_project(connection_options, paths, app_state, open_options, &mut cx).await
+                                open_ssh_project(connection_options, paths, app_state, open_options, nickname, &mut cx).await
                             })
                         }
                     }
@@ -445,8 +451,9 @@ impl PickerDelegate for RecentProjectsDelegate {
                 order
                     .order()
                     .iter()
-                    .filter_map(|i| paths.paths().get(*i).cloned())
-                    .map(|path| path.compact())
+                    .zip(paths.paths().iter())
+                    .sorted_by_key(|(i, _)| **i)
+                    .map(|(_, path)| path.compact())
                     .collect(),
             ),
             SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),

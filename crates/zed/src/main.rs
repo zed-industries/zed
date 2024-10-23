@@ -33,7 +33,7 @@ use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
-use recent_projects::open_ssh_project;
+use recent_projects::{open_ssh_project, SshSettings};
 use release_channel::{AppCommitSha, AppVersion};
 use session::{AppSession, Session};
 use settings::{
@@ -214,6 +214,7 @@ fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuild
         ThemeRegistry::global(cx),
         cx,
     );
+    recent_projects::init(cx);
     prompt_builder
 }
 
@@ -248,7 +249,6 @@ fn init_ui(
     audio::init(Assets, cx);
     workspace::init(app_state.clone(), cx);
 
-    recent_projects::init(cx);
     go_to_line::init(cx);
     file_finder::init(cx);
     tab_switcher::init(cx);
@@ -713,6 +713,16 @@ fn handle_open_request(
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
+            let nickname = cx
+                .update(|cx| {
+                    SshSettings::get_global(cx).nickname_for(
+                        &connection_info.host,
+                        connection_info.port,
+                        &connection_info.username,
+                    )
+                })
+                .ok()
+                .flatten();
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
@@ -720,6 +730,7 @@ fn handle_open_request(
                 paths_with_position.into_iter().map(|p| p.path).collect(),
                 app_state,
                 workspace::OpenOptions::default(),
+                nickname,
                 &mut cx,
             )
             .await
@@ -881,20 +892,34 @@ async fn restore_or_create_workspace(
                     })?;
                     task.await?;
                 }
-                SerializedWorkspaceLocation::Ssh(ssh_project) => {
+                SerializedWorkspaceLocation::Ssh(ssh) => {
+                    let args = cx
+                        .update(|cx| {
+                            SshSettings::get_global(cx).args_for(&ssh.host, ssh.port, &ssh.user)
+                        })
+                        .ok()
+                        .flatten();
+                    let nickname = cx
+                        .update(|cx| {
+                            SshSettings::get_global(cx).nickname_for(&ssh.host, ssh.port, &ssh.user)
+                        })
+                        .ok()
+                        .flatten();
                     let connection_options = SshConnectionOptions {
-                        host: ssh_project.host.clone(),
-                        username: ssh_project.user.clone(),
-                        port: ssh_project.port,
+                        args,
+                        host: ssh.host.clone(),
+                        username: ssh.user.clone(),
+                        port: ssh.port,
                         password: None,
                     };
                     let app_state = app_state.clone();
                     cx.spawn(move |mut cx| async move {
                         recent_projects::open_ssh_project(
                             connection_options,
-                            ssh_project.paths.into_iter().map(PathBuf::from).collect(),
+                            ssh.paths.into_iter().map(PathBuf::from).collect(),
                             app_state,
                             workspace::OpenOptions::default(),
+                            nickname,
                             &mut cx,
                         )
                         .await
