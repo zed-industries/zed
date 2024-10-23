@@ -200,7 +200,25 @@ pub fn simple_example() -> &'static str {
          "cell_type": "code",
          "execution_count": 2,
          "metadata": {},
-         "outputs": [],
+         "outputs": [
+            {
+             "data": {
+                "text/plain": [
+                 "<module 'matplotlib.pyplot' from 'C:\\\\Users\\\\HP\\\\anaconda3\\\\lib\\\\site-packages\\\\matplotlib\\\\pyplot.py'>"
+                ]
+             },
+             "execution_count": 2,
+             "metadata": {},
+             "output_type": "execute_result"
+            },
+            {
+                "name": "stderr",
+                "output_type": "stream",
+                "text": [
+                    "Matplotlib is building the font cache; this may take a moment.\n"
+                ]
+            },
+         ],
          "source": [
           "# Import Matplotlib\n",
           "\n",
