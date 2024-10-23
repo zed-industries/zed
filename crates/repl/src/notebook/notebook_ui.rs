@@ -243,13 +243,16 @@ impl Render for NotebookEditor {
         let gap = Spacing::Large.px(cx);
 
         div()
-            // .debug_below()
+            .debug_below()
             .key_context("notebook")
             .on_action(cx.listener(Self::open_notebook))
             .track_focus(&self.focus_handle)
             .flex()
             .items_start()
-            .size_full()
+            // .size_full()
+            // i'm lazy to figure out this flex height issue right now
+            .h(px(800.))
+            .w(px(1000.))
             .overflow_hidden()
             .p(large_gap)
             .gap(large_gap)
@@ -261,9 +264,8 @@ impl Render for NotebookEditor {
                     .id("notebook-cells")
                     .flex_1()
                     .size_full()
-                    .overflow_hidden()
+                    .overflow_y_scroll()
                     .gap_6()
-                    .child(self.nbformat_minor.to_string())
                     .children(self.cells().iter().map(|cell| match cell {
                         Cell::Code(view) => view.clone().into_any_element(),
                         Cell::Markdown(view) => view.clone().into_any_element(),

@@ -303,7 +303,21 @@ impl RenderableCell for MarkdownCell {
 
 impl Render for MarkdownCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().child(self.source.clone())
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap(Spacing::Large.rems(cx))
+            .child(self.gutter(cx))
+            .child(
+                div()
+                    .flex()
+                    .size_full()
+                    .flex_1()
+                    .p_3()
+                    .font_ui(cx)
+                    .text_size(TextSize::Default.rems(cx))
+                    .child(self.source.clone()),
+            )
     }
 }
 
@@ -346,7 +360,25 @@ impl RenderableCell for CodeCell {
 
 impl Render for CodeCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().child(self.source.clone())
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap(Spacing::Large.rems(cx))
+            .child(self.gutter(cx))
+            .child(
+                div()
+                    .flex()
+                    .size_full()
+                    .flex_1()
+                    .p_3()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(cx.theme().colors().border)
+                    .bg(cx.theme().colors().editor_background)
+                    .font_buffer(cx)
+                    .text_size(TextSize::Editor.rems(cx))
+                    .child(self.source.clone()),
+            )
     }
 }
 
@@ -387,6 +419,20 @@ impl RenderableCell for RawCell {
 
 impl Render for RawCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div().child(self.source.clone())
+        h_flex()
+            .w_full()
+            .items_start()
+            .gap(Spacing::Large.rems(cx))
+            .child(self.gutter(cx))
+            .child(
+                div()
+                    .flex()
+                    .size_full()
+                    .flex_1()
+                    .p_3()
+                    .font_ui(cx)
+                    .text_size(TextSize::Default.rems(cx))
+                    .child(self.source.clone()),
+            )
     }
 }
