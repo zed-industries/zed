@@ -1,11 +1,9 @@
-use super::{codeblock_fence_for_path, create_label_for_command};
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
-    SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use feature_flags::FeatureFlag;
-use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use semantic_index::{LoadedSearchResult, SemanticDb};
@@ -15,6 +13,9 @@ use std::{
 };
 use ui::{prelude::*, IconName};
 use workspace::Workspace;
+
+use crate::slash_command::create_label_for_command;
+use crate::slash_command::file_command::{build_entry_output_section, codeblock_fence_for_path};
 
 pub(crate) struct SearchSlashCommandFeatureFlag;
 
@@ -107,54 +108,65 @@ impl SlashCommand for SearchSlashCommand {
 
             let loaded_results = SemanticDb::load_results(results, &fs, &cx).await?;
 
-            cx.background_executor()
+            let output = cx
+                .background_executor()
                 .spawn(async move {
-                    let mut events = Vec::new();
-                    events.push(SlashCommandEvent::StartSection {
+                    let mut text = format!("Search results for {query}:\n");
+                    let mut sections = Vec::new();
+                    for loaded_result in &loaded_results {
+                        add_search_result_section(loaded_result, &mut text, &mut sections);
+                    }
+
+                    let query = SharedString::from(query);
+                    sections.push(SlashCommandOutputSection {
+                        range: 0..text.len(),
                         icon: IconName::MagnifyingGlass,
-                        label: SharedString::from(format!("Search results for {query}:")),
+                        label: query,
                         metadata: None,
                     });
 
-                    for loaded_result in loaded_results {
-                        add_search_result_section(&loaded_result, &mut events);
+                    SlashCommandOutput {
+                        text,
+                        sections,
+                        run_commands_in_text: false,
                     }
-
-                    events.push(SlashCommandEvent::EndSection { metadata: None });
-
-                    Ok(stream::iter(events).boxed())
+                    .to_event_stream()
                 })
-                .await
+                .await;
+
+            Ok(output)
         })
     }
 }
 
 pub fn add_search_result_section(
     loaded_result: &LoadedSearchResult,
-    events: &mut Vec<SlashCommandEvent>,
+    text: &mut String,
+    sections: &mut Vec<SlashCommandOutputSection<usize>>,
 ) {
     let LoadedSearchResult {
         path,
+        full_path,
         excerpt_content,
         row_range,
         ..
     } = loaded_result;
+    let section_start_ix = text.len();
+    text.push_str(&codeblock_fence_for_path(
+        Some(&path),
+        Some(row_range.clone()),
+    ));
 
-    let mut text = codeblock_fence_for_path(Some(&path), Some(row_range.clone()));
     text.push_str(&excerpt_content);
     if !text.ends_with('\n') {
         text.push('\n');
     }
     writeln!(text, "```\n").unwrap();
-    let path_str = path.to_string_lossy().to_string();
-    events.push(SlashCommandEvent::StartSection {
-        icon: IconName::File,
-        label: path_str.into(),
-        metadata: None,
-    });
-    events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
-        text,
-        run_commands_in_text: false,
-    }));
-    events.push(SlashCommandEvent::EndSection { metadata: None });
+    let section_end_ix = text.len() - 1;
+    sections.push(build_entry_output_section(
+        section_start_ix..section_end_ix,
+        Some(&full_path),
+        false,
+        Some(row_range.start() + 1..row_range.end() + 1),
+    ));
 }

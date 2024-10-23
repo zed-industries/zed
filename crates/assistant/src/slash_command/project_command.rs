@@ -1,18 +1,23 @@
-use super::{create_label_for_command, SlashCommand};
+use super::{create_label_for_command, search_command::add_search_result_section, SlashCommand};
 use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
-    SlashCommandResult,
+    ArgumentCompletion, SlashCommandOutput, SlashCommandOutputSection, SlashCommandResult,
 };
 use feature_flags::FeatureFlag;
-use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
 use schemars::JsonSchema;
 use semantic_index::SemanticDb;
 use serde::Deserialize;
+
+pub struct ProjectSlashCommandFeatureFlag;
+
+impl FeatureFlag for ProjectSlashCommandFeatureFlag {
+    const NAME: &'static str = "project-slash-command";
+}
+
 use std::{
     fmt::Write as _,
     ops::DerefMut,
@@ -20,12 +25,6 @@ use std::{
 };
 use ui::{BorrowAppContext as _, IconName};
 use workspace::Workspace;
-
-pub struct ProjectSlashCommandFeatureFlag;
-
-impl FeatureFlag for ProjectSlashCommandFeatureFlag {
-    const NAME: &'static str = "project-slash-command";
-}
 
 pub struct ProjectSlashCommand {
     prompt_builder: Arc<PromptBuilder>,
@@ -125,49 +124,45 @@ impl SlashCommand for ProjectSlashCommand {
 
             cx.background_executor()
                 .spawn(async move {
-                    let mut events = Vec::new();
-                    events.push(SlashCommandEvent::StartSection {
+                    let mut output = "Project context:\n".to_string();
+                    let mut sections = Vec::new();
+
+                    for (ix, query) in search_queries.into_iter().enumerate() {
+                        let start_ix = output.len();
+                        writeln!(&mut output, "Results for {query}:").unwrap();
+                        let mut has_results = false;
+                        for result in &results {
+                            if result.query_index == ix {
+                                add_search_result_section(result, &mut output, &mut sections);
+                                has_results = true;
+                            }
+                        }
+                        if has_results {
+                            sections.push(SlashCommandOutputSection {
+                                range: start_ix..output.len(),
+                                icon: IconName::MagnifyingGlass,
+                                label: query.into(),
+                                metadata: None,
+                            });
+                            output.push('\n');
+                        } else {
+                            output.truncate(start_ix);
+                        }
+                    }
+
+                    sections.push(SlashCommandOutputSection {
+                        range: 0..output.len(),
                         icon: IconName::Book,
                         label: "Project context".into(),
                         metadata: None,
                     });
 
-                    let output = "Project context:\n".to_string();
-                    events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
-                        text: output.clone(),
+                    Ok(SlashCommandOutput {
+                        text: output,
+                        sections,
                         run_commands_in_text: true,
-                    }));
-
-                    for (ix, query) in search_queries.into_iter().enumerate() {
-                        let mut has_results = false;
-                        events.push(SlashCommandEvent::StartSection {
-                            icon: IconName::MagnifyingGlass,
-                            label: query.clone().into(),
-                            metadata: None,
-                        });
-
-                        let mut section_text = format!("Results for {query}:\n");
-                        for result in &results {
-                            if result.query_index == ix {
-                                writeln!(&mut section_text, "{}", result.excerpt_content).unwrap();
-                                has_results = true;
-                            }
-                        }
-
-                        if has_results {
-                            events.push(SlashCommandEvent::Content(
-                                SlashCommandContentType::Text {
-                                    text: section_text,
-                                    run_commands_in_text: true,
-                                },
-                            ));
-                            events.push(SlashCommandEvent::EndSection { metadata: None });
-                        }
                     }
-
-                    events.push(SlashCommandEvent::EndSection { metadata: None });
-
-                    Ok(stream::iter(events).boxed())
+                    .to_event_stream())
                 })
                 .await
         })

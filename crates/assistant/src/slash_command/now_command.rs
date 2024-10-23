@@ -3,11 +3,10 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
-    SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use chrono::Local;
-use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
@@ -53,19 +52,18 @@ impl SlashCommand for NowSlashCommand {
     ) -> Task<SlashCommandResult> {
         let now = Local::now();
         let text = format!("Today is {now}.", now = now.to_rfc2822());
+        let range = 0..text.len();
 
-        Task::ready(Ok(stream::iter(vec![
-            SlashCommandEvent::StartSection {
+        Task::ready(Ok(SlashCommandOutput {
+            text,
+            sections: vec![SlashCommandOutputSection {
+                range,
                 icon: IconName::CountdownTimer,
                 label: now.to_rfc2822().into(),
                 metadata: None,
-            },
-            SlashCommandEvent::Content(SlashCommandContentType::Text {
-                text,
-                run_commands_in_text: false,
-            }),
-            SlashCommandEvent::EndSection { metadata: None },
-        ])
-        .boxed()))
+            }],
+            run_commands_in_text: false,
+        }
+        .to_event_stream()))
     }
 }

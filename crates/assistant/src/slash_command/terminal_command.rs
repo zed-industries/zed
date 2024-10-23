@@ -3,10 +3,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
-    SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
-use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -87,21 +86,19 @@ impl SlashCommand for TerminalSlashCommand {
         let mut text = String::new();
         text.push_str("Terminal output:\n");
         text.push_str(&lines.join("\n"));
+        let range = 0..text.len();
 
-        let events = vec![
-            SlashCommandEvent::StartSection {
+        Task::ready(Ok(SlashCommandOutput {
+            text,
+            sections: vec![SlashCommandOutputSection {
+                range,
                 icon: IconName::Terminal,
                 label: "Terminal".into(),
                 metadata: None,
-            },
-            SlashCommandEvent::Content(SlashCommandContentType::Text {
-                text,
-                run_commands_in_text: false,
-            }),
-            SlashCommandEvent::EndSection { metadata: None },
-        ];
-
-        Task::ready(Ok(stream::iter(events).boxed()))
+            }],
+            run_commands_in_text: false,
+        }
+        .to_event_stream()))
     }
 }
 

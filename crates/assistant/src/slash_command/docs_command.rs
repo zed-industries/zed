@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
-    SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
@@ -276,8 +276,6 @@ impl SlashCommand for DocsSlashCommand {
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
-        use futures::stream::{self, StreamExt};
-
         if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing an argument")));
         };
@@ -316,7 +314,7 @@ impl SlashCommand for DocsSlashCommand {
                         .await;
                 }
 
-                let (text, _ranges) = if let Some((prefix, _)) = key.split_once('*') {
+                let (text, ranges) = if let Some((prefix, _)) = key.split_once('*') {
                     let docs = store.load_many_by_prefix(prefix.to_string()).await?;
 
                     let mut text = String::new();
@@ -340,26 +338,26 @@ impl SlashCommand for DocsSlashCommand {
                     (text, vec![(key, range)])
                 };
 
-                anyhow::Ok((provider, text, _ranges))
+                anyhow::Ok((provider, text, ranges))
             }
         });
 
         cx.foreground_executor().spawn(async move {
-            let (provider, text, _) = task.await?;
-            let events = vec![
-                SlashCommandEvent::StartSection {
-                    icon: IconName::FileDoc,
-                    label: format!("docs ({provider})").into(),
-                    metadata: None,
-                },
-                SlashCommandEvent::Content(SlashCommandContentType::Text {
-                    text,
-                    run_commands_in_text: false,
-                }),
-                SlashCommandEvent::EndSection { metadata: None },
-            ];
-
-            Ok(stream::iter(events).boxed())
+            let (provider, text, ranges) = task.await?;
+            Ok(SlashCommandOutput {
+                text,
+                sections: ranges
+                    .into_iter()
+                    .map(|(key, range)| SlashCommandOutputSection {
+                        range,
+                        icon: IconName::FileDoc,
+                        label: format!("docs ({provider}): {key}",).into(),
+                        metadata: None,
+                    })
+                    .collect(),
+                run_commands_in_text: false,
+            }
+            .to_event_stream())
         })
     }
 }

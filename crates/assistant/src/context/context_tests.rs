@@ -5,7 +5,7 @@ use crate::{
 };
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
+    ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
 use collections::HashSet;
@@ -1069,33 +1069,33 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         .take(10)
                         .collect::<String>();
 
-                    let mut events = vec![SlashCommandEvent::StartMessage {
+                    let mut events = vec![Ok(SlashCommandEvent::StartMessage {
                         role: Role::User,
                         merge_same_roles: true,
-                    }];
+                    })];
 
                     let num_sections = rng.gen_range(0..=3);
                     let mut section_start = 0;
                     for _ in 0..num_sections {
                         let section_end = rng.gen_range(section_start..=output_text.len());
-                        events.push(SlashCommandEvent::StartSection {
+                        events.push(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Ai,
                             label: "section".into(),
                             metadata: None,
-                        });
-                        events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
+                        }));
+                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
                             text: output_text[section_start..section_end].to_string(),
                             run_commands_in_text: false,
-                        }));
-                        events.push(SlashCommandEvent::EndSection { metadata: None });
+                        })));
+                        events.push(Ok(SlashCommandEvent::EndSection { metadata: None }));
                         section_start = section_end;
                     }
 
                     if section_start < output_text.len() {
-                        events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
+                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
                             text: output_text[section_start..].to_string(),
                             run_commands_in_text: false,
-                        }));
+                        })));
                     }
 
                     log::info!(
@@ -1429,18 +1429,11 @@ impl SlashCommand for FakeSlashCommand {
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
-        Task::ready(Ok(stream::iter(vec![
-            SlashCommandEvent::StartSection {
-                icon: IconName::Ai,
-                label: "Fake Command".into(),
-                metadata: None,
-            },
-            SlashCommandEvent::Content(SlashCommandContentType::Text {
-                text: format!("Executed fake command: {}", self.0),
-                run_commands_in_text: false,
-            }),
-            SlashCommandEvent::EndSection { metadata: None },
-        ])
-        .boxed()))
+        Task::ready(Ok(SlashCommandOutput {
+            text: format!("Executed fake command: {}", self.0),
+            sections: vec![],
+            run_commands_in_text: false,
+        }
+        .to_event_stream()))
     }
 }

@@ -1,11 +1,9 @@
-use super::SlashCommand;
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use editor::Editor;
-use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
@@ -77,20 +75,18 @@ impl SlashCommand for OutlineSlashCommand {
                     outline_text.push_str(&item.string);
                     outline_text.push('\n');
                 }
-                let events = vec![
-                    SlashCommandEvent::StartSection {
+
+                Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: 0..outline_text.len(),
                         icon: IconName::ListTree,
                         label: path.to_string_lossy().to_string().into(),
                         metadata: None,
-                    },
-                    SlashCommandEvent::Content(SlashCommandContentType::Text {
-                        text: outline_text,
-                        run_commands_in_text: false,
-                    }),
-                    SlashCommandEvent::EndSection { metadata: None },
-                ];
-
-                Ok(stream::iter(events).boxed())
+                    }],
+                    text: outline_text,
+                    run_commands_in_text: false,
+                }
+                .to_event_stream())
             })
         });
 

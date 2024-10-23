@@ -458,6 +458,7 @@ dependencies = [
  "language",
  "language_model",
  "parking_lot",
+ "pretty_assertions",
  "serde",
  "serde_json",
  "workspace",
@@ -14603,7 +14604,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.159.0"
+version = "0.160.0"
 dependencies = [
  "activity_indicator",
  "anyhow",

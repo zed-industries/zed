@@ -5,13 +5,10 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandContentType, SlashCommandEvent,
-    SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
-use futures::{
-    stream::{self, StreamExt},
-    AsyncReadExt,
-};
+use futures::AsyncReadExt;
 use gpui::{Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
@@ -160,19 +157,18 @@ impl SlashCommand for FetchSlashCommand {
                 bail!("no textual content found");
             }
 
-            Ok(stream::iter(vec![
-                SlashCommandEvent::StartSection {
+            let range = 0..text.len();
+            Ok(SlashCommandOutput {
+                text,
+                sections: vec![SlashCommandOutputSection {
+                    range,
                     icon: IconName::AtSign,
                     label: format!("fetch {}", url).into(),
                     metadata: None,
-                },
-                SlashCommandEvent::Content(SlashCommandContentType::Text {
-                    text,
-                    run_commands_in_text: false,
-                }),
-                SlashCommandEvent::EndSection { metadata: None },
-            ])
-            .boxed())
+                }],
+                run_commands_in_text: false,
+            }
+            .to_event_stream())
         })
     }
 }

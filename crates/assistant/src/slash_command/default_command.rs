@@ -1,11 +1,9 @@
-use super::SlashCommand;
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::{
@@ -71,20 +69,17 @@ impl SlashCommand for DefaultSlashCommand {
                 text.push('\n');
             }
 
-            let stream = stream::iter(vec![
-                SlashCommandEvent::StartSection {
+            Ok(SlashCommandOutput {
+                sections: vec![SlashCommandOutputSection {
+                    range: 0..text.len(),
                     icon: IconName::Library,
                     label: "Default".into(),
                     metadata: None,
-                },
-                SlashCommandEvent::Content(SlashCommandContentType::Text {
-                    text,
-                    run_commands_in_text: true,
-                }),
-                SlashCommandEvent::EndSection { metadata: None },
-            ]);
-
-            Ok(stream.boxed())
+                }],
+                text,
+                run_commands_in_text: true,
+            }
+            .to_event_stream())
         })
     }
 }

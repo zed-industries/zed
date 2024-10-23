@@ -1,10 +1,10 @@
+use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
     prompt_library::open_prompt_library,
     prompts::PromptBuilder,
     slash_command::{
-        codeblock_fence_for_path,
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
         file_command, SlashCommandCompletionProvider, SlashCommandRegistry,

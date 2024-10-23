@@ -1,9 +1,11 @@
-use super::{buffer_to_output, SlashCommand};
 use anyhow::{Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use collections::{HashMap, HashSet};
 use editor::Editor;
-use futures::{future::join_all, stream, StreamExt};
+use futures::future::join_all;
 use gpui::{Entity, Task, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
 use std::{
@@ -13,6 +15,8 @@ use std::{
 use ui::{ActiveTheme, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
+
+use crate::slash_command::file_command::append_buffer_to_output;
 
 pub(crate) struct TabSlashCommand;
 
@@ -142,16 +146,11 @@ impl SlashCommand for TabSlashCommand {
         );
 
         cx.background_executor().spawn(async move {
-            let stream = {
-                let search_results = tab_items_search.await?;
-                stream::iter(search_results).flat_map(|(full_path, buffer, _)| {
-                    let output = buffer_to_output(&buffer, full_path.as_deref())
-                        .log_err()
-                        .unwrap_or_default();
-                    futures::stream::iter(output)
-                })
-            };
-            Ok(stream.boxed())
+            let mut output = SlashCommandOutput::default();
+            for (full_path, buffer, _) in tab_items_search.await? {
+                append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
+            }
+            Ok(output.to_event_stream())
         })
     }
 }

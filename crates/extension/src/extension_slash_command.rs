@@ -2,10 +2,10 @@ use std::sync::{atomic::AtomicBool, Arc};
 
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
-use assistant_slash_command::{SlashCommandContentType, SlashCommandEvent};
-use futures::{FutureExt, StreamExt};
+use futures::FutureExt;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
@@ -115,26 +115,21 @@ impl SlashCommand for ExtensionSlashCommand {
         });
         cx.foreground_executor().spawn(async move {
             let output = output.await?;
-            let mut events = Vec::new();
-
-            for section in output.sections {
-                events.push(SlashCommandEvent::StartSection {
-                    icon: IconName::Code,
-                    label: section.label.into(),
-                    metadata: None,
-                });
-                events.push(SlashCommandEvent::Content(SlashCommandContentType::Text {
-                    text: output
-                        .text
-                        .get(section.range.start as usize..section.range.end as usize)
-                        .unwrap_or_default()
-                        .to_string(),
-                    run_commands_in_text: false,
-                }));
-                events.push(SlashCommandEvent::EndSection { metadata: None });
+            Ok(SlashCommandOutput {
+                text: output.text,
+                sections: output
+                    .sections
+                    .into_iter()
+                    .map(|section| SlashCommandOutputSection {
+                        range: section.range.into(),
+                        icon: IconName::Code,
+                        label: section.label.into(),
+                        metadata: None,
+                    })
+                    .collect(),
+                run_commands_in_text: false,
             }
-
-            Ok(futures::stream::iter(events).boxed())
+            .to_event_stream())
         })
     }
 }

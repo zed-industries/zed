@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry,
+    SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry,
     SlashCommandResult,
 };
 use assistant_tool::ToolRegistry;
@@ -1736,7 +1736,7 @@ impl Context {
                 let mut last_role: Option<Role> = None;
 
                 while let Some(event) = stream.next().await {
-                    dbg!(&event);
+                    let event = event?;
                     match event {
                         SlashCommandEvent::StartMessage {
                             role,
@@ -1778,7 +1778,7 @@ impl Context {
                             })?;
                         }
                         SlashCommandEvent::Content(content) => match content {
-                            SlashCommandContentType::Text {
+                            SlashCommandContent::Text {
                                 text,
                                 run_commands_in_text,
                             } => {

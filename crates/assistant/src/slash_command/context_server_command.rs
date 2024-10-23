@@ -1,23 +1,22 @@
-use super::create_label_for_command;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    AfterCompletion, ArgumentCompletion, Role, SlashCommand, SlashCommandContentType,
-    SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+    AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
+    SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
     types::Prompt,
 };
-use futures::stream;
-use gpui::{AppContext, SharedString, Task, WeakView, WindowContext};
+use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
-use smol::stream::StreamExt;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use text::LineEnding;
-use ui::IconName;
+use ui::{IconName, SharedString};
 use workspace::Workspace;
+
+use crate::slash_command::create_label_for_command;
 
 pub struct ContextServerSlashCommand {
     server_id: String,
@@ -173,8 +172,9 @@ impl SlashCommand for ContextServerSlashCommand {
                 // We must normalize the line endings here, since servers might return CR characters.
                 LineEnding::normalize(&mut prompt);
 
-                Ok(stream::iter(vec![
-                    SlashCommandEvent::StartSection {
+                Ok(SlashCommandOutput {
+                    sections: vec![SlashCommandOutputSection {
+                        range: 0..(prompt.len()),
                         icon: IconName::ZedAssistant,
                         label: SharedString::from(
                             result
@@ -182,14 +182,11 @@ impl SlashCommand for ContextServerSlashCommand {
                                 .unwrap_or(format!("Result from {}", prompt_name)),
                         ),
                         metadata: None,
-                    },
-                    SlashCommandEvent::Content(SlashCommandContentType::Text {
-                        text: prompt,
-                        run_commands_in_text: false,
-                    }),
-                    SlashCommandEvent::EndSection { metadata: None },
-                ])
-                .boxed())
+                    }],
+                    text: prompt,
+                    run_commands_in_text: false,
+                }
+                .to_event_stream())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

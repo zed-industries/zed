@@ -1,11 +1,9 @@
-use super::SlashCommand;
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use futures::stream::{self, StreamExt};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -94,21 +92,18 @@ impl SlashCommand for PromptSlashCommand {
             if prompt.is_empty() {
                 prompt.push('\n');
             }
-
-            let stream = stream::iter(vec![
-                SlashCommandEvent::StartSection {
+            let range = 0..prompt.len();
+            Ok(SlashCommandOutput {
+                text: prompt,
+                sections: vec![SlashCommandOutputSection {
+                    range,
                     icon: IconName::Library,
                     label: title,
                     metadata: None,
-                },
-                SlashCommandEvent::Content(SlashCommandContentType::Text {
-                    text: prompt,
-                    run_commands_in_text: true,
-                }),
-                SlashCommandEvent::EndSection { metadata: None },
-            ]);
-
-            Ok(stream.boxed())
+                }],
+                run_commands_in_text: true,
+            }
+            .to_event_stream())
         })
     }
 }

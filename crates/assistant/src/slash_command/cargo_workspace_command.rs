@@ -1,11 +1,9 @@
-use super::SlashCommand;
 use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection,
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use fs::Fs;
-use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Model, Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
@@ -139,19 +137,18 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
 
             cx.foreground_executor().spawn(async move {
                 let text = output.await?;
-                Ok(stream::iter(vec![
-                    SlashCommandEvent::StartSection {
+                let range = 0..text.len();
+                Ok(SlashCommandOutput {
+                    text,
+                    sections: vec![SlashCommandOutputSection {
+                        range,
                         icon: IconName::FileTree,
                         label: "Project".into(),
                         metadata: None,
-                    },
-                    SlashCommandEvent::Content(SlashCommandContentType::Text {
-                        text,
-                        run_commands_in_text: false,
-                    }),
-                    SlashCommandEvent::EndSection { metadata: None },
-                ])
-                .boxed())
+                    }],
+                    run_commands_in_text: false,
+                }
+                .to_event_stream())
             })
         });
         output.unwrap_or_else(|error| Task::ready(Err(error)))

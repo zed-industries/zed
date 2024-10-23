@@ -1,11 +1,10 @@
-use super::create_label_for_command;
-use super::SlashCommand;
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandContentType;
-use assistant_slash_command::{ArgumentCompletion, SlashCommandEvent, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use feature_flags::FeatureFlag;
-use futures::stream::BoxStream;
-use futures::stream::{self, StreamExt};
+use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
@@ -18,6 +17,8 @@ use std::sync::{atomic::AtomicBool, Arc};
 use ui::{BorrowAppContext, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
+
+use crate::slash_command::create_label_for_command;
 
 pub struct AutoSlashCommandFeatureFlag;
 
@@ -94,7 +95,7 @@ impl SlashCommand for AutoCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<BoxStream<'static, SlashCommandEvent>>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
@@ -142,13 +143,12 @@ impl SlashCommand for AutoCommand {
             prompt.push('\n');
             prompt.push_str(&original_prompt);
 
-            Ok(stream::iter(vec![SlashCommandEvent::Content(
-                SlashCommandContentType::Text {
-                    text: prompt,
-                    run_commands_in_text: true,
-                },
-            )])
-            .boxed())
+            Ok(SlashCommandOutput {
+                text: prompt,
+                sections: Vec::new(),
+                run_commands_in_text: true,
+            }
+            .to_event_stream())
         })
     }
 }
