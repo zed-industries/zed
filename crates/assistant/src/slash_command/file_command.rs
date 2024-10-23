@@ -528,6 +528,7 @@ pub fn append_buffer_to_output(
 
 #[cfg(test)]
 mod test {
+    use assistant_slash_command::SlashCommandOutput;
     use fs::FakeFs;
     use gpui::TestAppContext;
     use project::Project;
@@ -577,6 +578,11 @@ mod test {
             .update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx))
             .await
             .unwrap();
+        let result_1 = SlashCommandOutput::from_event_stream(result_1)
+            .await
+            .unwrap();
+
+        dbg!(&result_1);
 
         assert!(result_1.text.starts_with("root/dir"));
         // 4 files + 2 directories
@@ -586,6 +592,9 @@ mod test {
             .update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx))
             .await
             .unwrap();
+        let result_2 = SlashCommandOutput::from_event_stream(result_2)
+            .await
+            .unwrap();
 
         assert_eq!(result_1, result_2);
 
@@ -593,6 +602,7 @@ mod test {
             .update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx))
             .await
             .unwrap();
+        let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
         assert!(result.text.starts_with("root/dir"));
         // 5 files + 2 directories
@@ -639,6 +649,7 @@ mod test {
             .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
             .await
             .unwrap();
+        let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
         // Sanity check
         assert!(result.text.starts_with("zed/assets/themes\n"));
@@ -700,6 +711,7 @@ mod test {
             .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
             .await
             .unwrap();
+        let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
         assert!(result.text.starts_with("zed/assets/themes\n"));
         assert_eq!(result.sections[0].label, "zed/assets/themes/LICENSE");
