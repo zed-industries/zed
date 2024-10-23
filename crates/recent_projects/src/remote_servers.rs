@@ -373,24 +373,12 @@ impl RemoteServerProjects {
         }
     }
 
-    fn scroll_to_selected(&self, _: &mut ViewContext<Self>) {
-        if let Mode::Default(scroll_state) = &self.mode {
-            if let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() {
-                if let Some(active_item) = self.selectable_items.active_item {
-                    scroll_handle.scroll_to_item(active_item);
-                }
-            }
-        }
-    }
-
     fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
 
         self.selectable_items.next(cx);
-        cx.notify();
-        self.scroll_to_selected(cx);
     }
 
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
@@ -398,8 +386,6 @@ impl RemoteServerProjects {
             return;
         }
         self.selectable_items.prev(cx);
-        cx.notify();
-        self.scroll_to_selected(cx);
     }
 
     pub fn project_picker(
