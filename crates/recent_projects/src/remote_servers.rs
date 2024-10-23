@@ -373,24 +373,12 @@ impl RemoteServerProjects {
         }
     }
 
-    fn scroll_to_selected(&self, _: &mut ViewContext<Self>) {
-        if let Mode::Default(scroll_state) = &self.mode {
-            if let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() {
-                if let Some(active_item) = self.selectable_items.active_item {
-                    scroll_handle.scroll_to_item(active_item);
-                }
-            }
-        }
-    }
-
     fn next_item(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
         if !matches!(self.mode, Mode::Default(_) | Mode::ViewServerOptions(_, _)) {
             return;
         }
 
         self.selectable_items.next(cx);
-        cx.notify();
-        self.scroll_to_selected(cx);
     }
 
     fn prev_item(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
@@ -398,8 +386,6 @@ impl RemoteServerProjects {
             return;
         }
         self.selectable_items.prev(cx);
-        cx.notify();
-        self.scroll_to_selected(cx);
     }
 
     pub fn project_picker(
@@ -818,14 +804,19 @@ impl RemoteServerProjects {
             .child(Label::new(project.paths.join(", ")))
             .on_click(cx.listener(move |this, _, cx| callback(this, cx)))
             .end_hover_slot::<AnyElement>(Some(
-                IconButton::new("remove-remote-project", IconName::TrashAlt)
-                    .icon_size(IconSize::Small)
-                    .shape(IconButtonShape::Square)
-                    .on_click(
-                        cx.listener(move |this, _, cx| this.delete_ssh_project(server_ix, ix, cx)),
+                div()
+                    .mr_2()
+                    .child(
+                        // Right-margin to offset it from the Scrollbar
+                        IconButton::new("remove-remote-project", IconName::TrashAlt)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Large)
+                            .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
+                            .on_click(cx.listener(move |this, _, cx| {
+                                this.delete_ssh_project(server_ix, ix, cx)
+                            })),
                     )
-                    .size(ButtonSize::Large)
-                    .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
                     .into_any_element(),
             ))
     }
@@ -1217,7 +1208,6 @@ impl RemoteServerProjects {
                 List::new()
                     .empty_message(
                         v_flex()
-                            // .child(ListSeparator)
                             .child(div().px_3().child(
                                 Label::new("No remote servers registered yet.").color(Color::Muted),
                             ))
@@ -1241,7 +1231,6 @@ impl RemoteServerProjects {
                 Section::new().padded(false).child(
                     v_flex()
                         .min_h(rems(20.))
-                        .group("remote-projects-section")
                         .size_full()
                         .relative()
                         .child(ListSeparator)
@@ -1263,7 +1252,6 @@ impl RemoteServerProjects {
                         )
                         .child(
                             div()
-                                .visible_on_hover("remote-projects-section")
                                 .occlude()
                                 .h_full()
                                 .absolute()

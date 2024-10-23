@@ -1397,7 +1397,7 @@ impl SshRemoteConnection {
                             check_interval
                         );
                         delegate.set_status(
-                            Some("Waiting for another Zed instance to finish uploading binary..."),
+                            Some("Waiting for another Zed instance to finish uploading binary"),
                             cx,
                         );
                         smol::Timer::after(check_interval).await;
