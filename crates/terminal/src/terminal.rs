@@ -45,7 +45,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::truncate_and_trailoff;
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
@@ -361,7 +361,9 @@ impl TerminalBuilder {
 
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
-                working_directory: working_directory.clone(),
+                working_directory: working_directory
+                    .clone()
+                    .or_else(|| Some(home_dir().to_path_buf())),
                 hold: false,
                 env: env.into_iter().collect(),
             }
