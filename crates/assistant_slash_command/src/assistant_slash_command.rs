@@ -1,7 +1,7 @@
 mod slash_command_registry;
 
 use anyhow::Result;
-use futures::stream::{BoxStream, StreamExt};
+use futures::stream::BoxStream;
 use gpui::{AnyElement, AppContext, ElementId, Image, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
@@ -130,14 +130,6 @@ pub enum SlashCommandEvent {
     EndSection {
         metadata: Option<serde_json::Value>,
     },
-}
-
-pub fn as_stream(event: SlashCommandEvent) -> BoxStream<'static, SlashCommandEvent> {
-    futures::stream::once(async { event }).boxed()
-}
-
-pub fn as_stream_vec(events: Vec<SlashCommandEvent>) -> BoxStream<'static, SlashCommandEvent> {
-    futures::stream::iter(events.into_iter()).boxed()
 }
 
 #[derive(Debug, Default, PartialEq)]

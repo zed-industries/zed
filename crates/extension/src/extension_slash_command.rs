@@ -1,9 +1,9 @@
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    as_stream_vec, ArgumentCompletion, SlashCommand, SlashCommandOutputSection, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandOutputSection, SlashCommandResult,
 };
 use assistant_slash_command::{SlashCommandContentType, SlashCommandEvent};
-use futures::FutureExt;
+use futures::{FutureExt, StreamExt};
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
@@ -128,7 +128,7 @@ impl SlashCommand for ExtensionSlashCommand {
                 SlashCommandEvent::EndSection { metadata: None },
             ];
 
-            return Ok(as_stream_vec(events));
+            return Ok(futures::stream::iter(events).boxed());
         })
     }
 }

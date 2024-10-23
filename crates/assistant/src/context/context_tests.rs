@@ -387,7 +387,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         cx.subscribe(&context, {
             let ranges = output_ranges.clone();
             move |_, _, event, _| match event {
-                ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
+                ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                     for range in removed {
                         ranges.borrow_mut().remove(range);
                     }

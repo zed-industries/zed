@@ -1,14 +1,15 @@
 use super::create_label_for_command;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
-    as_stream_vec, AfterCompletion, ArgumentCompletion, Role, SlashCommand,
-    SlashCommandContentType, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
+    AfterCompletion, ArgumentCompletion, Role, SlashCommand, SlashCommandContentType,
+    SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
     types::{Prompt, SamplingContent, SamplingRole},
 };
+use futures::StreamExt;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
@@ -185,7 +186,7 @@ impl SlashCommand for ContextServerSlashCommand {
                     events.push(SlashCommandEvent::EndSection { metadata: None });
                 }
 
-                Ok(as_stream_vec(events))
+                Ok(futures::stream::iter(events).boxed())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

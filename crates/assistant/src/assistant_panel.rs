@@ -13,10 +13,11 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId, ContextStore,
     ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory, DeployPromptLibrary,
-    InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor, Message, MessageId,
-    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
-    PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
-    SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
+    InlineAssistId, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
+    InvokedSlashCommandStatus, Message, MessageId, MessageMetadata, MessageStatus,
+    ModelPickerDelegate, ModelSelector, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
+    QuoteSelection, RemoteContextMetadata, SavedContextMetadata, SlashCommandId, Split,
+    ToggleFocus, ToggleModelSelector, WorkflowStepResolution,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -41,7 +42,7 @@ use gpui::{
     Context as _, Empty, Entity, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
     FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, ReadGlobal, Render,
     RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task,
-    Transformation, UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    Transformation, UpdateGlobal, View, VisualContext, WeakModel, WeakView, WindowContext,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -1522,7 +1523,7 @@ pub struct ContextEditor {
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
-    pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
+    invoked_slash_command_blocks: HashMap<SlashCommandId, CustomBlockId>,
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     workflow_steps: HashMap<Range<language::Anchor>, WorkflowStepViewState>,
@@ -1593,7 +1594,7 @@ impl ContextEditor {
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
-            pending_slash_command_blocks: HashMap::default(),
+            invoked_slash_command_blocks: HashMap::default(),
             pending_tool_use_creases: HashMap::default(),
             _subscriptions,
             workflow_steps: HashMap::default(),
@@ -1618,7 +1619,7 @@ impl ContextEditor {
         });
         let command = self.context.update(cx, |context, cx| {
             context.reparse(cx);
-            context.pending_slash_commands()[0].clone()
+            context.parsed_slash_commands()[0].clone()
         });
         self.run_command(
             command.source_range,
@@ -2071,26 +2072,15 @@ impl ContextEditor {
             ContextEvent::WorkflowStepsUpdated { removed, updated } => {
                 self.workflow_steps_updated(removed, updated, cx);
             }
-            ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
+            ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
-                    let excerpt_id = *excerpt_id;
+                    let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
 
                     editor.remove_creases(
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
-                        cx,
-                    );
-
-                    editor.remove_blocks(
-                        HashSet::from_iter(
-                            removed.iter().filter_map(|range| {
-                                self.pending_slash_command_blocks.remove(range)
-                            }),
-                        ),
-                        None,
                         cx,
                     );
 
@@ -2161,45 +2151,16 @@ impl ContextEditor {
                         cx,
                     );
 
-                    let block_ids = editor.insert_blocks(
-                        updated
-                            .iter()
-                            .filter_map(|command| match &command.status {
-                                PendingSlashCommandStatus::Error(error) => {
-                                    Some((command, error.clone()))
-                                }
-                                _ => None,
-                            })
-                            .map(|(command, error_message)| BlockProperties {
-                                style: BlockStyle::Fixed,
-                                position: Anchor {
-                                    buffer_id: Some(buffer_id),
-                                    excerpt_id,
-                                    text_anchor: command.source_range.start,
-                                },
-                                height: 1,
-                                disposition: BlockDisposition::Below,
-                                render: slash_command_error_block_renderer(error_message),
-                                priority: 0,
-                            }),
-                        None,
-                        cx,
-                    );
-
                     self.pending_slash_command_creases.extend(
                         updated
                             .iter()
                             .map(|command| command.source_range.clone())
                             .zip(crease_ids),
                     );
-
-                    self.pending_slash_command_blocks.extend(
-                        updated
-                            .iter()
-                            .map(|command| command.source_range.clone())
-                            .zip(block_ids),
-                    );
                 })
+            }
+            ContextEvent::InvokedSlashCommandChanged { command_id } => {
+                self.update_invoked_slash_command(*command_id, cx);
             }
             ContextEvent::SlashCommandFinished {
                 output_range: _output_range,
@@ -2307,6 +2268,57 @@ impl ContextEditor {
                 self.last_error = Some(AssistError::MaxMonthlySpendReached);
             }
         }
+    }
+
+    fn update_invoked_slash_command(
+        &mut self,
+        command_id: SlashCommandId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.editor.update(cx, |editor, cx| {
+            if let Some(invoked_slash_command) =
+                self.context.read(cx).invoked_slash_command(&command_id)
+            {
+                if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+                    editor.remove_blocks(
+                        HashSet::from_iter(self.invoked_slash_command_blocks.remove(&command_id)),
+                        None,
+                        cx,
+                    )
+                } else if self.invoked_slash_command_blocks.contains_key(&command_id) {
+                    cx.notify();
+                } else {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let context = self.context.downgrade();
+                    let block_ids = editor.insert_blocks(
+                        [BlockProperties {
+                            style: BlockStyle::Fixed,
+                            position: Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id,
+                                text_anchor: invoked_slash_command.position,
+                            },
+                            height: 1,
+                            disposition: BlockDisposition::Above,
+                            render: invoked_slash_command_renderer(command_id, context),
+                            priority: 0,
+                        }],
+                        None,
+                        cx,
+                    );
+
+                    self.invoked_slash_command_blocks
+                        .insert(command_id, block_ids[0]);
+                }
+            } else {
+                editor.remove_blocks(
+                    HashSet::from_iter(self.invoked_slash_command_blocks.remove(&command_id)),
+                    None,
+                    cx,
+                )
+            };
+        });
     }
 
     fn workflow_steps_updated(
@@ -5567,7 +5579,7 @@ fn render_pending_slash_command_gutter_decoration(
 
 fn render_docs_slash_command_trailer(
     row: MultiBufferRow,
-    command: PendingSlashCommand,
+    command: ParsedSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
     if command.arguments.is_empty() {
@@ -5651,16 +5663,33 @@ fn make_lsp_adapter_delegate(
     })
 }
 
-fn slash_command_error_block_renderer(message: String) -> RenderBlock {
-    Box::new(move |_| {
-        div()
-            .pl_6()
-            .child(
-                Label::new(format!("error: {}", message))
-                    .single_line()
-                    .color(Color::Error),
-            )
-            .into_any()
+fn invoked_slash_command_renderer(
+    command_id: SlashCommandId,
+    context: WeakModel<Context>,
+) -> RenderBlock {
+    Box::new(move |cx| {
+        let Some(context) = context.upgrade() else {
+            return Empty.into_any();
+        };
+
+        let Some(command) = context.read(cx).invoked_slash_command(&command_id) else {
+            return Empty.into_any();
+        };
+
+        match &command.status {
+            InvokedSlashCommandStatus::Running(_) => {
+                div().pl_6().child("Running command").into_any()
+            }
+            InvokedSlashCommandStatus::Error(message) => div()
+                .pl_6()
+                .child(
+                    Label::new(format!("error: {}", message))
+                        .single_line()
+                        .color(Color::Error),
+                )
+                .into_any_element(),
+            InvokedSlashCommandStatus::Finished => Empty.into_any(),
+        }
     })
 }
 
