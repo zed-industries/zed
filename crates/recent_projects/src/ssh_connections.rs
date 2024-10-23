@@ -336,17 +336,26 @@ impl RenderOnce for SshConnectionHeader {
             .child(
                 h_flex()
                     .gap_1()
-                    .child(Headline::new(main_label).size(HeadlineSize::XSmall))
+                    .overflow_x_hidden()
+                    .child(
+                        div()
+                            .max_w_96()
+                            .overflow_x_hidden()
+                            .text_ellipsis()
+                            .child(Headline::new(main_label).size(HeadlineSize::XSmall)),
+                    )
                     .children(
                         meta_label.map(|label| {
                             Label::new(label).color(Color::Muted).size(LabelSize::Small)
                         }),
                     )
-                    .children(self.paths.into_iter().map(|path| {
-                        Label::new(path.to_string_lossy().to_string())
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                    })),
+                    .child(div().overflow_x_hidden().text_ellipsis().children(
+                        self.paths.into_iter().map(|path| {
+                            Label::new(path.to_string_lossy().to_string())
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        }),
+                    )),
             )
     }
 }
