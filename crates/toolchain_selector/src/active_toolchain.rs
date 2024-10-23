@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use editor::Editor;
 use gpui::{
@@ -44,6 +44,22 @@ impl ActiveToolchain {
                 })
                 .ok()
                 .flatten()?;
+            let worktree_root = this
+                .update(&mut cx, |this, cx| {
+                    this.workspace
+                        .update(cx, |this, cx| {
+                            this.project()
+                                .read(cx)
+                                .worktrees(cx)
+                                .next()
+                                .map(|worktree| worktree.read(cx).abs_path())
+                        })
+                        .ok()
+                        .flatten()
+                })
+                .ok()
+                .flatten()?;
+            let worktree_root = PathBuf::from(&*worktree_root);
             let workspace_id = this
                 .update(&mut cx, |this, cx| {
                     this.workspace.update(cx, |this, _| this.database_id())
@@ -56,8 +72,15 @@ impl ActiveToolchain {
                 .update(&mut cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
-            let toolchain =
-                Self::active_toolchain(workspace_id, language_name, lister, cx.clone()).await?;
+
+            let toolchain = Self::active_toolchain(
+                workspace_id,
+                worktree_root,
+                language_name,
+                lister,
+                cx.clone(),
+            )
+            .await?;
             let _ = this.update(&mut cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -84,6 +107,7 @@ impl ActiveToolchain {
 
     fn active_toolchain(
         workspace_id: WorkspaceId,
+        worktree_root: PathBuf,
         language_name: LanguageName,
         toolchain: Arc<dyn ToolchainLister>,
         cx: AsyncWindowContext,
@@ -98,8 +122,7 @@ impl ActiveToolchain {
             if let Some(toolchain) = selected_toolchain {
                 Some(toolchain)
             } else {
-                dbg!("Else");
-                let toolchains = toolchain.list().await;
+                let toolchains = toolchain.list(worktree_root).await;
                 toolchains.default_toolchain()
             }
         })

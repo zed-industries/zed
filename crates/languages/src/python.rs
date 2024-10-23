@@ -11,6 +11,8 @@ use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use pet::find::SearchScope;
+use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
 
@@ -329,30 +331,39 @@ pub(crate) struct PythonToolchainProvider;
 
 #[async_trait(?Send)]
 impl ToolchainLister for PythonToolchainProvider {
-    async fn list(&self) -> ToolchainList {
-        let output = smol::process::Command::new("pet")
-            .arg("find")
-            .arg("--list")
-            .output()
-            .await
-            .unwrap();
-        let mut toolchains = vec![];
-        let mut current_venv = None;
-        for line in std::str::from_utf8(&output.stdout).unwrap().lines() {
-            if let Some(flavour) = line.strip_prefix("Environment (") {
-                current_venv = Some(SharedString::from(flavour.trim_end_matches(')').to_owned()));
-            } else if let Some((path, kind)) = current_venv.take().and_then(|kind| {
-                line.strip_prefix("   Executable  :")
-                    .map(|path| (path, kind))
-            }) {
-                toolchains.push(Toolchain {
-                    label: kind,
-                    path: SharedString::from(path.to_string()),
+    async fn list(&self, worktree_root: PathBuf) -> ToolchainList {
+        let environment = pet_core::os_environment::EnvironmentApi::new();
+        let locators = pet::locators::create_locators(
+            Arc::new(pet_conda::Conda::from(&environment)),
+            Arc::new(pet_poetry::Poetry::from(&environment)),
+            &environment,
+        );
+        let mut config = Configuration::default();
+        config.workspace_directories = Some(vec![worktree_root]);
+        let reporter = pet_reporter::collect::create_reporter();
+        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
+
+        let mut toolchains = reporter
+            .environments
+            .lock()
+            .ok()
+            .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
+        toolchains.sort_by(|lhs, rhs| {
+            lhs.kind
+                .cmp(&rhs.kind)
+                .then_with(|| lhs.executable.cmp(&rhs.executable))
+        });
+        let mut toolchains: Vec<_> = toolchains
+            .into_iter()
+            .filter_map(|toolchain| {
+                Some(Toolchain {
+                    label: format!("{:?}", toolchain.kind?).into(),
+                    path: toolchain.executable?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
-                });
-            }
-        }
-        toolchains.sort_by(|lhs, rhs| lhs.label.cmp(&rhs.label));
+                })
+            })
+            .collect();
+        toolchains.dedup();
         ToolchainList {
             toolchains,
             default: Some(1),

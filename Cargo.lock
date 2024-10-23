@@ -292,6 +292,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arraydeque"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d902e3d592a523def97af8f317b08ce16b7ab854c1985a0c671e6f15cebc236"
+
+[[package]]
 name = "arrayref"
 version = "0.3.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -385,7 +391,7 @@ dependencies = [
  "ctor",
  "db",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "feature_flags",
  "fs",
  "futures 0.3.30",
@@ -2548,7 +2554,7 @@ dependencies = [
  "derive_more",
  "dev_server_projects",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "envy",
  "file_finder",
  "fs",
@@ -2704,7 +2710,7 @@ dependencies = [
  "command_palette_hooks",
  "ctor",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "fuzzy",
  "go_to_line",
  "gpui",
@@ -3493,7 +3499,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "language",
@@ -3675,7 +3681,7 @@ dependencies = [
  "ctor",
  "db",
  "emojis",
- "env_logger",
+ "env_logger 0.11.5",
  "file_icons",
  "futures 0.3.30",
  "fuzzy",
@@ -3883,6 +3889,19 @@ dependencies = [
 
 [[package]]
 name = "env_logger"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4cd405aab171cb85d6735e5c8d9db038c17d3ca007a4d2c25f337935c3d90580"
+dependencies = [
+ "humantime",
+ "is-terminal",
+ "log",
+ "regex",
+ "termcolor",
+]
+
+[[package]]
+name = "env_logger"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13fa619b91fb2381732789fc5de83b45675e882f66623b7d8cb4f643017018d"
@@ -3989,7 +4008,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger",
+ "env_logger 0.11.5",
  "feature_flags",
  "fs",
  "git",
@@ -4084,7 +4103,7 @@ dependencies = [
  "client",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.11.5",
  "fs",
  "futures 0.3.30",
  "gpui",
@@ -4126,7 +4145,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
- "env_logger",
+ "env_logger 0.11.5",
  "extension",
  "fs",
  "language",
@@ -4285,7 +4304,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "file_icons",
  "futures 0.3.30",
  "fuzzy",
@@ -5040,7 +5059,7 @@ dependencies = [
  "ctor",
  "derive_more",
  "embed-resource",
- "env_logger",
+ "env_logger 0.11.5",
  "etagere",
  "filedescriptor",
  "flume",
@@ -5228,6 +5247,15 @@ dependencies = [
  "ahash 0.8.11",
  "allocator-api2",
  "serde",
+]
+
+[[package]]
+name = "hashlink"
+version = "0.8.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e8094feaf31ff591f651a2664fb9cfd92bba7a60ce3197265e9482ebe753c8f7"
+dependencies = [
+ "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -6209,7 +6237,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "fuzzy",
  "git",
@@ -6265,7 +6293,7 @@ dependencies = [
  "copilot",
  "ctor",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "feature_flags",
  "futures 0.3.30",
  "google_ai",
@@ -6323,7 +6351,7 @@ dependencies = [
  "collections",
  "copilot",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "language",
@@ -6357,6 +6385,11 @@ dependencies = [
  "lsp",
  "node_runtime",
  "paths",
+ "pet",
+ "pet-conda",
+ "pet-core",
+ "pet-poetry",
+ "pet-reporter",
  "project",
  "regex",
  "rope",
@@ -6653,7 +6686,7 @@ dependencies = [
  "async-pipe",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "log",
@@ -6736,7 +6769,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "language",
@@ -6849,7 +6882,7 @@ dependencies = [
  "clap",
  "clap_complete",
  "elasticlunr-rs",
- "env_logger",
+ "env_logger 0.11.5",
  "futures-util",
  "handlebars 5.1.2",
  "ignore",
@@ -7032,6 +7065,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "msvc_spectre_libs"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8661ace213a0a130c7c5b9542df5023aedf092a02008ccf477b39ff108990305"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "multi_buffer"
 version = "0.1.0"
 dependencies = [
@@ -7039,7 +7081,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "itertools 0.13.0",
@@ -7998,6 +8040,366 @@ dependencies = [
 ]
 
 [[package]]
+name = "pet"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "clap",
+ "env_logger 0.10.2",
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-conda",
+ "pet-core",
+ "pet-env-var-path",
+ "pet-fs",
+ "pet-global-virtualenvs",
+ "pet-homebrew",
+ "pet-jsonrpc",
+ "pet-linux-global-python",
+ "pet-mac-commandlinetools",
+ "pet-mac-python-org",
+ "pet-mac-xcode",
+ "pet-pipenv",
+ "pet-poetry",
+ "pet-pyenv",
+ "pet-python-utils",
+ "pet-reporter",
+ "pet-telemetry",
+ "pet-venv",
+ "pet-virtualenv",
+ "pet-virtualenvwrapper",
+ "pet-windows-registry",
+ "pet-windows-store",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pet-conda"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "env_logger 0.10.2",
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-reporter",
+ "regex",
+ "serde",
+ "serde_json",
+ "yaml-rust2",
+]
+
+[[package]]
+name = "pet-core"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "clap",
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-fs",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pet-env-var-path"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-conda",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+ "regex",
+]
+
+[[package]]
+name = "pet-fs"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+]
+
+[[package]]
+name = "pet-global-virtualenvs"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-conda",
+ "pet-core",
+ "pet-fs",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-homebrew"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-conda",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pet-jsonrpc"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "env_logger 0.10.2",
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pet-linux-global-python"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-mac-commandlinetools"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-mac-python-org"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-mac-xcode"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-pipenv"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-poetry"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "base64 0.22.1",
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-reporter",
+ "pet-virtualenv",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+ "toml 0.8.19",
+]
+
+[[package]]
+name = "pet-pyenv"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-conda",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-reporter",
+ "regex",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pet-python-utils"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "env_logger 0.10.2",
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
+name = "pet-reporter"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "env_logger 0.10.2",
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-jsonrpc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "pet-telemetry"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "env_logger 0.10.2",
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "regex",
+]
+
+[[package]]
+name = "pet-venv"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-python-utils",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-virtualenv"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+]
+
+[[package]]
+name = "pet-virtualenvwrapper"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+]
+
+[[package]]
+name = "pet-windows-registry"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-conda",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+ "pet-windows-store",
+ "regex",
+ "winreg 0.52.0",
+]
+
+[[package]]
+name = "pet-windows-store"
+version = "0.1.0"
+source = "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c"
+dependencies = [
+ "lazy_static",
+ "log",
+ "msvc_spectre_libs",
+ "pet-core",
+ "pet-fs",
+ "pet-python-utils",
+ "pet-virtualenv",
+ "regex",
+ "winreg 0.52.0",
+]
+
+[[package]]
 name = "petgraph"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8085,7 +8487,7 @@ dependencies = [
  "anyhow",
  "ctor",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "gpui",
  "menu",
  "serde",
@@ -8432,7 +8834,7 @@ dependencies = [
  "clock",
  "collections",
  "dev_server_projects",
- "env_logger",
+ "env_logger 0.11.5",
  "fs",
  "futures 0.3.30",
  "fuzzy",
@@ -9145,7 +9547,7 @@ dependencies = [
  "clap",
  "client",
  "clock",
- "env_logger",
+ "env_logger 0.11.5",
  "fs",
  "futures 0.3.30",
  "gpui",
@@ -9192,7 +9594,7 @@ dependencies = [
  "collections",
  "command_palette_hooks",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -9471,7 +9873,7 @@ dependencies = [
  "arrayvec",
  "criterion",
  "ctor",
- "env_logger",
+ "env_logger 0.11.5",
  "gpui",
  "log",
  "rand 0.8.5",
@@ -9502,7 +9904,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "collections",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "parking_lot",
@@ -10091,7 +10493,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "env_logger",
+ "env_logger 0.11.5",
  "feature_flags",
  "fs",
  "futures 0.3.30",
@@ -10783,7 +11185,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "hashbrown 0.14.5",
- "hashlink",
+ "hashlink 0.9.1",
  "hex",
  "indexmap 2.4.0",
  "log",
@@ -11107,7 +11509,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ctor",
- "env_logger",
+ "env_logger 0.11.5",
  "log",
  "rand 0.8.5",
  "rayon",
@@ -11121,7 +11523,7 @@ dependencies = [
  "client",
  "collections",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -11420,7 +11822,7 @@ dependencies = [
  "collections",
  "ctor",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "gpui",
  "language",
  "menu",
@@ -11627,7 +12029,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
- "env_logger",
+ "env_logger 0.11.5",
  "gpui",
  "http_client",
  "log",
@@ -14303,7 +14705,7 @@ dependencies = [
  "db",
  "derive_more",
  "dev_server_projects",
- "env_logger",
+ "env_logger 0.11.5",
  "fs",
  "futures 0.3.30",
  "git",
@@ -14340,7 +14742,7 @@ dependencies = [
  "anyhow",
  "clock",
  "collections",
- "env_logger",
+ "env_logger 0.11.5",
  "fs",
  "futures 0.3.30",
  "fuzzy",
@@ -14511,6 +14913,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "yaml-rust2"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8902160c4e6f2fb145dbe9d6760a75e3c9522d8bf796ed7047c85919ac7115f8"
+dependencies = [
+ "arraydeque",
+ "encoding_rs",
+ "hashlink 0.8.4",
+]
+
+[[package]]
 name = "yansi"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14624,7 +15037,7 @@ dependencies = [
  "dev_server_projects",
  "diagnostics",
  "editor",
- "env_logger",
+ "env_logger 0.11.5",
  "extension",
  "extensions_ui",
  "feature_flags",

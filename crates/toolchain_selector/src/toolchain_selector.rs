@@ -10,7 +10,7 @@ use gpui::{
 use language::{Buffer, ToolchainList, ToolchainLister};
 use picker::{Picker, PickerDelegate};
 use project::Project;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -103,12 +103,19 @@ impl ToolchainSelectorDelegate {
     ) -> Self {
         let _fetch_candidates_task = cx.spawn({
             let lister = lister.clone();
+            let worktree_root = project
+                .read(cx)
+                .worktrees(cx)
+                .next()
+                .map(|worktree| worktree.read(cx).abs_path());
             move |this, mut cx| async move {
-                let available_toolchains = lister.list().await;
-                let _ = this.update(&mut cx, move |this, cx| {
-                    this.delegate.candidates = available_toolchains;
-                    this.update_matches(this.query(cx), cx);
-                });
+                if let Some(root) = worktree_root {
+                    let available_toolchains = lister.list(PathBuf::from(&*root)).await;
+                    let _ = this.update(&mut cx, move |this, cx| {
+                        this.delegate.candidates = available_toolchains;
+                        this.update_matches(this.query(cx), cx);
+                    });
+                }
             }
         });
 
