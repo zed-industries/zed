@@ -241,7 +241,6 @@ impl HeadlessProject {
                     .log_err();
             }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
-                let prompt = prompt.clone();
                 let request = self.session.request(proto::LanguageServerPromptRequest {
                     project_id: SSH_PROJECT_ID,
                     actions: prompt
@@ -250,9 +249,10 @@ impl HeadlessProject {
                         .map(|action| action.title.to_string())
                         .collect(),
                     level: Some(prompt_to_proto(&prompt)),
-                    lsp_name: Default::default(),
-                    message: Default::default(),
+                    lsp_name: prompt.lsp_name.clone(),
+                    message: prompt.message.clone(),
                 });
+                let prompt = prompt.clone();
                 cx.background_executor()
                     .spawn(async move {
                         let response = request.await?;
