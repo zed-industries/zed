@@ -1530,7 +1530,7 @@ impl SshRemoteConnection {
             run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
         }
 
-        delegate.set_status(Some("Downloading remote development server on host..."), cx);
+        delegate.set_status(Some("Downloading remote development server on host"), cx);
 
         let script = format!(
             r#"
