@@ -1246,7 +1246,6 @@ impl RemoteServerProjects {
                 Section::new().padded(false).child(
                     v_flex()
                         .min_h(rems(20.))
-                        .group("remote-projects-section")
                         .size_full()
                         .relative()
                         .child(ListSeparator)
@@ -1268,7 +1267,6 @@ impl RemoteServerProjects {
                         )
                         .child(
                             div()
-                                .visible_on_hover("remote-projects-section")
                                 .occlude()
                                 .h_full()
                                 .absolute()
