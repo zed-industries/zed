@@ -153,7 +153,7 @@ fn main() -> Result<()> {
 
     if let Some(_) = args.dev_server_token {
         return Err(anyhow::anyhow!(
-            "Dev servers were removed in v0.157.x please ugprade to SSH remoting"
+            "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
         ))?;
     }
 

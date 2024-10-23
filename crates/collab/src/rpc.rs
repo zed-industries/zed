@@ -394,9 +394,7 @@ impl Server {
                     }
                 }
             })
-            .add_request_handler({
-                move |request, response, session| get_cached_embeddings(request, response, session)
-            })
+            .add_request_handler(get_cached_embeddings)
             .add_request_handler({
                 let app_state = app_state.clone();
                 move |request, response, session| {
