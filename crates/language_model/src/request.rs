@@ -396,11 +396,7 @@ impl LanguageModelRequest {
             tools: self
                 .tools
                 .into_iter()
-                .map(|tool| anthropic::Tool {
-                    name: tool.name,
-                    description: tool.description,
-                    input_schema: tool.input_schema,
-                })
+                .map(|tool| anthropic::Tool::new(tool.name, tool.description, tool.input_schema))
                 .collect(),
             tool_choice: None,
             metadata: None,

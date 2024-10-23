@@ -6,12 +6,17 @@ use crate::ToolWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
-    AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
+    tools::code_edits_tool::CodeEditsTool,
+    AssistantEdit, AssistantEdit, AssistantEdit, AssistantPatch, AssistantPatch, AssistantPatch,
+    AssistantPatchStatus, AssistantPatchStatus, AssistantPatchStatus, MessageId, MessageId,
+    MessageId, MessageStatus, MessageStatus, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
+use assistant_tool::ToolRegistry;
+use assistant_tool::{Tool, ToolRegistry};
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
@@ -36,7 +41,6 @@ use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use smallvec::SmallVec;
 use std::{
     cmp::{max, Ordering},
@@ -2476,19 +2480,17 @@ impl Context {
             let todo = (); // TODO here is where we need to get the "was this from an edit?" passed in.
             true
         };
-        let tools = if is_edit {
-            vec![LanguageModelRequestTool {
-                name: EDIT_TOOL_NAME.to_string(),
-                description: EDIT_TOOL_DESCRIPTION.to_string(),
-                input_schema: EDIT_TOOL_SCHEMA,
-            }]
-        } else {
-            Vec::new()
-        };
 
         let mut completion_request = LanguageModelRequest {
             messages: Vec::new(),
-            tools: Vec::new(),
+            tools: vec![{
+                let tool = CodeEditsTool;
+                LanguageModelRequestTool {
+                    name: tool.name(),
+                    description: tool.description(),
+                    input_schema: tool.input_schema(),
+                }
+            }],
             stop: Vec::new(),
             temperature: None,
         };
@@ -3508,55 +3510,63 @@ pub struct SavedContextMetadata {
     pub mtime: chrono::DateTime<chrono::Local>,
 }
 
-const EDIT_TOOL_NAME: &str = "code_edits";
+// pub const EDIT_TOOL_NAME: &str = "code_edits";
 
-// Anthropic's best practices for tool descriptions:
-// https://docs.anthropic.com/en/docs/build-with-claude/tool-use#best-practices-for-tool-definitions
-const EDIT_TOOL_DESCRIPTION: &str = include_str!("edit_tool_description.txt");
+// fn edit_tool() -> Value {
+//     // Anthropic's best practices for tool descriptions:
+//     // https://docs.anthropic.com/en/docs/build-with-claude/tool-use#best-practices-for-tool-definitions
+//     const EDIT_TOOL_DESCRIPTION: &str = include_str!("edit_tool_description.txt");
 
-const EDIT_TOOL_SCHEMA: Value = json!({
-    "type": "object",
-    "properties": {
-        "title": {
-            "type": "string",
-            "description": "A high-level description of the code changes. This should be as short as possible, possibly using common abbreviations."
-        },
-        "edits": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "path": {
-                        "type": "string",
-                        "description": "The path to the file that this edit will change."
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "An arbitrarily-long comment that describes the purpose of this edit."
-                    },
-                    "old_text": {
-                        "type": "string",
-                        "description": "An excerpt from the file's current contents that uniquely identifies a range within the file where the edit should occur."
-                    },
-                    "new_text": {
-                        "type": "string",
-                        "description": "The new text to insert into the file."
-                    },
-                    "operation": {
-                        "type": "string",
-                        "enum": ["update", "insert_before", "insert_after", "create", "delete"],
-                        "description": "The type of change that should occur at the given range of the file. \
-It must be one of the following: \
-- `update`: Replaces the entire range with the new text. \
-- `insert_before`: Inserts the new text before the range. \
-- `insert_after`: Inserts new text after the range. \
-- `create`: Creates a new file with the given path and the new text. \
-- `delete`: Deletes the specified range from the file.",
-                    }
-                },
-                "required": ["path", "new_text", "operation"]
-            }
-        }
-    },
-    "required": ["title", "edits"]
-});
+//     let input_schema = json!({
+//         "type": "object",
+//         "properties": {
+//             "title": {
+//                 "type": "string",
+//                 "description": "A high-level description of the code changes. This should be as short as possible, possibly using common abbreviations."
+//             },
+//             "edits": {
+//                 "type": "array",
+//                 "items": {
+//                     "type": "object",
+//                     "properties": {
+//                         "path": {
+//                             "type": "string",
+//                             "description": "The path to the file that this edit will change."
+//                         },
+//                         "description": {
+//                             "type": "string",
+//                             "description": "An arbitrarily-long comment that describes the purpose of this edit."
+//                         },
+//                         "old_text": {
+//                             "type": "string",
+//                             "description": "An excerpt from the file's current contents that uniquely identifies a range within the file where the edit should occur."
+//                         },
+//                         "new_text": {
+//                             "type": "string",
+//                             "description": "The new text to insert into the file."
+//                         },
+//                         "operation": {
+//                             "type": "string",
+//                             "enum": ["update", "insert_before", "insert_after", "create", "delete"],
+//                             "description": "The type of change that should occur at the given range of the file. \
+//     It must be one of the following: \
+//     - `update`: Replaces the entire range with the new text. \
+//     - `insert_before`: Inserts the new text before the range. \
+//     - `insert_after`: Inserts new text after the range. \
+//     - `create`: Creates a new file with the given path and the new text. \
+//     - `delete`: Deletes the specified range from the file.",
+//                         }
+//                     },
+//                     "required": ["path", "new_text", "operation"]
+//                 }
+//             }
+//         },
+//         "required": ["title", "edits"]
+//     });
+
+//     LanguageModelRequestTool {
+//         name: "code_edits",
+//         description: EDIT_TOOL_DESCRIPTION.to_string(),
+//         input_schema,
+//     }
+// }
