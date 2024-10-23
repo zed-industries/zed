@@ -125,8 +125,6 @@ winresource = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd.workspace = true
-# We don't use zstd in the zed crate, but we want to add this feature when compiling a desktop build of Zed
-zstd = { workspace = true, features = [ "pkg-config" ] }
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
