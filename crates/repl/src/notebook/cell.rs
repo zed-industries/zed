@@ -104,11 +104,15 @@ where
     let cells: Vec<serde_json::Value> = Deserialize::deserialize(deserializer)?;
     cells
         .into_iter()
+        .enumerate()
         .filter_map(
-            |cell| match serde_json::from_value::<DeserializedCell>(cell) {
+            |(index, cell)| match serde_json::from_value::<DeserializedCell>(cell) {
                 Ok(cell) => Some(Ok(cell)),
                 Err(e) => {
-                    eprintln!("Warning: Failed to deserialize cell: {}", e);
+                    eprintln!(
+                        "Warning: Failed to deserialize cell at index {}: {}",
+                        index, e
+                    );
                     None
                 }
             },
@@ -168,15 +172,23 @@ where
     let outputs: Vec<serde_json::Value> = Deserialize::deserialize(deserializer)?;
     outputs
         .into_iter()
-        .filter_map(
-            |output| match serde_json::from_value::<DeserializedOutput>(output) {
+        .enumerate()
+        .filter_map(|(index, output)| {
+            match serde_json::from_value::<DeserializedOutput>(output.clone()) {
                 Ok(output) => Some(Ok(output)),
                 Err(e) => {
-                    eprintln!("Warning: Failed to deserialize output: {}", e);
+                    eprintln!(
+                        "Warning: Failed to deserialize output at index {} of cell: {}",
+                        index, e
+                    );
+                    eprintln!(
+                        "Output JSON: {}",
+                        serde_json::to_string_pretty(&output).unwrap_or_default()
+                    );
                     None
                 }
-            },
-        )
+            }
+        })
         .collect()
 }
 
