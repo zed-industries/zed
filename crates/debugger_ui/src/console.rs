@@ -79,7 +79,7 @@ impl Console {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            StackFrameListEvent::ChangedStackFrame => cx.notify(),
+            StackFrameListEvent::SelectedStackFrameChanged => cx.notify(),
             StackFrameListEvent::StackFramesUpdated => {
                 // TODO debugger: check if we need to do something here
             }

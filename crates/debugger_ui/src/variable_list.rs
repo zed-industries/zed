@@ -128,7 +128,7 @@ impl VariableList {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            StackFrameListEvent::ChangedStackFrame => {
+            StackFrameListEvent::SelectedStackFrameChanged => {
                 self.build_entries(true, false, cx);
             }
             StackFrameListEvent::StackFramesUpdated => {

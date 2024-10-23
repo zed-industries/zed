@@ -19,7 +19,7 @@ use crate::debugger_panel_item::{self, DebugPanelItem};
 
 #[derive(Debug)]
 pub enum StackFrameListEvent {
-    ChangedStackFrame,
+    SelectedStackFrameChanged,
     StackFramesUpdated,
 }
 
@@ -110,7 +110,7 @@ impl StackFrameList {
 
                 if let Some(stack_frame) = this.stack_frames.first() {
                     this.current_stack_frame_id = stack_frame.id;
-                    cx.emit(StackFrameListEvent::ChangedStackFrame);
+                    cx.emit(StackFrameListEvent::SelectedStackFrameChanged);
                 }
 
                 this.list.reset(this.stack_frames.len());
@@ -221,7 +221,7 @@ impl StackFrameList {
 
                     cx.notify();
 
-                    cx.emit(StackFrameListEvent::ChangedStackFrame);
+                    cx.emit(StackFrameListEvent::SelectedStackFrameChanged);
                 }
             }))
             .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
