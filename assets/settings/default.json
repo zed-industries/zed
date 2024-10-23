@@ -803,7 +803,7 @@
   /// You can override this to use a version of node that is not in $PATH with:
   /// {
   ///   "node": {
-  ///     "node_path": "/path/to/node"
+  ///     "path": "/path/to/node"
   ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
   ///   }
   /// }
