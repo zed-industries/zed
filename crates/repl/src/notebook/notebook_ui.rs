@@ -243,7 +243,6 @@ impl Render for NotebookEditor {
         let gap = Spacing::Large.px(cx);
 
         div()
-            .debug_below()
             .key_context("notebook")
             .on_action(cx.listener(Self::open_notebook))
             .track_focus(&self.focus_handle)
