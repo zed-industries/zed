@@ -2479,12 +2479,14 @@ impl Project {
     pub fn activate_toolchain(&self, toolchain: Toolchain, cx: &AppContext) -> Task<Option<()>> {
         if self.is_local() {
             let registry = self.languages.clone();
-            cx.spawn(|_| async move {
+            let lsp_store = self.lsp_store.downgrade();
+            cx.spawn(move |cx| async move {
                 let language = registry
                     .language_for_name(&toolchain.language_name.0)
                     .await
                     .ok()?;
                 language.toolchain_lister()?.activate(toolchain).await;
+                LspStore::refresh_workspace_configurations(&lsp_store, cx).await;
                 Some(())
             })
         } else {

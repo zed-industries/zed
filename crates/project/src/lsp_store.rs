@@ -3020,17 +3020,10 @@ impl LspStore {
         None
     }
 
-    fn maintain_workspace_config(cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
-        let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
-
-        let settings_observation = cx.observe_global::<SettingsStore>(move |_, _| {
-            *settings_changed_tx.borrow_mut() = ();
-        });
-
-        cx.spawn(move |this, mut cx| async move {
-            while let Some(()) = settings_changed_rx.next().await {
-                let servers = this.update(&mut cx, |this, cx| {
+    pub async fn refresh_workspace_configurations(this: &WeakModel<Self>, mut cx: AsyncAppContext) {
+        maybe!(async move {
+            let servers = this
+                .update(&mut cx, |this, cx| {
                     this.language_server_ids
                         .iter()
                         .filter_map(|((worktree_id, _), server_id)| {
@@ -3052,17 +3045,37 @@ impl LspStore {
                             }
                         })
                         .collect::<Vec<_>>()
-                })?;
+                })
+                .ok()?;
 
-                for (adapter, server, delegate) in servers {
-                    let settings = adapter.workspace_configuration(&delegate, &mut cx).await?;
+            for (adapter, server, delegate) in servers {
+                let settings = adapter
+                    .workspace_configuration(&delegate, &mut cx)
+                    .await
+                    .ok()?;
 
-                    server
-                        .notify::<lsp::notification::DidChangeConfiguration>(
-                            lsp::DidChangeConfigurationParams { settings },
-                        )
-                        .ok();
-                }
+                server
+                    .notify::<lsp::notification::DidChangeConfiguration>(
+                        lsp::DidChangeConfigurationParams { settings },
+                    )
+                    .ok();
+            }
+            Some(())
+        })
+        .await;
+    }
+
+    fn maintain_workspace_config(cx: &mut ModelContext<Self>) -> Task<Result<()>> {
+        let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
+        let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
+
+        let settings_observation = cx.observe_global::<SettingsStore>(move |_, _| {
+            *settings_changed_tx.borrow_mut() = ();
+        });
+
+        cx.spawn(move |this, cx| async move {
+            while let Some(()) = settings_changed_rx.next().await {
+                Self::refresh_workspace_configurations(&this, cx.clone()).await;
             }
 
             drop(settings_observation);
