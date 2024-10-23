@@ -118,10 +118,6 @@ pub struct GithubRepo {
 
 #[async_trait(?Send)]
 pub trait DebugAdapter: 'static + Send + Sync {
-    fn id(&self) -> String {
-        "".to_string()
-    }
-
     fn name(&self) -> DebugAdapterName;
 
     fn transport(&self) -> Box<dyn Transport>;
