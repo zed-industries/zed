@@ -1,3 +1,4 @@
+pub mod connection_pool;
 pub mod json_log;
 pub mod protocol;
 pub mod proxy;
