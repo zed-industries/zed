@@ -628,22 +628,6 @@ mod test {
 
         // Check content of events with pattern matching
         let mut i = 0;
-        // Check we get all expected events
-        let events_str = events
-            .iter()
-            .map(|e| match e {
-                SlashCommandEvent::StartSection { label, .. } => format!("StartSection: {}", label),
-                SlashCommandEvent::Content(SlashCommandContentType::Text { text, .. }) => {
-                    format!("Content: {}", text)
-                }
-                SlashCommandEvent::Content(SlashCommandContentType::Image { .. }) => {
-                    "Content: Image".to_string()
-                }
-                SlashCommandEvent::EndSection { .. } => "EndSection".to_string(),
-                _ => "Unknown event".to_string(),
-            })
-            .collect::<Vec<_>>()
-            .join("\n");
 
         for event in &events {
             match event {

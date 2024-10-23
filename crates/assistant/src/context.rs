@@ -1778,26 +1778,6 @@ impl Context {
                             })?;
                         }
                         SlashCommandEvent::Content(content) => match content {
-                            SlashCommandContentType::Image { image } => {
-                                this.update(&mut cx, |this, cx| {
-                                    let Some(render_image) = image.to_image_data(cx).log_err()
-                                    else {
-                                        return;
-                                    };
-                                    let image_id = image.id();
-                                    let image_task =
-                                        LanguageModelImage::from_image(image, cx).shared();
-                                    this.insert_content(
-                                        Content::Image {
-                                            anchor: insert_position,
-                                            image_id,
-                                            image: image_task,
-                                            render_image,
-                                        },
-                                        cx,
-                                    );
-                                })?;
-                            }
                             SlashCommandContentType::Text {
                                 text,
                                 run_commands_in_text,

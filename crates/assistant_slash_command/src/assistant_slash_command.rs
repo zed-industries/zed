@@ -2,7 +2,7 @@ mod slash_command_registry;
 
 use anyhow::Result;
 use futures::stream::BoxStream;
-use gpui::{AnyElement, AppContext, ElementId, Image, SharedString, Task, WeakView, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
@@ -105,9 +105,6 @@ pub enum SlashCommandContentType {
     Text {
         text: String,
         run_commands_in_text: bool,
-    },
-    Image {
-        image: Image,
     },
 }
 
