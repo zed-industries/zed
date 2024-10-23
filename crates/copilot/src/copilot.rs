@@ -25,7 +25,7 @@ use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
-use settings::SettingsStore;
+use settings::{update_settings_file, SettingsStore};
 use smol::{fs, io::BufReader, stream::StreamExt};
 use std::{
     any::TypeId,
@@ -39,6 +39,7 @@ use std::{
 use util::{fs::remove_matching, maybe, ResultExt};
 
 pub use copilot_completion_provider::CopilotCompletionProvider;
+use language::language_settings::AllLanguageSettings;
 pub use sign_in::CopilotCodeVerification;
 
 actions!(
@@ -49,7 +50,8 @@ actions!(
         PreviousSuggestion,
         Reinstall,
         SignIn,
-        SignOut
+        SignOut,
+        ToggleOnAndOff
     ]
 );
 
@@ -60,7 +62,7 @@ pub fn init(
     node_runtime: NodeRuntime,
     cx: &mut AppContext,
 ) {
-    copilot_chat::init(fs, http.clone(), cx);
+    copilot_chat::init(fs.clone(), http.clone(), cx);
 
     let copilot = cx.new_model({
         let node_runtime = node_runtime.clone();
@@ -90,7 +92,7 @@ pub fn init(
                 filter.show_action_types(
                     copilot_action_types
                         .iter()
-                        .chain(&copilot_auth_action_types),
+                        .chain(&copilot_auth_action_types)
                 );
             }
             _ => {
@@ -99,6 +101,8 @@ pub fn init(
                 filter.show_action_types(copilot_no_auth_action_types.iter());
             }
         }
+
+        filter.show_action_types([TypeId::of::<ToggleOnAndOff>()].iter());
     })
     .detach();
 
@@ -121,6 +125,26 @@ pub fn init(
             copilot
                 .update(cx, |copilot, cx| copilot.reinstall(cx))
                 .detach();
+        }
+    });
+    cx.on_action(move |_: &ToggleOnAndOff, cx| {
+        if let Some(copilot) = Copilot::global(cx) {
+            copilot.update(cx, |copilot, cx| {
+                update_settings_file::<AllLanguageSettings>(fs.clone(), cx, move |file, _| {
+                    let entry = file.features
+                        .get_or_insert(Default::default())
+                        .inline_completion_provider;
+                    if entry.is_none() || entry == Some(InlineCompletionProvider::None) {
+                        file.features
+                            .get_or_insert(Default::default())
+                            .inline_completion_provider = Some(InlineCompletionProvider::Copilot);
+                    } else {
+                        file.features
+                            .get_or_insert(Default::default())
+                            .inline_completion_provider = Some(InlineCompletionProvider::None);
+                    }
+                });
+            });
         }
     });
 }
