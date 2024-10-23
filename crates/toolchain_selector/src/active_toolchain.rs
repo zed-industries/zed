@@ -1,18 +1,15 @@
-use std::{path::PathBuf, sync::Arc};
-
 use editor::Editor;
 use gpui::{
     div, AsyncWindowContext, IntoElement, ParentElement, Render, Subscription, Task, View,
     ViewContext, WeakModel, WeakView,
 };
-use language::{Buffer, LanguageName, Toolchain, ToolchainLister};
+use language::{Buffer, LanguageName, Toolchain};
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
-use workspace::{item::ItemHandle, StatusItemView, Workspace, WorkspaceId};
+use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::ToolchainSelector;
 
 pub struct ActiveToolchain {
-    lister: Option<Arc<dyn ToolchainLister>>,
     active_toolchain: Option<Toolchain>,
     workspace: WeakView<Workspace>,
     active_buffer: Option<WeakModel<Buffer>>,
@@ -25,7 +22,6 @@ impl ActiveToolchain {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
         let view = cx.view().clone();
         Self {
-            lister: None,
             active_toolchain: None,
             active_buffer: None,
             workspace: workspace.weak_handle(),
@@ -38,49 +34,20 @@ impl ActiveToolchain {
     }
     fn spawn_tracker_task(cx: &mut ViewContext<Self>) -> Task<Option<()>> {
         cx.spawn(|this, mut cx| async move {
-            let (lister, active_file) = this
-                .update(&mut cx, |this, _| {
-                    this.lister.clone().zip(this.active_buffer.clone())
-                })
+            let active_file = this
+                .update(&mut cx, |this, _| this.active_buffer.clone())
                 .ok()
                 .flatten()?;
-            let worktree_root = this
-                .update(&mut cx, |this, cx| {
-                    this.workspace
-                        .update(cx, |this, cx| {
-                            this.project()
-                                .read(cx)
-                                .worktrees(cx)
-                                .next()
-                                .map(|worktree| worktree.read(cx).abs_path())
-                        })
-                        .ok()
-                        .flatten()
-                })
-                .ok()
-                .flatten()?;
-            let worktree_root = PathBuf::from(&*worktree_root);
-            let workspace_id = this
-                .update(&mut cx, |this, cx| {
-                    this.workspace.update(cx, |this, _| this.database_id())
-                })
-                .ok()
-                .map(Result::ok)
-                .flatten()
-                .flatten()?;
+            let workspace = this
+                .update(&mut cx, |this, _| this.workspace.clone())
+                .ok()?;
+
             let language_name = active_file
                 .update(&mut cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
 
-            let toolchain = Self::active_toolchain(
-                workspace_id,
-                worktree_root,
-                language_name,
-                lister,
-                cx.clone(),
-            )
-            .await?;
+            let toolchain = Self::active_toolchain(workspace, language_name, cx.clone()).await?;
             let _ = this.update(&mut cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -91,14 +58,8 @@ impl ActiveToolchain {
     }
 
     fn update_lister(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        self.lister = None;
-
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-            self.lister = buffer
-                .read(cx)
-                .language()
-                .and_then(|language| language.toolchain_lister());
             self.active_buffer = Some(buffer.downgrade());
         }
 
@@ -106,15 +67,17 @@ impl ActiveToolchain {
     }
 
     fn active_toolchain(
-        workspace_id: WorkspaceId,
-        worktree_root: PathBuf,
+        workspace: WeakView<Workspace>,
         language_name: LanguageName,
-        toolchain: Arc<dyn ToolchainLister>,
         cx: AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
-        cx.spawn(move |_| async move {
+        cx.spawn(move |mut cx| async move {
+            let workspace_id = workspace
+                .update(&mut cx, |this, _| this.database_id())
+                .ok()
+                .flatten()?;
             let selected_toolchain = workspace::WORKSPACE_DB
-                .toolchain(workspace_id, language_name)
+                .toolchain(workspace_id, language_name.clone())
                 .await
                 .ok()
                 .flatten();
@@ -122,8 +85,14 @@ impl ActiveToolchain {
             if let Some(toolchain) = selected_toolchain {
                 Some(toolchain)
             } else {
-                let toolchains = toolchain.list(worktree_root).await;
-                toolchains.default_toolchain()
+                let project = workspace
+                    .update(&mut cx, |this, _| this.project().clone())
+                    .ok()?;
+                let toolchains = cx
+                    .update(|cx| project.read(cx).available_toolchains(language_name, cx))
+                    .ok()?
+                    .await?;
+                toolchains.toolchains.first().cloned()
             }
         })
     }
@@ -159,7 +128,6 @@ impl StatusItemView for ActiveToolchain {
             self._observe_active_editor = Some(cx.observe(&editor, Self::update_lister));
             self.update_lister(editor, cx);
         } else {
-            self.lister = None;
             self._observe_active_editor = None;
         }
 

@@ -2456,7 +2456,7 @@ impl Project {
     pub fn available_toolchains(
         &self,
         language_name: LanguageName,
-        cx: &mut ModelContext<Self>,
+        cx: &AppContext,
     ) -> Task<Option<ToolchainList>> {
         if self.is_local() {
             let registry = self.languages.clone();
@@ -2467,7 +2467,7 @@ impl Project {
             else {
                 return Task::ready(None);
             };
-            cx.spawn(|_, _| async move {
+            cx.spawn(|_| async move {
                 let language = registry.language_for_name(&language_name.0).await.ok()?;
                 let toolchains = language.toolchain_lister()?.list(root.to_path_buf()).await;
                 Some(toolchains)
