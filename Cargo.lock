@@ -3355,6 +3355,7 @@ dependencies = [
  "log",
  "node_runtime",
  "parking_lot",
+ "paths",
  "schemars",
  "serde",
  "serde_json",
@@ -3362,6 +3363,7 @@ dependencies = [
  "smallvec",
  "smol",
  "task",
+ "util",
 ]
 
 [[package]]
@@ -3389,6 +3391,7 @@ dependencies = [
  "serde_json",
  "smol",
  "task",
+ "util",
 ]
 
 [[package]]

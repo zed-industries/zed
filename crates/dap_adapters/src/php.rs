@@ -38,6 +38,11 @@ impl DebugAdapter for PhpDebugAdapter {
             .ok_or(anyhow!("Couldn't get npm runtime"))?;
 
         let adapter_path = paths::debug_adapters_dir().join(self.name());
+        let adapter_path = util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+            file_name.starts_with("vscode-php-debug_")
+        })
+        .await
+        .ok_or_else(|| anyhow!("Couldn't find javascript dap directory"))?;
 
         Ok(DebugAdapterBinary {
             command: node_runtime
@@ -54,98 +59,29 @@ impl DebugAdapter for PhpDebugAdapter {
     }
 
     async fn install_binary(&self, delegate: &dyn DapDelegate) -> Result<()> {
-        let adapter_path = paths::debug_adapters_dir().join(self.name());
-        let fs = delegate.fs();
+        let github_repo = GithubRepo {
+            repo_name: "vscode-php-debug".to_string(),
+            repo_owner: "xdebug".to_string(),
+        };
 
-        if fs.is_dir(adapter_path.as_path()).await {
-            return Ok(());
-        }
+        let adapter_path =
+            adapters::download_adapter_from_github(self.name(), github_repo, delegate).await?;
 
-        if let Some(http_client) = delegate.http_client() {
-            if !adapter_path.exists() {
-                fs.create_dir(&adapter_path.as_path()).await?;
-            }
+        let _ = delegate
+            .node_runtime()
+            .ok_or(anyhow!("Couldn't get npm runtime"))?
+            .run_npm_subcommand(&adapter_path, "install", &[])
+            .await
+            .is_ok();
 
-            let release =
-                latest_github_release("xdebug/vscode-php-debug", false, false, http_client.clone())
-                    .await?;
+        let _ = delegate
+            .node_runtime()
+            .ok_or(anyhow!("Couldn't get npm runtime"))?
+            .run_npm_subcommand(&adapter_path, "run", &["build"])
+            .await
+            .is_ok();
 
-            let asset_name = format!("{}-{}", self.name(), release.tag_name);
-            let zip_path = adapter_path.join(asset_name);
-
-            if fs::metadata(&zip_path).await.is_err() {
-                let mut response = http_client
-                    .get(&release.zipball_url, Default::default(), true)
-                    .await
-                    .context("Error downloading release")?;
-
-                let mut file = File::create(&zip_path).await?;
-                futures::io::copy(response.body_mut(), &mut file).await?;
-
-                let _unzip_status = process::Command::new("unzip")
-                    .current_dir(&adapter_path)
-                    .arg(&zip_path)
-                    .output()
-                    .await?
-                    .status;
-
-                let mut ls = process::Command::new("ls")
-                    .current_dir(&adapter_path)
-                    .stdout(Stdio::piped())
-                    .spawn()?;
-
-                let std = ls
-                    .stdout
-                    .take()
-                    .ok_or(anyhow!("Failed to list directories"))?
-                    .into_stdio()
-                    .await?;
-
-                let file_name = String::from_utf8(
-                    process::Command::new("grep")
-                        .arg("xdebug-vscode-php-debug")
-                        .stdin(std)
-                        .output()
-                        .await?
-                        .stdout,
-                )?;
-
-                let file_name = file_name.trim_end();
-
-                process::Command::new("sh")
-                    .current_dir(&adapter_path)
-                    .arg("-c")
-                    .arg(format!("mv {file_name}/* ."))
-                    .output()
-                    .await?;
-
-                process::Command::new("rm")
-                    .current_dir(&adapter_path)
-                    .arg("-rf")
-                    .arg(file_name)
-                    .arg(zip_path)
-                    .output()
-                    .await?;
-
-                let _ = delegate
-                    .node_runtime()
-                    .ok_or(anyhow!("Couldn't get npm runtime"))?
-                    .run_npm_subcommand(&adapter_path, "install", &[])
-                    .await
-                    .is_ok();
-
-                let _ = delegate
-                    .node_runtime()
-                    .ok_or(anyhow!("Couldn't get npm runtime"))?
-                    .run_npm_subcommand(&adapter_path, "run", &["build"])
-                    .await
-                    .is_ok();
-
-                return Ok(());
-            }
-        }
-
-        bail!("Install or fetch not implemented for PHP debug adapter (yet)");
+        Ok(())
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
