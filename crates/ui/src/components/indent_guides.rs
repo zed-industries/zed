@@ -6,10 +6,14 @@ use smallvec::SmallVec;
 
 use crate::prelude::*;
 
+/// Represents the colors used for different states of indent guides.
 #[derive(Debug, Clone)]
 pub struct IndentGuideColors {
+    /// The color of the indent guide when it's neither active nor hovered.
     pub default: Hsla,
+    /// The color of the indent guide when it's hovered.
     pub hovered: Hsla,
+    /// The color of the indent guide when it's active.
     pub active: Hsla,
 }
 
@@ -47,6 +51,7 @@ pub fn indent_guides<V: Render>(
 }
 
 impl IndentGuides {
+    /// Sets the callback that will be called when the user clicks on an indent guide.
     pub fn on_click(
         mut self,
         on_click: impl Fn(&IndentGuideLayout, &mut WindowContext) + 'static,
@@ -55,6 +60,7 @@ impl IndentGuides {
         self
     }
 
+    /// Sets a custom callback that will be called when the indent guides need to be rendered.
     pub fn with_render_fn<V: Render>(
         mut self,
         view: View<V>,
@@ -73,26 +79,42 @@ impl IndentGuides {
     }
 }
 
+/// Parameters for rendering indent guides.
 pub struct RenderIndentGuideParams {
+    /// The calculated layouts for the indent guides to be rendered.
     pub indent_guides: SmallVec<[IndentGuideLayout; 12]>,
+    /// The size of each indentation level in pixels.
     pub indent_size: Pixels,
+    /// The height of each item in pixels.
     pub item_height: Pixels,
 }
 
+/// Represents a rendered indent guide with its visual properties and interaction areas.
 pub struct RenderedIndentGuide {
+    /// The bounds of the rendered indent guide in pixels.
     pub bounds: Bounds<Pixels>,
+    /// The layout information for the indent guide.
     pub layout: IndentGuideLayout,
+    /// Indicates whether the indent guide is currently active.
     pub is_active: bool,
+    /// Can be used to customize the hitbox of the indent guide,
+    /// if this is set to `None`, the bounds of the indent guide will be used.
     pub hitbox: Option<Bounds<Pixels>>,
 }
 
+/// Represents the layout information for an indent guide.
 #[derive(Debug, PartialEq, Eq, Hash)]
 pub struct IndentGuideLayout {
+    /// The starting position of the indent guide, where x is the indentation level
+    /// and y is the starting row.
     pub offset: Point<usize>,
+    /// The length of the indent guide in rows.
     pub length: usize,
+    /// Indicates whether the indent guide continues beyond the visible bounds.
     pub continues_offscreen: bool,
 }
 
+/// Implements the necessary functionality for rendering indent guides inside a uniform list.
 mod uniform_list {
     use gpui::{DispatchPhase, Hitbox, MouseButton, MouseDownEvent, MouseMoveEvent};
 
