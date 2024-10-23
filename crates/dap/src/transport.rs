@@ -15,7 +15,6 @@ use smol::{
     process::{self, Child, ChildStderr, ChildStdout},
 };
 use std::{
-    borrow::BorrowMut,
     collections::HashMap,
     net::{Ipv4Addr, SocketAddrV4},
     process::Stdio,
@@ -173,8 +172,8 @@ impl TransportDelegate {
         pending_requests: Requests,
         log_handlers: LogHandlers,
     ) -> Result<()> {
-        while let Ok(mut payload) = client_rx.recv().await {
-            if let Message::Request(request) = payload.borrow_mut() {
+        while let Ok(payload) = client_rx.recv().await {
+            if let Message::Request(request) = &payload {
                 if let Some(sender) = current_requests.lock().await.remove(&request.seq) {
                     pending_requests.lock().await.insert(request.seq, sender);
                 }
