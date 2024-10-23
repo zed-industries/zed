@@ -356,8 +356,10 @@ impl AssistantPanel {
             let project = workspace.project().clone();
             pane.set_custom_drop_handle(cx, move |_, dropped_item, cx| {
                 let action = maybe!({
-                    if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                        return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                    if project.read(cx).is_local() {
+                        if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                            return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                        }
                     }
 
                     let project_paths = if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>()

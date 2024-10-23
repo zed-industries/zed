@@ -22,7 +22,7 @@ pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
     proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
@@ -40,8 +40,8 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Hsla, Model,
-    ModelContext, SharedString, Task, WeakModel, WindowContext,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
+    Model, ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -52,6 +52,7 @@ use language::{
 };
 use lsp::{
     CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
+    MessageActionItem,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -59,7 +60,10 @@ use parking_lot::{Mutex, RwLock};
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
-use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
+use rpc::{
+    proto::{LanguageServerPromptResponse, SSH_PROJECT_ID},
+    AnyProtoClient, ErrorCode,
+};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
@@ -728,12 +732,7 @@ impl Project {
             });
 
             let settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_ssh(
-                    ssh_proto.clone(),
-                    worktree_store.clone(),
-                    task_store.clone(),
-                    cx,
-                )
+                SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
@@ -815,6 +814,7 @@ impl Project {
             ssh_proto.add_model_message_handler(Self::handle_update_worktree);
             ssh_proto.add_model_message_handler(Self::handle_update_project);
             ssh_proto.add_model_message_handler(Self::handle_toast);
+            ssh_proto.add_model_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_model_message_handler(Self::handle_hide_toast);
             ssh_proto.add_model_request_handler(BufferStore::handle_update_buffer);
             BufferStore::init(&ssh_proto);
@@ -1185,6 +1185,7 @@ impl Project {
         cx: &mut gpui::TestAppContext,
     ) -> Model<Project> {
         use clock::FakeSystemClock;
+        use gpui::Context;
 
         let languages = LanguageRegistry::test(cx.executor());
         let clock = Arc::new(FakeSystemClock::default());
@@ -3627,6 +3628,45 @@ impl Project {
         })?
     }
 
+    async fn handle_language_server_prompt_request(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::LanguageServerPromptResponse> {
+        let (tx, mut rx) = smol::channel::bounded(1);
+        let actions: Vec<_> = envelope
+            .payload
+            .actions
+            .into_iter()
+            .map(|action| MessageActionItem {
+                title: action,
+                properties: Default::default(),
+            })
+            .collect();
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::LanguageServerPrompt(LanguageServerPromptRequest {
+                level: proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
+                message: envelope.payload.message,
+                actions: actions.clone(),
+                lsp_name: envelope.payload.lsp_name,
+                response_channel: tx,
+            }));
+
+            anyhow::Ok(())
+        })??;
+
+        let answer = rx.next().await;
+
+        Ok(LanguageServerPromptResponse {
+            action_response: answer.and_then(|answer| {
+                actions
+                    .iter()
+                    .position(|action| *action == answer)
+                    .map(|index| index as u64)
+            }),
+        })
+    }
+
     async fn handle_hide_toast(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::HideToast>,
@@ -4261,4 +4301,12 @@ pub fn sort_worktree_entries(entries: &mut [Entry]) {
             (&entry_b.path, entry_b.is_file()),
         )
     });
+}
+
+fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {
+    match level {
+        proto::language_server_prompt_request::Level::Info(_) => gpui::PromptLevel::Info,
+        proto::language_server_prompt_request::Level::Warning(_) => gpui::PromptLevel::Warning,
+        proto::language_server_prompt_request::Level::Critical(_) => gpui::PromptLevel::Critical,
+    }
 }

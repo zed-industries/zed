@@ -18,8 +18,9 @@ use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, PromptLevel,
-    ReadGlobal, TitlebarOptions, View, ViewContext, VisualContext, WindowKind, WindowOptions,
+    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
+    PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
+    VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 
@@ -27,9 +28,10 @@ use anyhow::Context as _;
 use assets::Assets;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use outline_panel::OutlinePanel;
-use project::Item;
+use project::{DirectoryLister, Item};
 use project_panel::ProjectPanel;
 use quick_action_bar::QuickActionBar;
+use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
@@ -38,6 +40,7 @@ use settings::{
     DEFAULT_KEYMAP_PATH,
 };
 use std::any::TypeId;
+use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use theme::ActiveTheme;
 use workspace::notifications::NotificationId;
@@ -274,7 +277,6 @@ pub fn initialize_workspace(
                 workspace.add_panel(channels_panel, cx);
                 workspace.add_panel(chat_panel, cx);
                 workspace.add_panel(notification_panel, cx);
-                cx.focus_self();
             })
         })
         .detach();
@@ -296,6 +298,40 @@ pub fn initialize_workspace(
             .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
             .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
                 theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
+            })
+            .register_action(|workspace, _: &workspace::Open, cx| {
+                    workspace.client()
+                        .telemetry()
+                        .report_app_event("open project".to_string());
+                    let paths = workspace.prompt_for_open_path(
+                        PathPromptOptions {
+                            files: true,
+                            directories: true,
+                            multiple: true,
+                        },
+                        DirectoryLister::Project(workspace.project().clone()),
+                        cx,
+                    );
+
+                    cx.spawn(|this, mut cx| async move {
+                        let Some(paths) = paths.await.log_err().flatten() else {
+                            return;
+                        };
+
+                        if let Some(task) = this
+                            .update(&mut cx, |this, cx| {
+                                if this.project().read(cx).is_local() {
+                                    this.open_workspace_for_paths(false, paths, cx)
+                                } else {
+                                    open_new_ssh_project_from_project(this, paths, cx)
+                                }
+                            })
+                            .log_err()
+                        {
+                            task.await.log_err();
+                        }
+                    })
+                    .detach()
             })
             .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
                 theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
@@ -833,6 +869,39 @@ pub fn load_default_keymap(cx: &mut AppContext) {
     if let Some(asset_path) = base_keymap.asset_path() {
         KeymapFile::load_asset(asset_path, cx).unwrap();
     }
+}
+
+pub fn open_new_ssh_project_from_project(
+    workspace: &mut Workspace,
+    paths: Vec<PathBuf>,
+    cx: &mut ViewContext<Workspace>,
+) -> Task<anyhow::Result<()>> {
+    let app_state = workspace.app_state().clone();
+    let Some(ssh_client) = workspace.project().read(cx).ssh_client() else {
+        return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
+    };
+    let connection_options = ssh_client.read(cx).connection_options();
+    let nickname = recent_projects::SshSettings::get_global(cx).nickname_for(
+        &connection_options.host,
+        connection_options.port,
+        &connection_options.username,
+    );
+
+    cx.spawn(|_, mut cx| async move {
+        open_ssh_project(
+            connection_options,
+            paths,
+            app_state,
+            workspace::OpenOptions {
+                open_new_workspace: Some(true),
+                replace_window: None,
+                env: None,
+            },
+            nickname,
+            &mut cx,
+        )
+        .await
+    })
 }
 
 fn open_project_settings_file(

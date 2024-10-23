@@ -196,7 +196,6 @@ impl Settings for ProjectSettings {
 
 pub enum SettingsObserverMode {
     Local(Arc<dyn Fs>),
-    Ssh(AnyProtoClient),
     Remote,
 }
 
@@ -223,7 +222,6 @@ pub struct SettingsObserver {
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
         client.add_model_message_handler(Self::handle_update_worktree_settings);
-        client.add_model_message_handler(Self::handle_update_user_settings)
     }
 
     pub fn new_local(
@@ -242,23 +240,6 @@ impl SettingsObserver {
             downstream_client: None,
             project_id: 0,
         }
-    }
-
-    pub fn new_ssh(
-        client: AnyProtoClient,
-        worktree_store: Model<WorktreeStore>,
-        task_store: Model<TaskStore>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        let this = Self {
-            worktree_store,
-            task_store,
-            mode: SettingsObserverMode::Ssh(client.clone()),
-            downstream_client: None,
-            project_id: 0,
-        };
-        this.maintain_ssh_settings(client, cx);
-        this
     }
 
     pub fn new_remote(
@@ -351,62 +332,6 @@ impl SettingsObserver {
             );
         })?;
         Ok(())
-    }
-
-    pub async fn handle_update_user_settings(
-        settings_observer: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateUserSettings>,
-        mut cx: AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        match envelope.payload.kind() {
-            proto::update_user_settings::Kind::Settings => {
-                cx.update_global(move |settings_store: &mut SettingsStore, cx| {
-                    settings_store.set_user_settings(&envelope.payload.content, cx)
-                })
-            }
-            proto::update_user_settings::Kind::Tasks => {
-                settings_observer.update(&mut cx, |settings_observer, cx| {
-                    settings_observer.task_store.update(cx, |task_store, cx| {
-                        task_store.update_user_tasks(None, Some(&envelope.payload.content), cx)
-                    })
-                })
-            }
-        }??;
-
-        Ok(())
-    }
-
-    pub fn maintain_ssh_settings(&self, ssh: AnyProtoClient, cx: &mut ModelContext<Self>) {
-        let settings_store = cx.global::<SettingsStore>();
-
-        let mut settings = settings_store.raw_user_settings().clone();
-        if let Some(content) = serde_json::to_string(&settings).log_err() {
-            ssh.send(proto::UpdateUserSettings {
-                project_id: 0,
-                content,
-                kind: Some(proto::LocalSettingsKind::Settings.into()),
-            })
-            .log_err();
-        }
-
-        let weak_client = ssh.downgrade();
-        cx.observe_global::<SettingsStore>(move |_, cx| {
-            let new_settings = cx.global::<SettingsStore>().raw_user_settings();
-            if &settings != new_settings {
-                settings = new_settings.clone()
-            }
-            if let Some(content) = serde_json::to_string(&settings).log_err() {
-                if let Some(ssh) = weak_client.upgrade() {
-                    ssh.send(proto::UpdateUserSettings {
-                        project_id: 0,
-                        content,
-                        kind: Some(proto::LocalSettingsKind::Settings.into()),
-                    })
-                    .log_err();
-                }
-            }
-        })
-        .detach();
     }
 
     fn on_worktree_store_event(
