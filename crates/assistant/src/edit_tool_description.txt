@@ -1,0 +1,15 @@
+Describes the specific code changes that should be made to the files in a code base, based on the request the user made.
+It should be used when the user requests making changes to the code base, but not when the user is asking an question about information
+(including when asking for information about the code base) rather than requesting a change.
+
+The tool will return an array of patches, each of which represents some related modifications to the code base.
+Each patch contains a high-level summary of the changes (which will be displayed in the code editor),
+as well as an array of specific edits to be made to specific individual files. The code editor will apply each of those edits to the code base, or not, at the discretion of the user of the editor.
+
+Within each patch, the tool will never return multiple edits whose ranges intersect each other. Instead, it will merge them into one edit.
+On the other hand, for ranges that do not intersect each other, the tool will prefer multiple edits to smaller ranges over one edit to a larger range.
+
+Whenever edits reference symbols that would be out of scope, the tool will always include earlier edits which add any necessary imports to bring those symbols into scope.
+
+The overall goal is that if the user of the code editor accepts all edits within all patches, the code will end up in a correct state, and
+will successfully build and run without any further modifications from the user. It will also have correctly effected the changes to the code base that the user originally requested.
