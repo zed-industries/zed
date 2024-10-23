@@ -370,7 +370,7 @@ impl ToolchainLister for PythonToolchainProvider {
         toolchains.dedup();
         ToolchainList {
             toolchains,
-            default: Some(1),
+            default: None,
         }
     }
     async fn activate(&self, _: Toolchain) {}
