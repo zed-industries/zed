@@ -147,7 +147,8 @@ impl SlashCommand for AutoCommand {
                 text: prompt,
                 sections: Vec::new(),
                 run_commands_in_text: true,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

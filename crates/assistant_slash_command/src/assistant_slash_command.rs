@@ -1,6 +1,8 @@
 mod slash_command_registry;
 
 use anyhow::Result;
+use futures::stream::{self, BoxStream};
+use futures::StreamExt;
 use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 use serde::{Deserialize, Serialize};
@@ -56,7 +58,7 @@ pub struct ArgumentCompletion {
     pub replace_previous_arguments: bool,
 }
 
-pub type SlashCommandResult = Result<SlashCommandOutput>;
+pub type SlashCommandResult = Result<BoxStream<'static, Result<SlashCommandEvent>>>;
 
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
@@ -98,11 +100,60 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
+#[derive(Debug)]
+pub enum SlashCommandContent {
+    Text {
+        text: String,
+        run_commands_in_text: bool,
+    },
+}
+
+#[derive(Debug)]
+pub enum SlashCommandEvent {
+    StartSection {
+        icon: IconName,
+        label: SharedString,
+        metadata: Option<serde_json::Value>,
+    },
+    Content(SlashCommandContent),
+    EndSection {
+        metadata: Option<serde_json::Value>,
+    },
+}
+
 #[derive(Debug, Default, PartialEq)]
 pub struct SlashCommandOutput {
     pub text: String,
     pub sections: Vec<SlashCommandOutputSection<usize>>,
     pub run_commands_in_text: bool,
+}
+
+impl SlashCommandOutput {
+    /// Returns this [`SlashCommandOutput`] as a stream of [`SlashCommandEvent`]s.
+    pub fn to_event_stream(self) -> BoxStream<'static, Result<SlashCommandEvent>> {
+        let mut events = Vec::new();
+
+        for section in self.sections {
+            events.push(Ok(SlashCommandEvent::StartSection {
+                icon: section.icon,
+                label: section.label,
+                metadata: section.metadata.clone(),
+            }));
+            events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
+                text: self
+                    .text
+                    .get(section.range.start as usize..section.range.end as usize)
+                    .unwrap_or_default()
+                    .to_string(),
+                run_commands_in_text: self.run_commands_in_text,
+            })));
+            events.push(Ok(SlashCommandEvent::EndSection {
+                metadata: section.metadata,
+            }));
+        }
+
+        stream::iter(events).boxed()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -104,7 +104,7 @@ impl SlashCommand for DeltaSlashCommand {
                 }
             }
 
-            Ok(output)
+            Ok(output.to_event_stream())
         })
     }
 }

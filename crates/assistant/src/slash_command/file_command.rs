@@ -342,7 +342,7 @@ fn collect_files(
                 }
             }
         }
-        Ok(output)
+        Ok(output.to_event_stream())
     })
 }
 

@@ -75,7 +75,7 @@ impl SlashCommand for WorkflowSlashCommand {
                     metadata: None,
                 }],
                 run_commands_in_text: false,
-            })
+            }.to_event_stream())
         })
     }
 }
