@@ -9,6 +9,6 @@
                 (string_fragment) @run
             )
         )
-    ) @ts-test
+    ) @_ts-test
     (#set! tag ts-test)
 )
