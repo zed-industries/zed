@@ -47,19 +47,18 @@ Extensions that provide language servers may also provide default settings for t
 
 **Options**
 
-To determine the name of the extension, you have to install the extension manually and copy the name of the
-extension folder in the [installation location](./extensions/installing-extensions#installation-location)
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
 
 On MacOS:
 
-```bash
-ls -l ~/Library/Application\ Support/Zed/extensions/installed/
+```sh
+ls ~/Library/Application\ Support/Zed/extensions/installed/
 ```
 
 On Linux:
 
-```bash
-ls -l ~/.local/share/zed/extensions/installed
+```sh
+ls ~/.local/share/zed/extensions/installed
 ```
 
 Define extensions which should be installed (`true`) or never installed (`false`).
