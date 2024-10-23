@@ -60,7 +60,7 @@ use thiserror::Error;
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
     Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
+    Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -274,19 +274,21 @@ impl TerminalError {
             })
     }
 
-    pub fn shell_to_string(&self) -> String {
-        match &self.shell {
-            Shell::System => "<system shell>".to_string(),
-            Shell::Program(p) => p.to_string(),
-            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
-        }
-    }
-
     pub fn fmt_shell(&self) -> String {
         match &self.shell {
             Shell::System => "<system defined shell>".to_string(),
             Shell::Program(s) => s.to_string(),
-            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => {
+                if let Some(title_override) = title_override {
+                    format!("{} {} ({})", program, args.join(" "), title_override)
+                } else {
+                    format!("{} {}", program, args.join(" "))
+                }
+            }
         }
     }
 }
@@ -348,13 +350,20 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
+        let mut terminal_title_override = None;
+
         let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }
-                Shell::WithArguments { program, args } => {
+                Shell::WithArguments {
+                    program,
+                    args,
+                    title_override,
+                } => {
+                    terminal_title_override = title_override;
                     Some(alacritty_terminal::tty::Shell::new(program, args))
                 }
             };
@@ -443,6 +452,7 @@ impl TerminalBuilder {
             completion_tx,
             term,
             term_config: config,
+            title_override: terminal_title_override,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
             last_mouse: None,
@@ -606,6 +616,7 @@ pub struct Terminal {
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
+    title_override: Option<SharedString>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -1642,37 +1653,43 @@ impl Terminal {
                 }
             }
             None => self
-                .pty_info
-                .current
+                .title_override
                 .as_ref()
-                .map(|fpi| {
-                    let process_file = fpi
-                        .cwd
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                .map(|title_override| title_override.to_string())
+                .unwrap_or_else(|| {
+                    self.pty_info
+                        .current
+                        .as_ref()
+                        .map(|fpi| {
+                            let process_file = fpi
+                                .cwd
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_default();
 
-                    let argv = fpi.argv.clone();
-                    let process_name = format!(
-                        "{}{}",
-                        fpi.name,
-                        if !argv.is_empty() {
-                            format!(" {}", (argv[1..]).join(" "))
-                        } else {
-                            "".to_string()
-                        }
-                    );
-                    let (process_file, process_name) = if truncate {
-                        (
-                            truncate_and_trailoff(&process_file, MAX_CHARS),
-                            truncate_and_trailoff(&process_name, MAX_CHARS),
-                        )
-                    } else {
-                        (process_file, process_name)
-                    };
-                    format!("{process_file} — {process_name}")
-                })
-                .unwrap_or_else(|| "Terminal".to_string()),
+                            let argv = fpi.argv.clone();
+                            let process_name = format!(
+                                "{}{}",
+                                fpi.name,
+                                if !argv.is_empty() {
+                                    format!(" {}", (argv[1..]).join(" "))
+                                } else {
+                                    "".to_string()
+                                }
+                            );
+                            dbg!(&process_file, &process_name);
+                            let (process_file, process_name) = if truncate {
+                                (
+                                    truncate_and_trailoff(&process_file, MAX_CHARS),
+                                    truncate_and_trailoff(&process_name, MAX_CHARS),
+                                )
+                            } else {
+                                (process_file, process_name)
+                            };
+                            format!("{process_file} — {process_name}")
+                        })
+                        .unwrap_or_else(|| "Terminal".to_string())
+                }),
         }
     }
 
