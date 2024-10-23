@@ -818,14 +818,19 @@ impl RemoteServerProjects {
             .child(Label::new(project.paths.join(", ")))
             .on_click(cx.listener(move |this, _, cx| callback(this, cx)))
             .end_hover_slot::<AnyElement>(Some(
-                IconButton::new("remove-remote-project", IconName::TrashAlt)
-                    .icon_size(IconSize::Small)
-                    .shape(IconButtonShape::Square)
-                    .on_click(
-                        cx.listener(move |this, _, cx| this.delete_ssh_project(server_ix, ix, cx)),
+                div()
+                    .mr_2()
+                    .child(
+                        // Right-margin to offset it from the Scrollbar
+                        IconButton::new("remove-remote-project", IconName::TrashAlt)
+                            .icon_size(IconSize::Small)
+                            .shape(IconButtonShape::Square)
+                            .size(ButtonSize::Large)
+                            .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
+                            .on_click(cx.listener(move |this, _, cx| {
+                                this.delete_ssh_project(server_ix, ix, cx)
+                            })),
                     )
-                    .size(ButtonSize::Large)
-                    .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
                     .into_any_element(),
             ))
     }
