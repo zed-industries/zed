@@ -296,6 +296,7 @@ impl Vim {
             object::register(editor, cx);
             visual::register(editor, cx);
             change_list::register(editor, cx);
+            digraph::register(editor, cx);
 
             cx.defer(|vim, cx| {
                 vim.focused(false, cx);

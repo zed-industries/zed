@@ -76,11 +76,11 @@ impl SharedState {
                 # keystrokes:
                 {}
                 # currently expected:
-                {}
+                {:?}
                 # neovim ({}):
-                {}
+                {:?}
                 # zed ({}):
-                {}"},
+                {:?}"},
             message,
             self.initial,
             self.recent_keystrokes,

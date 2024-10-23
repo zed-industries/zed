@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{AppContext, KeystrokeEvent};
+use editor::Editor;
+use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent};
+use serde::Deserialize;
 use settings::Settings;
 use std::sync::LazyLock;
 use ui::ViewContext;
@@ -9,6 +11,14 @@ use ui::ViewContext;
 use crate::{state::Operator, Vim, VimSettings};
 
 mod default;
+
+#[derive(PartialEq, Clone, Deserialize)]
+struct Literal(String, char);
+impl_actions!(vim, [Literal]);
+
+pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
+    Vim::action(editor, cx, Vim::literal)
+}
 
 static DEFAULT_DIGRAPHS_MAP: LazyLock<HashMap<String, Arc<str>>> = LazyLock::new(|| {
     let mut map = HashMap::default();
@@ -51,6 +61,21 @@ impl Vim {
         }
     }
 
+    fn literal(&mut self, action: &Literal, cx: &mut ViewContext<Self>) {
+        if let Some(Operator::Literal { prefix }) = self.active_operator() {
+            if let Some(prefix) = prefix {
+                if let Some(keystroke) = Keystroke::parse(&action.0).ok() {
+                    cx.window_context().defer(|cx| {
+                        cx.dispatch_keystroke(keystroke);
+                    });
+                }
+                return self.handle_literal_input(prefix, "", cx);
+            }
+        }
+
+        self.insert_literal(Some(action.1), "", cx);
+    }
+
     pub fn handle_literal_keystroke(
         &mut self,
         keystroke_event: &KeystrokeEvent,
@@ -65,9 +90,6 @@ impl Vim {
         if prefix.len() > 0 {
             self.handle_literal_input(prefix, "", cx);
         } else {
-            // todo: it'd be nice to support ctrl-v escape, etc.
-            // but we need a way to observe keystrokes before the actions
-            // are dispatched to do that...
             self.pop_operator(cx);
         }
 
@@ -88,7 +110,6 @@ impl Vim {
         text: &str,
         cx: &mut ViewContext<Self>,
     ) {
-        dbg!(&prefix, &text);
         let first = prefix.chars().next();
         let next = text.chars().next().unwrap_or(' ');
         match first {
@@ -97,7 +118,7 @@ impl Vim {
                     prefix.push(next);
                     if prefix.len() == 4 {
                         let ch: char = u8::from_str_radix(&prefix[1..], 8).unwrap_or(255).into();
-                        return self.do_literal_insert(Some(ch), "", cx);
+                        return self.insert_literal(Some(ch), "", cx);
                     }
                 } else {
                     let ch = if prefix.len() > 1 {
@@ -105,7 +126,7 @@ impl Vim {
                     } else {
                         None
                     };
-                    return self.do_literal_insert(ch, text, cx);
+                    return self.insert_literal(ch, text, cx);
                 }
             }
             Some('x' | 'X' | 'u' | 'U') => {
@@ -124,7 +145,7 @@ impl Vim {
                             .and_then(|n| n.try_into().ok())
                             .unwrap_or('\u{FFFD}')
                             .into();
-                        return self.do_literal_insert(Some(ch), "", cx);
+                        return self.insert_literal(Some(ch), "", cx);
                     }
                 } else {
                     let ch = if prefix.len() > 1 {
@@ -138,7 +159,7 @@ impl Vim {
                     } else {
                         None
                     };
-                    return self.do_literal_insert(ch, text, cx);
+                    return self.insert_literal(ch, text, cx);
                 }
             }
             Some('0'..='9') => {
@@ -146,18 +167,18 @@ impl Vim {
                     prefix.push(next);
                     if prefix.len() == 3 {
                         let ch: char = u8::from_str_radix(&prefix, 10).unwrap_or(255).into();
-                        return self.do_literal_insert(Some(ch), "", cx);
+                        return self.insert_literal(Some(ch), "", cx);
                     }
                 } else {
                     let ch: char = u8::from_str_radix(&prefix, 10).unwrap_or(255).into();
-                    return self.do_literal_insert(Some(ch), "", cx);
+                    return self.insert_literal(Some(ch), "", cx);
                 }
             }
             None if matches!(next, 'o' | 'O' | 'x' | 'X' | 'u' | 'U' | '0'..='9') => {
                 prefix.push(next)
             }
             _ => {
-                return self.do_literal_insert(None, text, cx);
+                return self.insert_literal(None, text, cx);
             }
         };
 
@@ -170,11 +191,15 @@ impl Vim {
         );
     }
 
-    fn do_literal_insert(&mut self, ch: Option<char>, suffix: &str, cx: &mut ViewContext<Self>) {
+    fn insert_literal(&mut self, ch: Option<char>, suffix: &str, cx: &mut ViewContext<Self>) {
         self.pop_operator(cx);
         let mut text = String::new();
         if let Some(c) = ch {
-            text.push(c)
+            if c == '\n' {
+                text.push('\x00')
+            } else {
+                text.push(c)
+            }
         }
         text.push_str(suffix);
 
@@ -312,5 +337,19 @@ mod test {
         cx.set_shared_state("ˇ").await;
         cx.simulate_shared_keystrokes("i ctrl-v 9 escape").await;
         cx.shared_state().await.assert_eq("ˇ\t");
+        cx.simulate_shared_keystrokes("i ctrl-v escape").await;
+        cx.shared_state().await.assert_eq("\x1bˇ\t");
+    }
+
+    #[gpui::test]
+    async fn test_ctrl_v_control(cx: &mut gpui::TestAppContext) {
+        let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state("ˇ").await;
+        cx.simulate_shared_keystrokes("i ctrl-v ctrl-d").await;
+        cx.shared_state().await.assert_eq("\x04ˇ");
+        cx.simulate_shared_keystrokes("ctrl-v ctrl-j").await;
+        cx.shared_state().await.assert_eq("\x04\x00ˇ");
+        cx.simulate_shared_keystrokes("ctrl-v tab").await;
+        cx.shared_state().await.assert_eq("\x04\x00\x09ˇ");
     }
 }
