@@ -2418,11 +2418,12 @@ mod tests {
                         is_in_replace_block = true;
                         if wrap_row == replace_range.end.0 {
                             if block.height() > 0 {
+                                let text = "\n".repeat((block.height() - 1) as usize);
                                 if block_row > 0 {
                                     expected_text.push('\n');
                                 }
-                                let text = "\n".repeat((block.height() - 1) as usize);
                                 expected_text.push_str(&text);
+                                expected_block_positions.push((block_row, block.id()));
                                 block_row += block.height();
                             }
 
@@ -2497,8 +2498,6 @@ mod tests {
                 // );
             }
 
-            continue;
-
             assert_eq!(
                 blocks_snapshot
                     .blocks_in_range(0..(expected_row_count as u32))
@@ -2560,6 +2559,8 @@ mod tests {
                 expected_longest_rows,
                 longest_line_len,
             );
+
+            continue;
 
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
                 let wrap_point = WrapPoint::new(row, 0);
