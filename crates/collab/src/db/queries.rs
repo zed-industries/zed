@@ -8,7 +8,6 @@ pub mod buffers;
 pub mod channels;
 pub mod contacts;
 pub mod contributors;
-pub mod dev_server_projects;
 pub mod dev_servers;
 pub mod embeddings;
 pub mod extensions;

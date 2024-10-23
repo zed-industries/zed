@@ -30,7 +30,6 @@ menu.workspace = true
 ordered-float.workspace = true
 picker.workspace = true
 project.workspace = true
-dev_server_projects.workspace = true
 remote.workspace = true
 rpc.workspace = true
 schemars.workspace = true

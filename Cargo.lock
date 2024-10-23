@@ -2548,7 +2548,6 @@ dependencies = [
  "ctor",
  "dashmap 6.0.1",
  "derive_more",
- "dev_server_projects",
  "editor",
  "env_logger",
  "envy",
@@ -3472,18 +3471,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "dev_server_projects"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "gpui",
- "rpc",
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -8441,7 +8428,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.30",
@@ -8979,7 +8965,6 @@ dependencies = [
  "anyhow",
  "auto_update",
  "client",
- "dev_server_projects",
  "editor",
  "file_finder",
  "futures 0.3.30",
@@ -11909,7 +11894,6 @@ dependencies = [
  "client",
  "collections",
  "command_palette",
- "dev_server_projects",
  "editor",
  "extensions_ui",
  "feature_flags",
@@ -14306,7 +14290,6 @@ dependencies = [
  "collections",
  "db",
  "derive_more",
- "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.30",
@@ -14625,7 +14608,6 @@ dependencies = [
  "command_palette_hooks",
  "copilot",
  "db",
- "dev_server_projects",
  "diagnostics",
  "editor",
  "env_logger",

@@ -23,7 +23,6 @@ members = [
     "crates/context_servers",
     "crates/copilot",
     "crates/db",
-    "crates/dev_server_projects",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
@@ -201,7 +200,6 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
-dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
