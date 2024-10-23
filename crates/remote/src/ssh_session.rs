@@ -216,6 +216,11 @@ impl SshPlatform {
     }
 }
 
+pub enum ServerBinary {
+    LocalBinary(PathBuf),
+    ReleaseUrl { url: String, body: String },
+}
+
 pub trait SshClientDelegate: Send + Sync {
     fn ask_password(
         &self,
@@ -231,7 +236,7 @@ pub trait SshClientDelegate: Send + Sync {
         &self,
         platform: SshPlatform,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>>;
+    ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
 }
 
@@ -1479,14 +1484,7 @@ impl SshRemoteConnection {
             }
         }
 
-        let mut dst_path_gz = dst_path.to_path_buf();
-        dst_path_gz.set_extension("gz");
-
-        if let Some(parent) = dst_path.parent() {
-            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
-        }
-
-        let (src_path, version) = delegate.get_server_binary(platform, cx).await??;
+        let (binary, version) = delegate.get_server_binary(platform, cx).await??;
 
         let mut server_binary_exists = false;
         if !server_binary_exists && cfg!(not(debug_assertions)) {
@@ -1504,9 +1502,82 @@ impl SshRemoteConnection {
             return Ok(());
         }
 
+        match binary {
+            ServerBinary::LocalBinary(src_path) => {
+                self.upload_local_server_binary(&src_path, dst_path, delegate, cx)
+                    .await
+            }
+            ServerBinary::ReleaseUrl { url, body } => {
+                self.download_binary_on_server(&url, &body, dst_path, delegate, cx)
+                    .await
+            }
+        }
+    }
+
+    async fn download_binary_on_server(
+        &self,
+        url: &str,
+        body: &str,
+        dst_path: &Path,
+        delegate: &Arc<dyn SshClientDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let mut dst_path_gz = dst_path.to_path_buf();
+        dst_path_gz.set_extension("gz");
+
+        if let Some(parent) = dst_path.parent() {
+            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+        }
+
+        delegate.set_status(Some("Downloading remote development server on host..."), cx);
+
+        let script = format!(
+            r#"
+            if command -v wget >/dev/null 2>&1; then
+                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data='{}' '{}' -O '{}' && echo "wget"
+            elif command -v curl >/dev/null 2>&1; then
+                curl -L -X GET -H "Content-Type: application/json" -d '{}' '{}' -o '{}' && echo "curl"
+            else
+                echo "Neither curl nor wget is available" >&2
+                exit 1
+            fi
+            "#,
+            body.replace("'", r#"\'"#),
+            url,
+            dst_path_gz.display(),
+            body.replace("'", r#"\'"#),
+            url,
+            dst_path_gz.display(),
+        );
+
+        let output = run_cmd(self.socket.ssh_command("bash").arg("-c").arg(script))
+            .await
+            .context("Failed to download server binary")?;
+
+        if !output.contains("curl") && !output.contains("wget") {
+            return Err(anyhow!("Failed to download server binary: {}", output));
+        }
+
+        self.extract_server_binary(dst_path, &dst_path_gz, delegate, cx)
+            .await
+    }
+
+    async fn upload_local_server_binary(
+        &self,
+        src_path: &Path,
+        dst_path: &Path,
+        delegate: &Arc<dyn SshClientDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let mut dst_path_gz = dst_path.to_path_buf();
+        dst_path_gz.set_extension("gz");
+
+        if let Some(parent) = dst_path.parent() {
+            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+        }
+
         let src_stat = fs::metadata(&src_path).await?;
         let size = src_stat.len();
-        let server_mode = 0o755;
 
         let t0 = Instant::now();
         delegate.set_status(Some("Uploading remote development server"), cx);
@@ -1516,6 +1587,17 @@ impl SshRemoteConnection {
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
 
+        self.extract_server_binary(dst_path, &dst_path_gz, delegate, cx)
+            .await
+    }
+
+    async fn extract_server_binary(
+        &self,
+        dst_path: &Path,
+        dst_path_gz: &Path,
+        delegate: &Arc<dyn SshClientDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
         run_cmd(
             self.socket
@@ -1525,6 +1607,7 @@ impl SshRemoteConnection {
         )
         .await?;
 
+        let server_mode = 0o755;
         delegate.set_status(Some("Marking remote development server executable"), cx);
         run_cmd(
             self.socket
@@ -1894,7 +1977,8 @@ mod fake {
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelClient, SshClientDelegate, SshConnectionOptions, SshPlatform, SshRemoteProcess,
+        ChannelClient, ServerBinary, SshClientDelegate, SshConnectionOptions, SshPlatform,
+        SshRemoteProcess,
     };
 
     pub(super) struct SshRemoteConnection {
@@ -2010,9 +2094,10 @@ mod fake {
             &self,
             _: SshPlatform,
             _: &mut AsyncAppContext,
-        ) -> oneshot::Receiver<Result<(PathBuf, SemanticVersion)>> {
+        ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
             unreachable!()
         }
+
         fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {
             unreachable!()
         }

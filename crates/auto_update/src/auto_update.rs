@@ -474,6 +474,39 @@ impl AutoUpdater {
         Ok(version_path)
     }
 
+    pub async fn get_latest_remote_server_release_url(
+        os: &str,
+        arch: &str,
+        mut release_channel: ReleaseChannel,
+        cx: &mut AsyncAppContext,
+    ) -> Result<(String, String)> {
+        let this = cx.update(|cx| {
+            cx.default_global::<GlobalAutoUpdate>()
+                .0
+                .clone()
+                .ok_or_else(|| anyhow!("auto-update not initialized"))
+        })??;
+
+        if release_channel == ReleaseChannel::Dev {
+            release_channel = ReleaseChannel::Nightly;
+        }
+
+        let release = Self::get_latest_release(
+            &this,
+            "zed-remote-server",
+            os,
+            arch,
+            Some(release_channel),
+            cx,
+        )
+        .await?;
+
+        let update_request_body = build_remote_server_update_request_body(cx)?;
+        let body = serde_json::to_string(&update_request_body)?;
+
+        Ok((release.url, body))
+    }
+
     async fn get_latest_release(
         this: &Model<Self>,
         asset: &str,
@@ -629,6 +662,15 @@ async fn download_remote_server_binary(
     cx: &AsyncAppContext,
 ) -> Result<()> {
     let mut target_file = File::create(&target_path).await?;
+    let update_request_body = build_remote_server_update_request_body(cx)?;
+    let request_body = AsyncBody::from(serde_json::to_string(&update_request_body)?);
+
+    let mut response = client.get(&release.url, request_body, true).await?;
+    smol::io::copy(response.body_mut(), &mut target_file).await?;
+    Ok(())
+}
+
+fn build_remote_server_update_request_body(cx: &AsyncAppContext) -> Result<UpdateRequestBody> {
     let (installation_id, release_channel, telemetry_enabled, is_staff) = cx.update(|cx| {
         let telemetry = Client::global(cx).telemetry().clone();
         let is_staff = telemetry.is_staff();
@@ -644,17 +686,14 @@ async fn download_remote_server_binary(
             is_staff,
         )
     })?;
-    let request_body = AsyncBody::from(serde_json::to_string(&UpdateRequestBody {
+
+    Ok(UpdateRequestBody {
         installation_id,
         release_channel,
         telemetry: telemetry_enabled,
         is_staff,
         destination: "remote",
-    })?);
-
-    let mut response = client.get(&release.url, request_body, true).await?;
-    smol::io::copy(response.body_mut(), &mut target_file).await?;
-    Ok(())
+    })
 }
 
 async fn download_release(
