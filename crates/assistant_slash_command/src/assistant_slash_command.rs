@@ -129,8 +129,23 @@ pub struct SlashCommandOutput {
 }
 
 impl SlashCommandOutput {
+    pub fn ensure_valid_section_ranges(&mut self) {
+        for section in &mut self.sections {
+            section.range.start = section.range.start.min(self.text.len());
+            section.range.end = section.range.end.min(self.text.len());
+            while !self.text.is_char_boundary(section.range.start) {
+                section.range.start -= 1;
+            }
+            while !self.text.is_char_boundary(section.range.end) {
+                section.range.end += 1;
+            }
+        }
+    }
+
     /// Returns this [`SlashCommandOutput`] as a stream of [`SlashCommandEvent`]s.
-    pub fn to_event_stream(self) -> BoxStream<'static, Result<SlashCommandEvent>> {
+    pub fn to_event_stream(mut self) -> BoxStream<'static, Result<SlashCommandEvent>> {
+        self.ensure_valid_section_ranges();
+
         let mut events = Vec::new();
         let mut last_section_end = 0;
 
