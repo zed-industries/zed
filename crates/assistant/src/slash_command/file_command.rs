@@ -582,8 +582,6 @@ mod test {
             .await
             .unwrap();
 
-        dbg!(&result_1);
-
         assert!(result_1.text.starts_with("root/dir"));
         // 4 files + 2 directories
         assert_eq!(result_1.sections.len(), 6);
