@@ -92,13 +92,13 @@ enum SearchDirection {
 // operation in the search.
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct SearchState {
-    score: u32,
+    cost: u32,
     direction: SearchDirection,
 }
 
 impl SearchState {
-    fn new(score: u32, direction: SearchDirection) -> Self {
-        Self { score, direction }
+    fn new(cost: u32, direction: SearchDirection) -> Self {
+        Self { cost, direction }
     }
 }
 
@@ -314,10 +314,9 @@ impl AssistantEditKind {
 
     fn resolve_location(buffer: &text::BufferSnapshot, search_query: &str) -> Range<text::Anchor> {
         const INSERTION_COST: u32 = 3;
+        const DELETION_COST: u32 = 10;
         const WHITESPACE_INSERTION_COST: u32 = 1;
-        const DELETION_COST: u32 = 3;
         const WHITESPACE_DELETION_COST: u32 = 1;
-        const EQUALITY_BONUS: u32 = 5;
 
         struct Matrix {
             cols: usize,
@@ -344,14 +343,22 @@ impl AssistantEditKind {
         let buffer_len = buffer.len();
         let query_len = search_query.len();
         let mut matrix = Matrix::new(query_len + 1, buffer_len + 1);
-
+        let mut leading_deletion_cost = 0_u32;
         for (row, query_byte) in search_query.bytes().enumerate() {
+            let deletion_cost = if query_byte.is_ascii_whitespace() {
+                WHITESPACE_DELETION_COST
+            } else {
+                DELETION_COST
+            };
+
+            leading_deletion_cost = leading_deletion_cost.saturating_add(deletion_cost);
+            matrix.set(
+                row + 1,
+                0,
+                SearchState::new(leading_deletion_cost, SearchDirection::Diagonal),
+            );
+
             for (col, buffer_byte) in buffer.bytes_in_range(0..buffer.len()).flatten().enumerate() {
-                let deletion_cost = if query_byte.is_ascii_whitespace() {
-                    WHITESPACE_DELETION_COST
-                } else {
-                    DELETION_COST
-                };
                 let insertion_cost = if buffer_byte.is_ascii_whitespace() {
                     WHITESPACE_INSERTION_COST
                 } else {
@@ -359,38 +366,35 @@ impl AssistantEditKind {
                 };
 
                 let up = SearchState::new(
-                    matrix.get(row, col + 1).score.saturating_sub(deletion_cost),
+                    matrix.get(row, col + 1).cost.saturating_add(deletion_cost),
                     SearchDirection::Up,
                 );
                 let left = SearchState::new(
-                    matrix
-                        .get(row + 1, col)
-                        .score
-                        .saturating_sub(insertion_cost),
+                    matrix.get(row + 1, col).cost.saturating_add(insertion_cost),
                     SearchDirection::Left,
                 );
                 let diagonal = SearchState::new(
                     if query_byte == *buffer_byte {
-                        matrix.get(row, col).score.saturating_add(EQUALITY_BONUS)
+                        matrix.get(row, col).cost
                     } else {
                         matrix
                             .get(row, col)
-                            .score
-                            .saturating_sub(deletion_cost + insertion_cost)
+                            .cost
+                            .saturating_add(deletion_cost + insertion_cost)
                     },
                     SearchDirection::Diagonal,
                 );
-                matrix.set(row + 1, col + 1, up.max(left).max(diagonal));
+                matrix.set(row + 1, col + 1, up.min(left).min(diagonal));
             }
         }
 
         // Traceback to find the best match
         let mut best_buffer_end = buffer_len;
-        let mut best_score = 0;
+        let mut best_cost = u32::MAX;
         for col in 1..=buffer_len {
-            let score = matrix.get(query_len, col).score;
-            if score > best_score {
-                best_score = score;
+            let cost = matrix.get(query_len, col).cost;
+            if cost < best_cost {
+                best_cost = cost;
                 best_buffer_end = col;
             }
         }
@@ -560,89 +564,84 @@ mod tests {
         language_settings::AllLanguageSettings, Language, LanguageConfig, LanguageMatcher,
     };
     use settings::SettingsStore;
-    use text::{OffsetRangeExt, Point};
     use ui::BorrowAppContext;
     use unindent::Unindent as _;
+    use util::test::{generate_marked_text, marked_text_ranges};
 
     #[gpui::test]
     fn test_resolve_location(cx: &mut AppContext) {
-        {
-            let buffer = cx.new_model(|cx| {
-                Buffer::local(
-                    concat!(
-                        "    Lorem\n",
-                        "    ipsum\n",
-                        "    dolor sit amet\n",
-                        "    consecteur",
-                    ),
-                    cx,
-                )
-            });
-            let snapshot = buffer.read(cx).snapshot();
-            assert_eq!(
-                AssistantEditKind::resolve_location(&snapshot, "ipsum\ndolor").to_point(&snapshot),
-                Point::new(1, 0)..Point::new(2, 18)
-            );
-        }
+        assert_location_resolution(
+            concat!(
+                "    Lorem\n",
+                "«    ipsum\n",
+                "    dolor sit amet»\n",
+                "    consecteur",
+            ),
+            "ipsum\ndolor",
+            cx,
+        );
 
-        {
-            let buffer = cx.new_model(|cx| {
-                Buffer::local(
-                    concat!(
-                        "fn foo1(a: usize) -> usize {\n",
-                        "    40\n",
-                        "}\n",
-                        "\n",
-                        "fn foo2(b: usize) -> usize {\n",
-                        "    42\n",
-                        "}\n",
-                    ),
-                    cx,
-                )
-            });
-            let snapshot = buffer.read(cx).snapshot();
-            assert_eq!(
-                AssistantEditKind::resolve_location(&snapshot, "fn foo1(b: usize) {\n40\n}")
-                    .to_point(&snapshot),
-                Point::new(0, 0)..Point::new(2, 1)
-            );
-        }
+        assert_location_resolution(
+            &"
+            «fn foo1(a: usize) -> usize {
+                40
+            }»
 
-        {
-            let buffer = cx.new_model(|cx| {
-                Buffer::local(
-                    concat!(
-                        "fn main() {\n",
-                        "    Foo\n",
-                        "        .bar()\n",
-                        "        .baz()\n",
-                        "        .qux()\n",
-                        "}\n",
-                        "\n",
-                        "fn foo2(b: usize) -> usize {\n",
-                        "    42\n",
-                        "}\n",
-                    ),
-                    cx,
-                )
-            });
-            let snapshot = buffer.read(cx).snapshot();
-            assert_eq!(
-                AssistantEditKind::resolve_location(&snapshot, "Foo.bar.baz.qux()")
-                    .to_point(&snapshot),
-                Point::new(1, 0)..Point::new(4, 14)
-            );
-        }
+            fn foo2(b: usize) -> usize {
+                42
+            }
+            "
+            .unindent(),
+            "fn foo1(b: usize) {\n40\n}",
+            cx,
+        );
+
+        assert_location_resolution(
+            &"
+            fn main() {
+            «    Foo
+                    .bar()
+                    .baz()
+                    .qux()»
+            }
+
+            fn foo2(b: usize) -> usize {
+                42
+            }
+            "
+            .unindent(),
+            "Foo.bar.baz.qux()",
+            cx,
+        );
+
+        assert_location_resolution(
+            &"
+            class Something {
+                one() { return 1; }
+            «    two() { return 2222; }
+                three() { return 333; }
+                four() { return 4444; }
+                five() { return 5555; }
+                six() { return 6666; }
+            »    seven() { return 7; }
+                eight() { return 8; }
+            }
+            "
+            .unindent(),
+            &"
+                two() { return 2222; }
+                four() { return 4444; }
+                five() { return 5555; }
+                six() { return 6666; }
+            "
+            .unindent(),
+            cx,
+        );
     }
 
     #[gpui::test]
     fn test_resolve_edits(cx: &mut AppContext) {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
-        language::init(cx);
-        cx.update_global::<SettingsStore, _>(|settings, cx| {
-            settings.update_user_settings::<AllLanguageSettings>(cx, |_| {});
-        });
+        init_test(cx);
 
         assert_edits(
             "
@@ -865,6 +864,29 @@ mod tests {
             .unindent(),
             cx,
         );
+    }
+
+    fn init_test(cx: &mut AppContext) {
+        let settings_store = SettingsStore::test(cx);
+        cx.set_global(settings_store);
+        language::init(cx);
+        cx.update_global::<SettingsStore, _>(|settings, cx| {
+            settings.update_user_settings::<AllLanguageSettings>(cx, |_| {});
+        });
+    }
+
+    #[track_caller]
+    fn assert_location_resolution(
+        text_with_expected_range: &str,
+        query: &str,
+        cx: &mut AppContext,
+    ) {
+        let (text, _) = marked_text_ranges(text_with_expected_range, false);
+        let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
+        let snapshot = buffer.read(cx).snapshot();
+        let range = AssistantEditKind::resolve_location(&snapshot, query).to_offset(&snapshot);
+        let text_with_actual_range = generate_marked_text(&text, &[range], false);
+        pretty_assertions::assert_eq!(text_with_actual_range, text_with_expected_range);
     }
 
     #[track_caller]
