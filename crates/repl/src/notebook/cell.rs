@@ -4,7 +4,10 @@ use serde::{Deserialize, Serialize};
 use ui::prelude::*;
 use uuid::Uuid;
 
-use crate::notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH};
+use crate::{
+    notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
+    outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
+};
 use runtimelib::{DisplayData, ErrorOutput, ExecuteResult, StreamContent};
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
@@ -146,6 +149,35 @@ pub enum Cell {
     Raw(View<RawCell>),
 }
 
+fn convert_outputs(outputs: Vec<DeserializedOutput>, cx: &mut WindowContext) -> Vec<Output> {
+    outputs
+        .into_iter()
+        .map(|output| match output {
+            DeserializedOutput::Stream(stream) => Output::Stream {
+                content: cx.new_view(|cx| TerminalOutput::from(&stream.text, cx)),
+            },
+            DeserializedOutput::DisplayData(display_data) => Output::new(
+                &display_data.data,
+                display_data.transient.display_id.clone(),
+                cx,
+            ),
+            DeserializedOutput::ExecuteResult(execute_result) => Output::new(
+                &execute_result.data,
+                execute_result
+                    .transient
+                    .as_ref()
+                    .and_then(|t| t.display_id.clone()),
+                cx,
+            ),
+            DeserializedOutput::Error(error) => Output::ErrorOutput(ErrorView {
+                ename: error.ename,
+                evalue: error.evalue,
+                traceback: cx.new_view(|cx| TerminalOutput::from(&error.traceback.join("\n"), cx)),
+            }),
+        })
+        .collect()
+}
+
 impl Cell {
     pub fn load(cell: DeserializedCell, cx: &mut WindowContext) -> Self {
         match cell {
@@ -166,13 +198,13 @@ impl Cell {
                 execution_count,
                 source,
                 outputs,
-            } => Cell::Code(cx.new_view(|_| CodeCell {
+            } => Cell::Code(cx.new_view(|cx| CodeCell {
                 id: id.into(),
                 cell_type: CellType::Code,
                 metadata,
                 execution_count,
                 source: source.join("\n"),
-                outputs,
+                outputs: convert_outputs(outputs, cx),
             })),
             DeserializedCell::Raw {
                 id,
@@ -317,7 +349,7 @@ pub struct CodeCell {
     metadata: DeserializedCellMetadata,
     execution_count: Option<i32>,
     source: String,
-    outputs: Vec<DeserializedOutput>,
+    outputs: Vec<Output>,
 }
 
 impl RenderableCell for CodeCell {

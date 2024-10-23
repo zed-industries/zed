@@ -56,7 +56,7 @@ use table::TableView;
 pub mod plain;
 use plain::TerminalOutput;
 
-mod user_error;
+pub(crate) mod user_error;
 use user_error::ErrorView;
 use workspace::Workspace;
 
