@@ -2,7 +2,7 @@
 
 Remote Development allows you to code at the speed of thought, even when your codebase is not on your local machine. You use Zed locally so the UI is immediately responsive, but offload heavy computation to the development server so that you can work effectively.
 
-> **Note:** Remoting is still "beta". We are still refining the relaibility and performance.
+> **Note:** Remoting is still "beta". We are still refining the reliability and performance.
 
 ## Overview
 
@@ -12,7 +12,7 @@ Remote development requires two computers, your local machine that runs the Zed 
 
 ## Setup
 
-1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You ned at least Zed v0.159.
+1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You need at least Zed v0.159.
 1. Open the remote projects dialogue with `cmd-shift-p remote`.
 1. Click "New Server" and enter the command you use to ssh into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, it will download the latest version of the Zed server and upload it to the remote over SSH.
@@ -32,16 +32,18 @@ The remote machine must be able to run Zed's server. The following platforms sho
 ## Settings
 
 When opening a remote project there are three relevant settings locations:
-* The local Zed settings (in `~/.zed/settings.json` on macOS or `~/.config/zed/settings.json` on Linux) on your local machine.
-* The server Zed settings (in the same place) on the remote server.
-* The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
+
+- The local Zed settings (in `~/.zed/settings.json` on macOS or `~/.config/zed/settings.json` on Linux) on your local machine.
+- The server Zed settings (in the same place) on the remote server.
+- The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
 Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings.json.
 
 Depending on the kind of setting you want to make, which settings file you should use:
-* Project settings should be used for things that affect the project: indentation settings, which formatter / language server to use etc.
-* Server settings should be used for things that affect the server: paths to language servers, etc.
-* Local settings should be used for things that affect the UI: font size, etc.
+
+- Project settings should be used for things that affect the project: indentation settings, which formatter / language server to use etc.
+- Server settings should be used for things that affect the server: paths to language servers, etc.
+- Local settings should be used for things that affect the UI: font size, etc.
 
 ## Initializing the remote server
 
@@ -57,7 +59,7 @@ If it is not there or the version mismatches, Zed will try to download the lates
 
 Once the server is initialized. Zed will create new SSH connections (reusing the existing ControlMaster) to run the remote development server.
 
-Each connection tries to run the development server in proxy mode. This mode will start the daemon if it is not runnning, and reconnect to it if it is. This way when your connection drops and is restarted, you can continue to work without interruption.
+Each connection tries to run the development server in proxy mode. This mode will start the daemon if it is not running, and reconnect to it if it is. This way when your connection drops and is restarted, you can continue to work without interruption.
 
 In the case that reconnecting fails, the daemon will not be re-used. That said, unsaved changes are by default persisted locally, so that you do not lose work. You can always reconnect to the project at a later date and Zed will restore unsaved changes.
 
