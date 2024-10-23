@@ -770,7 +770,7 @@
     // Existing terminals will not pick up this change until they are recreated.
     // "max_scroll_history_lines": 10000,
   },
-  "titlebar_signin": false,
+  "titlebar_signin": true,
   "code_actions_on_format": {},
   /// Settings related to running tasks.
   "tasks": {
