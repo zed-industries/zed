@@ -29,6 +29,7 @@ test-support = [
 ]
 
 [dependencies]
+anyhow.workspace = true
 auto_update.workspace = true
 call.workspace = true
 client.workspace = true

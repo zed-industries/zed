@@ -21,7 +21,7 @@ use project::{Project, RepositoryEntry};
 use recent_projects::{OpenRemote, RecentProjects, SshSettings};
 use remote::SshConnectionOptions;
 use rpc::proto::{self, DevServerStatus};
-use settings::Settings;
+//use settings::Settings;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -32,6 +32,10 @@ use ui::{
 use util::{maybe, ResultExt};
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
+
+//For settings related to the Title Bar (like hiding Sign in button)
+use settings::{Settings, SettingsSources};
+use anyhow::Result;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -51,6 +55,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
+    TitleBarSettings::register(cx);
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
         let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
         workspace.set_titlebar_item(item.into(), cx)
@@ -71,6 +76,9 @@ pub struct TitleBar {
     _subscriptions: Vec<Subscription>,
 }
 
+//Title bar settings
+pub struct TitleBarSettings(pub bool);
+
 impl Render for TitleBar {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
@@ -86,6 +94,9 @@ impl Render for TitleBar {
         } else {
             cx.theme().colors().title_bar_background
         };
+
+        //For hiding Sign in
+        let show_signin = TitleBarSettings::get_global(cx).0;
 
         h_flex()
             .id("titlebar")
@@ -153,9 +164,15 @@ impl Render for TitleBar {
                                 if matches!(status, client::Status::Connected { .. }) {
                                     el.child(self.render_user_menu_button(cx))
                                 } else {
-                                    el.children(self.render_connection_status(status, cx))
-                                        .child(self.render_sign_in_button(cx))
-                                        .child(self.render_user_menu_button(cx))
+                                    if show_signin {
+                                        el.children(self.render_connection_status(status, cx))
+                                            .child(self.render_sign_in_button(cx))
+                                            .child(self.render_user_menu_button(cx))
+                                    }
+                                    else {
+                                        el.children(self.render_connection_status(status, cx))
+                                            .child(self.render_user_menu_button(cx))
+                                    }
                                 }
                             }),
                     ),
@@ -678,5 +695,22 @@ impl StatefulInteractiveElement for TitleBar {}
 impl ParentElement for TitleBar {
     fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
         self.children.extend(elements)
+    }
+}
+
+impl Settings for TitleBarSettings {
+    const KEY: Option<&'static str> = Some("titlebar_signin");
+
+    type FileContent = Option<bool>;
+
+     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
+        Ok(Self(
+            sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        ))
     }
 }
