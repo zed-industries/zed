@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
@@ -206,7 +206,7 @@ impl HeadlessProject {
         &mut self,
         _lsp_store: Model<LspStore>,
         event: &LspStoreEvent,
-        _cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             LspStoreEvent::LanguageServerUpdate {
@@ -239,6 +239,29 @@ impl HeadlessProject {
                         log_type: Some(log_type.to_proto()),
                     })
                     .log_err();
+            }
+            LspStoreEvent::LanguageServerPrompt(prompt) => {
+                let prompt = prompt.clone();
+                let request = self.session.request(proto::LanguageServerPromptRequest {
+                    project_id: SSH_PROJECT_ID,
+                    actions: prompt
+                        .actions
+                        .iter()
+                        .map(|action| action.title.to_string())
+                        .collect(),
+                    level: Some(prompt_to_proto(&prompt)),
+                    lsp_name: Default::default(),
+                    message: Default::default(),
+                });
+                cx.background_executor()
+                    .spawn(async move {
+                        let response = request.await?;
+                        if let Some(action_response) = response.action_response {
+                            prompt.respond(action_response as usize).await;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach();
             }
             _ => {}
         }
@@ -538,5 +561,21 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
+    }
+}
+
+fn prompt_to_proto(
+    prompt: &project::LanguageServerPromptRequest,
+) -> proto::language_server_prompt_request::Level {
+    match prompt.level {
+        PromptLevel::Info => proto::language_server_prompt_request::Level::Info(
+            proto::language_server_prompt_request::Info {},
+        ),
+        PromptLevel::Warning => proto::language_server_prompt_request::Level::Warning(
+            proto::language_server_prompt_request::Warning {},
+        ),
+        PromptLevel::Critical => proto::language_server_prompt_request::Level::Critical(
+            proto::language_server_prompt_request::Critical {},
+        ),
     }
 }
