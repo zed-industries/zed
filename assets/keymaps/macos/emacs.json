@@ -1,0 +1,63 @@
+// documentation: https://zed.dev/docs/key-bindings
+//
+// To see the default key bindings run `zed: open default keymap`
+// from the command palette.
+[
+  {
+    "context": "Editor",
+    "bindings": {
+      "cmd-g": "editor::Cancel",
+      "cmd-shift-g": "go_to_line::Toggle",
+      //"cmd-space": "editor::SetMark",
+      "cmd-x u": "editor::Undo",
+      "cmd-x cmd-u": "editor::Redo",
+      "cmd-f": "editor::MoveRight",
+      "cmd-b": "editor::MoveLeft",
+      "cmd-n": "editor::MoveDown",
+      "cmd-p": "editor::MoveUp",
+      "cmd-a": "editor::MoveToBeginningOfLine",
+      "cmd-e": "editor::MoveToEndOfLine",
+      "alt-f": "editor::MoveToNextSubwordEnd",
+      "alt-b": "editor::MoveToPreviousSubwordStart",
+      "cmd-d": "editor::Delete",
+      "alt-d": "editor::DeleteToNextWordEnd",
+      "cmd-k": "editor::CutToEndOfLine",
+      "cmd-w": "editor::Cut",
+      "alt-w": "editor::Copy",
+      "cmd-y": "editor::Paste",
+      "cmd-_": "editor::Undo",
+      "cmd-v": "editor::MovePageDown",
+      "alt-v": "editor::MovePageUp",
+      "cmd-x ]": "editor::MoveToEnd",
+      "cmd-x [": "editor::MoveToBeginning",
+      "cmd-l": "editor::ScrollCursorCenterTopBottom",
+      "cmd-s": "buffer_search::Deploy",
+      "cmd-x cmd-f": "file_finder::Toggle",
+      "cmd-shift-r": "editor::Rename"
+    }
+  },
+  {
+    "context": "Workspace",
+    "bindings": {
+      "cmd-x k": "pane::CloseActiveItem",
+      "cmd-x cmd-c": "workspace::CloseWindow",
+      "cmd-x o": "workspace::ActivateNextPane",
+      "cmd-x b": "tab_switcher::Toggle",
+      "cmd-x 0": "pane::CloseActiveItem",
+      "cmd-x 1": "pane::CloseInactiveItems",
+      "cmd-x 2": "pane::SplitVertical",
+      "cmd-x cmd-f": "file_finder::Toggle",
+      "cmd-x cmd-s": "workspace::Save",
+      "cmd-x cmd-w": "workspace::SaveAs",
+      "cmd-x s": "workspace::SaveAll",
+      "shift shift": "file_finder::Toggle"
+    }
+  },
+  {
+    "context": "Pane",
+    "bindings": {
+      "cmd-alt-left": "pane::GoBack",
+      "cmd-alt-right": "pane::GoForward"
+    }
+  }
+]
