@@ -336,6 +336,11 @@ mod tests {
 
         init_test(cx);
 
+        cx.update(|cx| {
+            // This functionality is staff-flagged.
+            cx.update_flags(true, vec![]);
+        });
+
         let temp_dir = tempfile::tempdir().unwrap();
 
         let mut semantic_index = SemanticDb::new(
