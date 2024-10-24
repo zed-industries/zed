@@ -2275,7 +2275,6 @@ impl EditorElement {
                         result = result.child(
                             h_flex()
                                 .id("excerpt header block")
-                                .group("excerpt-jump-action")
                                 .justify_start()
                                 .w_full()
                                 .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32 * cx.line_height())
@@ -2287,38 +2286,7 @@ impl EditorElement {
                                         .w_full()
                                         .h_px()
                                         .bg(cx.theme().colors().border_variant)
-                                        .group_hover("excerpt-jump-action", |style| {
-                                            style.bg(cx.theme().colors().border)
-                                        }),
                                 )
-                                .cursor_pointer()
-                                .when_some(jump_data.clone(), |this, jump_data| {
-                                    this.on_click(cx.listener_for(&self.editor, {
-                                        let path = jump_data.path.clone();
-                                        move |editor, _, cx| {
-                                            cx.stop_propagation();
-
-                                            editor.jump(
-                                                path.clone(),
-                                                jump_data.position,
-                                                jump_data.anchor,
-                                                jump_data.line_offset_from_top,
-                                                cx,
-                                            );
-                                        }
-                                    }))
-                                    .tooltip(move |cx| {
-                                        Tooltip::for_action(
-                                            format!(
-                                                "Jump to {}:L{}",
-                                                jump_data.path.path.display(),
-                                                jump_data.position.row + 1
-                                            ),
-                                            &OpenExcerpts,
-                                            cx,
-                                        )
-                                    })
-                                })
                                 .child(
                                     h_flex()
                                         .w(icon_offset)
@@ -2343,14 +2311,6 @@ impl EditorElement {
                                                         .text_color(
                                                             cx.theme().colors().border_variant,
                                                         )
-                                                        .group_hover(
-                                                            "excerpt-jump-action",
-                                                            |style| {
-                                                                style.text_color(
-                                                                    cx.theme().colors().border,
-                                                                )
-                                                            },
-                                                        ),
                                                 )
                                         }),
                                 ),
