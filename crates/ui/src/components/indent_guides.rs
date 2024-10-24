@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 use std::{cmp::Ordering, ops::Range, rc::Rc};
 
-use gpui::{fill, point, size, AnyElement, Bounds, Hsla, Point, UniformListDecoration, View};
+use gpui::{
+    fill, point, size, AnyElement, AppContext, Bounds, Hsla, Point, UniformListDecoration, View,
+};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
@@ -12,15 +14,26 @@ pub struct IndentGuideColors {
     /// The color of the indent guide when it's neither active nor hovered.
     pub default: Hsla,
     /// The color of the indent guide when it's hovered.
-    pub hovered: Hsla,
+    pub hover: Hsla,
     /// The color of the indent guide when it's active.
     pub active: Hsla,
+}
+
+impl IndentGuideColors {
+    /// Returns the indent guide colors that should be used for panels.
+    pub fn panels(cx: &AppContext) -> Self {
+        Self {
+            default: cx.theme().colors().panel_indent_guide,
+            hover: cx.theme().colors().panel_indent_guide_hover,
+            active: cx.theme().colors().panel_indent_guide_active,
+        }
+    }
 }
 
 pub struct IndentGuides {
     colors: IndentGuideColors,
     indent_size: Pixels,
-    compute_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
+    compute_indents_fn: Box<dyn Fn(Range<usize>, &mut WindowContext) -> SmallVec<[usize; 64]>>,
     render_fn: Option<
         Box<
             dyn Fn(
@@ -36,15 +49,16 @@ pub fn indent_guides<V: Render>(
     view: View<V>,
     indent_size: Pixels,
     colors: IndentGuideColors,
-    compute_fn: impl Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> SmallVec<[usize; 64]> + 'static,
+    compute_indents_fn: impl Fn(&mut V, Range<usize>, &mut ViewContext<V>) -> SmallVec<[usize; 64]>
+        + 'static,
 ) -> IndentGuides {
-    let compute_indent_guides = move |range, cx: &mut WindowContext| {
-        view.update(cx, |this, cx| compute_fn(this, range, cx))
-    };
+    let compute_indents_fn = Box::new(move |range, cx: &mut WindowContext| {
+        view.update(cx, |this, cx| compute_indents_fn(this, range, cx))
+    });
     IndentGuides {
         colors,
         indent_size,
-        compute_fn: Box::new(compute_indent_guides),
+        compute_indents_fn,
         render_fn: None,
         on_click: None,
     }
@@ -130,7 +144,7 @@ mod uniform_list {
         ) -> AnyElement {
             let mut visible_range = visible_range.clone();
             visible_range.end += 1;
-            let visible_entries = &(self.compute_fn)(visible_range.clone(), cx);
+            let visible_entries = &(self.compute_indents_fn)(visible_range.clone(), cx);
             // Check if we have an additional indent that is outside of the visible range
             let includes_trailing_indent = visible_entries.len() == visible_range.len();
             let indent_guides = compute_indent_guides(
@@ -261,7 +275,7 @@ mod uniform_list {
                 let indent_guide = &self.indent_guides[i];
                 let fill_color = if hitbox.is_hovered(cx) {
                     hovered_hitbox_id = Some(hitbox.id);
-                    self.colors.hovered
+                    self.colors.hover
                 } else if indent_guide.is_active {
                     self.colors.active
                 } else {

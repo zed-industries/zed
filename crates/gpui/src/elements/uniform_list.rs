@@ -386,9 +386,8 @@ impl IntoElement for UniformList {
     }
 }
 
-/// A decoration for a [`UniformList`]. This can be used for various things, such
-/// as rendering a checkered background, adding indent guides, or adding other
-/// visual effects.
+/// A decoration for a [`UniformList`]. This can be used for various things,
+/// such as rendering indent guides, or other visual effects.
 pub trait UniformListDecoration {
     /// Compute the decoration element, given the visible range of list items,
     /// the bounds of the list, and the height of each item.
