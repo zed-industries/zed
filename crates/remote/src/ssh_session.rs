@@ -1484,18 +1484,25 @@ impl SshRemoteConnection {
             }
         }
 
-        let (binary, version) = delegate.get_server_binary(platform, cx).await??;
+        let (binary, latest_version) = delegate.get_server_binary(platform, cx).await??;
 
         let mut server_binary_exists = false;
         if !server_binary_exists && cfg!(not(debug_assertions)) {
             if let Ok(installed_version) =
                 run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
             {
-                if installed_version.trim() == version.to_string() {
+                if installed_version.trim() == latest_version.to_string() {
                     server_binary_exists = true;
                 }
-                log::info!("checked remote server binary for version. latest version: {}. remote server version: {}", version.to_string(), installed_version.trim());
+                log::info!("checked remote server binary for version. latest version: {}. remote server version: {}", latest_version.to_string(), installed_version.trim());
+            } else {
+                log::info!("checked remote server binary for version. latest version: {}. failed to run version command on server", latest_version.to_string());
             }
+        } else {
+            log::info!(
+                "skipping remote binary check. installing latest version: {}",
+                latest_version.to_string()
+            );
         }
 
         if server_binary_exists {
