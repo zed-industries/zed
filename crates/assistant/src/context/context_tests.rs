@@ -5,11 +5,12 @@ use crate::{
 };
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandRegistry, SlashCommandResult,
+    ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
+    SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
 use collections::HashSet;
 use fs::FakeFs;
+use futures::stream::{self, StreamExt};
 use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
@@ -28,7 +29,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId};
-use ui::{Context as _, WindowContext};
+use ui::{Context as _, IconName, WindowContext};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},
@@ -386,7 +387,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         cx.subscribe(&context, {
             let ranges = output_ranges.clone();
             move |_, _, event, _| match event {
-                ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
+                ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                     for range in removed {
                         ranges.borrow_mut().remove(range);
                     }
@@ -1063,42 +1064,54 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         offset + 1..offset + 1 + command_text.len()
                     });
 
-                    let output_len = rng.gen_range(1..=10);
                     let output_text = RandomCharIter::new(&mut rng)
                         .filter(|c| *c != '\r')
-                        .take(output_len)
+                        .take(10)
                         .collect::<String>();
 
+                    let mut events = vec![Ok(SlashCommandEvent::StartMessage {
+                        role: Role::User,
+                        merge_same_roles: true,
+                    })];
+
                     let num_sections = rng.gen_range(0..=3);
-                    let mut sections = Vec::with_capacity(num_sections);
+                    let mut section_start = 0;
                     for _ in 0..num_sections {
-                        let section_start = rng.gen_range(0..output_len);
-                        let section_end = rng.gen_range(section_start..=output_len);
-                        sections.push(SlashCommandOutputSection {
-                            range: section_start..section_end,
-                            icon: ui::IconName::Ai,
+                        let section_end = rng.gen_range(section_start..=output_text.len());
+                        events.push(Ok(SlashCommandEvent::StartSection {
+                            icon: IconName::Ai,
                             label: "section".into(),
                             metadata: None,
-                        });
+                        }));
+                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
+                            text: output_text[section_start..section_end].to_string(),
+                            run_commands_in_text: false,
+                        })));
+                        events.push(Ok(SlashCommandEvent::EndSection { metadata: None }));
+                        section_start = section_end;
+                    }
+
+                    if section_start < output_text.len() {
+                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
+                            text: output_text[section_start..].to_string(),
+                            run_commands_in_text: false,
+                        })));
                     }
 
                     log::info!(
-                        "Context {}: insert slash command output at {:?} with {:?}",
+                        "Context {}: insert slash command output at {:?} with {:?} events",
                         context_index,
                         command_range,
-                        sections
+                        events.len()
                     );
 
                     let command_range = context.buffer.read(cx).anchor_after(command_range.start)
                         ..context.buffer.read(cx).anchor_after(command_range.end);
                     context.insert_command_output(
                         command_range,
-                        Task::ready(Ok(SlashCommandOutput {
-                            text: output_text,
-                            sections,
-                            run_commands_in_text: false,
-                        }
-                        .to_event_stream())),
+                        "/command",
+                        &[],
+                        Task::ready(Ok(stream::iter(events).boxed())),
                         true,
                         false,
                         cx,

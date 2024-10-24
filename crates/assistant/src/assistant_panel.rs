@@ -1,3 +1,4 @@
+use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -6,8 +7,7 @@ use crate::{
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command::{self, codeblock_fence_for_path},
-        SlashCommandCompletionProvider, SlashCommandRegistry,
+        file_command, SlashCommandCompletionProvider, SlashCommandRegistry,
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
@@ -15,9 +15,10 @@ use crate::{
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
     DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
     Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
-    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    NewContext, ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
+use crate::{InvokedSlashCommandStatus, SlashCommandId};
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use assistant_tool::ToolRegistry;
@@ -37,12 +38,12 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    canvas, div, img, percentage, point, pulsating_between, size, Action, Animation, AnimationExt,
-    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
-    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
-    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    UpdateGlobal, View, VisualContext, WeakView, WindowContext,
+    canvas, div, img, percentage, point, prelude::*, pulsating_between, size, Action, Animation,
+    AnimationExt, AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry,
+    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle,
+    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
+    Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription,
+    Task, Transformation, UpdateGlobal, View, WeakModel, WeakView,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -72,13 +73,13 @@ use std::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::SelectionGoal;
-use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
     Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use ui::{IconButtonShape, TintColor};
 use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -1478,7 +1479,7 @@ pub struct ContextEditor {
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
-    pending_slash_command_blocks: HashMap<Range<language::Anchor>, CustomBlockId>,
+    invoked_slash_command_blocks: HashMap<SlashCommandId, CustomBlockId>,
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
@@ -1549,7 +1550,7 @@ impl ContextEditor {
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
-            pending_slash_command_blocks: HashMap::default(),
+            invoked_slash_command_blocks: HashMap::default(),
             pending_tool_use_creases: HashMap::default(),
             _subscriptions,
             patches: HashMap::default(),
@@ -1574,7 +1575,7 @@ impl ContextEditor {
         });
         let command = self.context.update(cx, |context, cx| {
             context.reparse(cx);
-            context.pending_slash_commands()[0].clone()
+            context.parsed_slash_commands()[0].clone()
         });
         self.run_command(
             command.source_range,
@@ -1780,6 +1781,8 @@ impl ContextEditor {
             self.context.update(cx, |context, cx| {
                 context.insert_command_output(
                     command_range,
+                    name,
+                    arguments,
                     output,
                     ensure_trailing_newline,
                     expand_result,
@@ -1908,26 +1911,15 @@ impl ContextEditor {
             ContextEvent::PatchesUpdated { removed, updated } => {
                 self.patches_updated(removed, updated, cx);
             }
-            ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
+            ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
                 self.editor.update(cx, |editor, cx| {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
-                    let excerpt_id = *excerpt_id;
+                    let (&excerpt_id, _, _) = buffer.as_singleton().unwrap();
 
                     editor.remove_creases(
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
-                        cx,
-                    );
-
-                    editor.remove_blocks(
-                        HashSet::from_iter(
-                            removed.iter().filter_map(|range| {
-                                self.pending_slash_command_blocks.remove(range)
-                            }),
-                        ),
-                        None,
                         cx,
                     );
 
@@ -1998,50 +1990,24 @@ impl ContextEditor {
                         cx,
                     );
 
-                    let block_ids = editor.insert_blocks(
-                        updated
-                            .iter()
-                            .filter_map(|command| match &command.status {
-                                PendingSlashCommandStatus::Error(error) => {
-                                    Some((command, error.clone()))
-                                }
-                                _ => None,
-                            })
-                            .map(|(command, error_message)| BlockProperties {
-                                style: BlockStyle::Fixed,
-                                position: Anchor {
-                                    buffer_id: Some(buffer_id),
-                                    excerpt_id,
-                                    text_anchor: command.source_range.start,
-                                },
-                                height: 1,
-                                disposition: BlockDisposition::Below,
-                                render: slash_command_error_block_renderer(error_message),
-                                priority: 0,
-                            }),
-                        None,
-                        cx,
-                    );
-
                     self.pending_slash_command_creases.extend(
                         updated
                             .iter()
                             .map(|command| command.source_range.clone())
                             .zip(crease_ids),
                     );
-
-                    self.pending_slash_command_blocks.extend(
-                        updated
-                            .iter()
-                            .map(|command| command.source_range.clone())
-                            .zip(block_ids),
-                    );
                 })
             }
+            ContextEvent::InvokedSlashCommandChanged { command_id } => {
+                self.update_invoked_slash_command(*command_id, cx);
+            }
+            ContextEvent::SlashCommandOutputSectionAdded { section } => {
+                self.insert_slash_command_output_sections([section.clone()], false, cx);
+            }
             ContextEvent::SlashCommandFinished {
-                output_range,
+                output_range: _output_range,
                 sections,
-                run_commands_in_output,
+                run_commands_in_ranges,
                 expand_result,
             } => {
                 self.insert_slash_command_output_sections(
@@ -2050,11 +2016,11 @@ impl ContextEditor {
                     cx,
                 );
 
-                if *run_commands_in_output {
+                for range in run_commands_in_ranges {
                     let commands = self.context.update(cx, |context, cx| {
                         context.reparse(cx);
                         context
-                            .pending_commands_for_range(output_range.clone(), cx)
+                            .pending_commands_for_range(range.clone(), cx)
                             .to_vec()
                     });
 
@@ -2144,6 +2110,62 @@ impl ContextEditor {
                 self.last_error = Some(AssistError::MaxMonthlySpendReached);
             }
         }
+    }
+
+    fn update_invoked_slash_command(
+        &mut self,
+        command_id: SlashCommandId,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let context_editor = cx.view().downgrade();
+        self.editor.update(cx, |editor, cx| {
+            if let Some(invoked_slash_command) =
+                self.context.read(cx).invoked_slash_command(&command_id)
+            {
+                if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+                    editor.remove_blocks(
+                        HashSet::from_iter(self.invoked_slash_command_blocks.remove(&command_id)),
+                        None,
+                        cx,
+                    )
+                } else if self.invoked_slash_command_blocks.contains_key(&command_id) {
+                    cx.notify();
+                } else {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let context = self.context.downgrade();
+                    let block_ids = editor.insert_blocks(
+                        [BlockProperties {
+                            style: BlockStyle::Fixed,
+                            position: Anchor {
+                                buffer_id: Some(buffer_id),
+                                excerpt_id,
+                                text_anchor: invoked_slash_command.position,
+                            },
+                            height: 1,
+                            disposition: BlockDisposition::Above,
+                            render: invoked_slash_command_renderer(
+                                command_id,
+                                context,
+                                context_editor,
+                            ),
+                            priority: 0,
+                        }],
+                        None,
+                        cx,
+                    );
+
+                    self.invoked_slash_command_blocks
+                        .insert(command_id, block_ids[0]);
+                }
+            } else {
+                editor.remove_blocks(
+                    HashSet::from_iter(self.invoked_slash_command_blocks.remove(&command_id)),
+                    None,
+                    cx,
+                )
+            };
+        });
     }
 
     fn patches_updated(
@@ -4876,7 +4898,7 @@ fn render_pending_slash_command_gutter_decoration(
 
 fn render_docs_slash_command_trailer(
     row: MultiBufferRow,
-    command: PendingSlashCommand,
+    command: ParsedSlashCommand,
     cx: &mut WindowContext,
 ) -> AnyElement {
     if command.arguments.is_empty() {
@@ -4960,16 +4982,70 @@ fn make_lsp_adapter_delegate(
     })
 }
 
-fn slash_command_error_block_renderer(message: String) -> RenderBlock {
-    Box::new(move |_| {
-        div()
-            .pl_6()
-            .child(
-                Label::new(format!("error: {}", message))
-                    .single_line()
-                    .color(Color::Error),
-            )
-            .into_any()
+fn invoked_slash_command_renderer(
+    command_id: SlashCommandId,
+    context: WeakModel<Context>,
+    context_editor: WeakView<ContextEditor>,
+) -> RenderBlock {
+    Box::new(move |cx| {
+        let Some(context) = context.upgrade() else {
+            return Empty.into_any();
+        };
+
+        let Some(command) = context.read(cx).invoked_slash_command(&command_id) else {
+            return Empty.into_any();
+        };
+
+        h_flex()
+            .px_1()
+            .ml_6()
+            .gap_2()
+            .bg(cx.theme().colors().surface_background)
+            .rounded_md()
+            .child(Label::new(format!("/{}", command.name.clone())))
+            .map(|parent| match &command.status {
+                InvokedSlashCommandStatus::Running(_) => {
+                    parent.child(Icon::new(IconName::ArrowCircle).with_animation(
+                        "arrow-circle",
+                        Animation::new(Duration::from_secs(4)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ))
+                }
+                InvokedSlashCommandStatus::Error(message) => parent
+                    .child(
+                        Label::new(format!("error: {message}"))
+                            .single_line()
+                            .color(Color::Error),
+                    )
+                    .child(
+                        IconButton::new("dismiss-error", IconName::Close)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .on_click({
+                                let context_editor = context_editor.clone();
+                                move |_event, cx| {
+                                    context_editor
+                                        .update(cx, |context_editor, cx| {
+                                            context_editor.editor.update(cx, |editor, cx| {
+                                                editor.remove_blocks(
+                                                    HashSet::from_iter(
+                                                        context_editor
+                                                            .invoked_slash_command_blocks
+                                                            .remove(&command_id),
+                                                    ),
+                                                    None,
+                                                    cx,
+                                                );
+                                            })
+                                        })
+                                        .log_err();
+                                }
+                            }),
+                    ),
+                InvokedSlashCommandStatus::Finished => parent,
+            })
+            .into_any_element()
     })
 }
 
