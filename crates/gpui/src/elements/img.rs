@@ -92,6 +92,12 @@ impl From<Arc<RenderImage>> for ImageSource {
     }
 }
 
+impl From<Arc<Image>> for ImageSource {
+    fn from(value: Arc<Image>) -> Self {
+        Self::Image(value)
+    }
+}
+
 /// An image element.
 pub struct Img {
     interactivity: Interactivity,

@@ -5743,10 +5743,14 @@ dependencies = [
  "anyhow",
  "db",
  "file_icons",
+ "futures 0.3.30",
  "gpui",
+ "image",
+ "log",
  "project",
  "settings",
  "ui",
+ "util",
  "workspace",
 ]
 
