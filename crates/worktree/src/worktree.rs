@@ -36,7 +36,10 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::{proto, AnyProtoClient};
+use rpc::{
+    proto::{self, split_worktree_update},
+    AnyProtoClient,
+};
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{smallvec, SmallVec};
@@ -1812,13 +1815,17 @@ impl RemoteWorktree {
         self.update_observer = Some(tx);
         cx.spawn(|this, mut cx| async move {
             let mut update = initial_update;
-            loop {
+            'outer: loop {
                 // SSH projects use a special project ID of 0, and we need to
                 // remap it to the correct one here.
                 update.project_id = project_id;
-                if !callback(update).await {
-                    break;
+
+                for chunk in split_worktree_update(update) {
+                    if !callback(chunk).await {
+                        break 'outer;
+                    }
                 }
+
                 if let Some(next_update) = rx.next().await {
                     update = next_update;
                 } else {
