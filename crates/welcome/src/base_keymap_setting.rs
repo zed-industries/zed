@@ -27,7 +27,7 @@ impl Display for BaseKeymap {
             BaseKeymap::SublimeText => write!(f, "Sublime Text"),
             BaseKeymap::Atom => write!(f, "Atom"),
             BaseKeymap::TextMate => write!(f, "TextMate"),
-            BaseKeymap::Emacs => write!(f, "Emacs"),
+            BaseKeymap::Emacs => write!(f, "Emacs (beta)"),
             BaseKeymap::None => write!(f, "None"),
         }
     }
@@ -40,7 +40,7 @@ impl BaseKeymap {
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
-        ("Emacs", Self::Emacs),
+        ("Emacs (beta)", Self::Emacs),
         ("TextMate", Self::TextMate),
     ];
 
@@ -50,7 +50,7 @@ impl BaseKeymap {
         ("Atom", Self::Atom),
         ("JetBrains", Self::JetBrains),
         ("Sublime Text", Self::SublimeText),
-        ("Emacs", Self::Emacs),
+        ("Emacs (beta)", Self::Emacs),
     ];
 
     pub fn asset_path(&self) -> Option<&'static str> {
