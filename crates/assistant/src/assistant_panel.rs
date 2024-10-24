@@ -1781,6 +1781,8 @@ impl ContextEditor {
             self.context.update(cx, |context, cx| {
                 context.insert_command_output(
                     command_range,
+                    name,
+                    arguments,
                     output,
                     ensure_trailing_newline,
                     expand_result,
@@ -4988,20 +4990,22 @@ fn invoked_slash_command_renderer(
             return Empty.into_any();
         };
 
-        match &command.status {
-            InvokedSlashCommandStatus::Running(_) => {
-                div().pl_6().child("Running command").into_any()
-            }
-            InvokedSlashCommandStatus::Error(message) => div()
-                .pl_6()
-                .child(
-                    Label::new(format!("error: {}", message))
-                        .single_line()
-                        .color(Color::Error),
-                )
-                .into_any_element(),
-            InvokedSlashCommandStatus::Finished => Empty.into_any(),
-        }
+        h_flex()
+            .pl_6()
+            .gap_2()
+            .child(h_flex().child("/").child(command.name.clone()))
+            .child(match &command.status {
+                InvokedSlashCommandStatus::Running(_) => div().child("Running command").into_any(),
+                InvokedSlashCommandStatus::Error(message) => div()
+                    .child(
+                        Label::new(format!("error: {}", message))
+                            .single_line()
+                            .color(Color::Error),
+                    )
+                    .into_any_element(),
+                InvokedSlashCommandStatus::Finished => Empty.into_any(),
+            })
+            .into_any_element()
     })
 }
 

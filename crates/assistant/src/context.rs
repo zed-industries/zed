@@ -1694,6 +1694,8 @@ impl Context {
     pub fn insert_command_output(
         &mut self,
         command_range: Range<language::Anchor>,
+        name: &str,
+        arguments: &[String],
         output: Task<SlashCommandResult>,
         ensure_trailing_newline: bool,
         expand_result: bool,
@@ -1916,6 +1918,8 @@ impl Context {
         self.invoked_slash_commands.insert(
             command_id,
             InvokedSlashCommand {
+                name: name.to_string().into(),
+                arguments: arguments.iter().cloned().map(SharedString::from).collect(),
                 position: command_range.start,
                 status: InvokedSlashCommandStatus::Running(insert_output_task),
             },
@@ -2934,6 +2938,8 @@ pub struct ParsedSlashCommand {
 
 #[derive(Debug)]
 pub struct InvokedSlashCommand {
+    pub name: SharedString,
+    pub arguments: SmallVec<[SharedString; 3]>,
     pub position: language::Anchor,
     pub status: InvokedSlashCommandStatus,
 }
