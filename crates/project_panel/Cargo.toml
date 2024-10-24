@@ -36,6 +36,7 @@ util.workspace = true
 client.workspace = true
 worktree.workspace = true
 workspace.workspace = true
+language.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
