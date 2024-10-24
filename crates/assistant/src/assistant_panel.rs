@@ -1999,6 +1999,9 @@ impl ContextEditor {
             ContextEvent::InvokedSlashCommandChanged { command_id } => {
                 self.update_invoked_slash_command(*command_id, cx);
             }
+            ContextEvent::SlashCommandOutputSectionAdded { section } => {
+                self.insert_slash_command_output_sections([section.clone()], false, cx);
+            }
             ContextEvent::SlashCommandFinished {
                 output_range: _output_range,
                 sections,
