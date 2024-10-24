@@ -37,6 +37,7 @@ pub struct DeserializedMetadata {
 #[derive(Deserialize, Debug)]
 pub struct DeserializedKernelSpec {
     pub name: String,
+    pub language: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]

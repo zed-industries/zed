@@ -19,8 +19,8 @@ use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 use super::{
     deserialize_notebook,
     static_sample::{complex_example, no_cells_example, simple_example},
-    Cell, CellId, DeserializedCell, DeserializedMetadata, RenderableCell, DEFAULT_NOTEBOOK_FORMAT,
-    DEFAULT_NOTEBOOK_FORMAT_MINOR,
+    Cell, CellId, DeserializedCell, DeserializedMetadata, DeserializedNotebook, RenderableCell,
+    DEFAULT_NOTEBOOK_FORMAT, DEFAULT_NOTEBOOK_FORMAT_MINOR,
 };
 
 actions!(
@@ -75,19 +75,35 @@ impl NotebookEditor {
     pub fn new(
         workspace: WeakView<Workspace>,
         project: Model<Project>,
+        notebook: DeserializedNotebook,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
         let languages = project.read(cx).languages().clone();
 
-        let mut metadata: DeserializedMetadata = Default::default();
-        let mut nbformat = DEFAULT_NOTEBOOK_FORMAT;
-        let mut nbformat_minor = DEFAULT_NOTEBOOK_FORMAT_MINOR;
-        let mut cell_order = vec![];
-        let mut cell_map = HashMap::default();
+        let metadata = notebook.metadata;
+        let nbformat = notebook.nbformat;
+        let nbformat_minor = notebook.nbformat_minor;
 
-        let deserialized_notebook = deserialize_notebook(simple_example());
+        let language_name = metadata
+            .language_info
+            .as_ref()
+            .map(|l| l.name.clone())
+            .or(metadata
+                .kernelspec
+                .as_ref()
+                .and_then(|spec| spec.language.clone()));
+
+        let notebook_language = if let Some(language_name) = language_name {
+            cx.spawn(|_, _| {
+                let languages = languages.clone();
+                async move { languages.language_for_name(&language_name).await.ok() }
+            })
+            .shared()
+        } else {
+            Task::ready(None).shared()
+        };
 
         let languages = project.read(cx).languages().clone();
         let notebook_language = cx
@@ -99,29 +115,22 @@ impl NotebookEditor {
             })
             .shared();
 
-        if let Ok(notebook) = deserialized_notebook {
-            metadata = notebook.metadata;
-            nbformat = notebook.nbformat;
-            nbformat_minor = notebook.nbformat_minor;
-            for (index, cell) in notebook.cells.into_iter().enumerate() {
-                let id = match &cell {
-                    DeserializedCell::Markdown { id, .. }
-                    | DeserializedCell::Code { id, .. }
-                    | DeserializedCell::Raw { id, .. } => {
-                        id.clone().unwrap_or_else(|| Uuid::new_v4().to_string())
-                    }
-                };
-                let cell_id = CellId::from(id.clone());
-                cell_order.push(cell_id.clone());
-                cell_map.insert(
-                    cell_id,
-                    Cell::load(cell, &languages, notebook_language.clone(), cx),
-                );
-            }
-        } else {
-            println!(
-                "Error deserializing notebook: {:?}",
-                deserialized_notebook.err()
+        let mut cell_order = vec![];
+        let mut cell_map = HashMap::default();
+
+        for (index, cell) in notebook.cells.into_iter().enumerate() {
+            let id = match &cell {
+                DeserializedCell::Markdown { id, .. }
+                | DeserializedCell::Code { id, .. }
+                | DeserializedCell::Raw { id, .. } => {
+                    id.clone().unwrap_or_else(|| Uuid::new_v4().to_string())
+                }
+            };
+            let cell_id = CellId::from(id.clone());
+            cell_order.push(cell_id.clone());
+            cell_map.insert(
+                cell_id,
+                Cell::load(cell, &languages, notebook_language.clone(), cx),
             );
         }
 
@@ -146,7 +155,9 @@ impl NotebookEditor {
         let project = workspace.project().to_owned();
 
         cx.spawn(|mut cx| async move {
-            cx.new_view(|cx| Self::new(weak_workspace.clone(), project, cx))
+            let notebook = deserialize_notebook(simple_example())?;
+
+            cx.new_view(|cx| Self::new(weak_workspace.clone(), project, notebook, cx))
         })
     }
 
