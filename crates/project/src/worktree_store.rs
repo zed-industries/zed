@@ -1,11 +1,9 @@
 use std::{
-    cell::RefCell,
     path::{Path, PathBuf},
     sync::{atomic::AtomicUsize, Arc},
 };
 
 use anyhow::{anyhow, Context as _, Result};
-use client::DevServerProjectId;
 use collections::{HashMap, HashSet};
 use fs::Fs;
 use futures::{
@@ -41,7 +39,6 @@ enum WorktreeStoreState {
         fs: Arc<dyn Fs>,
     },
     Remote {
-        dev_server_project_id: Option<DevServerProjectId>,
         upstream_client: AnyProtoClient,
         upstream_project_id: u64,
     },
@@ -94,7 +91,6 @@ impl WorktreeStore {
         retain_worktrees: bool,
         upstream_client: AnyProtoClient,
         upstream_project_id: u64,
-        dev_server_project_id: Option<DevServerProjectId>,
     ) -> Self {
         Self {
             next_entry_id: Default::default(),
@@ -106,7 +102,6 @@ impl WorktreeStore {
             state: WorktreeStoreState::Remote {
                 upstream_client,
                 upstream_project_id,
-                dev_server_project_id,
             },
         }
     }
@@ -196,18 +191,9 @@ impl WorktreeStore {
         if !self.loading_worktrees.contains_key(&path) {
             let task = match &self.state {
                 WorktreeStoreState::Remote {
-                    upstream_client,
-                    dev_server_project_id,
-                    ..
+                    upstream_client, ..
                 } => {
-                    if let Some(dev_server_project_id) = dev_server_project_id {
-                        self.create_dev_server_worktree(
-                            upstream_client.clone(),
-                            *dev_server_project_id,
-                            abs_path,
-                            cx,
-                        )
-                    } else if upstream_client.is_via_collab() {
+                    if upstream_client.is_via_collab() {
                         Task::ready(Err(Arc::new(anyhow!("cannot create worktrees via collab"))))
                     } else {
                         self.create_ssh_worktree(upstream_client.clone(), abs_path, visible, cx)
@@ -318,51 +304,6 @@ impl WorktreeStore {
                 .log_err();
             }
 
-            Ok(worktree)
-        })
-    }
-
-    fn create_dev_server_worktree(
-        &mut self,
-        client: AnyProtoClient,
-        dev_server_project_id: DevServerProjectId,
-        abs_path: impl AsRef<Path>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Model<Worktree>, Arc<anyhow::Error>>> {
-        let path: Arc<Path> = abs_path.as_ref().into();
-        let mut paths: Vec<String> = self
-            .visible_worktrees(cx)
-            .map(|worktree| worktree.read(cx).abs_path().to_string_lossy().to_string())
-            .collect();
-        paths.push(path.to_string_lossy().to_string());
-        let request = client.request(proto::UpdateDevServerProject {
-            dev_server_project_id: dev_server_project_id.0,
-            paths,
-        });
-
-        let abs_path = abs_path.as_ref().to_path_buf();
-        cx.spawn(move |project, cx| async move {
-            let (tx, rx) = futures::channel::oneshot::channel();
-            let tx = RefCell::new(Some(tx));
-            let Some(project) = project.upgrade() else {
-                return Err(anyhow!("project dropped"))?;
-            };
-            let observer = cx.update(|cx| {
-                cx.observe(&project, move |project, cx| {
-                    let abs_path = abs_path.clone();
-                    project.update(cx, |project, cx| {
-                        if let Some((worktree, _)) = project.find_worktree(&abs_path, cx) {
-                            if let Some(tx) = tx.borrow_mut().take() {
-                                tx.send(worktree).ok();
-                            }
-                        }
-                    })
-                })
-            })?;
-
-            request.await?;
-            let worktree = rx.await.map_err(|e| anyhow!(e))?;
-            drop(observer);
             Ok(worktree)
         })
     }

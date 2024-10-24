@@ -726,7 +726,6 @@ pub struct Project {
     pub collaborators: Vec<ProjectCollaborator>,
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
-    pub dev_server_project_id: Option<DevServerProjectId>,
 }
 
 pub struct ProjectCollaborator {

@@ -23,7 +23,6 @@ members = [
     "crates/context_servers",
     "crates/copilot",
     "crates/db",
-    "crates/dev_server_projects",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
@@ -45,7 +44,6 @@ members = [
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
-    "crates/headless",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/image_viewer",
@@ -201,7 +199,6 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
-dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
@@ -219,7 +216,6 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
 gpui_macros = { path = "crates/gpui_macros" }
-headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
