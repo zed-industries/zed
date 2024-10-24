@@ -36,10 +36,8 @@ struct CosmicTextSystemState {
 
 impl CosmicTextSystem {
     pub(crate) fn new() -> Self {
-        let mut font_system = FontSystem::new();
-
         // todo(linux) make font loading non-blocking
-        font_system.db_mut().load_system_fonts();
+        let mut font_system = FontSystem::new();
 
         Self(RwLock::new(CosmicTextSystemState {
             font_system,
