@@ -129,6 +129,11 @@ pub struct RemoveWorktreeFromProject(pub WorktreeId);
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
+    debugger,
+    [Start, Continue, Disconnect, Pause, Restart, StepInto, StepOver, StepOut, Stop]
+);
+
+actions!(
     workspace,
     [
         ActivateNextPane,
@@ -153,6 +158,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
+        StopDebugAdapters,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,
@@ -891,7 +897,7 @@ impl Workspace {
                 project.clone(),
                 pane_history_timestamp.clone(),
                 None,
-                NewFile.boxed_clone(),
+                Some(NewFile.boxed_clone()),
                 cx,
             )
         });
@@ -1133,6 +1139,7 @@ impl Workspace {
             // Get project paths for all of the abs_paths
             let mut project_paths: Vec<(PathBuf, Option<ProjectPath>)> =
                 Vec::with_capacity(paths_to_open.len());
+
             for path in paths_to_open.into_iter() {
                 if let Some((_, project_entry)) = cx
                     .update(|cx| {
@@ -2437,7 +2444,7 @@ impl Workspace {
                 self.project.clone(),
                 self.pane_history_timestamp.clone(),
                 None,
-                NewFile.boxed_clone(),
+                Some(NewFile.boxed_clone()),
                 cx,
             )
         });
@@ -3025,10 +3032,10 @@ impl Workspace {
                 self.update_window_edited(cx);
             }
             pane::Event::RemoveItem { .. } => {}
-            pane::Event::RemovedItem { item_id } => {
+            pane::Event::RemovedItem { item } => {
                 cx.emit(Event::ActiveItemChanged);
                 self.update_window_edited(cx);
-                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(*item_id) {
+                if let hash_map::Entry::Occupied(entry) = self.panes_by_item.entry(item.item_id()) {
                     if entry.get().entity_id() == pane.entity_id() {
                         entry.remove();
                     }
@@ -4152,6 +4159,10 @@ impl Workspace {
         };
 
         if let Some(location) = location {
+            let breakpoint_lines = self
+                .project
+                .update(cx, |project, cx| project.serialize_breakpoints(cx));
+
             let center_group = build_serialized_pane_group(&self.center.root, cx);
             let docks = build_serialized_docks(self, cx);
             let window_bounds = Some(SerializedWindowBounds(cx.window_bounds()));
@@ -4164,6 +4175,7 @@ impl Workspace {
                 docks,
                 centered_layout: self.centered_layout,
                 session_id: self.session_id.clone(),
+                breakpoints: breakpoint_lines,
                 window_id: Some(cx.window_handle().window_id().as_u64()),
             };
             return cx.spawn(|_| persistence::DB.save_workspace(serialized_workspace));
@@ -4218,7 +4230,7 @@ impl Workspace {
     }
 
     pub(crate) fn load_workspace(
-        serialized_workspace: SerializedWorkspace,
+        mut serialized_workspace: SerializedWorkspace,
         paths_to_open: Vec<Option<ProjectPath>>,
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<Vec<Option<Box<dyn ItemHandle>>>>> {
@@ -4227,6 +4239,24 @@ impl Workspace {
 
             let mut center_group = None;
             let mut center_items = None;
+
+            // Add unopened breakpoints to project before opening any items
+            workspace.update(&mut cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    project.dap_store().update(cx, |store, cx| {
+                        for worktree in project.worktrees(cx) {
+                            let (worktree_id, worktree_path) =
+                                worktree.read_with(cx, |tree, _cx| (tree.id(), tree.abs_path()));
+
+                            if let Some(serialized_breakpoints) =
+                                serialized_workspace.breakpoints.remove(&worktree_path)
+                            {
+                                store.deserialize_breakpoints(worktree_id, serialized_breakpoints);
+                            }
+                        }
+                    });
+                })
+            })?;
 
             // Traverse the splits tree and add to things
             if let Some((group, active_pane, items)) = serialized_workspace

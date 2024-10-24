@@ -9,9 +9,15 @@ use crate::bindable::{Bind, Column};
 use crate::connection::Connection;
 
 pub struct Statement<'a> {
+    /// vector of pointers to the raw SQLite statement objects.
+    /// it holds the actual prepared statements that will be executed.
     raw_statements: Vec<*mut sqlite3_stmt>,
+    /// Index of the current statement being executed from the `raw_statements` vector.
     current_statement: usize,
+    /// A reference to the database connection.
+    /// This is used to execute the statements and check for errors.
     connection: &'a Connection,
+    ///Indicates that the `Statement` struct is tied to the lifetime of the SQLite statement
     phantom: PhantomData<sqlite3_stmt>,
 }
 

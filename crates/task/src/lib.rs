@@ -1,6 +1,7 @@
 //! Baseline interface of Tasks in Zed: all tasks in Zed are intended to use those for implementing their own logic.
 #![deny(missing_docs)]
 
+mod debug_format;
 pub mod static_source;
 mod task_template;
 mod vscode_format;
@@ -13,7 +14,13 @@ use std::borrow::Cow;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-pub use task_template::{HideStrategy, RevealStrategy, TaskTemplate, TaskTemplates};
+pub use debug_format::{
+    CustomArgs, DebugAdapterConfig, DebugAdapterKind, DebugConnectionType, DebugRequestType,
+    DebugTaskFile, TCPHost,
+};
+pub use task_template::{
+    HideStrategy, RevealStrategy, TaskModal, TaskTemplate, TaskTemplates, TaskType,
+};
 pub use vscode_format::VsCodeTaskFile;
 
 /// Task identifier, unique within the application.
@@ -51,6 +58,8 @@ pub struct SpawnInTerminal {
     pub hide: HideStrategy,
     /// Which shell to use when spawning the task.
     pub shell: Shell,
+    /// Tells debug tasks which program to debug
+    pub program: Option<String>,
 }
 
 /// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
@@ -77,6 +86,28 @@ impl ResolvedTask {
     /// A task template before the resolution.
     pub fn original_task(&self) -> &TaskTemplate {
         &self.original_task
+    }
+
+    /// Get the task type that determines what this task is used for
+    /// And where is it shown in the UI
+    pub fn task_type(&self) -> TaskType {
+        self.original_task.task_type.clone()
+    }
+
+    /// Get the configuration for the debug adapter that should be used for this task.
+    pub fn debug_adapter_config(&self) -> Option<DebugAdapterConfig> {
+        match self.original_task.task_type.clone() {
+            TaskType::Script => None,
+            TaskType::Debug(mut adapter_config) => {
+                let program = match &self.resolved {
+                    None => adapter_config.program,
+                    Some(spawn_in_terminal) => spawn_in_terminal.program.clone(),
+                };
+
+                adapter_config.program = program;
+                Some(adapter_config)
+            }
+        }
     }
 
     /// Variables that were substituted during the task template resolution.
