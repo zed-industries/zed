@@ -1,4 +1,6 @@
 #![allow(unused)]
+use std::sync::Arc;
+
 use anyhow::Result;
 use client::proto::ViewId;
 use collections::HashMap;
@@ -6,6 +8,7 @@ use gpui::{
     actions, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, Model, Task, View,
     WeakView,
 };
+use language::LanguageRegistry;
 use project::Project;
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
@@ -52,6 +55,8 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct NotebookEditor {
+    languages: Arc<LanguageRegistry>,
+
     focus_handle: FocusHandle,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
@@ -72,6 +77,8 @@ impl NotebookEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+
+        let languages = project.read(cx).languages().clone();
 
         let mut metadata: DeserializedMetadata = Default::default();
         let mut nbformat = DEFAULT_NOTEBOOK_FORMAT;
@@ -95,7 +102,7 @@ impl NotebookEditor {
                 };
                 let cell_id = CellId::from(id.clone());
                 cell_order.push(cell_id.clone());
-                cell_map.insert(cell_id, Cell::load(cell, cx));
+                cell_map.insert(cell_id, Cell::load(cell, &languages, cx));
             }
         } else {
             println!(
@@ -105,6 +112,7 @@ impl NotebookEditor {
         }
 
         Self {
+            languages,
             focus_handle,
             workspace,
             project,
@@ -148,15 +156,14 @@ impl NotebookEditor {
         })
     }
 
-    fn cells(&self) -> Vec<Cell> {
+    fn cells(&self) -> impl Iterator<Item = &Cell> {
         self.cell_order
             .iter()
-            .filter_map(|id| self.cell_map.get(id).cloned())
-            .collect()
+            .filter_map(|id| self.cell_map.get(id))
     }
 
     fn has_outputs(&self, cx: &ViewContext<Self>) -> bool {
-        self.cells().iter().any(|cell| {
+        self.cell_map.values().any(|cell| {
             if let Cell::Code(code_cell) = cell {
                 code_cell.read(cx).has_outputs()
             } else {
@@ -166,7 +173,7 @@ impl NotebookEditor {
     }
 
     fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
-        for cell in self.cells() {
+        for cell in self.cell_map.values() {
             if let Cell::Code(code_cell) = cell {
                 code_cell.update(cx, |cell, cx| {
                     cell.clear_outputs();
@@ -407,7 +414,7 @@ impl NotebookEditor {
             .flex_1()
             .size_full()
             .overflow_y_scroll()
-            .children(self.cells().into_iter().enumerate().map(|(index, cell)| {
+            .children(self.cells().enumerate().map(|(index, cell)| {
                 let is_selected = index == self.selected_cell_index;
                 match cell {
                     Cell::Code(cell) => {

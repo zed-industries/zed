@@ -1,9 +1,14 @@
 #![allow(unused, dead_code)]
 use core::fmt;
-use std::fmt::{Display, Formatter};
+use std::{
+    fmt::{Display, Formatter},
+    sync::Arc,
+};
 
 use editor::Editor;
-use gpui::{prelude::*, Hsla, View, WeakView};
+use gpui::{prelude::*, Hsla, Task, View, WeakView};
+use language::LanguageRegistry;
+use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ui::prelude::*;
@@ -240,20 +245,53 @@ fn convert_outputs(outputs: Vec<DeserializedOutput>, cx: &mut WindowContext) -> 
 }
 
 impl Cell {
-    pub fn load(cell: DeserializedCell, cx: &mut WindowContext) -> Self {
+    pub fn load(
+        cell: DeserializedCell,
+        languages: &Arc<LanguageRegistry>,
+        cx: &mut WindowContext,
+    ) -> Self {
         match cell {
             DeserializedCell::Markdown {
                 id,
                 metadata,
                 source,
                 attachments,
-            } => Cell::Markdown(cx.new_view(|cx| MarkdownCell {
-                id: id.into(),
-                cell_type: CellType::Markdown,
-                metadata,
-                source: source.join("\n"),
-                selected: false,
-            })),
+            } => {
+                let source = source.join("\n");
+
+                let view = cx.new_view(|cx| {
+                    let markdown_parsing_task = {
+                        let languages = languages.clone();
+                        let source = source.clone();
+
+                        cx.spawn(|this, mut cx| async move {
+                            let parsed_markdown = cx
+                                .background_executor()
+                                .spawn(async move {
+                                    parse_markdown(&source, None, Some(languages)).await
+                                })
+                                .await;
+
+                            this.update(&mut cx, |cell: &mut MarkdownCell, _| {
+                                cell.parsed_markdown = Some(parsed_markdown);
+                            });
+                        })
+                    };
+
+                    MarkdownCell {
+                        markdown_parsing_task,
+                        languages: languages.clone(),
+                        id: id.into(),
+                        cell_type: CellType::Markdown,
+                        metadata,
+                        source: source.clone(),
+                        parsed_markdown: None,
+                        selected: false,
+                    }
+                });
+
+                Cell::Markdown(view)
+            }
             DeserializedCell::Code {
                 id,
                 metadata,
@@ -267,7 +305,7 @@ impl Cell {
                     let mut editor = Editor::multi_line(cx);
                     editor.set_text(text, cx);
                     editor.set_show_gutter(false, cx);
-                    editor.set_read_only(true);
+                    // editor.set_read_only(true);
                     editor
                 });
 
@@ -299,6 +337,7 @@ impl Cell {
 
 pub trait RenderableCell: Render {
     const CELL_TYPE: CellType;
+
     // fn new(cx: &mut WindowContext) -> View<Self>;
     fn id(&self) -> &CellId;
     fn cell_type(&self) -> &CellType;
@@ -319,6 +358,7 @@ pub trait RenderableCell: Render {
     fn control(&self) -> Option<CellControl> {
         None
     }
+    // fn language_registry(&self, language_registry: &Arc<LanguageRegistry>) -> &LanguageRegistry;
     fn gutter(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let is_selected = self.selected();
 
@@ -359,6 +399,11 @@ pub trait RenderableCell: Render {
                 )
             })
     }
+
+    // fn cell_placeholder(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+    //     // TODO: render placeholder
+    //     div().into_element()
+    // }
 }
 
 pub struct MarkdownCell {
@@ -366,19 +411,10 @@ pub struct MarkdownCell {
     cell_type: CellType,
     metadata: DeserializedCellMetadata,
     source: String,
+    parsed_markdown: Option<markdown_preview::markdown_elements::ParsedMarkdown>,
+    markdown_parsing_task: Task<()>,
     selected: bool,
-}
-
-impl Default for MarkdownCell {
-    fn default() -> Self {
-        Self {
-            id: Default::default(),
-            cell_type: CellType::Markdown,
-            metadata: Default::default(),
-            source: "".to_string(),
-            selected: false,
-        }
-    }
+    languages: Arc<LanguageRegistry>,
 }
 
 impl RenderableCell for MarkdownCell {
@@ -420,6 +456,13 @@ impl RenderableCell for MarkdownCell {
 
 impl Render for MarkdownCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let Some(parsed) = self.parsed_markdown.as_ref() else {
+            return div();
+        };
+
+        let mut markdown_render_context =
+            markdown_preview::markdown_renderer::RenderContext::new(None, cx);
+
         h_flex()
             .w_full()
             .pr_2()
@@ -429,14 +472,20 @@ impl Render for MarkdownCell {
             .bg(self.selected_bg_color(cx))
             .child(self.gutter(cx))
             .child(
-                div()
-                    .flex()
+                v_flex()
                     .size_full()
                     .flex_1()
                     .p_3()
                     .font_ui(cx)
                     .text_size(TextSize::Default.rems(cx))
-                    .child(self.source.clone()),
+                    //
+                    .children(parsed.children.iter().map(|child| {
+                        div().relative().child(
+                            div()
+                                .relative()
+                                .child(render_markdown_block(child, &mut markdown_render_context)),
+                        )
+                    })),
             )
     }
 }

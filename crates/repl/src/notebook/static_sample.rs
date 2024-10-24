@@ -5,7 +5,13 @@ pub fn simple_example() -> &'static str {
           "cell_type": "markdown",
           "metadata": {},
           "source": [
-            "# Simple Notebook Example"
+            "# Simple Notebook Example",
+            "",
+            "```python",
+            "# This is syntax highlighted",
+            "import this",
+            "```",
+            ""
           ]
         },
         {
