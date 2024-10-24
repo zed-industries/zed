@@ -1,5 +1,110 @@
 pub fn simple_example() -> &'static str {
     r#######"{
+      "cells": [
+        {
+          "cell_type": "markdown",
+          "metadata": {},
+          "source": [
+            "# Simple Notebook Example"
+          ]
+        },
+        {
+          "cell_type": "markdown",
+          "metadata": {},
+          "source": [
+            "This is a basic markdown cell."
+          ]
+        },
+        {
+          "cell_type": "code",
+          "execution_count": 1,
+          "metadata": {},
+          "outputs": [],
+          "source": [
+            "print('Hello, World!')"
+          ]
+        },
+        {
+          "cell_type": "raw",
+          "metadata": {},
+          "source": [
+            "This is a raw cell."
+          ]
+        },
+        {
+          "cell_type": "markdown",
+          "metadata": {},
+          "source": [
+            "## Code Example"
+          ]
+        },
+        {
+          "cell_type": "code",
+          "execution_count": 2,
+          "metadata": {},
+          "outputs": [],
+          "source": [
+            "x = 5\n",
+            "y = 10"
+          ]
+        },
+        {
+          "cell_type": "markdown",
+          "metadata": {},
+          "source": [
+            "Another simple markdown cell."
+          ]
+        },
+        {
+          "cell_type": "code",
+          "execution_count": 3,
+          "metadata": {},
+          "outputs": [],
+          "source": [
+            "print(f'x + y = {x + y}')"
+          ]
+        },
+        {
+          "cell_type": "raw",
+          "metadata": {},
+          "source": [
+            "Another raw cell example."
+          ]
+        },
+        {
+          "cell_type": "markdown",
+          "metadata": {},
+          "source": [
+            "## Conclusion"
+          ]
+        }
+      ],
+      "metadata": {
+        "kernelspec": {
+          "display_name": "Python 3",
+          "language": "python",
+          "name": "python3"
+        },
+        "language_info": {
+          "codemirror_mode": {
+            "name": "ipython",
+            "version": 3
+          },
+          "file_extension": ".py",
+          "mimetype": "text/x-python",
+          "name": "python",
+          "nbconvert_exporter": "python",
+          "pygments_lexer": "ipython3",
+          "version": "3.8.0"
+        }
+      },
+      "nbformat": 4,
+      "nbformat_minor": 5
+    }"#######
+}
+
+pub fn complex_example() -> &'static str {
+    r#######"{
       "cells":[
         {
           "cell_type":"markdown",
