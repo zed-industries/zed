@@ -16,10 +16,10 @@ use util::RangeExt;
 use workspace::Item;
 
 use crate::{
-    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyDiffHunk,
-    BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
-    DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
-    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
+    ApplyDiffHunk, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight,
+    DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
+    RevertFile, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -352,7 +352,11 @@ impl Editor {
         None
     }
 
-    pub(crate) fn apply_all_diff_hunks(&mut self, cx: &mut ViewContext<Self>) {
+    pub(crate) fn apply_all_diff_hunks(
+        &mut self,
+        _: &ApplyAllDiffHunks,
+        cx: &mut ViewContext<Self>,
+    ) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
             branch_buffer.update(cx, |branch_buffer, cx| {

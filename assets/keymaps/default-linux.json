@@ -506,6 +506,13 @@
     }
   },
   {
+    "context": "ProposedChangesEditor",
+    "bindings": {
+      "ctrl-shift-y": "editor::ApplyDiffHunk",
+      "ctrl-alt-a": "editor::ApplyAllDiffHunks"
+    }
+  },
+  {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
