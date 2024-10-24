@@ -1,5 +1,5 @@
+use crate::db::UserId;
 use crate::llm::Cents;
-use crate::{db::UserId, llm::FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use chrono::{Datelike, Duration};
 use futures::StreamExt as _;
 use rpc::LanguageModelProvider;
@@ -299,6 +299,7 @@ impl LlmDatabase {
         tokens: TokenUsage,
         has_llm_subscription: bool,
         max_monthly_spend: Cents,
+        free_tier_monthly_spending_limit: Cents,
         now: DateTimeUtc,
     ) -> Result<Usage> {
         self.transaction(|tx| async move {
@@ -410,9 +411,9 @@ impl LlmDatabase {
             );
 
             if !is_staff
-                && spending_this_month > FREE_TIER_MONTHLY_SPENDING_LIMIT
+                && spending_this_month > free_tier_monthly_spending_limit
                 && has_llm_subscription
-                && (spending_this_month - FREE_TIER_MONTHLY_SPENDING_LIMIT) <= max_monthly_spend
+                && (spending_this_month - free_tier_monthly_spending_limit) <= max_monthly_spend
             {
                 billing_event::ActiveModel {
                     id: ActiveValue::not_set(),

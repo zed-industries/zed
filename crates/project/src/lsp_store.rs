@@ -1033,6 +1033,7 @@ impl LspStore {
                 })
                 .detach()
             }
+            WorktreeStoreEvent::WorktreeReleased(..) => {}
             WorktreeStoreEvent::WorktreeRemoved(_, id) => self.remove_worktree(*id, cx),
             WorktreeStoreEvent::WorktreeOrderChanged => {}
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
@@ -3367,11 +3368,12 @@ impl LspStore {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<(), anyhow::Error> {
-        let (worktree, relative_path) =
-            self.worktree_store
-                .read(cx)
-                .find_worktree(&abs_path, cx)
-                .ok_or_else(|| anyhow!("no worktree found for diagnostics path {abs_path:?}"))?;
+        let Some((worktree, relative_path)) =
+            self.worktree_store.read(cx).find_worktree(&abs_path, cx)
+        else {
+            log::warn!("skipping diagnostics update, no worktree found for path {abs_path:?}");
+            return Ok(());
+        };
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),

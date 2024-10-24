@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.159.0"
+version = "0.160.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -127,8 +127,6 @@ winresource = "0.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd.workspace = true
-# We don't use zstd in the zed crate, but we want to add this feature when compiling a desktop build of Zed
-zstd = { workspace = true, features = [ "pkg-config" ] }
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

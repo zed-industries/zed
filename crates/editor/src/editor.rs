@@ -77,8 +77,8 @@ use gpui::{
     FocusOutEvent, FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText,
     KeyContext, ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render,
     SharedString, Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
-    UTF16Selection, UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler,
-    VisualContext, WeakFocusHandle, WeakView, WindowContext,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View,
+    ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -550,6 +550,7 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
+
     project: Option<Model<Project>>,
     semantics_provider: Option<Rc<dyn SemanticsProvider>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
@@ -619,6 +620,7 @@ pub struct Editor {
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
     gutter_dimensions: GutterDimensions,
     style: Option<EditorStyle>,
+    text_style_refinement: Option<TextStyleRefinement>,
     next_editor_action_id: EditorActionId,
     editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
@@ -2078,6 +2080,7 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
+            text_style_refinement: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -6507,28 +6510,6 @@ impl Editor {
                 editor.revert(revert_changes, cx);
             });
         }
-    }
-
-    fn apply_selected_diff_hunks(&mut self, _: &ApplyDiffHunk, cx: &mut ViewContext<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
-        let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, |editor, cx| {
-            for hunk in hunks {
-                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
-                    ranges_by_buffer
-                        .entry(buffer.clone())
-                        .or_insert_with(Vec::new)
-                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
-                }
-            }
-
-            for (buffer, ranges) in ranges_by_buffer {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.merge_into_base(ranges, cx);
-                });
-            }
-        });
     }
 
     pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
@@ -11554,7 +11535,12 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_style(&mut self, style: EditorStyle, cx: &mut ViewContext<Self>) {
+    pub fn set_text_style_refinement(&mut self, style: TextStyleRefinement) {
+        self.text_style_refinement = Some(style);
+    }
+
+    /// called by the Element so we know what style we were most recently rendered with.
+    pub(crate) fn set_style(&mut self, style: EditorStyle, cx: &mut ViewContext<Self>) {
         let rem_size = cx.rem_size();
         self.display_map.update(cx, |map, cx| {
             map.set_font(
@@ -14075,7 +14061,7 @@ impl Render for Editor {
     fn render<'a>(&mut self, cx: &mut ViewContext<'a, Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
-        let text_style = match self.mode {
+        let mut text_style = match self.mode {
             EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
@@ -14097,6 +14083,9 @@ impl Render for Editor {
                 ..Default::default()
             },
         };
+        if let Some(text_style_refinement) = &self.text_style_refinement {
+            text_style.refine(text_style_refinement)
+        }
 
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,

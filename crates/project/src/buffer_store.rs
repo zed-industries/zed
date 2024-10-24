@@ -55,7 +55,7 @@ trait BufferStoreImpl {
 
     fn reload_buffers(
         &self,
-        buffers: Vec<Model<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<ProjectTransaction>>;
@@ -394,7 +394,7 @@ impl BufferStoreImpl for Model<RemoteBufferStore> {
 
     fn reload_buffers(
         &self,
-        buffers: Vec<Model<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<ProjectTransaction>> {
@@ -944,7 +944,7 @@ impl BufferStoreImpl for Model<LocalBufferStore> {
 
     fn reload_buffers(
         &self,
-        buffers: Vec<Model<Buffer>>,
+        buffers: HashSet<Model<Buffer>>,
         push_to_history: bool,
         cx: &mut ModelContext<BufferStore>,
     ) -> Task<Result<ProjectTransaction>> {
@@ -1933,13 +1933,10 @@ impl BufferStore {
         push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
-        let buffers: Vec<Model<Buffer>> = buffers
-            .into_iter()
-            .filter(|buffer| buffer.read(cx).is_dirty())
-            .collect();
         if buffers.is_empty() {
             return Task::ready(Ok(ProjectTransaction::default()));
         }
+
         self.state.reload_buffers(buffers, push_to_history, cx)
     }
 

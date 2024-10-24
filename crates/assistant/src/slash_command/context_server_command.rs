@@ -1,8 +1,7 @@
-use super::create_label_for_command;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
-    SlashCommandOutputSection,
+    SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
 use context_servers::{
@@ -16,6 +15,8 @@ use std::sync::Arc;
 use text::LineEnding;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
+
+use crate::slash_command::create_label_for_command;
 
 pub struct ContextServerSlashCommand {
     server_id: String,
@@ -128,7 +129,7 @@ impl SlashCommand for ContextServerSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
 
@@ -145,7 +146,28 @@ impl SlashCommand for ContextServerSlashCommand {
                     return Err(anyhow!("Context server not initialized"));
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
-                let mut prompt = result.prompt;
+
+                // Check that there are only user roles
+                if result
+                    .messages
+                    .iter()
+                    .any(|msg| !matches!(msg.role, context_servers::types::SamplingRole::User))
+                {
+                    return Err(anyhow!(
+                        "Prompt contains non-user roles, which is not supported"
+                    ));
+                }
+
+                // Extract text from user messages into a single prompt string
+                let mut prompt = result
+                    .messages
+                    .into_iter()
+                    .filter_map(|msg| match msg.content {
+                        context_servers::types::SamplingContent::Text { text } => Some(text),
+                        _ => None,
+                    })
+                    .collect::<Vec<String>>()
+                    .join("\n\n");
 
                 // We must normalize the line endings here, since servers might return CR characters.
                 LineEnding::normalize(&mut prompt);
@@ -163,7 +185,8 @@ impl SlashCommand for ContextServerSlashCommand {
                     }],
                     text: prompt,
                     run_commands_in_text: false,
-                })
+                }
+                .to_event_stream())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

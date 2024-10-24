@@ -1,7 +1,9 @@
-use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::{
@@ -48,7 +50,7 @@ impl SlashCommand for DefaultSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let store = PromptStore::global(cx);
         cx.background_executor().spawn(async move {
             let store = store.await?;
@@ -76,7 +78,8 @@ impl SlashCommand for DefaultSlashCommand {
                 }],
                 text,
                 run_commands_in_text: true,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

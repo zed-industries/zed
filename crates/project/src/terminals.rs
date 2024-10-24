@@ -74,13 +74,15 @@ impl Project {
         }
     }
 
-    fn ssh_command(&self, cx: &AppContext) -> Option<SshCommand> {
-        if let Some(args) = self
-            .ssh_client
-            .as_ref()
-            .and_then(|session| session.read(cx).ssh_args())
-        {
-            return Some(SshCommand::Direct(args));
+    fn ssh_details(&self, cx: &AppContext) -> Option<(String, SshCommand)> {
+        if let Some(ssh_client) = &self.ssh_client {
+            let ssh_client = ssh_client.read(cx);
+            if let Some(args) = ssh_client.ssh_args() {
+                return Some((
+                    ssh_client.connection_options().host.clone(),
+                    SshCommand::Direct(args),
+                ));
+            }
         }
 
         let dev_server_project_id = self.dev_server_project_id()?;
@@ -90,7 +92,7 @@ impl Project {
             .ssh_connection_string
             .as_ref()?
             .to_string();
-        Some(SshCommand::DevServer(ssh_command))
+        Some(("".to_string(), SshCommand::DevServer(ssh_command)))
     }
 
     pub fn create_terminal(
@@ -110,7 +112,7 @@ impl Project {
             }
             TerminalKind::Debug { cwd, .. } => Some(cwd.clone()),
         };
-        let ssh_command = self.ssh_command(cx);
+        let ssh_details = self.ssh_details(cx);
 
         let mut settings_location = None;
         if let Some(path) = path.as_ref() {
@@ -135,7 +137,7 @@ impl Project {
         // precedence.
         env.extend(settings.env.clone());
 
-        let local_path = if ssh_command.is_none() {
+        let local_path = if ssh_details.is_none() {
             path.clone()
         } else {
             None
@@ -154,8 +156,8 @@ impl Project {
                         self.python_activate_command(&python_venv_directory, settings);
                 }
 
-                match &ssh_command {
-                    Some(ssh_command) => {
+                match &ssh_details {
+                    Some((host, ssh_command)) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
 
                         // Alacritty sets its terminfo to `alacritty`, this requiring hosts to have it installed
@@ -168,7 +170,14 @@ impl Project {
                         let (program, args) =
                             wrap_for_ssh(ssh_command, None, path.as_deref(), env, None);
                         env = HashMap::default();
-                        (None, Shell::WithArguments { program, args })
+                        (
+                            None,
+                            Shell::WithArguments {
+                                program,
+                                args,
+                                title_override: Some(format!("{} — Terminal", host).into()),
+                            },
+                        )
                     }
                     None => (None, settings.shell.clone()),
                 }
@@ -182,7 +191,11 @@ impl Project {
                 env.extend(envs);
 
                 let shell = if let Some(program) = command {
-                    Shell::WithArguments { program, args }
+                    Shell::WithArguments {
+                        program,
+                        args,
+                        title_override: Some("debugger".into()),
+                    }
                 } else {
                     settings.shell.clone()
                 };
@@ -209,8 +222,8 @@ impl Project {
                     );
                 }
 
-                match &ssh_command {
-                    Some(ssh_command) => {
+                match &ssh_details {
+                    Some((host, ssh_command)) => {
                         log::debug!("Connecting to a remote server: {ssh_command:?}");
                         env.entry("TERM".to_string())
                             .or_insert_with(|| "xterm-256color".to_string());
@@ -222,7 +235,14 @@ impl Project {
                             python_venv_directory,
                         );
                         env = HashMap::default();
-                        (task_state, Shell::WithArguments { program, args })
+                        (
+                            task_state,
+                            Shell::WithArguments {
+                                program,
+                                args,
+                                title_override: Some(format!("{} — Terminal", host).into()),
+                            },
+                        )
                     }
                     None => {
                         if let Some(venv_path) = &python_venv_directory {
@@ -234,6 +254,7 @@ impl Project {
                             Shell::WithArguments {
                                 program: spawn_task.command,
                                 args: spawn_task.args,
+                                title_override: None,
                             },
                         )
                     }
@@ -249,6 +270,7 @@ impl Project {
             settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
+            ssh_details.is_some(),
             window,
             completion_tx,
             debug_terminal,

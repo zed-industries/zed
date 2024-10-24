@@ -715,6 +715,16 @@ fn handle_open_request(
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
+            let nickname = cx
+                .update(|cx| {
+                    SshSettings::get_global(cx).nickname_for(
+                        &connection_info.host,
+                        connection_info.port,
+                        &connection_info.username,
+                    )
+                })
+                .ok()
+                .flatten();
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
@@ -722,6 +732,7 @@ fn handle_open_request(
                 paths_with_position.into_iter().map(|p| p.path).collect(),
                 app_state,
                 workspace::OpenOptions::default(),
+                nickname,
                 &mut cx,
             )
             .await
@@ -890,6 +901,12 @@ async fn restore_or_create_workspace(
                         })
                         .ok()
                         .flatten();
+                    let nickname = cx
+                        .update(|cx| {
+                            SshSettings::get_global(cx).nickname_for(&ssh.host, ssh.port, &ssh.user)
+                        })
+                        .ok()
+                        .flatten();
                     let connection_options = SshConnectionOptions {
                         args,
                         host: ssh.host.clone(),
@@ -904,6 +921,7 @@ async fn restore_or_create_workspace(
                             ssh.paths.into_iter().map(PathBuf::from).collect(),
                             app_state,
                             workspace::OpenOptions::default(),
+                            nickname,
                             &mut cx,
                         )
                         .await

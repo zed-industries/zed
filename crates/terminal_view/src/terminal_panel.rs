@@ -89,6 +89,7 @@ impl TerminalPanel {
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_| true);
 
+            let is_local = workspace.project().read(cx).is_local();
             let workspace = workspace.weak_handle();
             pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
                 if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
@@ -128,8 +129,10 @@ impl TerminalPanel {
                     {
                         add_paths_to_terminal(pane, &[entry_path], cx);
                     }
-                } else if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                    add_paths_to_terminal(pane, paths.paths(), cx);
+                } else if is_local {
+                    if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                        add_paths_to_terminal(pane, paths.paths(), cx);
+                    }
                 }
 
                 ControlFlow::Break(())
@@ -411,7 +414,7 @@ impl TerminalPanel {
                 }
             }
             Shell::Program(shell) => Some((shell, Vec::new())),
-            Shell::WithArguments { program, args } => Some((program, args)),
+            Shell::WithArguments { program, args, .. } => Some((program, args)),
         }) else {
             return;
         };

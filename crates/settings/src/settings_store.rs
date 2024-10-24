@@ -968,7 +968,7 @@ impl SettingsStore {
         Ok(())
     }
 
-    pub fn editorconfg_properties(
+    pub fn editorconfig_properties(
         &self,
         for_worktree: WorktreeId,
         for_path: &Path,

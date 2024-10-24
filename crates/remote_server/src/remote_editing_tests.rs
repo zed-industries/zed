@@ -210,7 +210,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
             AllLanguageSettings::get_global(cx)
                 .language(None, Some(&"Rust".into()), cx)
                 .language_servers,
-            ["from-local-settings".to_string()]
+            ["..."] // local settings are ignored
         )
     });
 
@@ -479,7 +479,19 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         })
         .await
         .unwrap();
+
+    fs.save(
+        &PathBuf::from("/code/project1/src/lib.rs"),
+        &("bangles".to_string().into()),
+        LineEnding::Unix,
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
     buffer.update(cx, |buffer, cx| {
+        assert_eq!(buffer.text(), "bangles");
         buffer.edit([(0..0, "a")], None, cx);
     });
 

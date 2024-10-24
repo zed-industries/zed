@@ -717,7 +717,6 @@ mod tests {
         );
 
         // Ensure InsertBefore merges correctly with Update of the same text
-
         assert_edits(
             "
                 fn foo() {
@@ -777,6 +776,90 @@ mod tests {
 
                 fn qux() {
                     // todo
+                }
+            "
+            .unindent(),
+            cx,
+        );
+
+        // Correctly indent new text when replacing multiple adjacent indented blocks.
+        assert_edits(
+            "
+            impl Numbers {
+                fn one() {
+                    1
+                }
+
+                fn two() {
+                    2
+                }
+
+                fn three() {
+                    3
+                }
+            }
+            "
+            .unindent(),
+            vec![
+                AssistantEditKind::Update {
+                    old_text: "
+                        fn one() {
+                            1
+                        }
+                    "
+                    .unindent(),
+                    new_text: "
+                        fn one() {
+                            101
+                        }
+                    "
+                    .unindent(),
+                    description: "pick better number".into(),
+                },
+                AssistantEditKind::Update {
+                    old_text: "
+                        fn two() {
+                            2
+                        }
+                    "
+                    .unindent(),
+                    new_text: "
+                        fn two() {
+                            102
+                        }
+                    "
+                    .unindent(),
+                    description: "pick better number".into(),
+                },
+                AssistantEditKind::Update {
+                    old_text: "
+                        fn three() {
+                            3
+                        }
+                    "
+                    .unindent(),
+                    new_text: "
+                        fn three() {
+                            103
+                        }
+                    "
+                    .unindent(),
+                    description: "pick better number".into(),
+                },
+            ],
+            "
+                impl Numbers {
+                    fn one() {
+                        101
+                    }
+
+                    fn two() {
+                        102
+                    }
+
+                    fn three() {
+                        103
+                    }
                 }
             "
             .unindent(),

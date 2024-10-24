@@ -147,6 +147,14 @@ impl Supermaven {
                     updates_tx,
                 },
             );
+            // ensure the states map is max 1000 elements
+            if agent.states.len() > 1000 {
+                // state id is monotonic so it's sufficient to remove the first element
+                agent
+                    .states
+                    .remove(&agent.states.keys().next().unwrap().clone());
+            }
+
             let _ = agent
                 .outgoing_tx
                 .unbounded_send(OutboundMessage::StateUpdate(StateUpdateMessage {
