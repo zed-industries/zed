@@ -1114,31 +1114,23 @@ impl BlockSnapshot {
         highlights: Highlights<'a>,
     ) -> BlockChunks<'a> {
         let max_output_row = cmp::min(rows.end, self.transforms.summary().output_rows);
+
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
-        let input_start = {
-            cursor.seek(&BlockRow(rows.start), Bias::Right, &());
-            let overshoot = if cursor
-                .item()
-                .map_or(false, |transform| transform.block.is_none())
-            {
-                rows.start - cursor.start().0 .0
-            } else {
-                0
-            };
-            cursor.start().1 .0 + overshoot
-        };
-        let input_end = if let Some(transform) = cursor.item() {
-            if transform.block.is_some() {
-                input_start
-            } else {
-                cmp::min(
-                    cursor.end(&()).1 .0,
-                    input_start + (rows.end - cursor.start().0 .0),
-                )
+        cursor.seek(&BlockRow(rows.start), Bias::Right, &());
+        let transform_output_start = cursor.start().0 .0;
+        let transform_input_start = cursor.start().1 .0;
+
+        let mut input_start = transform_input_start;
+        let mut input_end = transform_input_start;
+        if let Some(transform) = cursor.item() {
+            if transform.block.is_none() {
+                input_start += rows.start - transform_output_start;
+                input_end += cmp::min(
+                    rows.end - transform_output_start,
+                    transform.summary.input_rows,
+                );
             }
-        } else {
-            input_start
-        };
+        }
 
         BlockChunks {
             input_chunks: self.wrap_snapshot.chunks(
