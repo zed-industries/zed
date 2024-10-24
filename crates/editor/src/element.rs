@@ -2119,8 +2119,6 @@ impl EditorElement {
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
-                let header_padding = px(6.0);
-
                 let mut result = v_flex().id(block_id).w_full();
 
                 if let Some(prev_excerpt) = prev_excerpt {
@@ -2197,44 +2195,43 @@ impl EditorElement {
 
                         result = result.child(
                             div()
-                                .px(header_padding)
-                                .pt(header_padding)
                                 .w_full()
-                                .h(FILE_HEADER_HEIGHT as f32 * cx.line_height())
+                                .h_auto()
+                                .text_ui_sm(cx)
                                 .child(
                                     h_flex()
                                         .id("path header block")
                                         .size_full()
-                                        .flex_basis(Length::Definite(DefiniteLength::Fraction(
-                                            0.667,
-                                        )))
-                                        .px(gpui::px(12.))
-                                        .rounded_md()
-                                        .shadow_md()
-                                        .border_1()
-                                        .border_color(cx.theme().colors().border)
+                                        .py_2()
+                                        .px_3()
+                                        .mt(px(-1.))
+                                        .border_y_1()
+                                        .border_color(cx.theme().colors().border_variant)
                                         .bg(cx.theme().colors().editor_subheader_background)
-                                        .justify_between()
                                         .hover(|style| style.bg(cx.theme().colors().element_hover))
                                         .child(
-                                            h_flex().gap_3().child(
-                                                h_flex()
-                                                    .gap_2()
-                                                    .child(
-                                                        filename
-                                                            .map(SharedString::from)
-                                                            .unwrap_or_else(|| "untitled".into()),
-                                                    )
-                                                    .when_some(parent_path, |then, path| {
-                                                        then.child(div().child(path).text_color(
-                                                            cx.theme().colors().text_muted,
-                                                        ))
-                                                    }),
-                                            ),
+                                            h_flex()
+                                                .size_full()
+                                                .gap_2()
+                                                .child(
+                                                    svg()
+                                                        .path(IconName::ArrowUpRight.path())
+                                                        .size(IconSize::Indicator.rems())
+                                                        .text_color(cx.theme().colors().editor_line_number)
+                                                )
+                                                .child(
+                                                    filename
+                                                        .map(SharedString::from)
+                                                        .unwrap_or_else(|| "untitled".into())
+                                                )
+                                                .when_some(parent_path, |then, path| {
+                                                    then.child(div().child(path).text_color(
+                                                        cx.theme().colors().text_muted,
+                                                    ))
+                                                })
                                         )
                                         .when_some(jump_data, |el, jump_data| {
-                                            el.child(Icon::new(IconName::ArrowUpRight))
-                                                .cursor_pointer()
+                                            el.child(div()).cursor_pointer()
                                                 .tooltip(|cx| {
                                                     Tooltip::for_action(
                                                         "Jump to File",
