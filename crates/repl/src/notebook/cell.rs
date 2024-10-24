@@ -5,9 +5,10 @@ use std::{
     sync::Arc,
 };
 
-use editor::Editor;
+use editor::{Editor, EditorMode, MultiBuffer};
+use futures::future::Shared;
 use gpui::{prelude::*, Hsla, Task, View, WeakView};
-use language::LanguageRegistry;
+use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -248,6 +249,7 @@ impl Cell {
     pub fn load(
         cell: DeserializedCell,
         languages: &Arc<LanguageRegistry>,
+        notebook_language: Shared<Task<Option<Arc<Language>>>>,
         cx: &mut WindowContext,
     ) -> Self {
         match cell {
@@ -301,12 +303,31 @@ impl Cell {
             } => Cell::Code(cx.new_view(|cx| {
                 let text = source.join("\n");
 
+                let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
+                let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
                 let editor_view = cx.new_view(|cx| {
-                    let mut editor = Editor::multi_line(cx);
+                    let mut editor = Editor::new(
+                        EditorMode::AutoHeight { max_lines: 1024 },
+                        multi_buffer,
+                        None,
+                        false,
+                        cx,
+                    );
+
                     editor.set_text(text, cx);
                     editor.set_show_gutter(false, cx);
                     // editor.set_read_only(true);
                     editor
+                });
+
+                let buffer = buffer.clone();
+                let language_task = cx.spawn(|this, mut cx| async move {
+                    let language = notebook_language.await;
+
+                    buffer.update(&mut cx, |buffer, cx| {
+                        buffer.set_language(language.clone(), cx);
+                    });
                 });
 
                 CodeCell {
@@ -318,6 +339,7 @@ impl Cell {
                     editor: editor_view,
                     outputs: convert_outputs(outputs, cx),
                     selected: false,
+                    language_task,
                 }
             })),
             DeserializedCell::Raw {
@@ -499,6 +521,7 @@ pub struct CodeCell {
     editor: View<editor::Editor>,
     outputs: Vec<Output>,
     selected: bool,
+    language_task: Task<()>,
 }
 
 impl CodeCell {
