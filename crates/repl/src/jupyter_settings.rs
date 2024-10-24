@@ -6,9 +6,26 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 
-#[derive(Debug, Default)]
+use std::fmt;
+
+#[derive(Default)]
 pub struct JupyterSettings {
     pub kernel_selections: HashMap<String, String>,
+    pub jupyter_servers: Vec<JupyterServer>,
+}
+impl fmt::Debug for JupyterSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JupyterSettings")
+            .field("kernel_selections", &self.kernel_selections)
+            .field("jupyter_servers", &self.jupyter_servers)
+            .finish()
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct JupyterServer {
+    pub url: String,
+    pub nickname: Option<String>,
 }
 
 impl JupyterSettings {
@@ -26,12 +43,15 @@ pub struct JupyterSettingsContent {
     ///
     /// Default: `{}`
     pub kernel_selections: Option<HashMap<String, String>>,
+
+    pub jupyter_servers: Option<Vec<JupyterServer>>,
 }
 
 impl Default for JupyterSettingsContent {
     fn default() -> Self {
         JupyterSettingsContent {
             kernel_selections: Some(HashMap::new()),
+            jupyter_servers: Some(Vec::new()),
         }
     }
 }
@@ -55,6 +75,9 @@ impl Settings for JupyterSettings {
                 for (k, v) in source {
                     settings.kernel_selections.insert(k.clone(), v.clone());
                 }
+            }
+            if let Some(servers) = &value.jupyter_servers {
+                settings.jupyter_servers.append(&mut servers.clone());
             }
         }
 
