@@ -301,7 +301,10 @@ message Envelope {
         FlushBufferedMessages flush_buffered_messages = 267;
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
-        LanguageServerPromptResponse language_server_prompt_response = 269; // current max
+        LanguageServerPromptResponse language_server_prompt_response = 269;
+        ListToolchains list_toolchains = 270;
+        ListToolchainsResponse list_toolchains_response = 271;
+        ActivateToolchain activate_toolchain = 272; // current max
     }
 
     reserved 87 to 88;
@@ -2552,4 +2555,23 @@ message LanguageServerPromptRequest {
 
 message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
+}
+
+message ListToolchains {
+    uint64 project_id = 1;
+    string language_name = 2;
+}
+
+message Toolchain {
+    string name = 1;
+    string path = 2;
+}
+
+message ListToolchainsResponse {
+    repeated Toolchain toolchains = 1;
+}
+
+message ActivateToolchain {
+    uint64 project_id = 1;
+    Toolchain toolchain = 2;
 }
