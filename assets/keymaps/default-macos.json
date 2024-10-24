@@ -539,6 +539,14 @@
     }
   },
   {
+    "context": "Editor && showing_changes",
+    "bindings": {
+      "cmd-enter": "editor::AcceptChange",
+      "cmd-shift-enter": "editor::RejectChange",
+      "cmd-shift-a": "editor::AcceptAllChanges"
+    }
+  },
+  {
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",

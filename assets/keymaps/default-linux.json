@@ -506,6 +506,14 @@
     }
   },
   {
+    "context": "Editor && showing_changes",
+    "bindings": {
+      "ctrl-enter": "editor::AcceptChange",
+      "ctrl-shift-enter": "editor::RejectChange",
+      "ctrl-shift-a": "editor::AcceptAllChanges"
+    }
+  },
+  {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
