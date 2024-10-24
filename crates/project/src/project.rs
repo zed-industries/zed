@@ -11,6 +11,7 @@ pub mod search;
 mod task_inventory;
 pub mod task_store;
 pub mod terminals;
+pub mod toolchain_store;
 pub mod worktree_store;
 
 #[cfg(test)]
@@ -47,8 +48,8 @@ use itertools::Itertools;
 use language::{
     language_settings::InlayHintKind, proto::split_operations, Buffer, BufferEvent,
     CachedLspAdapter, Capability, CodeLabel, DiagnosticEntry, Documentation, File as _, Language,
-    LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    LanguageName, LanguageRegistry, LanguageServerName, PointUtf16, ToOffset, ToPointUtf16,
+    Toolchain, ToolchainList, Transaction, Unclipped,
 };
 use lsp::{
     CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
@@ -81,6 +82,7 @@ use std::{
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
+use toolchain_store::ToolchainStore;
 use util::{paths::compare_paths, ResultExt as _};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
@@ -163,6 +165,7 @@ pub struct Project {
     snippets: Model<SnippetProvider>,
     environment: Model<ProjectEnvironment>,
     settings_observer: Model<SettingsObserver>,
+    toolchain_store: Option<Model<ToolchainStore>>,
 }
 
 #[derive(Default)]
@@ -648,7 +651,9 @@ impl Project {
                 )
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
-
+            let toolchain_store = Some(cx.new_model(|_| {
+                ToolchainStore::local(languages.clone(), worktree_store.clone(), lsp_store.clone())
+            }));
             Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -682,6 +687,8 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+
+                toolchain_store,
             }
         })
     }
@@ -752,7 +759,8 @@ impl Project {
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
-
+            let toolchain_store =
+                Some(cx.new_model(|cx| ToolchainStore::remote(ssh.read(cx).proto_client())));
             let this = Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -801,6 +809,8 @@ impl Project {
 
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
+
+                toolchain_store,
             };
 
             let ssh = ssh.read(cx);
@@ -1010,6 +1020,7 @@ impl Project {
                 search_excluded_history: Self::new_search_history(),
                 environment: ProjectEnvironment::new(&worktree_store, None, cx),
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
+                toolchain_store: None,
             };
             this.set_role(role, cx);
             for worktree in worktrees {
@@ -2466,6 +2477,39 @@ impl Project {
             .map_err(|e| anyhow!(e))
     }
 
+    pub fn available_toolchains(
+        &self,
+        language_name: LanguageName,
+        cx: &AppContext,
+    ) -> Task<Option<ToolchainList>> {
+        if let Some(toolchain_store) = self.toolchain_store.as_ref() {
+            toolchain_store.read(cx).list_toolchains(language_name, cx)
+        } else {
+            Task::ready(None)
+        }
+    }
+    pub fn activate_toolchain(&self, toolchain: Toolchain, cx: &AppContext) -> Task<Option<()>> {
+        let Some(toolchain_store) = self.toolchain_store.clone() else {
+            return Task::ready(None);
+        };
+        if self.is_local() {
+            let registry = self.languages.clone();
+            let lsp_store = self.lsp_store.downgrade();
+            cx.spawn(move |cx| async move {
+                let language = registry
+                    .language_for_name(&toolchain.language_name.0)
+                    .await
+                    .ok()?;
+                language.toolchain_lister()?.activate(toolchain).await;
+                LspStore::refresh_workspace_configurations(&lsp_store, cx).await;
+                Some(())
+            })
+        } else if self.is_via_ssh() {
+            Task::ready(None)
+        } else {
+            Task::ready(None)
+        }
+    }
     pub fn language_server_statuses<'a>(
         &'a self,
         cx: &'a AppContext,

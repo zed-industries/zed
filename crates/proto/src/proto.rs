@@ -375,6 +375,9 @@ messages!(
     (FlushBufferedMessages, Foreground),
     (LanguageServerPromptRequest, Foreground),
     (LanguageServerPromptResponse, Foreground),
+    (ListToolchains, Foreground),
+    (ListToolchainsResponse, Foreground),
+    (ActivateToolchain, Foreground)
 );
 
 request_messages!(
@@ -503,6 +506,8 @@ request_messages!(
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
+    (ListToolchains, ListToolchainsResponse),
+    (ActivateToolchain, Ack)
 );
 
 entity_messages!(
@@ -580,7 +585,9 @@ entity_messages!(
     HideToast,
     OpenServerSettings,
     GetPermalinkToLine,
-    LanguageServerPromptRequest
+    LanguageServerPromptRequest,
+    ListToolchains,
+    ActivateToolchain,
 );
 
 entity_messages!(

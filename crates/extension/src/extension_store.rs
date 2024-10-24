@@ -37,7 +37,7 @@ use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageRegistry,
-    QUERY_FILENAME_PREFIXES,
+    LoadedLanguage, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -1102,14 +1102,21 @@ impl ExtensionStore {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
-                    let tasks = std::fs::read_to_string(language_path.join("tasks.json"))
-                        .ok()
-                        .and_then(|contents| {
-                            let definitions = serde_json_lenient::from_str(&contents).log_err()?;
-                            Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
-                        });
+                    let context_provider =
+                        std::fs::read_to_string(language_path.join("tasks.json"))
+                            .ok()
+                            .and_then(|contents| {
+                                let definitions =
+                                    serde_json_lenient::from_str(&contents).log_err()?;
+                                Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
+                            });
 
-                    Ok((config, queries, tasks))
+                    Ok(LoadedLanguage {
+                        config,
+                        queries,
+                        context_provider,
+                        toolchain_provider: None,
+                    })
                 },
             );
         }

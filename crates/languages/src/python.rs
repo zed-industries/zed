@@ -3,11 +3,17 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
+use language::LanguageName;
+use language::Toolchain;
+use language::ToolchainList;
+use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
+use smol::lock::Mutex;
 
 use std::{
     any::Any,
@@ -28,13 +34,14 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct PythonLspAdapter {
     node: NodeRuntime,
+    toolchain: Arc<PythonToolchainProvider>,
 }
 
 impl PythonLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
-    pub fn new(node: NodeRuntime) -> Self {
-        PythonLspAdapter { node }
+    pub fn new(node: NodeRuntime, toolchain: Arc<PythonToolchainProvider>) -> Self {
+        PythonLspAdapter { node, toolchain }
     }
 }
 
@@ -202,10 +209,30 @@ impl LspAdapter for PythonLspAdapter {
         adapter: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        cx.update(|cx| {
-            language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
+        let toolchain = self.toolchain.active_toolchain.lock().await.clone();
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+                object
+                    .entry("python")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                    .map(|python| {
+                        python
+                            .entry("pythonPath")
+                            .or_insert(Value::String(toolchain.path.into()));
+                    });
+            }
+            user_settings
         })
     }
 }
@@ -318,6 +345,62 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .strip_suffix(".py")
         .unwrap_or(&path_with_dots)
         .to_string()
+}
+
+#[derive(Default)]
+pub(crate) struct PythonToolchainProvider {
+    active_toolchain: Arc<Mutex<Option<Toolchain>>>,
+}
+
+#[async_trait(?Send)]
+impl ToolchainLister for PythonToolchainProvider {
+    async fn list(&self, worktree_root: PathBuf) -> ToolchainList {
+        let environment = pet_core::os_environment::EnvironmentApi::new();
+        let locators = pet::locators::create_locators(
+            Arc::new(pet_conda::Conda::from(&environment)),
+            Arc::new(pet_poetry::Poetry::from(&environment)),
+            &environment,
+        );
+        let mut config = Configuration::default();
+        config.workspace_directories = Some(vec![worktree_root]);
+        let reporter = pet_reporter::collect::create_reporter();
+        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
+
+        let mut toolchains = reporter
+            .environments
+            .lock()
+            .ok()
+            .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
+        toolchains.sort_by(|lhs, rhs| {
+            lhs.kind
+                .cmp(&rhs.kind)
+                .then_with(|| lhs.executable.cmp(&rhs.executable))
+        });
+        let mut toolchains: Vec<_> = toolchains
+            .into_iter()
+            .filter_map(|toolchain| {
+                let label = if let Some(version) = &toolchain.version {
+                    format!("Python {version} ({:?})", toolchain.kind?)
+                } else {
+                    format!("{:?}", toolchain.kind?)
+                }
+                .into();
+                Some(Toolchain {
+                    label,
+                    path: toolchain.executable?.to_str()?.to_owned().into(),
+                    language_name: LanguageName::new("Python"),
+                })
+            })
+            .collect();
+        toolchains.dedup();
+        ToolchainList {
+            toolchains,
+            default: None,
+        }
+    }
+    async fn activate(&self, toolchain: Toolchain) {
+        let _ = self.active_toolchain.lock().await.insert(toolchain);
+    }
 }
 
 #[cfg(test)]

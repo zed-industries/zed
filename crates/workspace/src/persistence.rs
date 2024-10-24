@@ -7,6 +7,7 @@ use client::DevServerProjectId;
 use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::sql};
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 
+use language::{LanguageName, Toolchain};
 use remote::ssh_session::SshProjectId;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -206,7 +207,8 @@ define_connection! {
     //     preview: bool // Indicates if this item is a preview item
     // )
     pub static ref DB: WorkspaceDb<()> =
-    &[sql!(
+    &[
+        sql!(
         CREATE TABLE workspaces(
             workspace_id INTEGER PRIMARY KEY,
             workspace_location BLOB UNIQUE,
@@ -368,6 +370,15 @@ define_connection! {
     ),
     sql!(
         ALTER TABLE ssh_projects RENAME COLUMN path TO paths;
+    ),
+    sql!(
+        CREATE TABLE toolchains (
+            workspace_id INTEGER,
+            language_name TEXT NOT NULL,
+            name TEXT NOT NULL,
+            path TEXT NOT NULL,
+            PRIMARY KEY (workspace_id, language_name)
+        );
     ),
     ];
 }
@@ -613,6 +624,7 @@ impl WorkspaceDb {
                 match workspace.location {
                     SerializedWorkspaceLocation::Local(local_paths, local_paths_order) => {
                         conn.exec_bound(sql!(
+                            DELETE FROM toolchains WHERE workspace_id = ?1;
                             DELETE FROM workspaces WHERE local_paths = ? AND workspace_id != ?
                         ))?((&local_paths, workspace.id))
                         .context("clearing out old locations")?;
@@ -661,6 +673,7 @@ impl WorkspaceDb {
                     }
                     SerializedWorkspaceLocation::DevServer(dev_server_project) => {
                         conn.exec_bound(sql!(
+                            DELETE FROM toolchains WHERE workspace_id = ?1;
                             DELETE FROM workspaces WHERE dev_server_project_id = ? AND workspace_id != ?
                         ))?((dev_server_project.id.0, workspace.id))
                         .context("clearing out old locations")?;
@@ -716,6 +729,7 @@ impl WorkspaceDb {
                     },
                     SerializedWorkspaceLocation::Ssh(ssh_project) => {
                         conn.exec_bound(sql!(
+                            DELETE FROM toolchains WHERE workspace_id = ?1;
                             DELETE FROM workspaces WHERE ssh_project_id = ? AND workspace_id != ?
                         ))?((ssh_project.id.0, workspace.id))
                         .context("clearing out old locations")?;
@@ -885,6 +899,7 @@ impl WorkspaceDb {
 
     query! {
         pub async fn delete_workspace_by_id(id: WorkspaceId) -> Result<()> {
+            DELETE FROM toolchains WHERE workspace_id = ?1;
             DELETE FROM workspaces
             WHERE workspace_id IS ?
         }
@@ -899,6 +914,7 @@ impl WorkspaceDb {
                 DELETE FROM dev_server_projects WHERE id = ?
             ))?(id.0)?;
             conn.exec_bound(sql!(
+                DELETE FROM toolchains WHERE workspace_id = ?1;
                 DELETE FROM workspaces
                 WHERE dev_server_project_id IS ?
             ))?(id.0)
@@ -1215,6 +1231,57 @@ impl WorkspaceDb {
             SET centered_layout = ?2
             WHERE workspace_id = ?1
         }
+    }
+
+    pub async fn toolchain(
+        &self,
+        workspace_id: WorkspaceId,
+        language_name: LanguageName,
+    ) -> Result<Option<Toolchain>> {
+        self.write(move |this| {
+            let mut select = this
+                .select_bound(sql!(
+                    SELECT name, path FROM toolchains WHERE workspace_id = ? AND language_name = ?
+                ))
+                .context("Preparing insertion")?;
+
+            let toolchain: Vec<(String, String)> =
+                select((workspace_id, language_name.0.to_owned()))?;
+
+            Ok(toolchain.into_iter().next().map(|(name, path)| Toolchain {
+                label: name.into(),
+                path: path.into(),
+                language_name,
+            }))
+        })
+        .await
+    }
+
+    pub async fn set_toolchain(
+        &self,
+        workspace_id: WorkspaceId,
+        toolchain: Toolchain,
+    ) -> Result<()> {
+        self.write(move |conn| {
+            let mut insert = conn
+                .exec_bound(sql!(
+                    INSERT INTO toolchains(workspace_id, language_name, name, path) VALUES (?, ?, ?,  ?)
+                    ON CONFLICT DO
+                    UPDATE SET
+                        path = ?4,
+                        name = ?3
+                ))
+                .context("Preparing insertion")?;
+
+            insert((
+                workspace_id,
+                toolchain.language_name.0.as_ref(),
+                toolchain.label.as_ref(),
+                toolchain.path.as_ref(),
+            ))?;
+
+            Ok(())
+        }).await
     }
 }
 
