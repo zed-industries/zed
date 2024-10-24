@@ -11,6 +11,7 @@ use gpui::{
 };
 
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
+use paths::remote_servers_dir;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -661,12 +662,15 @@ async fn download_remote_server_binary(
     client: Arc<HttpClientWithUrl>,
     cx: &AsyncAppContext,
 ) -> Result<()> {
-    let mut target_file = File::create(&target_path).await?;
+    let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
+    let mut temp_file = File::create(&temp).await?;
     let update_request_body = build_remote_server_update_request_body(cx)?;
     let request_body = AsyncBody::from(serde_json::to_string(&update_request_body)?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
-    smol::io::copy(response.body_mut(), &mut target_file).await?;
+    smol::io::copy(response.body_mut(), &mut temp_file).await?;
+    smol::fs::rename(&temp, &target_path).await?;
+
     Ok(())
 }
 
