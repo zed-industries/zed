@@ -21,8 +21,8 @@ use gpui::{
     Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
-    Styled, Subscription, Task, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
-    VisualContext as _, WeakView, WindowContext,
+    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
+    WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -497,6 +497,7 @@ impl ProjectPanel {
 
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let auto_fold_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
+            let worktree = worktree.read(cx);
             let is_root = Some(entry) == worktree.root_entry();
             let is_dir = entry.is_dir();
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
@@ -1273,6 +1274,7 @@ impl ProjectPanel {
     fn select_parent(&mut self, _: &SelectParent, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             if let Some(parent) = entry.path.parent() {
+                let worktree = worktree.read(cx);
                 if let Some(parent_entry) = worktree.entry_for_path(parent) {
                     self.selection = Some(SelectedEntry {
                         worktree_id: worktree.id(),
@@ -1406,7 +1408,6 @@ impl ProjectPanel {
                 .clipboard
                 .as_ref()
                 .filter(|clipboard| !clipboard.items().is_empty())?;
-
             enum PasteTask {
                 Rename(Task<Result<CreatedEntry>>),
                 Copy(Task<Result<Option<Entry>>>),
@@ -1416,7 +1417,7 @@ impl ProjectPanel {
             let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
                 let new_path =
-                    self.create_paste_path(clipboard_entry, self.selected_entry_handle(cx)?, cx)?;
+                    self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
                 let relative_worktree_source_path = if !is_same_worktree {
@@ -1558,7 +1559,7 @@ impl ProjectPanel {
 
     fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
-            cx.reveal_path(&worktree.abs_path().join(&entry.path));
+            cx.reveal_path(&worktree.read(cx).abs_path().join(&entry.path));
         }
     }
 
@@ -1573,7 +1574,7 @@ impl ProjectPanel {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             let abs_path = match &entry.canonical_path {
                 Some(canonical_path) => Some(canonical_path.to_path_buf()),
-                None => worktree.absolutize(&entry.path).ok(),
+                None => worktree.read(cx).absolutize(&entry.path).ok(),
             };
 
             let working_directory = if entry.is_dir() {
@@ -1596,7 +1597,7 @@ impl ProjectPanel {
             if entry.is_dir() {
                 let include_root = self.project.read(cx).visible_worktrees(cx).count() > 1;
                 let dir_path = if include_root {
-                    let mut full_path = PathBuf::from(worktree.root_name());
+                    let mut full_path = PathBuf::from(worktree.read(cx).root_name());
                     full_path.push(&entry.path);
                     Arc::from(full_path)
                 } else {
@@ -1756,12 +1757,12 @@ impl ProjectPanel {
     fn selected_sub_entry<'a>(
         &self,
         cx: &'a AppContext,
-    ) -> Option<(&'a Worktree, &'a project::Entry)> {
+    ) -> Option<(Model<Worktree>, &'a project::Entry)> {
         let (worktree, mut entry) = self.selected_entry_handle(cx)?;
 
-        let worktree = worktree.read(cx);
         let resolved_id = self.resolve_entry(entry.id);
         if resolved_id != entry.id {
+            let worktree = worktree.read(cx);
             entry = worktree.entry_for_id(resolved_id)?;
         }
         Some((worktree, entry))
