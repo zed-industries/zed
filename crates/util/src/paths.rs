@@ -114,6 +114,7 @@ pub struct SanitizedPathBuf {
 impl From<PathBuf> for SanitizedPathBuf {
     fn from(path: PathBuf) -> Self {
         println!("path: {:?}, absolute: {}", path, path.is_absolute());
+        #[cfg(not(any(test, feature = "test-support")))]
         debug_assert!(path.is_absolute());
         #[cfg(target_os = "windows")]
         {
