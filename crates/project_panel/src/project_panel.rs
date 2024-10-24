@@ -937,6 +937,9 @@ impl ProjectPanel {
         self.edit_state = None;
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
+        if cx.has_active_drag() {
+            cx.clear_active_drag();
+        }
         cx.focus(&self.focus_handle);
         cx.notify();
     }
