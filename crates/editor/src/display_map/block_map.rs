@@ -404,31 +404,6 @@ pub struct BlockBufferRows<'a> {
     started: bool,
 }
 
-fn debug_transforms(transforms: &SumTree<Transform>) -> String {
-    use core::fmt::Write;
-
-    let mut buf = "(".to_string();
-
-    for transform in transforms.items(&()) {
-        write!(
-            &mut buf,
-            "[{} - {:?}:{:?}]",
-            match transform.block.as_ref() {
-                Some(Block::Custom(block)) => format!("block:{}", block.id.0),
-                Some(Block::ExcerptBoundary { .. }) => "boundary".to_string(),
-                None => "isomorphic".to_string(),
-            },
-            transform.summary.input_rows,
-            transform.summary.output_rows
-        )
-        .unwrap();
-    }
-
-    buf.push(')');
-
-    buf
-}
-
 impl BlockMap {
     pub fn new(
         wrap_snapshot: WrapSnapshot,
