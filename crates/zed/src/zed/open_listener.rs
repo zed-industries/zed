@@ -1,5 +1,5 @@
 use crate::restorable_workspace_locations;
-use crate::{handle_open_request, init_headless, init_ui};
+use crate::{handle_open_request, init_ui};
 use anyhow::{anyhow, Context, Result};
 use assistant::PromptBuilder;
 use cli::{ipc, IpcHandshake};
@@ -21,8 +21,8 @@ use remote::SshConnectionOptions;
 use settings::Settings;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
-use std::{process, thread};
 use util::paths::PathWithPosition;
 use util::ResultExt;
 use welcome::{show_welcome_view, FIRST_OPEN};
@@ -262,38 +262,9 @@ pub async fn handle_cli_connection(
                 paths,
                 wait,
                 open_new_workspace,
-                dev_server_token,
+
                 env,
             } => {
-                if let Some(dev_server_token) = dev_server_token {
-                    match cx
-                        .update(|cx| {
-                            init_headless(client::DevServerToken(dev_server_token), app_state, cx)
-                        })
-                        .unwrap()
-                        .await
-                    {
-                        Ok(_) => {
-                            responses
-                                .send(CliResponse::Stdout {
-                                    message: format!("zed (pid {}) connected!", process::id()),
-                                })
-                                .log_err();
-                            responses.send(CliResponse::Exit { status: 0 }).log_err();
-                        }
-                        Err(error) => {
-                            responses
-                                .send(CliResponse::Stderr {
-                                    message: format!("{error}"),
-                                })
-                                .log_err();
-                            responses.send(CliResponse::Exit { status: 1 }).log_err();
-                            cx.update(|cx| cx.quit()).log_err();
-                        }
-                    }
-                    return;
-                }
-
                 if !urls.is_empty() {
                     cx.update(|cx| {
                         match OpenRequest::parse(urls, cx) {
@@ -459,7 +430,6 @@ async fn open_workspaces(
                     // We don't set `errored` here, because for ssh projects, the
                     // error is displayed in the window.
                 }
-                SerializedWorkspaceLocation::DevServer(_) => {}
             }
         }
 

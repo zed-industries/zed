@@ -151,6 +151,12 @@ fn main() -> Result<()> {
         }
     }
 
+    if let Some(_) = args.dev_server_token {
+        return Err(anyhow::anyhow!(
+            "Dev servers were removed in v0.157.x please upgrade to SSH remoting: https://zed.dev/docs/remote-development"
+        ))?;
+    }
+
     let sender: JoinHandle<anyhow::Result<()>> = thread::spawn({
         let exit_status = exit_status.clone();
         move || {
@@ -162,7 +168,6 @@ fn main() -> Result<()> {
                 urls,
                 wait: args.wait,
                 open_new_workspace,
-                dev_server_token: args.dev_server_token,
                 env,
             })?;
 

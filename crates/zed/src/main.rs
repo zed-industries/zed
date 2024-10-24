@@ -11,7 +11,7 @@ use assistant::PromptBuilder;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
-use client::{parse_zed_link, Client, DevServerToken, ProxySettings, UserStore};
+use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
@@ -20,8 +20,8 @@ use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
 use gpui::{
-    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, Global, Task,
-    UpdateGlobal as _, VisualContext,
+    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, UpdateGlobal as _,
+    VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
@@ -136,43 +136,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
     }
 }
 
-enum AppMode {
-    Headless(DevServerToken),
-    Ui,
-}
-impl Global for AppMode {}
-
-fn init_headless(
-    dev_server_token: DevServerToken,
-    app_state: Arc<AppState>,
-    cx: &mut AppContext,
-) -> Task<Result<()>> {
-    match cx.try_global::<AppMode>() {
-        Some(AppMode::Headless(token)) if token == &dev_server_token => return Task::ready(Ok(())),
-        Some(_) => {
-            return Task::ready(Err(anyhow!(
-                "zed is already running. Use `kill {}` to stop it",
-                process::id()
-            )))
-        }
-        None => {
-            cx.set_global(AppMode::Headless(dev_server_token.clone()));
-        }
-    };
-    let client = app_state.client.clone();
-    client.set_dev_server_token(dev_server_token);
-    headless::init(
-        client.clone(),
-        headless::AppState {
-            languages: app_state.languages.clone(),
-            user_store: app_state.user_store.clone(),
-            fs: app_state.fs.clone(),
-            node_runtime: app_state.node_runtime.clone(),
-        },
-        cx,
-    )
-}
-
 // init_common is called for both headless and normal mode.
 fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuilder> {
     SystemAppearance::init(cx);
@@ -223,19 +186,6 @@ fn init_ui(
     prompt_builder: Arc<PromptBuilder>,
     cx: &mut AppContext,
 ) -> Result<()> {
-    match cx.try_global::<AppMode>() {
-        Some(AppMode::Headless(_)) => {
-            return Err(anyhow!(
-                "zed is already running in headless mode. Use `kill {}` to stop it",
-                process::id()
-            ))
-        }
-        Some(AppMode::Ui) => return Ok(()),
-        None => {
-            cx.set_global(AppMode::Ui);
-        }
-    };
-
     load_embedded_fonts(cx);
 
     #[cfg(target_os = "linux")]
@@ -252,7 +202,6 @@ fn init_ui(
     go_to_line::init(cx);
     file_finder::init(cx);
     tab_switcher::init(cx);
-    dev_server_projects::init(app_state.client.clone(), cx);
     outline::init(cx);
     project_symbols::init(cx);
     project_panel::init(Assets, cx);
@@ -426,22 +375,15 @@ fn main() {
     app.on_reopen(move |cx| {
         if let Some(app_state) = AppState::try_global(cx).and_then(|app_state| app_state.upgrade())
         {
-            let ui_has_launched = cx
-                .try_global::<AppMode>()
-                .map(|mode| matches!(mode, AppMode::Ui))
-                .unwrap_or(false);
-
-            if ui_has_launched {
-                cx.spawn({
-                    let app_state = app_state.clone();
-                    |mut cx| async move {
-                        if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
-                            fail_to_open_window_async(e, &mut cx)
-                        }
+            cx.spawn({
+                let app_state = app_state.clone();
+                |mut cx| async move {
+                    if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
+                        fail_to_open_window_async(e, &mut cx)
                     }
-                })
-                .detach();
-            }
+                }
+            })
+            .detach();
         }
     });
 
@@ -590,30 +532,16 @@ fn main() {
                 handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
             }
             None => {
-                if let Some(dev_server_token) = args.dev_server_token {
-                    let task =
-                        init_headless(DevServerToken(dev_server_token), app_state.clone(), cx);
-                    cx.spawn(|cx| async move {
-                        if let Err(e) = task.await {
-                            log::error!("{}", e);
-                            cx.update(|cx| cx.quit()).log_err();
-                        } else {
-                            log::info!("connected!");
+                init_ui(app_state.clone(), prompt_builder.clone(), cx).unwrap();
+                cx.spawn({
+                    let app_state = app_state.clone();
+                    |mut cx| async move {
+                        if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
+                            fail_to_open_window_async(e, &mut cx)
                         }
-                    })
-                    .detach();
-                } else {
-                    init_ui(app_state.clone(), prompt_builder.clone(), cx).unwrap();
-                    cx.spawn({
-                        let app_state = app_state.clone();
-                        |mut cx| async move {
-                            if let Err(e) = restore_or_create_workspace(app_state, &mut cx).await {
-                                fail_to_open_window_async(e, &mut cx)
-                            }
-                        }
-                    })
-                    .detach();
-                }
+                    }
+                })
+                .detach();
             }
         }
 
@@ -927,7 +855,6 @@ async fn restore_or_create_workspace(
                     })
                     .detach();
                 }
-                SerializedWorkspaceLocation::DevServer(_) => {}
             }
         }
     } else if matches!(KEY_VALUE_STORE.read_kvp(FIRST_OPEN), Ok(None)) {

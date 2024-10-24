@@ -503,7 +503,7 @@ impl ProjectPanel {
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
             let worktree_id = worktree.id();
             let is_read_only = project.is_read_only(cx);
-            let is_remote = project.is_via_collab() && project.dev_server_project_id().is_none();
+            let is_remote = project.is_via_collab();
             let is_local = project.is_local();
 
             let context_menu = ContextMenu::build(cx, |menu, cx| {
@@ -3334,12 +3334,11 @@ impl Panel for ProjectPanel {
 
     fn starts_open(&self, cx: &WindowContext) -> bool {
         let project = &self.project.read(cx);
-        project.dev_server_project_id().is_some()
-            || project.visible_worktrees(cx).any(|tree| {
-                tree.read(cx)
-                    .root_entry()
-                    .map_or(false, |entry| entry.is_dir())
-            })
+        project.visible_worktrees(cx).any(|tree| {
+            tree.read(cx)
+                .root_entry()
+                .map_or(false, |entry| entry.is_dir())
+        })
     }
 }
 

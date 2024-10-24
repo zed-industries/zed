@@ -24,9 +24,7 @@ use model::{
     SerializedSshProject, SerializedWorkspace,
 };
 
-use self::model::{
-    DockStructure, LocalPathsOrder, SerializedDevServerProject, SerializedWorkspaceLocation,
-};
+use self::model::{DockStructure, LocalPathsOrder, SerializedWorkspaceLocation};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -460,89 +458,6 @@ impl WorkspaceDb {
         })
     }
 
-    pub(crate) fn workspace_for_dev_server_project(
-        &self,
-        dev_server_project_id: DevServerProjectId,
-    ) -> Option<SerializedWorkspace> {
-        // Note that we re-assign the workspace_id here in case it's empty
-        // and we've grabbed the most recent workspace
-        let (
-            workspace_id,
-            dev_server_project_id,
-            window_bounds,
-            display,
-            centered_layout,
-            docks,
-            window_id,
-        ): (
-            WorkspaceId,
-            Option<u64>,
-            Option<SerializedWindowBounds>,
-            Option<Uuid>,
-            Option<bool>,
-            DockStructure,
-            Option<u64>,
-        ) = self
-            .select_row_bound(sql! {
-                SELECT
-                    workspace_id,
-                    dev_server_project_id,
-                    window_state,
-                    window_x,
-                    window_y,
-                    window_width,
-                    window_height,
-                    display,
-                    centered_layout,
-                    left_dock_visible,
-                    left_dock_active_panel,
-                    left_dock_zoom,
-                    right_dock_visible,
-                    right_dock_active_panel,
-                    right_dock_zoom,
-                    bottom_dock_visible,
-                    bottom_dock_active_panel,
-                    bottom_dock_zoom,
-                    window_id
-                FROM workspaces
-                WHERE dev_server_project_id = ?
-            })
-            .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id.0))
-            .context("No workspaces found")
-            .warn_on_err()
-            .flatten()?;
-
-        let dev_server_project_id = dev_server_project_id?;
-
-        let dev_server_project: SerializedDevServerProject = self
-            .select_row_bound(sql! {
-                SELECT id, path, dev_server_name
-                FROM dev_server_projects
-                WHERE id = ?
-            })
-            .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
-            .context("No remote project found")
-            .warn_on_err()
-            .flatten()?;
-
-        let location = SerializedWorkspaceLocation::DevServer(dev_server_project);
-
-        Some(SerializedWorkspace {
-            id: workspace_id,
-            location,
-            center_group: self
-                .get_center_pane_group(workspace_id)
-                .context("Getting center group")
-                .log_err()?,
-            window_bounds,
-            centered_layout: centered_layout.unwrap_or(false),
-            display,
-            docks,
-            session_id: None,
-            window_id,
-        })
-    }
-
     pub(crate) fn workspace_for_ssh_project(
         &self,
         ssh_project: &SerializedSshProject,
@@ -659,61 +574,6 @@ impl WorkspaceDb {
 
                         prepared_query(args).context("Updating workspace")?;
                     }
-                    SerializedWorkspaceLocation::DevServer(dev_server_project) => {
-                        conn.exec_bound(sql!(
-                            DELETE FROM workspaces WHERE dev_server_project_id = ? AND workspace_id != ?
-                        ))?((dev_server_project.id.0, workspace.id))
-                        .context("clearing out old locations")?;
-
-                        conn.exec_bound(sql!(
-                            INSERT INTO dev_server_projects(
-                                id,
-                                path,
-                                dev_server_name
-                            ) VALUES (?1, ?2, ?3)
-                            ON CONFLICT DO
-                            UPDATE SET
-                                path = ?2,
-                                dev_server_name = ?3
-                        ))?(&dev_server_project)?;
-
-                        // Upsert
-                        conn.exec_bound(sql!(
-                            INSERT INTO workspaces(
-                                workspace_id,
-                                dev_server_project_id,
-                                left_dock_visible,
-                                left_dock_active_panel,
-                                left_dock_zoom,
-                                right_dock_visible,
-                                right_dock_active_panel,
-                                right_dock_zoom,
-                                bottom_dock_visible,
-                                bottom_dock_active_panel,
-                                bottom_dock_zoom,
-                                timestamp
-                            )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
-                            ON CONFLICT DO
-                            UPDATE SET
-                                dev_server_project_id = ?2,
-                                left_dock_visible = ?3,
-                                left_dock_active_panel = ?4,
-                                left_dock_zoom = ?5,
-                                right_dock_visible = ?6,
-                                right_dock_active_panel = ?7,
-                                right_dock_zoom = ?8,
-                                bottom_dock_visible = ?9,
-                                bottom_dock_active_panel = ?10,
-                                bottom_dock_zoom = ?11,
-                                timestamp = CURRENT_TIMESTAMP
-                        ))?((
-                            workspace.id,
-                            dev_server_project.id.0,
-                            workspace.docks,
-                        ))
-                        .context("Updating workspace")?;
-                    },
                     SerializedWorkspaceLocation::Ssh(ssh_project) => {
                         conn.exec_bound(sql!(
                             DELETE FROM workspaces WHERE ssh_project_id = ? AND workspace_id != ?
@@ -824,11 +684,10 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>, Option<u64>)>> {
-            SELECT workspace_id, local_paths, local_paths_order, dev_server_project_id, ssh_project_id
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>)>> {
+            SELECT workspace_id, local_paths, local_paths_order, ssh_project_id
             FROM workspaces
             WHERE local_paths IS NOT NULL
-                OR dev_server_project_id IS NOT NULL
                 OR ssh_project_id IS NOT NULL
             ORDER BY timestamp DESC
         }
@@ -840,13 +699,6 @@ impl WorkspaceDb {
             FROM workspaces
             WHERE session_id = ?1 AND dev_server_project_id IS NULL
             ORDER BY timestamp DESC
-        }
-    }
-
-    query! {
-        fn dev_server_projects() -> Result<Vec<SerializedDevServerProject>> {
-            SELECT id, path, dev_server_name
-            FROM dev_server_projects
         }
     }
 
@@ -913,24 +765,9 @@ impl WorkspaceDb {
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        let dev_server_projects = self.dev_server_projects()?;
         let ssh_projects = self.ssh_projects()?;
 
-        for (id, location, order, dev_server_project_id, ssh_project_id) in
-            self.recent_workspaces()?
-        {
-            if let Some(dev_server_project_id) = dev_server_project_id.map(DevServerProjectId) {
-                if let Some(dev_server_project) = dev_server_projects
-                    .iter()
-                    .find(|rp| rp.id == dev_server_project_id)
-                {
-                    result.push((id, dev_server_project.clone().into()));
-                } else {
-                    delete_tasks.push(self.delete_workspace_by_id(id));
-                }
-                continue;
-            }
-
+        for (id, location, order, ssh_project_id) in self.recent_workspaces()? {
             if let Some(ssh_project_id) = ssh_project_id.map(SshProjectId) {
                 if let Some(ssh_project) = ssh_projects.iter().find(|rp| rp.id == ssh_project_id) {
                     result.push((id, SerializedWorkspaceLocation::Ssh(ssh_project.clone())));

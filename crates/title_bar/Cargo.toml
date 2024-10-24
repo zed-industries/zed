@@ -33,7 +33,6 @@ auto_update.workspace = true
 call.workspace = true
 client.workspace = true
 command_palette.workspace = true
-dev_server_projects.workspace = true
 extensions_ui.workspace = true
 feedback.workspace = true
 feature_flags.workspace = true

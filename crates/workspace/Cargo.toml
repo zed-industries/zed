@@ -49,7 +49,6 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
-dev_server_projects.workspace = true
 task.workspace = true
 release_channel.workspace = true
 remote.workspace = true
