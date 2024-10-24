@@ -78,7 +78,8 @@ impl SlashCommand for DefaultSlashCommand {
                 }],
                 text,
                 run_commands_in_text: true,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

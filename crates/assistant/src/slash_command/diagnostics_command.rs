@@ -180,7 +180,11 @@ impl SlashCommand for DiagnosticsSlashCommand {
 
         let task = collect_diagnostics(workspace.read(cx).project().clone(), options, cx);
 
-        cx.spawn(move |_| async move { task.await?.ok_or_else(|| anyhow!("No diagnostics found")) })
+        cx.spawn(move |_| async move {
+            task.await?
+                .map(|output| output.to_event_stream())
+                .ok_or_else(|| anyhow!("No diagnostics found"))
+        })
     }
 }
 

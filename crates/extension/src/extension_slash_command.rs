@@ -128,7 +128,8 @@ impl SlashCommand for ExtensionSlashCommand {
                     })
                     .collect(),
                 run_commands_in_text: false,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

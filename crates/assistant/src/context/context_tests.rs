@@ -1097,7 +1097,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             text: output_text,
                             sections,
                             run_commands_in_text: false,
-                        })),
+                        }
+                        .to_event_stream())),
                         true,
                         false,
                         cx,
@@ -1421,6 +1422,7 @@ impl SlashCommand for FakeSlashCommand {
             text: format!("Executed fake command: {}", self.0),
             sections: vec![],
             run_commands_in_text: false,
-        }))
+        }
+        .to_event_stream()))
     }
 }

@@ -86,25 +86,28 @@ impl SlashCommand for DeltaSlashCommand {
                 .zip(file_command_new_outputs)
             {
                 if let Ok(new_output) = new_output {
-                    if let Some(file_command_range) = new_output.sections.first() {
-                        let new_text = &new_output.text[file_command_range.range.clone()];
-                        if old_text.chars().ne(new_text.chars()) {
-                            output.sections.extend(new_output.sections.into_iter().map(
-                                |section| SlashCommandOutputSection {
-                                    range: output.text.len() + section.range.start
-                                        ..output.text.len() + section.range.end,
-                                    icon: section.icon,
-                                    label: section.label,
-                                    metadata: section.metadata,
-                                },
-                            ));
-                            output.text.push_str(&new_output.text);
+                    if let Ok(new_output) = SlashCommandOutput::from_event_stream(new_output).await
+                    {
+                        if let Some(file_command_range) = new_output.sections.first() {
+                            let new_text = &new_output.text[file_command_range.range.clone()];
+                            if old_text.chars().ne(new_text.chars()) {
+                                output.sections.extend(new_output.sections.into_iter().map(
+                                    |section| SlashCommandOutputSection {
+                                        range: output.text.len() + section.range.start
+                                            ..output.text.len() + section.range.end,
+                                        icon: section.icon,
+                                        label: section.label,
+                                        metadata: section.metadata,
+                                    },
+                                ));
+                                output.text.push_str(&new_output.text);
+                            }
                         }
                     }
                 }
             }
 
-            Ok(output)
+            Ok(output.to_event_stream())
         })
     }
 }
