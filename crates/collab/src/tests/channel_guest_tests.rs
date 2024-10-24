@@ -95,7 +95,9 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     let room_b = cx_b
         .read(ActiveCall::global)
         .update(cx_b, |call, _| call.room().unwrap().clone());
-    cx_b.simulate_keystrokes("cmd-p 1 enter");
+    cx_b.simulate_keystrokes("cmd-p");
+    cx_a.run_until_parked();
+    cx_b.simulate_keystrokes("1 enter");
 
     let (project_b, editor_b) = workspace_b.update(cx_b, |workspace, cx| {
         (

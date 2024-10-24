@@ -4,7 +4,7 @@ use super::*;
 use editor::Editor;
 use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrev};
-use project::FS_WATCH_LATENCY;
+use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
 use workspace::{AppState, ToggleFileFinder, Workspace};
 
@@ -1450,6 +1450,15 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     open_close_queried_buffer("non", 1, "nonexistent.rs", &workspace, cx).await;
     open_close_queried_buffer("thi", 1, "third.rs", &workspace, cx).await;
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
+    app_state
+        .fs
+        .remove_file(
+            Path::new("/src/test/nonexistent.rs"),
+            RemoveOptions::default(),
+        )
+        .await
+        .unwrap();
+    cx.run_until_parked();
 
     let picker = open_file_picker(&workspace, cx);
     cx.simulate_input("rs");
