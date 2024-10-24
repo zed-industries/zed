@@ -66,36 +66,6 @@ pub struct NotebookEditor {
 }
 
 impl NotebookEditor {
-    pub fn open(
-        workspace_view: View<Workspace>,
-        cx: &mut WindowContext,
-    ) -> Task<Result<View<Self>>> {
-        let weak_workspace = workspace_view.downgrade();
-        let workspace = workspace_view.read(cx);
-        let project = workspace.project().to_owned();
-        let pane = workspace.active_pane().clone();
-        let notebook = Self::load(workspace_view, cx);
-
-        cx.spawn(|mut cx| async move {
-            let notebook = notebook.await?;
-            pane.update(&mut cx, |pane, cx| {
-                pane.add_item(Box::new(notebook.clone()), true, true, None, cx);
-            })?;
-
-            anyhow::Ok(notebook)
-        })
-    }
-
-    pub fn load(workspace: View<Workspace>, cx: &mut WindowContext) -> Task<Result<View<Self>>> {
-        let weak_workspace = workspace.downgrade();
-        let workspace = workspace.read(cx);
-        let project = workspace.project().to_owned();
-
-        cx.spawn(|mut cx| async move {
-            cx.new_view(|cx| Self::new(weak_workspace.clone(), project, cx))
-        })
-    }
-
     pub fn new(
         workspace: WeakView<Workspace>,
         project: Model<Project>,
@@ -146,6 +116,36 @@ impl NotebookEditor {
             cell_order,
             cell_map,
         }
+    }
+
+    pub fn load(workspace: View<Workspace>, cx: &mut WindowContext) -> Task<Result<View<Self>>> {
+        let weak_workspace = workspace.downgrade();
+        let workspace = workspace.read(cx);
+        let project = workspace.project().to_owned();
+
+        cx.spawn(|mut cx| async move {
+            cx.new_view(|cx| Self::new(weak_workspace.clone(), project, cx))
+        })
+    }
+
+    pub fn open(
+        workspace_view: View<Workspace>,
+        cx: &mut WindowContext,
+    ) -> Task<Result<View<Self>>> {
+        let weak_workspace = workspace_view.downgrade();
+        let workspace = workspace_view.read(cx);
+        let project = workspace.project().to_owned();
+        let pane = workspace.active_pane().clone();
+        let notebook = Self::load(workspace_view, cx);
+
+        cx.spawn(|mut cx| async move {
+            let notebook = notebook.await?;
+            pane.update(&mut cx, |pane, cx| {
+                pane.add_item(Box::new(notebook.clone()), true, true, None, cx);
+            })?;
+
+            anyhow::Ok(notebook)
+        })
     }
 
     fn cells(&self) -> Vec<Cell> {
@@ -238,10 +238,6 @@ impl NotebookEditor {
 
 impl Render for NotebookEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        // cell bar
-        // scrollbar
-        // settings
-
         let large_gap = Spacing::XLarge.px(cx);
         let gap = Spacing::Large.px(cx);
 
@@ -261,7 +257,6 @@ impl Render for NotebookEditor {
             .bg(cx.theme().colors().tab_bar_background)
             .child(Self::render_controls(cx))
             .child(
-                // notebook cells
                 v_flex()
                     .id("notebook-cells")
                     .flex_1()
@@ -280,11 +275,8 @@ impl Render for NotebookEditor {
                     .h_full()
                     .flex_none()
                     .overflow_hidden()
-                    .child("cell bar")
                     .child("scrollbar"),
             )
-
-        // .child("settings")
     }
 }
 
