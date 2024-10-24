@@ -408,7 +408,8 @@ impl Render for MarkdownCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
-            .pr_3()
+            .pr_2()
+            .rounded_sm()
             .items_start()
             .gap(Spacing::Large.rems(cx))
             .bg(self.selected_bg_color(cx))
@@ -483,7 +484,8 @@ impl Render for CodeCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
-            .pr_3()
+            .pr_2()
+            .rounded_sm()
             .items_start()
             .gap(Spacing::Large.rems(cx))
             .bg(self.selected_bg_color(cx))
@@ -553,7 +555,8 @@ impl Render for RawCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
-            .pr_3()
+            .pr_2()
+            .rounded_sm()
             .items_start()
             .gap(Spacing::Large.rems(cx))
             .bg(self.selected_bg_color(cx))
