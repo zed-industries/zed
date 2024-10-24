@@ -224,7 +224,7 @@ impl PickerDelegate for SlashCommandDelegate {
             SlashCommandEntry::Advert { renderer, .. } => Some(
                 ListItem::new(ix)
                     .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
+                    .spacing(ListItemSpacing::Dense)
                     .selected(selected)
                     .child(renderer(cx)),
             ),

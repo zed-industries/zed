@@ -3949,7 +3949,7 @@ impl Render for ContextEditor {
                         .bg(cx.theme().colors().editor_background)
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(render_inject_context_menu(cx.view().downgrade(), cx))
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
