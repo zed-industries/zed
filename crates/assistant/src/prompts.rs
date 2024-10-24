@@ -204,7 +204,7 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn generate_content_prompt(
+    pub fn generate_inline_transformation_prompt(
         &self,
         user_prompt: String,
         language_name: Option<&LanguageName>,
