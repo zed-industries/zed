@@ -3949,7 +3949,7 @@ impl Render for ContextEditor {
                         .bg(cx.theme().colors().editor_background)
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(render_inject_context_menu(cx.view().downgrade(), cx))
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
@@ -4249,11 +4249,11 @@ fn render_inject_context_menu(
     slash_command_picker::SlashCommandSelector::new(
         commands.clone(),
         active_context_editor,
-        IconButton::new("trigger", IconName::SlashSquare)
+        Button::new("trigger", "Add Context")
+            .icon(IconName::Plus)
             .icon_size(IconSize::Small)
-            .tooltip(|cx| {
-                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-            }),
+            .icon_position(IconPosition::Start)
+            .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
     )
 }
 
