@@ -178,7 +178,7 @@ impl PickerDelegate for SlashCommandDelegate {
             SlashCommandEntry::Info(info) => Some(
                 ListItem::new(ix)
                     .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
+                    .spacing(ListItemSpacing::Dense)
                     .selected(selected)
                     .child(
                         h_flex()
