@@ -291,7 +291,11 @@ impl ContextOperation {
 
 #[derive(Debug, Clone)]
 pub enum ContextEvent {
-    ShowAssistError(SharedString),
+    ShowAssistError {
+        error: SharedString,
+        details: Option<SharedString>,
+        show_details: bool,
+    },
     ShowPaymentRequiredError,
     ShowMaxMonthlySpendReachedError,
     MessagesEdited,
@@ -2016,15 +2020,23 @@ impl Context {
                             });
                             Some(error.to_string())
                         } else {
-                            let error_message = error.to_string().trim().to_string();
-                            cx.emit(ContextEvent::ShowAssistError(SharedString::from(
-                                error_message.clone(),
-                            )));
+                            cx.emit(ContextEvent::ShowAssistError {
+                                error: SharedString::from(error.to_string()),
+                                details: Some(SharedString::from(
+                                    error
+                                        .chain()
+                                        .enumerate()
+                                        .map(|(i, e)| format!("{}. {}", i, e))
+                                        .collect::<Vec<_>>()
+                                        .join("\n"),
+                                )),
+                                show_details: false,
+                            });
                             this.update_metadata(assistant_message_id, cx, |metadata| {
                                 metadata.status =
-                                    MessageStatus::Error(SharedString::from(error_message.clone()));
+                                    MessageStatus::Error(SharedString::from(error.to_string()));
                             });
-                            Some(error_message)
+                            Some(error.to_string())
                         }
                     } else {
                         this.update_metadata(assistant_message_id, cx, |metadata| {

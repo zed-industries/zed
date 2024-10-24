@@ -217,7 +217,9 @@ impl http_client::HttpClient for ReqwestClient {
 
         let handle = self.handle.clone();
         async move {
-            let mut response = handle.spawn(async { request.send().await }).await??;
+            let mut response = handle
+                .spawn(async { request.send().await.map_err(map_reqwest_error) })
+                .await??;
 
             let headers = mem::take(response.headers_mut());
             let mut builder = http::Response::builder()
@@ -234,6 +236,17 @@ impl http_client::HttpClient for ReqwestClient {
             builder.body(body).map_err(|e| anyhow!(e))
         }
         .boxed()
+    }
+}
+
+fn map_reqwest_error(e: reqwest::Error) -> anyhow::Error {
+    match e {
+        e if e.is_timeout() => anyhow!(e).context("request timed out"),
+        e if e.is_connect() => anyhow!(e).context("connection failed"),
+        e if e.is_builder() => anyhow!(e).context("invalid request configuration"),
+        e if e.is_redirect() => anyhow!(e).context("too many redirects"),
+        e if e.is_status() => anyhow!(e).context("server returned error status"),
+        e => anyhow!(e).context("request failed"),
     }
 }
 

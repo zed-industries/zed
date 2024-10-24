@@ -1463,7 +1463,11 @@ type MessageHeader = MessageMetadata;
 enum AssistError {
     PaymentRequired,
     MaxMonthlySpendReached,
-    Message(SharedString),
+    Other {
+        error: SharedString,
+        details: Option<SharedString>,
+        show_details: bool,
+    },
 }
 
 pub struct ContextEditor {
@@ -2134,8 +2138,16 @@ impl ContextEditor {
                 });
             }
             ContextEvent::Operation(_) => {}
-            ContextEvent::ShowAssistError(error_message) => {
-                self.last_error = Some(AssistError::Message(error_message.clone()));
+            ContextEvent::ShowAssistError {
+                error,
+                details,
+                show_details,
+            } => {
+                self.last_error = Some(AssistError::Other {
+                    error: error.clone(),
+                    details: details.clone(),
+                    show_details: *show_details,
+                });
             }
             ContextEvent::ShowPaymentRequiredError => {
                 self.last_error = Some(AssistError::PaymentRequired);
@@ -2698,9 +2710,11 @@ impl ContextEditor {
                                             let error = error.clone();
                                             move |_, cx| {
                                                 context.update(cx, |_, cx| {
-                                                    cx.emit(ContextEvent::ShowAssistError(
-                                                        error.clone(),
-                                                    ));
+                                                    cx.emit(ContextEvent::ShowAssistError {
+                                                        error: error.clone(),
+                                                        details: None,
+                                                        show_details: false,
+                                                    });
                                                 });
                                             }
                                         })
@@ -3675,9 +3689,11 @@ impl ContextEditor {
                     AssistError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
                     }
-                    AssistError::Message(error_message) => {
-                        self.render_assist_error(error_message, cx)
-                    }
+                    AssistError::Other {
+                        error,
+                        details,
+                        show_details,
+                    } => self.render_assist_error(error, details, show_details, cx),
                 })
                 .into_any(),
         )
@@ -3767,9 +3783,31 @@ impl ContextEditor {
 
     fn render_assist_error(
         &self,
-        error_message: &SharedString,
+        error: &SharedString,
+        details: &Option<SharedString>,
+        show_details: &bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement {
+        let detail_button = {
+            let (id, label) = if *show_details {
+                ("less", "Less")
+            } else {
+                ("details", "Details")
+            };
+            Button::new(id, label).on_click(cx.listener({
+                let error_cloned = error.clone();
+                let details_cloned = details.clone();
+                let new_show_details = !*show_details;
+                move |this, _, cx| {
+                    this.last_error = Some(AssistError::Other {
+                        error: error_cloned.clone(),
+                        details: details_cloned.clone(),
+                        show_details: new_show_details,
+                    });
+                    cx.notify();
+                }
+            }))
+        };
         v_flex()
             .gap_0p5()
             .child(
@@ -3785,21 +3823,19 @@ impl ContextEditor {
             .child(
                 div()
                     .id("error-message")
-                    .max_h_24()
                     .overflow_y_scroll()
-                    .child(Label::new(error_message.clone())),
+                    .child(Label::new(if *show_details {
+                        details.as_ref().unwrap_or(error).clone()
+                    } else {
+                        error.clone()
+                    })),
             )
-            .child(
-                h_flex()
-                    .justify_end()
-                    .mt_1()
-                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, cx| {
-                            this.last_error = None;
-                            cx.notify();
-                        },
-                    ))),
-            )
+            .child(h_flex().justify_end().mt_1().child(detail_button).child(
+                Button::new("dismiss", "Dismiss").on_click(cx.listener(|this, _, cx| {
+                    this.last_error = None;
+                    cx.notify();
+                })),
+            ))
             .into_any()
     }
 }
