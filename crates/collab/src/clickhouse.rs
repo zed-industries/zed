@@ -1,4 +1,6 @@
-use serde::Serialize;
+pub use clickhouse::*;
+
+use ::serde::Serialize;
 
 /// Writes the given rows to the specified Clickhouse table.
 pub async fn write_to_table<T: clickhouse::Row + Serialize + std::fmt::Debug>(

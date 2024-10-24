@@ -3,6 +3,7 @@ pub mod auth;
 mod cents;
 pub mod clickhouse;
 pub mod db;
+mod duckdb;
 pub mod env;
 pub mod executor;
 pub mod llm;
@@ -24,6 +25,7 @@ use axum::{
 };
 pub use cents::*;
 use db::{ChannelId, Database};
+use duckdb::DuckdbConnectionManager;
 use executor::Executor;
 use llm::db::LlmDatabase;
 pub use rate_limiter::*;
@@ -155,6 +157,7 @@ pub struct Config {
     pub clickhouse_user: Option<String>,
     pub clickhouse_password: Option<String>,
     pub clickhouse_database: Option<String>,
+    pub duckdb_path: Option<String>,
     pub invite_link_prefix: String,
     pub live_kit_server: Option<String>,
     pub live_kit_key: Option<String>,
@@ -230,6 +233,7 @@ impl Config {
             clickhouse_user: None,
             clickhouse_password: None,
             clickhouse_database: None,
+            duckdb_path: None,
             zed_client_checksum_seed: None,
             slack_panics_webhook: None,
             auto_join_channel_id: None,
@@ -276,7 +280,14 @@ pub struct AppState {
     pub rate_limiter: Arc<RateLimiter>,
     pub executor: Executor,
     pub clickhouse_client: Option<::clickhouse::Client>,
+    pub duckdb_pool: Option<r2d2::Pool<DuckdbConnectionManager>>,
     pub config: Config,
+}
+
+#[test]
+fn test_app_state_is_send_and_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<AppState>();
 }
 
 impl AppState {
@@ -317,6 +328,14 @@ impl AppState {
 
         let db = Arc::new(db);
         let stripe_client = build_stripe_client(&config).map(Arc::new).log_err();
+
+        let duckdb_pool = config.duckdb_path.as_ref().and_then(|path| {
+            r2d2::Pool::builder()
+                .max_size(15)
+                .build(DuckdbConnectionManager::file(path).log_err()?)
+                .log_err()
+        });
+
         let this = Self {
             db: db.clone(),
             llm_db,
@@ -332,6 +351,7 @@ impl AppState {
                 .clickhouse_url
                 .as_ref()
                 .and_then(|_| build_clickhouse_client(&config).log_err()),
+            duckdb_pool,
             config,
         };
         Ok(Arc::new(this))

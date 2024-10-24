@@ -1,6 +1,7 @@
 use super::ips_file::IpsFile;
 use crate::api::CloudflareIpCountryHeader;
-use crate::clickhouse::write_to_table;
+use crate::clickhouse;
+use crate::duckdb;
 use crate::{api::slack, AppState, Error, Result};
 use anyhow::{anyhow, Context};
 use aws_sdk_s3::primitives::ByteStream;
@@ -11,6 +12,7 @@ use axum::{
     routing::post,
     Extension, Router, TypedHeader,
 };
+use duckdb::Connection as DuckDbConnection;
 use rpc::ExtensionMetadata;
 use semantic_version::SemanticVersion;
 use serde::{Serialize, Serializer};
@@ -388,13 +390,6 @@ pub async fn post_events(
     country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     body: Bytes,
 ) -> Result<()> {
-    let Some(clickhouse_client) = app.clickhouse_client.clone() else {
-        Err(Error::http(
-            StatusCode::NOT_IMPLEMENTED,
-            "not supported".into(),
-        ))?
-    };
-
     let Some(expected) = calculate_json_checksum(app.clone(), &body) else {
         return Err(Error::http(
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -527,10 +522,26 @@ pub async fn post_events(
         }
     }
 
-    to_upload
-        .upload(&clickhouse_client)
+    if let Some(clickhouse_client) = app.clickhouse_client.clone() {
+        to_upload
+            .upload_to_clickhouse(&clickhouse_client)
+            .await
+            .map_err(|err| Error::Internal(anyhow!(err)))?;
+    }
+
+    if let Some(pool) = app.duckdb_pool.clone() {
+        tokio::task::spawn_blocking(move || {
+            let connection = pool
+                .get()
+                .context("can't get duckdb connection from pool")?;
+            to_upload
+                .upload_to_duckdb(&connection)
+                .map_err(|err| Error::Internal(anyhow!(err)))?;
+            anyhow::Ok(())
+        })
         .await
-        .map_err(|err| Error::Internal(anyhow!(err)))?;
+        .context("error spawning duckdb write")??;
+    }
 
     Ok(())
 }
@@ -552,14 +563,17 @@ struct ToUpload {
 }
 
 impl ToUpload {
-    pub async fn upload(&self, clickhouse_client: &clickhouse::Client) -> anyhow::Result<()> {
+    pub async fn upload_to_clickhouse(
+        &self,
+        clickhouse_client: &clickhouse::Client,
+    ) -> anyhow::Result<()> {
         const EDITOR_EVENTS_TABLE: &str = "editor_events";
-        write_to_table(EDITOR_EVENTS_TABLE, &self.editor_events, clickhouse_client)
+        clickhouse::write_to_table(EDITOR_EVENTS_TABLE, &self.editor_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{EDITOR_EVENTS_TABLE}'"))?;
 
         const INLINE_COMPLETION_EVENTS_TABLE: &str = "inline_completion_events";
-        write_to_table(
+        clickhouse::write_to_table(
             INLINE_COMPLETION_EVENTS_TABLE,
             &self.inline_completion_events,
             clickhouse_client,
@@ -568,7 +582,7 @@ impl ToUpload {
         .with_context(|| format!("failed to upload to table '{INLINE_COMPLETION_EVENTS_TABLE}'"))?;
 
         const ASSISTANT_EVENTS_TABLE: &str = "assistant_events";
-        write_to_table(
+        clickhouse::write_to_table(
             ASSISTANT_EVENTS_TABLE,
             &self.assistant_events,
             clickhouse_client,
@@ -577,27 +591,27 @@ impl ToUpload {
         .with_context(|| format!("failed to upload to table '{ASSISTANT_EVENTS_TABLE}'"))?;
 
         const CALL_EVENTS_TABLE: &str = "call_events";
-        write_to_table(CALL_EVENTS_TABLE, &self.call_events, clickhouse_client)
+        clickhouse::write_to_table(CALL_EVENTS_TABLE, &self.call_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{CALL_EVENTS_TABLE}'"))?;
 
         const CPU_EVENTS_TABLE: &str = "cpu_events";
-        write_to_table(CPU_EVENTS_TABLE, &self.cpu_events, clickhouse_client)
+        clickhouse::write_to_table(CPU_EVENTS_TABLE, &self.cpu_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{CPU_EVENTS_TABLE}'"))?;
 
         const MEMORY_EVENTS_TABLE: &str = "memory_events";
-        write_to_table(MEMORY_EVENTS_TABLE, &self.memory_events, clickhouse_client)
+        clickhouse::write_to_table(MEMORY_EVENTS_TABLE, &self.memory_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{MEMORY_EVENTS_TABLE}'"))?;
 
         const APP_EVENTS_TABLE: &str = "app_events";
-        write_to_table(APP_EVENTS_TABLE, &self.app_events, clickhouse_client)
+        clickhouse::write_to_table(APP_EVENTS_TABLE, &self.app_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{APP_EVENTS_TABLE}'"))?;
 
         const SETTING_EVENTS_TABLE: &str = "setting_events";
-        write_to_table(
+        clickhouse::write_to_table(
             SETTING_EVENTS_TABLE,
             &self.setting_events,
             clickhouse_client,
@@ -606,7 +620,7 @@ impl ToUpload {
         .with_context(|| format!("failed to upload to table '{SETTING_EVENTS_TABLE}'"))?;
 
         const EXTENSION_EVENTS_TABLE: &str = "extension_events";
-        write_to_table(
+        clickhouse::write_to_table(
             EXTENSION_EVENTS_TABLE,
             &self.extension_events,
             clickhouse_client,
@@ -615,19 +629,26 @@ impl ToUpload {
         .with_context(|| format!("failed to upload to table '{EXTENSION_EVENTS_TABLE}'"))?;
 
         const EDIT_EVENTS_TABLE: &str = "edit_events";
-        write_to_table(EDIT_EVENTS_TABLE, &self.edit_events, clickhouse_client)
+        clickhouse::write_to_table(EDIT_EVENTS_TABLE, &self.edit_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{EDIT_EVENTS_TABLE}'"))?;
 
         const ACTION_EVENTS_TABLE: &str = "action_events";
-        write_to_table(ACTION_EVENTS_TABLE, &self.action_events, clickhouse_client)
+        clickhouse::write_to_table(ACTION_EVENTS_TABLE, &self.action_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{ACTION_EVENTS_TABLE}'"))?;
 
         const REPL_EVENTS_TABLE: &str = "repl_events";
-        write_to_table(REPL_EVENTS_TABLE, &self.repl_events, clickhouse_client)
+        clickhouse::write_to_table(REPL_EVENTS_TABLE, &self.repl_events, clickhouse_client)
             .await
             .with_context(|| format!("failed to upload to table '{REPL_EVENTS_TABLE}'"))?;
+
+        Ok(())
+    }
+
+    pub fn upload_to_duckdb(&self, connection: &DuckDbConnection) -> anyhow::Result<()> {
+        duckdb::write_to_table("edit_events", &self.edit_events, &connection)
+            .with_context(|| format!("failed to upload to table 'edit_events"))?;
 
         Ok(())
     }

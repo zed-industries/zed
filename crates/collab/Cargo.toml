@@ -33,6 +33,7 @@ clock.workspace = true
 collections.workspace = true
 dashmap.workspace = true
 derive_more.workspace = true
+duckdb = { version = "1.1.1", features = ["r2d2"] }
 envy = "0.4.2"
 futures.workspace = true
 google_ai.workspace = true
@@ -51,6 +52,7 @@ reqwest = { version = "0.11", features = ["json"] }
 reqwest_client.workspace = true
 rpc.workspace = true
 rustc-demangle.workspace = true
+r2d2 = "0.8.9"
 scrypt = "0.11"
 sea-orm = { version = "1.1.0-rc.1", features = ["sqlx-postgres", "postgres-array", "runtime-tokio-rustls", "with-uuid"] }
 semantic_version.workspace = true

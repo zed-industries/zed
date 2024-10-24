@@ -643,6 +643,7 @@ impl TestServer {
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
             clickhouse_client: None,
+            duckdb_pool: None,
             config: Config {
                 http_port: 0,
                 database_url: "".into(),
@@ -673,6 +674,7 @@ impl TestServer {
                 clickhouse_user: None,
                 clickhouse_password: None,
                 clickhouse_database: None,
+                duckdb_path: None,
                 zed_client_checksum_seed: None,
                 slack_panics_webhook: None,
                 auto_join_channel_id: None,
