@@ -212,22 +212,17 @@ impl SlashCommandOutput {
         mut events: BoxStream<'static, Result<SlashCommandEvent>>,
     ) -> Result<SlashCommandOutput> {
         let mut output = SlashCommandOutput::default();
-        let mut current_section = None;
+        let mut section_stack = Vec::new();
 
         while let Some(event) = events.next().await {
             match event? {
-
                 SlashCommandEvent::StartSection {
                     icon,
                     label,
                     metadata,
                 } => {
-                    if let Some(section) = current_section.take() {
-                        output.sections.push(section);
-                    }
-
                     let start = output.text.len();
-                    current_section = Some(SlashCommandOutputSection {
+                    section_stack.push(SlashCommandOutputSection {
                         range: start..start,
                         icon,
                         label,
@@ -241,12 +236,12 @@ impl SlashCommandOutput {
                     output.text.push_str(&text);
                     output.run_commands_in_text = run_commands_in_text;
 
-                    if let Some(section) = current_section.as_mut() {
+                    if let Some(section) = section_stack.last_mut() {
                         section.range.end = output.text.len();
                     }
                 }
                 SlashCommandEvent::EndSection { metadata } => {
-                    if let Some(mut section) = current_section.take() {
+                    if let Some(mut section) = section_stack.pop() {
                         section.metadata = metadata;
                         output.sections.push(section);
                     }
@@ -255,7 +250,7 @@ impl SlashCommandOutput {
             }
         }
 
-        if let Some(section) = current_section {
+        while let Some(section) = section_stack.pop() {
             output.sections.push(section);
         }
 

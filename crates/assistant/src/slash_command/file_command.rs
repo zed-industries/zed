@@ -6,17 +6,16 @@ use assistant_slash_command::{
 use futures::channel::mpsc;
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
-use language::{BufferSnapshot, CodeLabel, HighlightId, LspAdapterDelegate};
+use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
 use smol::stream::StreamExt;
-use std::ops::{Range, RangeInclusive};
 use std::{
     fmt::Write,
+    ops::{Range, RangeInclusive},
     path::{Path, PathBuf},
     sync::{atomic::AtomicBool, Arc},
 };
-use text::LineEnding;
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
@@ -228,9 +227,9 @@ fn collect_files(
     cx.spawn(|mut cx| async move {
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
-            let mut folded_directory_names = Vec::new();
+            let mut directory_stack: Vec<Arc<Path>> = Vec::new();
+            let mut folded_directory_names_stack = Vec::new();
             let mut is_top_level_directory = true;
-            let mut directory_stack = Vec::new();
 
             for entry in snapshot.entries(false, 0) {
                 let mut path_including_worktree_name = PathBuf::new();
@@ -244,6 +243,21 @@ fn collect_files(
                     continue;
                 }
 
+                while let Some(dir) = directory_stack.last() {
+                    if entry.path.starts_with(dir) {
+                        break;
+                    }
+                    directory_stack.pop().unwrap();
+                    events_tx
+                        .unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                    events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                        SlashCommandContent::Text {
+                            text: "\n".into(),
+                            run_commands_in_text: false,
+                        },
+                    )))?;
+                }
+
                 let filename = entry
                     .path
                     .file_name()
@@ -252,136 +266,99 @@ fn collect_files(
                     .unwrap_or_default()
                     .to_string();
 
-                while !directory_stack.is_empty()
-                    && !entry.path.starts_with(directory_stack.last().unwrap())
-                {
-                    log::info!("end dir");
-                    directory_stack.pop();
-                    events_tx
-                        .unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
-                }
-
                 if entry.is_dir() {
-                    log::info!("start dir");
+                    // Auto-fold directories that contain no files
                     let mut child_entries = snapshot.child_entries(&entry.path);
                     if let Some(child) = child_entries.next() {
                         if child_entries.next().is_none() && child.kind.is_dir() {
                             if is_top_level_directory {
                                 is_top_level_directory = false;
-                                folded_directory_names.push(
+                                folded_directory_names_stack.push(
                                     path_including_worktree_name.to_string_lossy().to_string(),
                                 );
                             } else {
-                                folded_directory_names.push(filename.to_string())
+                                folded_directory_names_stack.push(filename.to_string());
                             }
+                            continue;
                         }
                     } else {
                         // Skip empty directories
-                        folded_directory_names.clear();
+                        folded_directory_names_stack.clear();
                         continue;
                     }
-
-                    let prefix_paths = folded_directory_names.drain(..).as_slice().join("/");
-                    let dirname = if prefix_paths.is_empty() {
-                        if is_top_level_directory {
+                    let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
+                    if prefix_paths.is_empty() {
+                        let label = if is_top_level_directory {
                             is_top_level_directory = false;
                             path_including_worktree_name.to_string_lossy().to_string()
                         } else {
                             filename
-                        }
+                        };
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                            icon: IconName::Folder,
+                            label: label.clone().into(),
+                            metadata: None,
+                        }))?;
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                            SlashCommandContent::Text {
+                                text: label,
+                                run_commands_in_text: false,
+                            },
+                        )))?;
+                        directory_stack.push(entry.path.clone());
                     } else {
-                        format!("{}/{}", prefix_paths, &filename)
-                    };
-                    events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
-                        icon: IconName::Folder,
-                        label: dirname.clone().into(),
-                        metadata: None,
-                    }))?;
+                        let entry_name = format!("{}/{}", prefix_paths, &filename);
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                            icon: IconName::Folder,
+                            label: entry_name.clone().into(),
+                            metadata: None,
+                        }))?;
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                            SlashCommandContent::Text {
+                                text: entry_name,
+                                run_commands_in_text: false,
+                            },
+                        )))?;
+                        directory_stack.push(entry.path.clone());
+                    }
                     events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                         SlashCommandContent::Text {
-                            text: dirname,
+                            text: "\n".into(),
                             run_commands_in_text: false,
                         },
                     )))?;
-                    directory_stack.push(entry.path.clone());
                 } else if entry.is_file() {
-                    let open_buffer_task = project_handle
+                    let Some(open_buffer_task) = project_handle
                         .update(&mut cx, |project, cx| {
                             project.open_buffer((worktree_id, &entry.path), cx)
                         })
-                        .ok();
-                    let Some(open_buffer_task) = open_buffer_task else {
+                        .ok()
+                    else {
                         continue;
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
+                        let mut output = SlashCommandOutput::default();
                         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
-                        let events_from_buffer =
-                            buffer_to_output(&snapshot, Some(&path_including_worktree_name))?;
-                        for event in events_from_buffer {
-                            events_tx.unbounded_send(Ok(event))?;
+                        append_buffer_to_output(
+                            &snapshot,
+                            Some(&path_including_worktree_name),
+                            &mut output,
+                        )
+                        .log_err();
+                        let mut buffer_events = output.to_event_stream();
+                        while let Some(event) = buffer_events.next().await {
+                            events_tx.unbounded_send(event)?;
                         }
                     }
                 }
             }
 
-            // Close any remaining open directories
-            while !directory_stack.is_empty() {
-                log::info!("end dir");
-                directory_stack.pop();
+            while let Some(_) = directory_stack.pop() {
                 events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
             }
         }
-        anyhow::Ok(())
+        Ok(events_rx.boxed())
     })
-    .detach_and_log_err(cx);
-    Task::ready(Ok(events_rx.boxed()))
-}
-
-/// Converts a buffer's contents into a formatted Markdown code block.
-pub fn buffer_to_output(
-    buffer: &BufferSnapshot,
-    path: Option<&Path>,
-) -> Result<Vec<SlashCommandEvent>> {
-    let mut events = Vec::new();
-
-    let mut content = buffer.text();
-    LineEnding::normalize(&mut content);
-
-    let fence = codeblock_fence_for_path(path, None);
-
-    let label = path.map_or("untitled".to_string(), |p| p.to_string_lossy().to_string());
-
-    let metadata = path.and_then(|path| {
-        serde_json::to_value(FileCommandMetadata {
-            path: path.to_string_lossy().to_string(),
-        })
-        .ok()
-    });
-
-    events.push(SlashCommandEvent::StartSection {
-        icon: IconName::File,
-        label: label.into(),
-        metadata,
-    });
-
-    let mut code_content = String::new();
-    code_content.push_str(&fence);
-    code_content.push_str(&content);
-    if !code_content.ends_with('\n') {
-        code_content.push('\n');
-    }
-    code_content.push_str("```\n");
-
-    events.push(SlashCommandEvent::Content(SlashCommandContent::Text {
-        text: code_content,
-        run_commands_in_text: false,
-    }));
-
-    events.push(SlashCommandEvent::EndSection { metadata: None });
-
-    // TODO: collect_buffer_diagnostics(events, buffer, false);
-
-    Ok(events)
 }
 
 pub fn codeblock_fence_for_path(
@@ -569,6 +546,7 @@ mod test {
     use assistant_slash_command::SlashCommandOutput;
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use pretty_assertions::assert_eq;
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
@@ -619,8 +597,6 @@ mod test {
         let result_1 = SlashCommandOutput::from_event_stream(result_1)
             .await
             .unwrap();
-
-        dbg!(&result_1);
 
         assert!(result_1.text.starts_with("root/dir"));
         // 4 files + 2 directories
@@ -769,6 +745,8 @@ mod test {
         assert_eq!(result.sections[5].label, "subdir");
         assert_eq!(result.sections[6].label, "summercamp");
         assert_eq!(result.sections[7].label, "zed/assets/themes");
+
+        assert_eq!(result.text, "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n");
 
         // Ensure that the project lasts until after the last await
         drop(project);
