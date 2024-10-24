@@ -240,6 +240,7 @@ impl Project {
             settings.cursor_shape.unwrap_or_default(),
             settings.alternate_scroll,
             settings.max_scroll_history_lines,
+            ssh_details.is_some(),
             window,
             completion_tx,
             cx,
