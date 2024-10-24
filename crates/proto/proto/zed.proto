@@ -217,32 +217,13 @@ message Envelope {
         MultiLspQueryResponse multi_lsp_query_response = 176;
         RestartLanguageServers restart_language_servers = 208;
 
-        CreateDevServerProject create_dev_server_project = 177;
-        CreateDevServerProjectResponse create_dev_server_project_response = 188;
-        CreateDevServer create_dev_server = 178;
-        CreateDevServerResponse create_dev_server_response = 179;
-        ShutdownDevServer shutdown_dev_server = 180;
-        DevServerInstructions dev_server_instructions = 181;
-        ReconnectDevServer reconnect_dev_server = 182;
-        ReconnectDevServerResponse reconnect_dev_server_response = 183;
-
-        ShareDevServerProject share_dev_server_project = 184;
-        JoinDevServerProject join_dev_server_project = 185;
         RejoinRemoteProjects rejoin_remote_projects = 186;
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
-        DevServerProjectsUpdate dev_server_projects_update = 193;
-        ValidateDevServerProjectRequest validate_dev_server_project_request = 194;
-        DeleteDevServer delete_dev_server = 195;
         OpenNewBuffer open_new_buffer = 196;
-        DeleteDevServerProject delete_dev_server_project = 197;
 
         GetSupermavenApiKey get_supermaven_api_key = 198;
         GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199;
-
-        RegenerateDevServerToken regenerate_dev_server_token = 200;
-        RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 201;
-        RenameDevServer rename_dev_server = 202;
 
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
@@ -264,7 +245,6 @@ message Envelope {
 
         ListRemoteDirectory list_remote_directory = 219;
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
-        UpdateDevServerProject update_dev_server_project = 221;
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
 
@@ -304,10 +284,17 @@ message Envelope {
         LanguageServerPromptResponse language_server_prompt_response = 269; // current max
     }
 
+
     reserved 87 to 88;
     reserved 158 to 161;
     reserved 166 to 169;
+    reserved 177 to 185;
+    reserved 188;
+    reserved 193 to 195;
+    reserved 197;
+    reserved 200 to 202;
     reserved 205 to 206;
+    reserved 221;
     reserved 224 to 229;
     reserved 247 to 254;
 }
@@ -342,12 +329,11 @@ enum ErrorCode {
     WrongMoveTarget = 11;
     UnsharedItem = 12;
     NoSuchProject = 13;
-    DevServerAlreadyOnline = 14;
-    DevServerOffline = 15;
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     RateLimitExceeded = 18;
     reserved 6;
+    reserved 14 to 15;
 }
 
 message EndStream {}
@@ -511,7 +497,7 @@ message LiveKitConnectionInfo {
 message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
-    optional uint64 dev_server_project_id = 3;
+    reserved 3;
     bool is_ssh_project = 4;
 }
 
@@ -536,19 +522,6 @@ message JoinHostedProject {
     uint64 project_id = 1;
 }
 
-message CreateDevServerProject {
-    reserved 1;
-    reserved 2;
-    uint64 dev_server_id = 3;
-    string path = 4;
-}
-message CreateDevServerProjectResponse {
-    DevServerProject dev_server_project = 1;
-}
-
-message ValidateDevServerProjectRequest {
-    string path = 1;
-}
 
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
@@ -559,77 +532,6 @@ message ListRemoteDirectoryResponse {
     repeated string entries = 1;
 }
 
-message UpdateDevServerProject {
-    uint64 dev_server_project_id = 1;
-    repeated string paths = 2;
-}
-
-message CreateDevServer {
-    reserved 1;
-    string name = 2;
-    optional string ssh_connection_string = 3;
-}
-
-message RegenerateDevServerToken {
-    uint64 dev_server_id = 1;
-}
-
-message RegenerateDevServerTokenResponse {
-    uint64 dev_server_id = 1;
-    string access_token = 2;
-}
-
-message CreateDevServerResponse {
-    uint64 dev_server_id = 1;
-    reserved 2;
-    string access_token = 3;
-    string name = 4;
-}
-
-message ShutdownDevServer {
-    optional string reason = 1;
-}
-
-message RenameDevServer {
-    uint64 dev_server_id = 1;
-    string name = 2;
-    optional string ssh_connection_string = 3;
-}
-
-message DeleteDevServer {
-    uint64 dev_server_id = 1;
-}
-
-message DeleteDevServerProject {
-    uint64 dev_server_project_id = 1;
-}
-
-message ReconnectDevServer {
-    repeated UpdateProject reshared_projects = 1;
-}
-
-message ReconnectDevServerResponse {
-    repeated ResharedProject reshared_projects = 1;
-}
-
-message DevServerInstructions {
-    repeated DevServerProject projects = 1;
-}
-
-message DevServerProjectsUpdate {
-    repeated DevServer dev_servers = 1;
-    repeated DevServerProject dev_server_projects = 2;
-}
-
-message ShareDevServerProject {
-    uint64 dev_server_project_id = 1;
-    repeated WorktreeMetadata worktrees = 2;
-}
-
-message JoinDevServerProject {
-    uint64 dev_server_project_id = 1;
-}
-
 message JoinProjectResponse {
     uint64 project_id = 5;
     uint32 replica_id = 1;
@@ -637,7 +539,7 @@ message JoinProjectResponse {
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
-    optional uint64 dev_server_project_id = 7;
+    reserved 7;
 }
 
 message LeaveProject {
@@ -1427,29 +1329,6 @@ message HostedProject {
     uint64 channel_id = 2;
     string name = 3;
     ChannelVisibility visibility = 4;
-}
-
-message DevServerProject {
-    uint64 id = 1;
-    optional uint64 project_id = 2;
-    reserved 3;
-    reserved 4;
-    uint64 dev_server_id = 5;
-    string path = 6;
-    repeated string paths = 7;
-}
-
-message DevServer {
-    reserved 1;
-    uint64 dev_server_id = 2;
-    string name = 3;
-    DevServerStatus status = 4;
-    optional string ssh_connection_string = 5;
-}
-
-enum DevServerStatus {
-    Offline = 0;
-    Online = 1;
 }
 
 message JoinChannel {
