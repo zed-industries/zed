@@ -577,6 +577,8 @@ impl<D: PickerDelegate> Render for Picker<D> {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let editor_position = self.delegate.editor_position();
 
+        let header = self.delegate.render_header(cx);
+
         v_flex()
             .key_context("Picker")
             .size_full()
@@ -606,14 +608,16 @@ impl<D: PickerDelegate> Render for Picker<D> {
                 }
                 Head::Empty(empty_head) => Some(div().child(empty_head.clone())),
             })
-            .when(self.delegate.match_count() > 0, |el| {
+            .when(header.is_some() || self.delegate.match_count() > 0, |el| {
                 el.child(
                     v_flex()
                         .flex_grow()
-                        .when_some(self.max_height, |div, max_h| div.max_h(max_h))
+                        .when_some(self.max_height, |el, max_h| el.max_h(max_h))
                         .overflow_hidden()
-                        .children(self.delegate.render_header(cx))
-                        .child(self.render_element_container(cx)),
+                        .when_some(header, |div, header| div.child(header))
+                        .when(self.delegate.match_count() > 0, |el| {
+                            el.child(self.render_element_container(cx))
+                        }),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {
