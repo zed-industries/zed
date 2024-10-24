@@ -21,8 +21,8 @@ use gpui::{
     Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
-    WeakView, WindowContext,
+    Styled, Subscription, Task, UnderlineStyle, UniformListScrollHandle, View, ViewContext,
+    VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -2546,9 +2546,7 @@ impl ProjectPanel {
                             h_flex().h_6().w_full().child(editor.clone())
                         } else {
                             h_flex().h_6().map(|mut this| {
-                                if let Some(folded_ancestors) =
-                                    is_active.then(|| self.ancestors.get(&entry_id)).flatten()
-                                {
+                                if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
                                     let components = Path::new(&file_name)
                                         .components()
                                         .map(|comp| {
@@ -2592,9 +2590,10 @@ impl ProjectPanel {
                                                 Label::new(component)
                                                     .single_line()
                                                     .color(filename_text_color)
-                                                    .when(index == active_index, |this| {
-                                                        this.underline(true)
-                                                    }),
+                                                    .when(
+                                                        is_active && index == active_index,
+                                                        |this| this.underline(true),
+                                                    ),
                                             );
 
                                         this = this.child(label);
