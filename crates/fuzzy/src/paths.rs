@@ -97,6 +97,7 @@ pub fn match_fixed_path_set(
     query: &str,
     smart_case: bool,
     max_results: usize,
+    relative_to: Option<&Path>,
 ) -> Vec<PathMatch> {
     let lowercase_query = query.to_lowercase().chars().collect::<Vec<_>>();
     let query = query.chars().collect::<Vec<_>>();
@@ -124,7 +125,9 @@ pub fn match_fixed_path_set(
             is_dir: candidate.is_dir,
             path: Arc::from(candidate.path),
             path_prefix: Arc::default(),
-            distance_to_relative_ancestor: usize::MAX,
+            distance_to_relative_ancestor: relative_to.as_ref().map_or(usize::MAX, |relative_to| {
+                distance_between_paths(candidate.path, relative_to)
+            }),
         },
     );
     results
