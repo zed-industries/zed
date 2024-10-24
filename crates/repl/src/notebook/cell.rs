@@ -403,6 +403,16 @@ pub struct CodeCell {
     outputs: Vec<Output>,
 }
 
+impl CodeCell {
+    pub fn has_outputs(&self) -> bool {
+        !self.outputs.is_empty()
+    }
+
+    pub fn clear_outputs(&mut self) {
+        self.outputs.clear();
+    }
+}
+
 impl RenderableCell for CodeCell {
     const CELL_TYPE: CellType = CellType::Code;
 
