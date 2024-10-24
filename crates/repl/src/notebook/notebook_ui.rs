@@ -4,11 +4,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use client::proto::ViewId;
 use collections::HashMap;
+use futures::{future::Shared, FutureExt};
 use gpui::{
     actions, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, Model, Task, View,
     WeakView,
 };
-use language::LanguageRegistry;
+use language::{Language, LanguageRegistry};
 use project::Project;
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
@@ -88,6 +89,16 @@ impl NotebookEditor {
 
         let deserialized_notebook = deserialize_notebook(simple_example());
 
+        let languages = project.read(cx).languages().clone();
+        let notebook_language = cx
+            .spawn(|_, _| {
+                // todo: pull from notebook metadata
+                const TODO: &'static str = "Python";
+                let languages = languages.clone();
+                async move { languages.language_for_name(TODO).await.ok() }
+            })
+            .shared();
+
         if let Ok(notebook) = deserialized_notebook {
             metadata = notebook.metadata;
             nbformat = notebook.nbformat;
@@ -102,7 +113,10 @@ impl NotebookEditor {
                 };
                 let cell_id = CellId::from(id.clone());
                 cell_order.push(cell_id.clone());
-                cell_map.insert(cell_id, Cell::load(cell, &languages, cx));
+                cell_map.insert(
+                    cell_id,
+                    Cell::load(cell, &languages, notebook_language.clone(), cx),
+                );
             }
         } else {
             println!(
@@ -112,7 +126,7 @@ impl NotebookEditor {
         }
 
         Self {
-            languages,
+            languages: languages.clone(),
             focus_handle,
             workspace,
             project,
