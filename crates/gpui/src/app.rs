@@ -1269,6 +1269,11 @@ impl AppContext {
         self.active_drag.is_some()
     }
 
+    ///Clear active drag to abort drag action
+    pub fn clear_active_drag(&mut self) {
+        self.active_drag = None;
+    }
+
     /// Set the prompt renderer for GPUI. This will replace the default or platform specific
     /// prompts with this custom implementation.
     pub fn set_prompt_builder(
