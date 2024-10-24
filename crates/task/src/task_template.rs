@@ -51,7 +51,7 @@ pub struct TaskTemplate {
     /// * `on_success` — hide the terminal tab on task success only, otherwise behaves similar to `always`.
     #[serde(default)]
     pub hide: HideStrategy,
-    /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
+    /// Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
     #[serde(default)]
     pub tags: Vec<String>,
     /// Which shell to use when spawning the task.

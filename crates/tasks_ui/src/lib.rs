@@ -1,8 +1,11 @@
+use std::usize;
+
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
 use gpui::{AppContext, Task as AsyncTask, ViewContext, WindowContext};
 use modal::TasksModal;
-use project::{Location, WorktreeId};
+use project::{Location, TaskSourceKind, WorktreeId};
+use task::TaskTemplate;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
@@ -83,9 +86,17 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
-    match &action.task_name {
-        Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
-        None => toggle_modal(workspace, cx).detach(),
+    match (&action.task_name, &action.task_tag) {
+        (Some(name), _) => {
+            let name = name.clone();
+            spawn_task_filtered(move |(_, task)| task.label.eq(&name), 1, cx).detach_and_log_err(cx)
+        }
+        (None, Some(tag)) => {
+            let tag = tag.clone();
+            spawn_task_filtered(move |(_, task)| task.tags.contains(&tag), usize::MAX, cx)
+                .detach_and_log_err(cx)
+        }
+        (None, None) => toggle_modal(workspace, cx).detach(),
     }
 }
 
@@ -112,10 +123,14 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
     }
 }
 
-fn spawn_task_with_name(
-    name: String,
+fn spawn_task_filtered<F>(
+    predicate: F,
+    limit_count: usize,
     cx: &mut ViewContext<Workspace>,
-) -> AsyncTask<anyhow::Result<()>> {
+) -> AsyncTask<anyhow::Result<()>>
+where
+    F: FnMut(&(TaskSourceKind, TaskTemplate)) -> bool + 'static,
+{
     cx.spawn(|workspace, mut cx| async move {
         let context_task =
             workspace.update(&mut cx, |workspace, cx| task_context(workspace, cx))?;
@@ -148,16 +163,24 @@ fn spawn_task_with_name(
 
         let did_spawn = workspace
             .update(&mut cx, |workspace, cx| {
-                let (task_source_kind, target_task) =
-                    tasks.into_iter().find(|(_, task)| task.label == name)?;
-                schedule_task(
-                    workspace,
-                    task_source_kind,
-                    &target_task,
-                    &task_context,
-                    false,
-                    cx,
-                );
+                let filtered_tasks: Vec<_> = tasks
+                    .into_iter()
+                    .filter(predicate)
+                    .take(limit_count)
+                    .collect();
+                if filtered_tasks.is_empty() {
+                    return None;
+                }
+                for (task_source_kind, target_task) in filtered_tasks {
+                    schedule_task(
+                        workspace,
+                        task_source_kind,
+                        &target_task,
+                        &task_context,
+                        false,
+                        cx,
+                    );
+                }
                 Some(())
             })?
             .is_some();

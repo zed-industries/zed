@@ -26,14 +26,21 @@ use serde::Deserialize;
 pub struct Spawn {
     #[serde(default)]
     /// Name of the task to spawn.
-    /// If it is not set, a modal with a list of available tasks is opened instead.
+    /// If neither task_name nor task_tag is set, a modal with a list of available tasks is opened instead.
     /// Defaults to None.
     pub task_name: Option<String>,
+    /// Name of the tag to spawn all related tasks.
+    /// If neither task_name nor task_tag is set, a modal with a list of available tasks is opened instead.
+    /// Defaults to None.
+    pub task_tag: Option<String>,
 }
 
 impl Spawn {
     pub fn modal() -> Self {
-        Self { task_name: None }
+        Self {
+            task_name: None,
+            task_tag: None,
+        }
     }
 }
 
@@ -721,6 +728,7 @@ mod tests {
 
         cx.dispatch_action(Spawn {
             task_name: Some("example task".to_string()),
+            task_tag: None,
         });
         let tasks_picker = workspace.update(cx, |workspace, cx| {
             workspace

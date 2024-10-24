@@ -40,7 +40,9 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     //           "args": ["--login"]
     //         }
     //     }
-    "shell": "system"
+    "shell": "system",
+    // Represents the tags for inline runnable indicators, or spawning multiple tasks at once.
+    "tags": []
   }
 ]
 ```
@@ -103,13 +105,17 @@ The intended use of ephemeral tasks is to stay in the flow with continuous `task
 
 ## Custom keybindings for tasks
 
-You can define your own keybindings for your tasks via additional argument to `task::Spawn`. If you wanted to bind the aforementioned `echo current file's path` task to `alt-g`, you would add the following snippet in your [`keymap.json`](./key-bindings.md) file:
+You can define your own keybindings for your tasks via additional argument to `task::Spawn`. You can filter the task(s) to spawn either with `task_name` (spawn a single task) or `task_tag` (spawn all tasks with a tag).
+A snippet in your [`keymap.json`](./key-bindings.md) file might look like this:
 
 ```json
 {
   "context": "Workspace",
   "bindings": {
-    "alt-g": ["task::Spawn", { "task_name": "echo current file's path" }]
+    // run the "echo current file's path" task on `alt-s e`
+    "alt-s e": ["task::Spawn", { "task_name": "echo current file's path" }],
+    // spawn all tasks with a "keybind:startup" tag on `alt-s s`
+    "alt-s s": ["task::Spawn", { "task_tag": "keybind:startup" }]
   }
 }
 ```
