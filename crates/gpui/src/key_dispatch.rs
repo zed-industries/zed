@@ -75,6 +75,7 @@ pub(crate) struct DispatchTree {
     view_node_ids: FxHashMap<EntityId, DispatchNodeId>,
     keymap: Rc<RefCell<Keymap>>,
     action_registry: Rc<ActionRegistry>,
+    modifiers_changed_listeners: Vec<DispatchNodeId>,
 }
 
 #[derive(Default)]
@@ -143,6 +144,7 @@ impl DispatchTree {
             view_node_ids: FxHashMap::default(),
             keymap,
             action_registry,
+            modifiers_changed_listeners: Vec::new(),
         }
     }
 
@@ -325,6 +327,8 @@ impl DispatchTree {
     }
 
     pub fn on_modifiers_changed(&mut self, listener: ModifiersChangedListener) {
+        self.modifiers_changed_listeners
+            .push(self.active_node_id().expect("no active node"));
         self.active_node()
             .modifiers_changed_listeners
             .push(listener);
@@ -516,6 +520,9 @@ impl DispatchTree {
             current_node_id = self.nodes[node_id.0].parent;
         }
         dispatch_path.reverse(); // Reverse the path so it goes from the root to the focused node.
+        for node_id in self.modifiers_changed_listeners.iter() {
+            dispatch_path.push(*node_id);
+        }
         dispatch_path
     }
 

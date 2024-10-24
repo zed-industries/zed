@@ -446,11 +446,10 @@ impl TerminalElement {
         });
 
         cx.on_mouse_event({
-            let focus = self.focus.clone();
             let terminal = self.terminal.clone();
             let hitbox = hitbox.clone();
             move |e: &MouseMoveEvent, phase, cx| {
-                if phase != DispatchPhase::Bubble || !focus.is_focused(cx) {
+                if phase != DispatchPhase::Bubble {
                     return;
                 }
 
@@ -466,13 +465,10 @@ impl TerminalElement {
                         }
                     })
                 }
-
-                if hitbox.is_hovered(cx) {
-                    terminal.update(cx, |terminal, cx| {
-                        terminal.mouse_move(e, origin);
-                        cx.notify();
-                    })
-                }
+                terminal.update(cx, |terminal, cx| {
+                    terminal.mouse_move(&e, origin);
+                    cx.notify();
+                })
             }
         });
 
@@ -899,13 +895,9 @@ impl Element for TerminalElement {
                 .paint(global_id, bounds, Some(&layout.hitbox), cx, |_, cx| {
                     cx.handle_input(&self.focus, terminal_input_handler);
 
-                    cx.on_key_event({
+                    cx.on_modifiers_changed({
                         let this = self.terminal.clone();
-                        move |event: &ModifiersChangedEvent, phase, cx| {
-                            if phase != DispatchPhase::Bubble {
-                                return;
-                            }
-
+                        move |event: &ModifiersChangedEvent, cx| {
                             let handled = this
                                 .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 
