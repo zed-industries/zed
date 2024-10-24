@@ -14,7 +14,7 @@ use project::Project;
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
+use workspace::{FollowableItem, Item, ItemHandle, Pane, SerializableItem, Workspace};
 
 use super::{
     deserialize_notebook,
@@ -531,3 +531,6 @@ impl Item for NotebookEditor {
         false
     }
 }
+
+// TODO: Implement this to allow us to persist to the database, etc:
+// impl SerializableItem for NotebookEditor {}
