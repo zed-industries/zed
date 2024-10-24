@@ -209,12 +209,30 @@ impl LspAdapter for PythonLspAdapter {
         adapter: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        cx.update(|cx| {
-            let toolchain = self.toolchain.active_toolchain.clone();
-            dbg!(&toolchain);
-            language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
+        let toolchain = self.toolchain.active_toolchain.lock().await.clone();
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+                object
+                    .entry("python")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                    .map(|python| {
+                        python
+                            .entry("pythonPath")
+                            .or_insert(Value::String(toolchain.path.into()));
+                    });
+            }
+            user_settings
         })
     }
 }
