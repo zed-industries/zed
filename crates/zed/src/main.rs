@@ -262,6 +262,8 @@ fn init_ui(
     channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
     search::init(cx);
     vim::init(cx);
+    #[cfg(feature = "helix")]
+    helix::init(cx);
     terminal_view::init(cx);
     journal::init(app_state.clone(), cx);
     language_selector::init(cx);
