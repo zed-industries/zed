@@ -73,13 +73,13 @@ use std::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::SelectionGoal;
-use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
     Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
     ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
 };
+use ui::{IconButtonShape, TintColor};
 use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -2117,6 +2117,7 @@ impl ContextEditor {
         command_id: SlashCommandId,
         cx: &mut ViewContext<Self>,
     ) {
+        let context_editor = cx.view().downgrade();
         self.editor.update(cx, |editor, cx| {
             if let Some(invoked_slash_command) =
                 self.context.read(cx).invoked_slash_command(&command_id)
@@ -2143,7 +2144,11 @@ impl ContextEditor {
                             },
                             height: 1,
                             disposition: BlockDisposition::Above,
-                            render: invoked_slash_command_renderer(command_id, context),
+                            render: invoked_slash_command_renderer(
+                                command_id,
+                                context,
+                                context_editor,
+                            ),
                             priority: 0,
                         }],
                         None,
@@ -4980,6 +4985,7 @@ fn make_lsp_adapter_delegate(
 fn invoked_slash_command_renderer(
     command_id: SlashCommandId,
     context: WeakModel<Context>,
+    context_editor: WeakView<ContextEditor>,
 ) -> RenderBlock {
     Box::new(move |cx| {
         let Some(context) = context.upgrade() else {
@@ -5005,11 +5011,38 @@ fn invoked_slash_command_renderer(
                         |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                     ))
                 }
-                InvokedSlashCommandStatus::Error(message) => parent.child(
-                    Label::new(format!("error: {message}"))
-                        .single_line()
-                        .color(Color::Error),
-                ),
+                InvokedSlashCommandStatus::Error(message) => parent
+                    .child(
+                        Label::new(format!("error: {message}"))
+                            .single_line()
+                            .color(Color::Error),
+                    )
+                    .child(
+                        IconButton::new("dismiss-error", IconName::Close)
+                            .shape(IconButtonShape::Square)
+                            .icon_size(IconSize::XSmall)
+                            .icon_color(Color::Muted)
+                            .on_click({
+                                let context_editor = context_editor.clone();
+                                move |_event, cx| {
+                                    context_editor
+                                        .update(cx, |context_editor, cx| {
+                                            context_editor.editor.update(cx, |editor, cx| {
+                                                editor.remove_blocks(
+                                                    HashSet::from_iter(
+                                                        context_editor
+                                                            .invoked_slash_command_blocks
+                                                            .remove(&command_id),
+                                                    ),
+                                                    None,
+                                                    cx,
+                                                );
+                                            })
+                                        })
+                                        .log_err();
+                                }
+                            }),
+                    ),
                 InvokedSlashCommandStatus::Finished => parent,
             })
             .into_any_element()
