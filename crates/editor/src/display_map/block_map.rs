@@ -966,6 +966,10 @@ impl<'a> BlockMapWriter<'a> {
 
         let mut previous_wrap_row_range: Option<Range<u32>> = None;
         for block in blocks {
+            if let BlockPlacement::Replace(_) = &block.placement {
+                debug_assert!(block.height > 0);
+            }
+
             let id = CustomBlockId(self.0.next_block_id.fetch_add(1, SeqCst));
             ids.push(id);
 
@@ -1024,6 +1028,10 @@ impl<'a> BlockMapWriter<'a> {
 
         for block in &mut self.0.custom_blocks {
             if let Some(new_height) = heights.remove(&block.id) {
+                if let BlockPlacement::Replace(_) = &block.placement {
+                    debug_assert!(new_height > 0);
+                }
+
                 if block.height != new_height {
                     let new_block = CustomBlock {
                         id: block.id,
@@ -1626,7 +1634,10 @@ impl Debug for CustomBlock {
         f.debug_struct("Block")
             .field("id", &self.id)
             .field("placement", &self.placement)
-            .finish()
+            .field("height", &self.height)
+            .field("style", &self.style)
+            .field("priority", &self.priority)
+            .finish_non_exhaustive()
     }
 }
 
@@ -2274,8 +2285,10 @@ mod tests {
                             let buffer = cx.update(|cx| buffer.read(cx).read(cx).clone());
                             let offset =
                                 buffer.clip_offset(rng.gen_range(0..=buffer.len()), Bias::Left);
+                            let mut min_height = 0;
                             let placement = match rng.gen_range(0..3) {
                                 0 => {
+                                    min_height = 1;
                                     let start = buffer.anchor_after(offset);
                                     let end = buffer.anchor_after(buffer.clip_offset(
                                         rng.gen_range(offset..=buffer.len()),
@@ -2287,7 +2300,7 @@ mod tests {
                                 _ => BlockPlacement::Below(buffer.anchor_after(offset)),
                             };
 
-                            let height = rng.gen_range(0..5);
+                            let height = rng.gen_range(min_height..5);
                             log::info!(
                                 "inserting block {:?} with height {}",
                                 placement.as_ref().map(|p| p.to_point(&buffer)),
@@ -2592,8 +2605,8 @@ mod tests {
 
             // Ensure that conversion between block points and wrap points is stable.
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
-                let wrap_point = WrapPoint::new(row, 0);
-                let block_point = blocks_snapshot.to_block_point(wrap_point);
+                let original_wrap_point = WrapPoint::new(row, 0);
+                let block_point = blocks_snapshot.to_block_point(original_wrap_point);
                 let wrap_point = blocks_snapshot.to_wrap_point(block_point);
                 assert_eq!(blocks_snapshot.to_block_point(wrap_point), block_point);
             }
