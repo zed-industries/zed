@@ -291,7 +291,7 @@ const MAX_RECONNECT_ATTEMPTS: usize = 3;
 enum State {
     Connecting,
     Connected {
-        ssh_connection: Arc<dyn SshRemoteProcess>,
+        ssh_connection: Arc<dyn RemoteConnection>,
         delegate: Arc<dyn SshClientDelegate>,
 
         multiplex_task: Task<Result<()>>,
@@ -300,7 +300,7 @@ enum State {
     HeartbeatMissed {
         missed_heartbeats: usize,
 
-        ssh_connection: Arc<dyn SshRemoteProcess>,
+        ssh_connection: Arc<dyn RemoteConnection>,
         delegate: Arc<dyn SshClientDelegate>,
 
         multiplex_task: Task<Result<()>>,
@@ -308,7 +308,7 @@ enum State {
     },
     Reconnecting,
     ReconnectFailed {
-        ssh_connection: Arc<dyn SshRemoteProcess>,
+        ssh_connection: Arc<dyn RemoteConnection>,
         delegate: Arc<dyn SshClientDelegate>,
 
         error: anyhow::Error,
@@ -333,7 +333,7 @@ impl fmt::Display for State {
 }
 
 impl State {
-    fn ssh_connection(&self) -> Option<&dyn SshRemoteProcess> {
+    fn ssh_connection(&self) -> Option<&dyn RemoteConnection> {
         match self {
             Self::Connected { ssh_connection, .. } => Some(ssh_connection.as_ref()),
             Self::HeartbeatMissed { ssh_connection, .. } => Some(ssh_connection.as_ref()),
@@ -967,15 +967,21 @@ impl SshRemoteClient {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn simulate_disconnect(&self, client_cx: &mut AppContext) -> Task<()> {
-        let port = self.connection_options().port.unwrap();
+        let opts = self.connection_options();
         client_cx.spawn(|cx| async move {
-            let (channel, server_cx) = cx
-                .update_global(|c: &mut fake::ServerConnections, _| c.get(port))
+            let connection = cx
+                .update_global(|c: &mut ConnectionPool, _| {
+                    if let Some(ConnectionPoolEntry::Connecting(c)) = c.connections.get(&opts) {
+                        c.clone()
+                    } else {
+                        panic!("missing test connection")
+                    }
+                })
+                .unwrap()
+                .await
                 .unwrap();
 
-            let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
-            let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
-            channel.reconnect(incoming_rx, outgoing_tx, &server_cx);
+            connection.simulate_disconnect(&cx);
         })
     }
 
@@ -983,37 +989,51 @@ impl SshRemoteClient {
     pub fn fake_server(
         client_cx: &mut gpui::TestAppContext,
         server_cx: &mut gpui::TestAppContext,
-    ) -> (u16, Arc<ChannelClient>) {
-        use gpui::BorrowAppContext;
+    ) -> (SshConnectionOptions, Arc<ChannelClient>) {
+        let port = client_cx
+            .update(|cx| cx.default_global::<ConnectionPool>().connections.len() as u16 + 1);
+        let opts = SshConnectionOptions {
+            host: "<fake>".to_string(),
+            port: Some(port),
+            ..Default::default()
+        };
         let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
         let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
         let server_client =
             server_cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server"));
-        let port = client_cx.update(|cx| {
-            cx.update_default_global(|c: &mut fake::ServerConnections, _| {
-                c.push(server_client.clone(), server_cx.to_async())
+        let connection: Arc<dyn RemoteConnection> = Arc::new(fake::FakeRemoteConnection {
+            connection_options: opts.clone(),
+            server_cx: fake::SendableCx::new(server_cx.to_async()),
+            server_channel: server_client.clone(),
+        });
+
+        client_cx.update(|cx| {
+            cx.update_default_global(|c: &mut ConnectionPool, cx| {
+                c.connections.insert(
+                    opts.clone(),
+                    ConnectionPoolEntry::Connecting(
+                        cx.foreground_executor()
+                            .spawn({
+                                let connection = connection.clone();
+                                async move { Ok(connection.clone()) }
+                            })
+                            .shared(),
+                    ),
+                );
             })
         });
-        (port, server_client)
+
+        (opts, server_client)
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub async fn fake_client(port: u16, client_cx: &mut gpui::TestAppContext) -> Model<Self> {
+    pub async fn fake_client(
+        opts: SshConnectionOptions,
+        client_cx: &mut gpui::TestAppContext,
+    ) -> Model<Self> {
         let (_tx, rx) = oneshot::channel();
         client_cx
-            .update(|cx| {
-                Self::new(
-                    "fake".to_string(),
-                    SshConnectionOptions {
-                        host: "<fake>".to_string(),
-                        port: Some(port),
-                        ..Default::default()
-                    },
-                    rx,
-                    Arc::new(fake::Delegate),
-                    cx,
-                )
-            })
+            .update(|cx| Self::new("fake".to_string(), opts, rx, Arc::new(fake::Delegate), cx))
             .await
             .unwrap()
             .unwrap()
@@ -1021,8 +1041,8 @@ impl SshRemoteClient {
 }
 
 enum ConnectionPoolEntry {
-    Connecting(Shared<Task<Result<Arc<dyn SshRemoteProcess>, Arc<anyhow::Error>>>>),
-    Connected(Weak<dyn SshRemoteProcess>),
+    Connecting(Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>>),
+    Connected(Weak<dyn RemoteConnection>),
 }
 
 #[derive(Default)]
@@ -1038,7 +1058,7 @@ impl ConnectionPool {
         opts: SshConnectionOptions,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AppContext,
-    ) -> Shared<Task<Result<Arc<dyn SshRemoteProcess>, Arc<anyhow::Error>>>> {
+    ) -> Shared<Task<Result<Arc<dyn RemoteConnection>, Arc<anyhow::Error>>>> {
         let connection = self.connections.get(&opts);
         match connection {
             Some(ConnectionPoolEntry::Connecting(task)) => {
@@ -1064,17 +1084,11 @@ impl ConnectionPool {
                 let opts = opts.clone();
                 let delegate = delegate.clone();
                 |mut cx| async move {
-                    let connection: Arc<dyn SshRemoteProcess> = async {
-                        #[cfg(any(test, feature = "test-support"))]
-                        if let Some(fake) = fake::SshRemoteConnection::new(&opts) {
-                            return Ok(fake);
-                        }
-                        let connection =
-                            SshRemoteConnection::new(opts.clone(), delegate, &mut cx).await?;
-                        anyhow::Ok(Arc::new(connection))
-                    }
-                    .await
-                    .map_err(|e| Arc::new(e))?;
+                    let connection: Arc<dyn RemoteConnection> = Arc::new(
+                        SshRemoteConnection::new(opts.clone(), delegate, &mut cx)
+                            .await
+                            .map_err(|e| Arc::new(e))?,
+                    );
 
                     cx.update_global(|pool: &mut Self, _| {
                         debug_assert!(matches!(
@@ -1104,7 +1118,7 @@ impl From<SshRemoteClient> for AnyProtoClient {
 }
 
 #[async_trait(?Send)]
-trait SshRemoteProcess: Send + Sync {
+trait RemoteConnection: Send + Sync {
     fn start_proxy(
         &self,
         remote_binary_path: PathBuf,
@@ -1125,6 +1139,9 @@ trait SshRemoteProcess: Send + Sync {
     async fn kill(&self) -> Result<()>;
     fn ssh_args(&self) -> Vec<String>;
     fn connection_options(&self) -> SshConnectionOptions;
+
+    #[cfg(any(test, feature = "test-support"))]
+    fn simulate_disconnect(&self, _: &AsyncAppContext) {}
 }
 
 struct SshRemoteConnection {
@@ -1143,7 +1160,7 @@ impl Drop for SshRemoteConnection {
 }
 
 #[async_trait(?Send)]
-impl SshRemoteProcess for SshRemoteConnection {
+impl RemoteConnection for SshRemoteConnection {
     async fn kill(&self) -> Result<()> {
         let mut process = self.master_process.lock();
         process.kill().ok();
@@ -2092,33 +2109,35 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AsyncAppContext, BorrowAppContext, Global, SemanticVersion, Task};
+    use gpui::{AsyncAppContext, SemanticVersion, Task};
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelClient, ServerBinary, SshClientDelegate, SshConnectionOptions, SshPlatform,
-        SshRemoteProcess,
+        ChannelClient, RemoteConnection, ServerBinary, SshClientDelegate, SshConnectionOptions,
+        SshPlatform,
     };
 
-    pub(super) struct SshRemoteConnection {
-        connection_options: SshConnectionOptions,
+    pub(super) struct FakeRemoteConnection {
+        pub(super) connection_options: SshConnectionOptions,
+        pub(super) server_channel: Arc<ChannelClient>,
+        pub(super) server_cx: SendableCx,
     }
 
-    impl SshRemoteConnection {
-        pub(super) fn new(
-            connection_options: &SshConnectionOptions,
-        ) -> Option<Arc<dyn SshRemoteProcess>> {
-            if connection_options.host == "<fake>" {
-                return Some(Arc::new(Self {
-                    connection_options: connection_options.clone(),
-                }));
-            }
-            return None;
+    pub(super) struct SendableCx(AsyncAppContext);
+    // safety: you can only get the other cx on the main thread.
+    impl SendableCx {
+        pub(super) fn new(cx: AsyncAppContext) -> Self {
+            Self(cx)
+        }
+        fn get(&self, _: &AsyncAppContext) -> AsyncAppContext {
+            self.0.clone()
         }
     }
+    unsafe impl Send for SendableCx {}
+    unsafe impl Sync for SendableCx {}
 
     #[async_trait(?Send)]
-    impl SshRemoteProcess for SshRemoteConnection {
+    impl RemoteConnection for FakeRemoteConnection {
         async fn kill(&self) -> Result<()> {
             Ok(())
         }
@@ -2129,6 +2148,13 @@ mod fake {
 
         fn connection_options(&self) -> SshConnectionOptions {
             self.connection_options.clone()
+        }
+
+        fn simulate_disconnect(&self, cx: &AsyncAppContext) {
+            let (outgoing_tx, _) = mpsc::unbounded::<Envelope>();
+            let (_, incoming_rx) = mpsc::unbounded::<Envelope>();
+            self.server_channel
+                .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(&cx));
         }
 
         async fn get_remote_binary_path(
@@ -2151,18 +2177,14 @@ mod fake {
             _delegate: Arc<dyn SshClientDelegate>,
             cx: &mut AsyncAppContext,
         ) -> Task<Result<i32>> {
-            let connection_options = self.connection_options.clone();
             let (mut server_incoming_tx, server_incoming_rx) = mpsc::unbounded::<Envelope>();
             let (server_outgoing_tx, mut server_outgoing_rx) = mpsc::unbounded::<Envelope>();
 
-            let (channel, server_cx) = cx
-                .update(|cx| {
-                    cx.update_global(|conns: &mut ServerConnections, _| {
-                        conns.get(connection_options.port.unwrap())
-                    })
-                })
-                .unwrap();
-            channel.reconnect(server_incoming_rx, server_outgoing_tx, &server_cx);
+            self.server_channel.reconnect(
+                server_incoming_rx,
+                server_outgoing_tx,
+                &self.server_cx.get(cx),
+            );
 
             cx.background_executor().spawn(async move {
                 loop {
@@ -2183,24 +2205,6 @@ mod fake {
                     }
                 }
             })
-        }
-    }
-
-    #[derive(Default)]
-    pub(super) struct ServerConnections(Vec<(Arc<ChannelClient>, AsyncAppContext)>);
-    impl Global for ServerConnections {}
-
-    impl ServerConnections {
-        pub(super) fn push(&mut self, server: Arc<ChannelClient>, cx: AsyncAppContext) -> u16 {
-            self.0.push((server.clone(), cx));
-            self.0.len() as u16 - 1
-        }
-
-        pub(super) fn get(&mut self, port: u16) -> (Arc<ChannelClient>, AsyncAppContext) {
-            self.0
-                .get(port as usize)
-                .expect("no fake server for port")
-                .clone()
         }
     }
 
@@ -2229,8 +2233,6 @@ mod fake {
             unreachable!()
         }
 
-        fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {
-            unreachable!()
-        }
+        fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {}
     }
 }

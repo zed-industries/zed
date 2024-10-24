@@ -26,7 +26,7 @@ async fn test_sharing_an_ssh_remote_project(
         .await;
 
     // Set up project on remote FS
-    let (port, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
+    let (opts, server_ssh) = SshRemoteClient::fake_server(cx_a, server_cx);
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
@@ -67,7 +67,7 @@ async fn test_sharing_an_ssh_remote_project(
         )
     });
 
-    let client_ssh = SshRemoteClient::fake_client(port, cx_a).await;
+    let client_ssh = SshRemoteClient::fake_client(opts, cx_a).await;
     let (project_a, worktree_id) = client_a
         .build_ssh_project("/code/project1", client_ssh, cx_a)
         .await;
