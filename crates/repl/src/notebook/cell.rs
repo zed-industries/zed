@@ -2,7 +2,8 @@
 use core::fmt;
 use std::fmt::{Display, Formatter};
 
-use gpui::{prelude::*, Hsla, View};
+use editor::Editor;
+use gpui::{prelude::*, Hsla, View, WeakView};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ui::prelude::*;
@@ -259,14 +260,27 @@ impl Cell {
                 execution_count,
                 source,
                 outputs,
-            } => Cell::Code(cx.new_view(|cx| CodeCell {
-                id: id.into(),
-                cell_type: CellType::Code,
-                metadata,
-                execution_count,
-                source: source.join("\n"),
-                outputs: convert_outputs(outputs, cx),
-                selected: false,
+            } => Cell::Code(cx.new_view(|cx| {
+                let text = source.join("\n");
+
+                let editor_view = cx.new_view(|cx| {
+                    let mut editor = Editor::multi_line(cx);
+                    editor.set_text(text, cx);
+                    editor.set_show_gutter(false, cx);
+                    editor.set_read_only(true);
+                    editor
+                });
+
+                CodeCell {
+                    id: id.into(),
+                    cell_type: CellType::Code,
+                    metadata,
+                    execution_count,
+                    source: source.join("\n"),
+                    editor: editor_view,
+                    outputs: convert_outputs(outputs, cx),
+                    selected: false,
+                }
             })),
             DeserializedCell::Raw {
                 id,
@@ -433,6 +447,7 @@ pub struct CodeCell {
     metadata: DeserializedCellMetadata,
     execution_count: Option<i32>,
     source: String,
+    editor: View<editor::Editor>,
     outputs: Vec<Output>,
     selected: bool,
 }
@@ -482,6 +497,9 @@ impl RenderableCell for CodeCell {
 
 impl Render for CodeCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let lines = self.source.lines().count();
+        let height = lines as f32 * cx.line_height();
+
         h_flex()
             .w_full()
             .pr_2()
@@ -502,9 +520,7 @@ impl Render for CodeCell {
                         .border_1()
                         .border_color(cx.theme().colors().border)
                         .bg(cx.theme().colors().editor_background)
-                        .font_buffer(cx)
-                        .text_size(TextSize::Editor.rems(cx))
-                        .child(self.source.clone()),
+                        .child(div().h(height).w_full().child(self.editor.clone())),
                 ),
             )
     }
