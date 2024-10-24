@@ -834,7 +834,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 (Path::new(""), false),
@@ -908,7 +908,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                 .read(cx)
                 .snapshot()
                 .entries(true, 0)
-                .map(|entry| (entry.path.as_ref(), entry.is_ignored))
+                .map(|entry| (entry.relative_path.as_ref(), entry.is_ignored))
                 .collect::<Vec<_>>(),
             &[
                 (Path::new(""), false),
@@ -2588,7 +2588,12 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
             .map(|worktree| {
                 let worktree = worktree.read(cx);
                 (
-                    worktree.as_local().unwrap().abs_path().as_ref(),
+                    worktree
+                        .as_local()
+                        .unwrap()
+                        .abs_path()
+                        .as_raw_path_buf()
+                        .as_path(),
                     worktree.is_visible(),
                 )
             })
@@ -5193,9 +5198,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         let worktree_c = worktrees[2].read(cx);
 
         // check they start in the right order
-        assert_eq!(worktree_a.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(worktree_b.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(worktree_c.abs_path().to_str().unwrap(), "/dir/c.rs");
+        assert_eq!(worktree_a.abs_path().to_string().as_str(), "/dir/a.rs");
+        assert_eq!(worktree_b.abs_path().to_string().as_str(), "/dir/b.rs");
+        assert_eq!(worktree_c.abs_path().to_string().as_str(), "/dir/c.rs");
 
         (
             worktrees[0].clone(),
@@ -5224,9 +5229,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         let third = worktrees[2].read(cx);
 
         // check they are now in the right order
-        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+        assert_eq!(first.abs_path().to_string().as_str(), "/dir/b.rs");
+        assert_eq!(second.abs_path().to_string().as_str(), "/dir/a.rs");
+        assert_eq!(third.abs_path().to_string().as_str(), "/dir/c.rs");
     });
 
     // move the second worktree to before the first
@@ -5249,9 +5254,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         let third = worktrees[2].read(cx);
 
         // check they are now in the right order
-        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+        assert_eq!(first.abs_path().to_string().as_str(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_string().as_str(), "/dir/b.rs");
+        assert_eq!(third.abs_path().to_string().as_str(), "/dir/c.rs");
     });
 
     // move the second worktree to after the third
@@ -5274,9 +5279,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         let third = worktrees[2].read(cx);
 
         // check they are now in the right order
-        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/b.rs");
+        assert_eq!(first.abs_path().to_string().as_str(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_string().as_str(), "/dir/c.rs");
+        assert_eq!(third.abs_path().to_string().as_str(), "/dir/b.rs");
     });
 
     // move the third worktree to before the second
@@ -5299,9 +5304,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         let third = worktrees[2].read(cx);
 
         // check they are now in the right order
-        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+        assert_eq!(first.abs_path().to_string().as_str(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_string().as_str(), "/dir/b.rs");
+        assert_eq!(third.abs_path().to_string().as_str(), "/dir/c.rs");
     });
 
     // move the first worktree to after the third
@@ -5324,9 +5329,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         let third = worktrees[2].read(cx);
 
         // check they are now in the right order
-        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/c.rs");
-        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/a.rs");
+        assert_eq!(first.abs_path().to_string().as_str(), "/dir/b.rs");
+        assert_eq!(second.abs_path().to_string().as_str(), "/dir/c.rs");
+        assert_eq!(third.abs_path().to_string().as_str(), "/dir/a.rs");
     });
 
     // move the third worktree to before the first
@@ -5349,9 +5354,9 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         let third = worktrees[2].read(cx);
 
         // check they are now in the right order
-        assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
-        assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
-        assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+        assert_eq!(first.abs_path().to_string().as_str(), "/dir/a.rs");
+        assert_eq!(second.abs_path().to_string().as_str(), "/dir/b.rs");
+        assert_eq!(third.abs_path().to_string().as_str(), "/dir/c.rs");
     });
 }
 

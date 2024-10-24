@@ -81,7 +81,10 @@ use std::{
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
-use util::{paths::compare_paths, ResultExt as _};
+use util::{
+    paths::{compare_paths, SanitizedPathBuf},
+    ResultExt as _,
+};
 use worktree::{CreatedEntry, Snapshot, Traversal};
 use worktree_store::{WorktreeStore, WorktreeStoreEvent};
 
@@ -274,6 +277,8 @@ pub enum Event {
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
 pub struct ProjectPath {
     pub worktree_id: WorktreeId,
+    // TODO:
+    // This should always be relative path, right ?
     pub path: Arc<Path>,
 }
 
@@ -511,7 +516,7 @@ impl DirectoryLister {
     pub fn default_query(&self, cx: &mut AppContext) -> String {
         if let DirectoryLister::Project(project) = self {
             if let Some(worktree) = project.read(cx).visible_worktrees(cx).next() {
-                return worktree.read(cx).abs_path().to_string_lossy().to_string();
+                return worktree.read(cx).abs_path().to_trimmed_string();
             }
         };
         "~/".to_string()
@@ -2272,7 +2277,9 @@ impl Project {
                     if worktree.read(cx).id() == id_to_remove {
                         None
                     } else {
-                        Some(worktree.read(cx).abs_path().to_string_lossy().to_string())
+                        // TODO:
+                        // to_string() or to_trimmed_string()?
+                        Some(worktree.read(cx).abs_path().to_trimmed_string())
                     }
                 })
                 .collect();
@@ -3236,7 +3243,7 @@ impl Project {
                 for candidate in candidates.iter() {
                     let path = worktree
                         .update(&mut cx, |worktree, _| {
-                            let root_entry_path = &worktree.root_entry()?.path;
+                            let root_entry_path = &worktree.root_entry()?.relative_path;
 
                             let resolved = resolve_path(root_entry_path, candidate);
 
@@ -3246,7 +3253,7 @@ impl Project {
                             worktree.entry_for_path(stripped).map(|entry| {
                                 ResolvedPath::ProjectPath(ProjectPath {
                                     worktree_id: worktree.id(),
-                                    path: entry.path.clone(),
+                                    path: entry.relative_path.clone(),
                                 })
                             })
                         })
@@ -3376,11 +3383,15 @@ impl Project {
         let worktree = self.worktree_for_entry(entry_id, cx)?;
         let worktree = worktree.read(cx);
         let worktree_id = worktree.id();
-        let path = worktree.entry_for_id(entry_id)?.path.clone();
+        let path = worktree.entry_for_id(entry_id)?.relative_path.clone();
         Some(ProjectPath { worktree_id, path })
     }
 
-    pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
+    pub fn absolute_path(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<SanitizedPathBuf> {
         let workspace_root = self
             .worktree_for_id(project_path.worktree_id, cx)?
             .read(cx)
@@ -3388,7 +3399,7 @@ impl Project {
         let project_path = project_path.path.as_ref();
 
         Some(if project_path == Path::new("") {
-            workspace_root.to_path_buf()
+            workspace_root
         } else {
             workspace_root.join(project_path)
         })
@@ -3429,7 +3440,7 @@ impl Project {
             if let Some(entry) = worktree.entry_for_path(path) {
                 return Some(ProjectPath {
                     worktree_id: worktree.id(),
-                    path: entry.path.clone(),
+                    path: entry.relative_path.clone(),
                 });
             }
         }
@@ -3441,12 +3452,11 @@ impl Project {
         &self,
         project_path: &ProjectPath,
         cx: &AppContext,
-    ) -> Option<PathBuf> {
+    ) -> Option<SanitizedPathBuf> {
         Some(
             self.worktree_for_id(project_path.worktree_id, cx)?
                 .read(cx)
-                .abs_path()
-                .to_path_buf(),
+                .abs_path(),
         )
     }
 
@@ -4141,7 +4151,7 @@ impl<'a> Iterator for PathMatchCandidateSetIter<'a> {
             .next()
             .map(|entry| fuzzy::PathMatchCandidate {
                 is_dir: entry.kind.is_dir(),
-                path: &entry.path,
+                path: &entry.relative_path,
                 char_bag: entry.char_bag,
             })
     }
@@ -4297,8 +4307,8 @@ impl std::error::Error for NoRepositoryError {}
 pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {
         compare_paths(
-            (&entry_a.path, entry_a.is_file()),
-            (&entry_b.path, entry_b.is_file()),
+            (&entry_a.relative_path, entry_a.is_file()),
+            (&entry_b.relative_path, entry_b.is_file()),
         )
     });
 }

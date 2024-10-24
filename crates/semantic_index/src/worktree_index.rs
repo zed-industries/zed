@@ -61,7 +61,9 @@ impl WorktreeIndex {
                     async move {
                         let mut txn = db_connection.write_txn()?;
                         let embedding_index = {
-                            let db_name = worktree_abs_path.to_string_lossy();
+                            // TODO:
+                            // trimmed string or ?
+                            let db_name = worktree_abs_path.to_trimmed_string();
                             let db = db_connection.create_database(&mut txn, Some(&db_name))?;
 
                             EmbeddingIndex::new(
@@ -80,7 +82,7 @@ impl WorktreeIndex {
                                 // Prepend something that wouldn't be found at the beginning of an
                                 // absolute path, so we don't get db key namespace conflicts with
                                 // embeddings, which use the abs path as a key.
-                                format!("digests-{}", worktree_abs_path.to_string_lossy());
+                                format!("digests-{}", worktree_abs_path.to_trimmed_string());
                                 db_connection.create_database(&mut txn, Some(&db_name))?
                             };
                             let summary_db = {
@@ -88,7 +90,7 @@ impl WorktreeIndex {
                                 // Prepend something that wouldn't be found at the beginning of an
                                 // absolute path, so we don't get db key namespace conflicts with
                                 // embeddings, which use the abs path as a key.
-                                format!("summaries-{}", worktree_abs_path.to_string_lossy());
+                                format!("summaries-{}", worktree_abs_path.to_trimmed_string());
                                 db_connection.create_database(&mut txn, Some(&db_name))?
                             };
                             SummaryIndex::new(

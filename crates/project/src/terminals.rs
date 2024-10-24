@@ -16,7 +16,7 @@ use terminal::{
     terminal_settings::{self, TerminalSettings},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
 };
-use util::ResultExt;
+use util::{paths::SanitizedPathBuf, ResultExt};
 
 // #[cfg(target_os = "macos")]
 // use std::os::unix::ffi::OsStrExt;
@@ -45,7 +45,7 @@ pub enum SshCommand {
 }
 
 impl Project {
-    pub fn active_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
+    pub fn active_project_directory(&self, cx: &AppContext) -> Option<SanitizedPathBuf> {
         let worktree = self
             .active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
@@ -54,14 +54,14 @@ impl Project {
         if !worktree.root_entry()?.is_dir() {
             return None;
         }
-        Some(worktree.abs_path().to_path_buf())
+        Some(worktree.abs_path())
     }
 
-    pub fn first_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
+    pub fn first_project_directory(&self, cx: &AppContext) -> Option<SanitizedPathBuf> {
         let worktree = self.worktrees(cx).next()?;
         let worktree = worktree.read(cx);
         if worktree.root_entry()?.is_dir() {
-            Some(worktree.abs_path().to_path_buf())
+            Some(worktree.abs_path())
         } else {
             None
         }
@@ -95,12 +95,12 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> anyhow::Result<Model<Terminal>> {
         let path = match &kind {
-            TerminalKind::Shell(path) => path.as_ref().map(|path| path.to_path_buf()),
+            TerminalKind::Shell(path) => path.clone(),
             TerminalKind::Task(spawn_task) => {
                 if let Some(cwd) = &spawn_task.cwd {
                     Some(cwd.clone())
                 } else {
-                    self.active_project_directory(cx)
+                    self.active_project_directory(cx).map(Into::into)
                 }
             }
         };

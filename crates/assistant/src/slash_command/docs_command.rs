@@ -30,10 +30,14 @@ impl DocsSlashCommand {
         let entry = worktree.entry_for_path("Cargo.toml")?;
         let path = ProjectPath {
             worktree_id: worktree.id(),
-            path: entry.path.clone(),
+            path: entry.relative_path.clone(),
         };
         Some(Arc::from(
-            project.read(cx).absolute_path(&path, cx)?.as_path(),
+            project
+                .read(cx)
+                .absolute_path(&path, cx)?
+                .as_raw_path_buf()
+                .as_path(),
         ))
     }
 

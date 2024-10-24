@@ -628,7 +628,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
         let entries = worktree.entries(true, 0).collect::<Vec<_>>();
         assert_eq!(entries.len(), 2);
         assert_eq!(
-            entries[1].path.to_string_lossy().to_string(),
+            entries[1].relative_path.to_string_lossy().to_string(),
             "README.md".to_string()
         )
     })

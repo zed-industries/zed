@@ -49,7 +49,7 @@ impl project::Item for ImageItem {
                     .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
 
                 cx.new_model(|_| ImageItem {
-                    path: abs_path,
+                    path: abs_path.into(),
                     project_path: path,
                 })
             }))

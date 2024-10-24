@@ -1111,18 +1111,22 @@ impl SerializableItem for Editor {
 
         let buffer = self.buffer().read(cx).as_singleton()?;
 
-        let abs_path = buffer.read(cx).file().and_then(|file| {
-            let worktree_id = file.worktree_id(cx);
-            project
-                .read(cx)
-                .worktree_for_id(worktree_id, cx)
-                .and_then(|worktree| worktree.read(cx).absolutize(&file.path()).ok())
-                .or_else(|| {
-                    let full_path = file.full_path(cx);
-                    let project_path = project.read(cx).find_project_path(&full_path, cx)?;
-                    project.read(cx).absolute_path(&project_path, cx)
-                })
-        });
+        let abs_path = buffer
+            .read(cx)
+            .file()
+            .and_then(|file| {
+                let worktree_id = file.worktree_id(cx);
+                project
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                    .and_then(|worktree| worktree.read(cx).absolutize(&file.path()).ok())
+                    .or_else(|| {
+                        let full_path = file.full_path(cx);
+                        let project_path = project.read(cx).find_project_path(&full_path, cx)?;
+                        project.read(cx).absolute_path(&project_path, cx)
+                    })
+            })
+            .map(Into::into);
 
         let is_dirty = buffer.read(cx).is_dirty();
         let mtime = buffer.read(cx).saved_mtime();

@@ -21,7 +21,7 @@ use std::{
     cmp::Ordering,
     future::Future,
     iter,
-    path::Path,
+    path::{Path, PathBuf},
     sync::Arc,
     time::{Duration, SystemTime},
 };
@@ -72,7 +72,7 @@ impl EmbeddingIndex {
         }
 
         let worktree = self.worktree.read(cx).snapshot();
-        let worktree_abs_path = worktree.abs_path().clone();
+        let worktree_abs_path = worktree.abs_path().clone().into();
         let scan = self.scan_entries(worktree, cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
@@ -94,7 +94,7 @@ impl EmbeddingIndex {
         }
 
         let worktree = self.worktree.read(cx).snapshot();
-        let worktree_abs_path = worktree.abs_path().clone();
+        let worktree_abs_path = worktree.abs_path().clone().into();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
         let chunk = self.chunk_files(worktree_abs_path, scan.updated_entries, cx);
         let embed = Self::embed_files(self.embedding_provider.clone(), chunk.files, cx);
@@ -124,9 +124,9 @@ impl EmbeddingIndex {
 
             let mut deletion_range: Option<(Bound<&str>, Bound<&str>)> = None;
             for entry in worktree.files(false, 0) {
-                log::trace!("scanning for embedding index: {:?}", &entry.path);
+                log::trace!("scanning for embedding index: {:?}", &entry.relative_path);
 
-                let entry_db_key = db_key_for_path(&entry.path);
+                let entry_db_key = db_key_for_path(&entry.relative_path);
 
                 let mut saved_mtime = None;
                 while let Some(db_entry) = db_entries.peek() {
@@ -232,7 +232,7 @@ impl EmbeddingIndex {
 
     fn chunk_files(
         &self,
-        worktree_abs_path: Arc<Path>,
+        worktree_abs_path: PathBuf,
         entries: channel::Receiver<(Entry, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> ChunkFiles {
@@ -245,20 +245,20 @@ impl EmbeddingIndex {
                     for _ in 0..cx.num_cpus() {
                         cx.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
-                                let entry_abs_path = worktree_abs_path.join(&entry.path);
+                                let entry_abs_path = worktree_abs_path.join(&entry.relative_path);
                                 if let Some(text) = fs.load(&entry_abs_path).await.ok() {
                                     let language = language_registry
-                                        .language_for_file_path(&entry.path)
+                                        .language_for_file_path(&entry.relative_path)
                                         .await
                                         .ok();
                                     let chunked_file = ChunkedFile {
                                         chunks: chunking::chunk_text(
                                             &text,
                                             language.as_ref(),
-                                            &entry.path,
+                                            &entry.relative_path,
                                         ),
                                         handle,
-                                        path: entry.path,
+                                        path: entry.relative_path,
                                         mtime: entry.mtime,
                                         text,
                                     };

@@ -47,7 +47,7 @@ impl FileSlashCommand {
                         (
                             project::ProjectPath {
                                 worktree_id: id,
-                                path: entry.path.clone(),
+                                path: entry.relative_path.clone(),
                             },
                             entry.kind.is_dir(),
                         )
@@ -234,7 +234,7 @@ fn collect_files(
             for entry in snapshot.entries(false, 0) {
                 let mut path_including_worktree_name = PathBuf::new();
                 path_including_worktree_name.push(snapshot.root_name());
-                path_including_worktree_name.push(&entry.path);
+                path_including_worktree_name.push(&entry.relative_path);
 
                 if !matchers
                     .iter()
@@ -244,7 +244,7 @@ fn collect_files(
                 }
 
                 while let Some(dir) = directory_stack.last() {
-                    if entry.path.starts_with(dir) {
+                    if entry.relative_path.starts_with(dir) {
                         break;
                     }
                     directory_stack.pop().unwrap();
@@ -259,7 +259,7 @@ fn collect_files(
                 }
 
                 let filename = entry
-                    .path
+                    .relative_path
                     .file_name()
                     .unwrap_or_default()
                     .to_str()
@@ -268,7 +268,7 @@ fn collect_files(
 
                 if entry.is_dir() {
                     // Auto-fold directories that contain no files
-                    let mut child_entries = snapshot.child_entries(&entry.path);
+                    let mut child_entries = snapshot.child_entries(&entry.relative_path);
                     if let Some(child) = child_entries.next() {
                         if child_entries.next().is_none() && child.kind.is_dir() {
                             if is_top_level_directory {
@@ -305,7 +305,7 @@ fn collect_files(
                                 run_commands_in_text: false,
                             },
                         )))?;
-                        directory_stack.push(entry.path.clone());
+                        directory_stack.push(entry.relative_path.clone());
                     } else {
                         let entry_name = format!("{}/{}", prefix_paths, &filename);
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
@@ -319,7 +319,7 @@ fn collect_files(
                                 run_commands_in_text: false,
                             },
                         )))?;
-                        directory_stack.push(entry.path.clone());
+                        directory_stack.push(entry.relative_path.clone());
                     }
                     events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                         SlashCommandContent::Text {
@@ -330,7 +330,7 @@ fn collect_files(
                 } else if entry.is_file() {
                     let Some(open_buffer_task) = project_handle
                         .update(&mut cx, |project, cx| {
-                            project.open_buffer((worktree_id, &entry.path), cx)
+                            project.open_buffer((worktree_id, &entry.relative_path), cx)
                         })
                         .ok()
                     else {

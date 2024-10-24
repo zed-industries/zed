@@ -101,13 +101,16 @@ pub fn new_journal_entry(workspace: &Workspace, cx: &mut WindowContext) {
     let mut open_new_workspace = true;
     'outer: for worktree in worktrees.iter() {
         let worktree_root = worktree.read(cx).abs_path();
-        if *worktree_root == journal_dir_clone {
+        if worktree_root.as_trimmed_path_buf() == &journal_dir_clone {
             open_new_workspace = false;
             break;
         }
         for directory in worktree.read(cx).directories(true, 1) {
-            let full_directory_path = worktree_root.join(&directory.path);
-            if full_directory_path.ends_with(&journal_dir_clone) {
+            let full_directory_path = worktree_root.join(&directory.relative_path);
+            if full_directory_path
+                .as_trimmed_path_buf()
+                .ends_with(&journal_dir_clone)
+            {
                 open_new_workspace = false;
                 break 'outer;
             }
