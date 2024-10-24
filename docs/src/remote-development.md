@@ -13,8 +13,8 @@ Remote development requires two computers, your local machine that runs the Zed 
 ## Setup
 
 1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You need at least Zed v0.159.
-1. Open the remote projects dialogue with `cmd-shift-p remote`.
-1. Click "New Server" and enter the command you use to ssh into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
+1. Open the remote projects dialogue with <kbd>cmd-shift-p remote</kbd> or <kbd>cmd-control-o</kbd>.
+1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, it will download the latest version of the Zed server and upload it to the remote over SSH.
 1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
@@ -37,11 +37,11 @@ When opening a remote project there are three relevant settings locations:
 - The server Zed settings (in the same place) on the remote server.
 - The project settings (in `.zed/settings.json` or `.editorconfig` of your project)
 
-Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main settings.json.
+Both the local Zed and the server Zed read the project settings, but they are not aware of the other's main `settings.json`.
 
 Depending on the kind of setting you want to make, which settings file you should use:
 
-- Project settings should be used for things that affect the project: indentation settings, which formatter / language server to use etc.
+- Project settings should be used for things that affect the project: indentation settings, which formatter / language server to use, etc.
 - Server settings should be used for things that affect the server: paths to language servers, etc.
 - Local settings should be used for things that affect the UI: font size, etc.
 
@@ -67,9 +67,9 @@ If you are struggling with connection issues, you should be able to see more inf
 
 ## Supported SSH Options
 
-Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and use then use that to multiplex ssh connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your ssh config file, but if you want to specify additional options to the ssh control master you can configure Zed to set them.
+Under the hood, Zed shells out to the `ssh` binary to connect to the remote server. We create one SSH control master per project, and use then use that to multiplex SSH connections for the Zed protocol itself, any terminals you open and tasks you run. We read settings from your SSH config file, but if you want to specify additional options to the SSH control master you can configure Zed to set them.
 
-When typing in the "New Server" dialogue, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
+When typing in the "Connect New Server" dialogue, you can use bash-style quoting to pass options containing a space. Once you have created a server it will be added to the `"ssh_connections": []` array in your settings file. You can edit the settings file directly to make changes to SSH connections.
 
 Supported options:
 
