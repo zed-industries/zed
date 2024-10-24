@@ -1370,7 +1370,12 @@ impl BlockSnapshot {
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             if transform.block.is_some() {
-                BlockPoint::new(cursor.start().1 .0, 0)
+                let wrap_start = WrapPoint::new(cursor.start().0 .0, 0);
+                if wrap_start == wrap_point {
+                    BlockPoint::new(cursor.start().1 .0, 0)
+                } else {
+                    BlockPoint::new(cursor.end(&()).1 .0 - 1, 0)
+                }
             } else {
                 let (input_start_row, output_start_row) = cursor.start();
                 let input_start = Point::new(input_start_row.0, 0);
@@ -1392,8 +1397,11 @@ impl BlockSnapshot {
                     if block.place_below() {
                         let wrap_row = cursor.start().1 .0 - 1;
                         WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
-                    } else {
+                    } else if block.place_above() || block_point.row == cursor.start().0 .0 {
                         WrapPoint::new(cursor.start().1 .0, 0)
+                    } else {
+                        let wrap_row = cursor.end(&()).1 .0 - 1;
+                        WrapPoint::new(wrap_row, self.wrap_snapshot.line_len(wrap_row))
                     }
                 }
                 None => {
@@ -2234,8 +2242,7 @@ mod tests {
         log::info!("Wrap width: {:?}", wrap_width);
         log::info!("Excerpt Header Height: {:?}", excerpt_header_height);
         log::info!("Excerpt Footer Height: {:?}", excerpt_footer_height);
-        let mut is_singleton = rng.gen();
-        is_singleton = true;
+        let is_singleton = rng.gen();
         let buffer = if is_singleton {
             let len = rng.gen_range(0..10);
             let text = RandomCharIter::new(&mut rng).take(len).collect::<String>();
@@ -2628,19 +2635,20 @@ mod tests {
                     left_point
                 );
 
-                // let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
-                // let right_buffer_point = blocks_snapshot.to_point(right_point, Bias::Right);
-                // assert_eq!(
-                //     blocks_snapshot
-                //         .to_block_point(dbg!(blocks_snapshot.to_wrap_point(right_point))),
-                //     right_point
-                // );
-                // assert_eq!(
-                //     right_buffer_point,
-                //     buffer_snapshot.clip_point(right_buffer_point, Bias::Left),
-                //     "{:?} is not valid in buffer coordinates",
-                //     right_point
-                // );
+                let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
+                let right_buffer_point = blocks_snapshot.to_point(right_point, Bias::Right);
+                assert_eq!(
+                    blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
+                    right_point,
+                    "wrap point: {:?}",
+                    blocks_snapshot.to_wrap_point(right_point)
+                );
+                assert_eq!(
+                    right_buffer_point,
+                    buffer_snapshot.clip_point(right_buffer_point, Bias::Left),
+                    "{:?} is not valid in buffer coordinates",
+                    right_point
+                );
 
                 if c == '\n' {
                     block_point.0 += Point::new(1, 0);
