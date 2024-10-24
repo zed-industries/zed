@@ -70,7 +70,11 @@ impl ModeIndicator {
         recording
             .chain(vim.pre_count.map(|count| format!("{}", count)))
             .chain(vim.selected_register.map(|reg| format!("\"{reg}")))
-            .chain(vim.operator_stack.iter().map(|item| item.id().to_string()))
+            .chain(
+                vim.operator_stack
+                    .iter()
+                    .map(|item| item.status().to_string()),
+            )
             .chain(vim.post_count.map(|count| format!("{}", count)))
             .collect::<Vec<_>>()
             .join("")

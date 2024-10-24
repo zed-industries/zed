@@ -339,6 +339,8 @@
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
+      "ctrl-v": ["vim::PushOperator", { "Literal": {} }],
+      "ctrl-q": ["vim::PushOperator", { "Literal": {} }],
       "ctrl-r": ["vim::PushOperator", "Register"],
       "insert": "vim::ToggleReplace"
     }
@@ -357,6 +359,8 @@
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
+      "ctrl-v": ["vim::PushOperator", { "Literal": {} }],
+      "ctrl-q": ["vim::PushOperator", { "Literal": {} }],
       "backspace": "vim::UndoReplace",
       "tab": "vim::Tab",
       "enter": "vim::Enter",
@@ -364,14 +368,16 @@
     }
   },
   {
-    "context": "vim_mode == waiting",
+    "context": "vim_mode == waiting && vim_operator != ^V",
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
       "ctrl-[": "vim::ClearOperators",
-      "ctrl-k": ["vim::PushOperator", { "Digraph": {} }]
+      "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
+      "ctrl-v": ["vim::PushOperator", { "Literal": {} }],
+      "ctrl-q": ["vim::PushOperator", { "Literal": {} }]
     }
   },
   {

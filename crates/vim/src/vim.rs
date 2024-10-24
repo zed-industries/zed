@@ -359,9 +359,15 @@ impl Vim {
         }
 
         if let Some(operator) = self.active_operator() {
-            if !operator.is_waiting(self.mode) {
-                self.clear_operator(cx);
-                self.stop_recording_immediately(Box::new(ClearOperators), cx)
+            match operator {
+                Operator::Literal { prefix } => {
+                    self.handle_literal_keystroke(keystroke_event, prefix.unwrap_or_default(), cx);
+                }
+                _ if !operator.is_waiting(self.mode) => {
+                    self.clear_operator(cx);
+                    self.stop_recording_immediately(Box::new(ClearOperators), cx)
+                }
+                _ => {}
             }
         }
     }
@@ -601,11 +607,11 @@ impl Vim {
         }
 
         if let Some(active_operator) = active_operator {
+            operator_id = active_operator.id();
             if active_operator.is_waiting(self.mode) {
                 mode = "waiting".to_string();
             } else {
                 mode = "operator".to_string();
-                operator_id = active_operator.id();
             }
         }
 
@@ -994,6 +1000,9 @@ impl Vim {
                     self.pop_operator(cx);
                     self.push_operator(Operator::Digraph { first_char }, cx);
                 }
+            }
+            Some(Operator::Literal { prefix }) => {
+                self.handle_literal_input(prefix.unwrap_or_default(), &text, cx)
             }
             Some(Operator::AddSurrounds { target }) => match self.mode {
                 Mode::Normal => {
