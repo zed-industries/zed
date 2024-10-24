@@ -292,7 +292,7 @@ fn collect_files(
                             is_top_level_directory = false;
                             path_including_worktree_name.to_string_lossy().to_string()
                         } else {
-                            filename.into()
+                            filename
                         };
                         events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Folder,
