@@ -3063,7 +3063,7 @@ impl Render for ProjectPanel {
                             ui::indent_guides(
                                 cx.view().clone(),
                                 px(indent_size),
-                                IndentGuideColors::panels(cx),
+                                IndentGuideColors::panel(cx),
                                 |this, range, cx| {
                                     let mut items =
                                         SmallVec::with_capacity(range.end - range.start);

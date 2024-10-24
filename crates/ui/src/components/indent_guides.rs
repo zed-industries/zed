@@ -21,7 +21,7 @@ pub struct IndentGuideColors {
 
 impl IndentGuideColors {
     /// Returns the indent guide colors that should be used for panels.
-    pub fn panels(cx: &AppContext) -> Self {
+    pub fn panel(cx: &AppContext) -> Self {
         Self {
             default: cx.theme().colors().panel_indent_guide,
             hover: cx.theme().colors().panel_indent_guide_hover,
