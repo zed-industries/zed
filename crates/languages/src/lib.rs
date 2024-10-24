@@ -172,13 +172,15 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
     );
     language!("markdown");
     language!("markdown-inline");
+    let python_toolchain = Arc::new(PythonToolchainProvider::default());
     language!(
         "python",
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
+            python_toolchain.clone()
         ))],
         PythonContextProvider,
-        Arc::new(PythonToolchainProvider) as Arc<dyn ToolchainLister>
+        python_toolchain.clone() as Arc<dyn ToolchainLister>
     );
     language!(
         "rust",

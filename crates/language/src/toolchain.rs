@@ -12,7 +12,7 @@ use gpui::SharedString;
 use crate::LanguageName;
 
 /// Represents a single toolchain.
-#[derive(Clone, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Toolchain {
     /// User-facing label
     pub label: SharedString,

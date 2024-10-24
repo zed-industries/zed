@@ -13,6 +13,7 @@ use node_runtime::NodeRuntime;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
+use smol::lock::Mutex;
 
 use std::{
     any::Any,
@@ -33,13 +34,14 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct PythonLspAdapter {
     node: NodeRuntime,
+    toolchain: Arc<PythonToolchainProvider>,
 }
 
 impl PythonLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
-    pub fn new(node: NodeRuntime) -> Self {
-        PythonLspAdapter { node }
+    pub fn new(node: NodeRuntime, toolchain: Arc<PythonToolchainProvider>) -> Self {
+        PythonLspAdapter { node, toolchain }
     }
 }
 
@@ -208,6 +210,8 @@ impl LspAdapter for PythonLspAdapter {
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {
+            let toolchain = self.toolchain.active_toolchain.clone();
+            dbg!(&toolchain);
             language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
                 .and_then(|s| s.settings.clone())
                 .unwrap_or_default()
@@ -325,7 +329,10 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .to_string()
 }
 
-pub(crate) struct PythonToolchainProvider;
+#[derive(Default)]
+pub(crate) struct PythonToolchainProvider {
+    active_toolchain: Arc<Mutex<Option<Toolchain>>>,
+}
 
 #[async_trait(?Send)]
 impl ToolchainLister for PythonToolchainProvider {
@@ -373,7 +380,9 @@ impl ToolchainLister for PythonToolchainProvider {
             default: None,
         }
     }
-    async fn activate(&self, _: Toolchain) {}
+    async fn activate(&self, toolchain: Toolchain) {
+        let _ = self.active_toolchain.lock().await.insert(toolchain);
+    }
 }
 
 #[cfg(test)]
