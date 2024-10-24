@@ -527,7 +527,7 @@ impl SshClientDelegate {
             .await
             .map_err(|e| {
                 anyhow!(
-                    "failed to get remote server binary download url (os: {}, arch: {}): {}",
+                    "Failed to get remote server binary download url (os: {}, arch: {}): {}",
                     platform.os,
                     platform.arch,
                     e
@@ -542,7 +542,7 @@ impl SshClientDelegate {
                 version,
             ))
         } else {
-            self.update_status(Some("checking for latest version of remote server"), cx);
+            self.update_status(Some("Checking for latest version of remote server"), cx);
             let binary_path = AutoUpdater::get_latest_remote_server_release(
                 platform.os,
                 platform.arch,
@@ -552,7 +552,7 @@ impl SshClientDelegate {
             .await
             .map_err(|e| {
                 anyhow!(
-                    "failed to download remote server binary (os: {}, arch: {}): {}",
+                    "Failed to download remote server binary (os: {}, arch: {}): {}",
                     platform.os,
                     platform.arch,
                     e
@@ -579,7 +579,7 @@ impl SshClientDelegate {
                 .output()
                 .await?;
             if !output.status.success() {
-                Err(anyhow!("failed to run command: {:?}", command))?;
+                Err(anyhow!("Failed to run command: {:?}", command))?;
             }
             Ok(())
         }
