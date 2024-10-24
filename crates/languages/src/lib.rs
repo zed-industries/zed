@@ -288,15 +288,6 @@ fn load_config(name: &str) -> LanguageConfig {
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
         .unwrap();
 
-    #[cfg(not(feature = "load-grammars"))]
-    {
-        config = LanguageConfig {
-            name: config.name,
-            matcher: config.matcher,
-            ..Default::default()
-        }
-    }
-
     config
 }
 

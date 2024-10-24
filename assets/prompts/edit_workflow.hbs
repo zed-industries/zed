@@ -88,7 +88,6 @@ origin: (f64, f64),
 
 <edit>
 <path>src/shapes/rectangle.rs</path>
-<description>Update the Rectangle's new function to take an origin parameter</description>
 <operation>update</operation>
 <old_text>
 fn new(width: f64, height: f64) -> Self {
@@ -117,7 +116,6 @@ pub struct Circle {
 
 <edit>
 <path>src/shapes/circle.rs</path>
-<description>Update the Circle's new function to take an origin parameter</description>
 <operation>update</operation>
 <old_text>
 fn new(radius: f64) -> Self {
@@ -134,7 +132,6 @@ fn new(origin: (f64, f64), radius: f64) -> Self {
 
 <edit>
 <path>src/shapes/rectangle.rs</path>
-<description>Add an import for the std::fmt module</description>
 <operation>insert_before</operation>
 <old_text>
 struct Rectangle {
@@ -147,7 +144,10 @@ use std::fmt;
 
 <edit>
 <path>src/shapes/rectangle.rs</path>
-<description>Add a Display implementation for Rectangle</description>
+<description>
+Add a manual Display implementation for Rectangle.
+Currently, this is the same as a derived Display implementation.
+</description>
 <operation>insert_after</operation>
 <old_text>
         Rectangle { width, height }
@@ -169,7 +169,6 @@ impl fmt::Display for Rectangle {
 
 <edit>
 <path>src/shapes/circle.rs</path>
-<description>Add an import for the `std::fmt` module</description>
 <operation>insert_before</operation>
 <old_text>
 struct Circle {
@@ -181,7 +180,6 @@ use std::fmt;
 
 <edit>
 <path>src/shapes/circle.rs</path>
-<description>Add a Display implementation for Circle</description>
 <operation>insert_after</operation>
 <old_text>
         Circle { radius }

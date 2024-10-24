@@ -1969,16 +1969,19 @@ impl Buffer {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
+                    let range_len = range.end - range.start;
+                    delta += new_text_length as isize - range_len as isize;
 
                     let mut range_of_insertion_to_indent = 0..new_text_length;
                     let mut first_line_is_new = false;
                     let mut original_indent_column = None;
 
-                    // When inserting an entire line at the beginning of an existing line,
-                    // treat the insertion as new.
-                    if new_text.contains('\n')
-                        && old_start.column <= before_edit.indent_size_for_line(old_start.row).len
+                    // When replacing an entire line, or inserting an entire line at the beginning of
+                    // an existing line, treat the insertion as new.
+                    if old_start.column <= before_edit.indent_size_for_line(old_start.row).len
+                        && (new_text.contains('\n')
+                            || old_start.column + range_len as u32
+                                >= before_edit.line_len(old_start.row))
                     {
                         first_line_is_new = true;
                     }
