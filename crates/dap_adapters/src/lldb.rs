@@ -54,6 +54,7 @@ impl DebugAdapter for LldbDebugAdapter {
                 command: lldb_dap_path,
                 arguments: None,
                 envs: None,
+                version: "1".into(),
             })
         }
         #[cfg(not(target_os = "macos"))]
