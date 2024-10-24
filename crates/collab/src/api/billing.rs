@@ -19,7 +19,7 @@ use stripe::{
 };
 use util::ResultExt;
 
-use crate::llm::DEFAULT_MAX_MONTHLY_SPEND;
+use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
 use crate::{
     db::{
@@ -34,7 +34,7 @@ use crate::{
     db::{billing_subscription::StripeSubscriptionStatus, UserId},
     llm::db::LlmDatabase,
 };
-use crate::{AppState, Error, Result};
+use crate::{AppState, Cents, Error, Result};
 
 pub fn router() -> Router {
     Router::new()
@@ -50,6 +50,7 @@ pub fn router() -> Router {
             "/billing/subscriptions/manage",
             post(manage_billing_subscription),
         )
+        .route("/billing/monthly_spend", get(get_monthly_spend))
 }
 
 #[derive(Debug, Deserialize)]
@@ -224,6 +225,13 @@ async fn create_billing_subscription(
             "not supported".into(),
         ))?
     };
+
+    if app.db.has_active_billing_subscription(user.id).await? {
+        return Err(Error::http(
+            StatusCode::CONFLICT,
+            "user already has an active subscription".into(),
+        ));
+    }
 
     let customer_id =
         if let Some(existing_customer) = app.db.get_billing_customer_by_user_id(user.id).await? {
@@ -654,6 +662,33 @@ async fn handle_customer_subscription_event(
             )
             .await?;
     } else {
+        // If the user already has an active billing subscription, ignore the
+        // event and return an `Ok` to signal that it was processed
+        // successfully.
+        //
+        // There is the possibility that this could cause us to not create a
+        // subscription in the following scenario:
+        //
+        //   1. User has an active subscription A
+        //   2. User cancels subscription A
+        //   3. User creates a new subscription B
+        //   4. We process the new subscription B before the cancellation of subscription A
+        //   5. User ends up with no subscriptions
+        //
+        // In theory this situation shouldn't arise as we try to process the events in the order they occur.
+        if app
+            .db
+            .has_active_billing_subscription(billing_customer.user_id)
+            .await?
+        {
+            log::info!(
+                "user {user_id} already has an active subscription, skipping creation of subscription {subscription_id}",
+                user_id = billing_customer.user_id,
+                subscription_id = subscription.id
+            );
+            return Ok(());
+        }
+
         app.db
             .create_billing_subscription(&CreateBillingSubscriptionParams {
                 billing_customer_id: billing_customer.id,
@@ -670,6 +705,54 @@ async fn handle_customer_subscription_event(
         .await;
 
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+struct GetMonthlySpendParams {
+    github_user_id: i32,
+}
+
+#[derive(Debug, Serialize)]
+struct GetMonthlySpendResponse {
+    monthly_free_tier_spend_in_cents: u32,
+    monthly_free_tier_allowance_in_cents: u32,
+    monthly_spend_in_cents: u32,
+}
+
+async fn get_monthly_spend(
+    Extension(app): Extension<Arc<AppState>>,
+    Query(params): Query<GetMonthlySpendParams>,
+) -> Result<Json<GetMonthlySpendResponse>> {
+    let user = app
+        .db
+        .get_user_by_github_user_id(params.github_user_id)
+        .await?
+        .ok_or_else(|| anyhow!("user not found"))?;
+
+    let Some(llm_db) = app.llm_db.clone() else {
+        return Err(Error::http(
+            StatusCode::NOT_IMPLEMENTED,
+            "LLM database not available".into(),
+        ));
+    };
+
+    let free_tier = user
+        .custom_llm_monthly_allowance_in_cents
+        .map(|allowance| Cents(allowance as u32))
+        .unwrap_or(FREE_TIER_MONTHLY_SPENDING_LIMIT);
+
+    let spending_for_month = llm_db
+        .get_user_spending_for_month(user.id, Utc::now())
+        .await?;
+
+    let free_tier_spend = Cents::min(spending_for_month, free_tier);
+    let monthly_spend = spending_for_month.saturating_sub(free_tier);
+
+    Ok(Json(GetMonthlySpendResponse {
+        monthly_free_tier_spend_in_cents: free_tier_spend.0,
+        monthly_free_tier_allowance_in_cents: free_tier.0,
+        monthly_spend_in_cents: monthly_spend.0,
+    }))
 }
 
 impl From<SubscriptionStatus> for StripeSubscriptionStatus {

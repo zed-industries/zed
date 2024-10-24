@@ -370,6 +370,11 @@ messages!(
     (Toast, Background),
     (HideToast, Background),
     (OpenServerSettings, Foreground),
+    (GetPermalinkToLine, Foreground),
+    (GetPermalinkToLineResponse, Foreground),
+    (FlushBufferedMessages, Foreground),
+    (LanguageServerPromptRequest, Foreground),
+    (LanguageServerPromptResponse, Foreground),
 );
 
 request_messages!(
@@ -494,7 +499,10 @@ request_messages!(
     (CheckFileExists, CheckFileExistsResponse),
     (ShutdownRemoteServer, Ack),
     (RemoveWorktree, Ack),
-    (OpenServerSettings, OpenBufferResponse)
+    (OpenServerSettings, OpenBufferResponse),
+    (GetPermalinkToLine, GetPermalinkToLineResponse),
+    (FlushBufferedMessages, Ack),
+    (LanguageServerPromptRequest, LanguageServerPromptResponse),
 );
 
 entity_messages!(
@@ -571,7 +579,8 @@ entity_messages!(
     Toast,
     HideToast,
     OpenServerSettings,
-
+    GetPermalinkToLine,
+    LanguageServerPromptRequest
 );
 
 entity_messages!(

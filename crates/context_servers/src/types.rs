@@ -36,10 +36,17 @@ impl RequestType {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProtocolVersion {
+    VersionString(String),
+    VersionNumber(u32),
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
-    pub protocol_version: u32,
+    pub protocol_version: ProtocolVersion,
     pub capabilities: ClientCapabilities,
     pub client_info: Implementation,
 }
@@ -131,7 +138,7 @@ pub struct CompletionArgument {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
-    pub protocol_version: u32,
+    pub protocol_version: ProtocolVersion,
     pub capabilities: ServerCapabilities,
     pub server_info: Implementation,
 }
@@ -145,10 +152,9 @@ pub struct ResourcesReadResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesListResponse {
+    pub resources: Vec<Resource>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_templates: Option<Vec<ResourceTemplate>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resources: Option<Vec<Resource>>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -179,13 +185,15 @@ pub enum SamplingContent {
 pub struct PromptsGetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub prompt: String,
+    pub messages: Vec<SamplingMessage>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
     pub prompts: Vec<Prompt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
