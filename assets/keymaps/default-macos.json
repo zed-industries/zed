@@ -201,6 +201,7 @@
     "context": "ContextEditor > Editor",
     "bindings": {
       "cmd-enter": "assistant::Assist",
+      "cmd-shift-enter": "assistant::Edit",
       "cmd-s": "workspace::Save",
       "cmd->": "assistant::QuoteSelection",
       "cmd-<": "assistant::InsertIntoEditor",

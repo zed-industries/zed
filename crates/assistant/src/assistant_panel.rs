@@ -13,9 +13,9 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
-    Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
-    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
+    InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate,
+    ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
     RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::Result;
@@ -3647,9 +3647,60 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Send"))
+            .child(Label::new("Chat"))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
+                    .map(|binding| binding.into_any_element()),
+            )
+            .on_click(move |_event, cx| {
+                focus_handle.dispatch_action(&Assist, cx);
+            })
+    }
+
+    fn render_edit_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx).clone();
+
+        let (style, tooltip) = match token_state(&self.context, cx) {
+            Some(TokenState::NoTokensLeft { .. }) => (
+                ButtonStyle::Tinted(TintColor::Negative),
+                Some(Tooltip::text("Token limit reached", cx)),
+            ),
+            Some(TokenState::HasMoreTokens {
+                over_warn_threshold,
+                ..
+            }) => {
+                let (style, tooltip) = if over_warn_threshold {
+                    (
+                        ButtonStyle::Tinted(TintColor::Warning),
+                        Some(Tooltip::text("Token limit is close to exhaustion", cx)),
+                    )
+                } else {
+                    (ButtonStyle::Filled, None)
+                };
+                (style, tooltip)
+            }
+            None => (ButtonStyle::Filled, None),
+        };
+
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+
+        let has_configuration_error = configuration_error(cx).is_some();
+        let needs_to_accept_terms = self.show_accept_terms
+            && provider
+                .as_ref()
+                .map_or(false, |provider| provider.must_accept_terms(cx));
+        let disabled = has_configuration_error || needs_to_accept_terms;
+
+        ButtonLike::new("edit_button")
+            .disabled(disabled)
+            .style(style)
+            .when_some(tooltip, |button, tooltip| {
+                button.tooltip(move |_| tooltip.clone())
+            })
+            .layer(ElevationIndex::ModalSurface)
+            .child(Label::new("Edit"))
+            .children(
+                KeyBinding::for_action_in(&Edit, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, cx| {
@@ -3977,6 +4028,8 @@ impl Render for ContextEditor {
                             h_flex()
                                 .w_full()
                                 .justify_end()
+                                .gap_2()
+                                .child(div().child(self.render_edit_button(cx)))
                                 .child(div().child(self.render_send_button(cx))),
                         ),
                 ),
