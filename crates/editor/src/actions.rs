@@ -191,6 +191,8 @@ gpui::actions!(
         AcceptInlineCompletion,
         AcceptPartialCopilotSuggestion,
         AcceptPartialInlineCompletion,
+        AcceptChange,
+        AcceptAllChanges,
         AddSelectionAbove,
         AddSelectionBelow,
         ApplyDiffHunk,

@@ -334,13 +334,14 @@ impl Render for ProposedChangesEditorToolbar {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         let editor = self.current_editor.clone();
         Button::new("apply-changes", "Apply All").on_click(move |_, cx| {
-            if let Some(editor) = &editor {
-                editor.update(cx, |editor, cx| {
-                    editor.editor.update(cx, |editor, cx| {
-                        editor.apply_all_diff_hunks(cx);
-                    })
-                });
-            }
+            cx.dispatch_action(Box::new(editor::AcceptAllChanges));
+            // if let Some(editor) = &editor {
+            //     editor.update(cx, |editor, cx| {
+            //         editor.editor.update(cx, |editor, cx| {
+            //             editor.apply_all_diff_hunks(cx);
+            //         })
+            //     });
+            // }
         })
     }
 }

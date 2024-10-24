@@ -2123,6 +2123,10 @@ impl Editor {
             }
         }
 
+        if self.showing_changes() {
+            key_context.add("showing_changes")
+        }
+
         // Disable vim contexts when a sub-editor (e.g. rename/inline assistant) is focused.
         if !self.focus_handle(cx).contains_focused(cx)
             || (self.is_focused(cx) || self.mouse_menu_is_focused(cx))
