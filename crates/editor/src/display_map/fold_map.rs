@@ -1100,6 +1100,17 @@ pub struct FoldBufferRows<'a> {
     fold_point: FoldPoint,
 }
 
+impl<'a> FoldBufferRows<'a> {
+    pub(crate) fn seek(&mut self, row: u32) {
+        let fold_point = FoldPoint::new(row, 0);
+        self.cursor.seek(&fold_point, Bias::Left, &());
+        let overshoot = fold_point.0 - self.cursor.start().0 .0;
+        let inlay_point = InlayPoint(self.cursor.start().1 .0 + overshoot);
+        self.input_buffer_rows.seek(inlay_point.row());
+        self.fold_point = fold_point;
+    }
+}
+
 impl<'a> Iterator for FoldBufferRows<'a> {
     type Item = Option<u32>;
 

@@ -1537,17 +1537,20 @@ impl<'a> Iterator for BlockBufferRows<'a> {
 
         if self.output_row.0 >= self.transforms.end(&()).0 .0 {
             self.transforms.next(&());
-        }
+            while let Some(transform) = self.transforms.item() {
+                if transform
+                    .block
+                    .as_ref()
+                    .map_or(false, |block| block.height() == 0)
+                {
+                    self.transforms.next(&());
+                } else {
+                    break;
+                }
+            }
 
-        while let Some(transform) = self.transforms.item() {
-            if transform
-                .block
-                .as_ref()
-                .map_or(false, |block| block.height() == 0)
-            {
-                self.transforms.next(&());
-            } else {
-                break;
+            if self.transforms.item()?.block.is_none() {
+                self.input_buffer_rows.seek(self.transforms.start().1 .0);
             }
         }
 
@@ -2474,6 +2477,9 @@ mod tests {
                                     expected_text.push('\n');
                                 }
                                 expected_text.push_str(&text);
+                                for _ in 0..block.height() {
+                                    expected_buffer_rows.push(None);
+                                }
                                 block_row += block.height();
                             }
 
@@ -2538,14 +2544,13 @@ mod tests {
                     "incorrect text starting from row {}",
                     start_row
                 );
-                // todo!("fix buffer rows")
-                // assert_eq!(
-                //     blocks_snapshot
-                //         .buffer_rows(BlockRow(start_row as u32))
-                //         .map(|row| row.map(|r| r.0))
-                //         .collect::<Vec<_>>(),
-                //     &expected_buffer_rows[start_row..]
-                // );
+                assert_eq!(
+                    blocks_snapshot
+                        .buffer_rows(BlockRow(start_row as u32))
+                        .map(|row| row.map(|r| r.0))
+                        .collect::<Vec<_>>(),
+                    &expected_buffer_rows[start_row..]
+                );
             }
 
             assert_eq!(

@@ -69,6 +69,21 @@ pub struct WrapBufferRows<'a> {
     transforms: Cursor<'a, Transform, (WrapPoint, CharPoint)>,
 }
 
+impl<'a> WrapBufferRows<'a> {
+    pub(crate) fn seek(&mut self, start_row: u32) {
+        self.transforms
+            .seek(&WrapPoint::new(start_row, 0), Bias::Left, &());
+        let mut input_row = self.transforms.start().1.row();
+        if self.transforms.item().map_or(false, |t| t.is_isomorphic()) {
+            input_row += start_row - self.transforms.start().0.row();
+        }
+        self.soft_wrapped = self.transforms.item().map_or(false, |t| !t.is_isomorphic());
+        self.input_buffer_rows.seek(input_row);
+        self.input_buffer_row = self.input_buffer_rows.next().unwrap();
+        self.output_row = start_row;
+    }
+}
+
 impl WrapMap {
     pub fn new(
         char_snapshot: CharSnapshot,
@@ -643,11 +658,11 @@ impl WrapSnapshot {
             let start_in_transform = start.0 - cursor.start().0 .0;
             let end_in_transform = cmp::min(end, cursor.end(&()).0).0 - cursor.start().0 .0;
             if transform.is_isomorphic() {
-                let tab_start = CharPoint(cursor.start().1 .0 + start_in_transform);
-                let tab_end = CharPoint(cursor.start().1 .0 + end_in_transform);
+                let char_start = CharPoint(cursor.start().1 .0 + start_in_transform);
+                let char_end = CharPoint(cursor.start().1 .0 + end_in_transform);
                 summary += &self
                     .char_snapshot
-                    .text_summary_for_range(tab_start..tab_end);
+                    .text_summary_for_range(char_start..char_end);
             } else {
                 debug_assert_eq!(start_in_transform.row, end_in_transform.row);
                 let indent_len = end_in_transform.column - start_in_transform.column;
@@ -671,11 +686,11 @@ impl WrapSnapshot {
             if let Some(transform) = cursor.item() {
                 let end_in_transform = end.0 - cursor.start().0 .0;
                 if transform.is_isomorphic() {
-                    let tab_start = cursor.start().1;
-                    let tab_end = CharPoint(tab_start.0 + end_in_transform);
+                    let char_start = cursor.start().1;
+                    let char_end = CharPoint(char_start.0 + end_in_transform);
                     summary += &self
                         .char_snapshot
-                        .text_summary_for_range(tab_start..tab_end);
+                        .text_summary_for_range(char_start..char_end);
                 } else {
                     debug_assert_eq!(end_in_transform, Point::new(1, 0));
                     summary += &TextSummary {
