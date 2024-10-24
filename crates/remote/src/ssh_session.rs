@@ -1071,12 +1071,13 @@ impl ConnectionPool {
             }
             Some(ConnectionPoolEntry::Connected(ssh)) => {
                 if let Some(ssh) = ssh.upgrade() {
-                    return Task::ready(Ok(ssh)).shared();
-                } else {
-                    self.connections.remove(&opts);
+                    if !ssh.has_been_killed() {
+                        return Task::ready(Ok(ssh)).shared();
+                    }
                 }
+                self.connections.remove(&opts);
             }
-            _ => {}
+            None => {}
         }
 
         let task = cx
@@ -1084,23 +1085,29 @@ impl ConnectionPool {
                 let opts = opts.clone();
                 let delegate = delegate.clone();
                 |mut cx| async move {
-                    let connection: Arc<dyn RemoteConnection> = Arc::new(
-                        SshRemoteConnection::new(opts.clone(), delegate, &mut cx)
-                            .await
-                            .map_err(|e| Arc::new(e))?,
-                    );
+                    let connection = SshRemoteConnection::new(opts.clone(), delegate, &mut cx)
+                        .await
+                        .map(|connection| Arc::new(connection) as Arc<dyn RemoteConnection>);
 
                     cx.update_global(|pool: &mut Self, _| {
                         debug_assert!(matches!(
                             pool.connections.get(&opts),
                             Some(ConnectionPoolEntry::Connecting(_))
                         ));
-                        pool.connections.insert(
-                            opts.clone(),
-                            ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
-                        );
-                    })?;
-                    Ok(connection)
+                        match connection {
+                            Ok(connection) => {
+                                pool.connections.insert(
+                                    opts.clone(),
+                                    ConnectionPoolEntry::Connected(Arc::downgrade(&connection)),
+                                );
+                                Ok(connection)
+                            }
+                            Err(error) => {
+                                pool.connections.remove(&opts);
+                                Err(Arc::new(error))
+                            }
+                        }
+                    })?
                 }
             })
             .shared();
@@ -1137,6 +1144,7 @@ trait RemoteConnection: Send + Sync {
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf>;
     async fn kill(&self) -> Result<()>;
+    fn has_been_killed(&self) -> bool;
     fn ssh_args(&self) -> Vec<String>;
     fn connection_options(&self) -> SshConnectionOptions;
 
@@ -1146,28 +1154,24 @@ trait RemoteConnection: Send + Sync {
 
 struct SshRemoteConnection {
     socket: SshSocket,
-    master_process: Mutex<process::Child>,
+    master_process: Mutex<Option<process::Child>>,
     platform: SshPlatform,
     _temp_dir: TempDir,
-}
-
-impl Drop for SshRemoteConnection {
-    fn drop(&mut self) {
-        if let Err(error) = self.master_process.lock().kill() {
-            log::error!("failed to kill SSH master process: {}", error);
-        }
-    }
 }
 
 #[async_trait(?Send)]
 impl RemoteConnection for SshRemoteConnection {
     async fn kill(&self) -> Result<()> {
-        let mut process = self.master_process.lock();
+        let Some(mut process) = self.master_process.lock().take() else {
+            return Ok(());
+        };
         process.kill().ok();
-        let future = process.status();
-        drop(process);
-        future.await?;
+        process.status().await?;
         Ok(())
+    }
+
+    fn has_been_killed(&self) -> bool {
+        self.master_process.lock().is_none()
     }
 
     fn ssh_args(&self) -> Vec<String> {
@@ -1337,6 +1341,7 @@ impl SshRemoteConnection {
             ])
             .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
+            .kill_on_drop(true)
             .spawn()?;
 
         // Wait for this ssh process to close its stdout, indicating that authentication
@@ -1405,7 +1410,7 @@ impl SshRemoteConnection {
 
         Ok(Self {
             socket,
-            master_process: Mutex::new(master_process),
+            master_process: Mutex::new(Some(master_process)),
             platform,
             _temp_dir: temp_dir,
         })
@@ -2140,6 +2145,10 @@ mod fake {
     impl RemoteConnection for FakeRemoteConnection {
         async fn kill(&self) -> Result<()> {
             Ok(())
+        }
+
+        fn has_been_killed(&self) -> bool {
+            false
         }
 
         fn ssh_args(&self) -> Vec<String> {
