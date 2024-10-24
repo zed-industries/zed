@@ -259,7 +259,6 @@ impl ProjectPicker {
 
                         let tasks = paths
                             .into_iter()
-                            .map(Into::into)
                             .map(|path| {
                                 project.update(cx, |project, cx| {
                                     project.find_or_create_worktree(&path, true, cx)

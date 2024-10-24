@@ -1418,7 +1418,7 @@ impl Workspace {
                                 pane.active_item().map(|p| p.item_id())
                             })?;
                             let open_by_abs_path = workspace.update(&mut cx, |workspace, cx| {
-                                workspace.open_abs_path(abs_path.clone(), false, cx)
+                                workspace.open_abs_path(abs_path.clone().into(), false, cx)
                             })?;
                             match open_by_abs_path
                                 .await

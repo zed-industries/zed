@@ -1018,7 +1018,7 @@ impl SerializableItem for Editor {
                 ..
             } => {
                 let project_item = project.update(cx, |project, cx| {
-                    let (worktree, path) = project.find_worktree(&path, cx)?;
+                    let (worktree, path) = project.find_worktree(&abs_path, cx)?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
                         path: path.into(),
