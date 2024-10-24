@@ -14,8 +14,8 @@ use workspace::{FollowableItem, Item, ItemHandle, Pane, Workspace};
 
 use super::{
     deserialize_notebook,
-    static_sample::{no_cells_example, simple_example},
-    Cell, CellId, DeserializedCell, DeserializedMetadata, DEFAULT_NOTEBOOK_FORMAT,
+    static_sample::{complex_example, no_cells_example, simple_example},
+    Cell, CellId, DeserializedCell, DeserializedMetadata, RenderableCell, DEFAULT_NOTEBOOK_FORMAT,
     DEFAULT_NOTEBOOK_FORMAT_MINOR,
 };
 
@@ -28,7 +28,7 @@ actions!(
         MoveCellUp,
         MoveCellDown,
         AddMarkdownBlock,
-        AddCodeBlock
+        AddCodeBlock,
     ]
 );
 
@@ -60,7 +60,7 @@ pub struct NotebookEditor {
     metadata: DeserializedMetadata,
     nbformat: i32,
     nbformat_minor: i32,
-    selected_cell: usize,
+    selected_cell_index: usize,
     cell_order: Vec<CellId>,
     cell_map: HashMap<CellId, Cell>,
 }
@@ -109,7 +109,7 @@ impl NotebookEditor {
             workspace,
             project,
             remote_id: None,
-            selected_cell: 0,
+            selected_cell_index: 0,
             metadata,
             nbformat,
             nbformat_minor,
@@ -197,6 +197,76 @@ impl NotebookEditor {
 
     fn add_code_block(&mut self, cx: &mut ViewContext<Self>) {
         println!("Add code block triggered");
+    }
+
+    fn cell_count(&self) -> usize {
+        self.cell_map.len()
+    }
+
+    fn selected_index(&self) -> usize {
+        self.selected_cell_index
+    }
+
+    pub fn set_selected_index(
+        &mut self,
+        index: usize,
+        jump_to_index: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let previous_index = self.selected_cell_index;
+        self.selected_cell_index = index;
+        let current_index = self.selected_cell_index;
+
+        // in the future we may have some `on_cell_change` event that we want to fire here
+
+        if jump_to_index {
+            self.jump_to_cell(current_index, cx);
+        }
+    }
+
+    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        let count = self.cell_count();
+        if count > 0 {
+            let index = self.selected_index();
+            let ix = if index == count - 1 {
+                count - 1
+            } else {
+                index + 1
+            };
+            self.set_selected_index(ix, true, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn select_previous(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        let count = self.cell_count();
+        if count > 0 {
+            let index = self.selected_index();
+            let ix = if index == 0 { 0 } else { index - 1 };
+            self.set_selected_index(ix, true, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+        let count = self.cell_count();
+        if count > 0 {
+            self.set_selected_index(0, true, cx);
+            cx.notify();
+        }
+    }
+
+    pub fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+        let count = self.cell_count();
+        if count > 0 {
+            self.set_selected_index(count - 1, true, cx);
+            cx.notify();
+        }
+    }
+
+    fn jump_to_cell(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+        // Logic to jump the view to make the selected cell visible
+        println!("Scrolling to cell at index {}", index);
     }
 
     fn button_group(cx: &ViewContext<Self>) -> Div {
@@ -330,6 +400,37 @@ impl NotebookEditor {
                     ),
             )
     }
+
+    fn render_cells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .id("notebook-cells")
+            .flex_1()
+            .size_full()
+            .overflow_y_scroll()
+            .children(self.cells().into_iter().enumerate().map(|(index, cell)| {
+                let is_selected = index == self.selected_cell_index;
+                match cell {
+                    Cell::Code(cell) => {
+                        cell.update(cx, |cell, cx| {
+                            cell.set_selected(is_selected);
+                        });
+                        cell.clone().into_any_element()
+                    }
+                    Cell::Markdown(cell) => {
+                        cell.update(cx, |cell, cx| {
+                            cell.set_selected(is_selected);
+                        });
+                        cell.clone().into_any_element()
+                    }
+                    Cell::Raw(cell) => {
+                        cell.update(cx, |cell, cx| {
+                            cell.set_selected(is_selected);
+                        });
+                        cell.clone().into_any_element()
+                    }
+                }
+            }))
+    }
 }
 
 impl Render for NotebookEditor {
@@ -347,6 +448,10 @@ impl Render for NotebookEditor {
             .on_action(cx.listener(|this, &MoveCellDown, cx| this.move_cell_down(cx)))
             .on_action(cx.listener(|this, &AddMarkdownBlock, cx| this.add_markdown_block(cx)))
             .on_action(cx.listener(|this, &AddCodeBlock, cx| this.add_code_block(cx)))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_previous))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
             .flex()
             .items_start()
             // .size_full()
@@ -358,19 +463,7 @@ impl Render for NotebookEditor {
             .gap(large_gap)
             .bg(cx.theme().colors().tab_bar_background)
             .child(self.render_notebook_controls(cx))
-            .child(
-                v_flex()
-                    .id("notebook-cells")
-                    .flex_1()
-                    .size_full()
-                    .overflow_y_scroll()
-                    .gap_6()
-                    .children(self.cells().into_iter().map(|cell| match cell {
-                        Cell::Code(view) => view.clone().into_any_element(),
-                        Cell::Markdown(view) => view.clone().into_any_element(),
-                        Cell::Raw(view) => view.clone().into_any_element(),
-                    })),
-            )
+            .child(self.render_cells(cx))
             .child(
                 div()
                     .w(px(GUTTER_WIDTH))

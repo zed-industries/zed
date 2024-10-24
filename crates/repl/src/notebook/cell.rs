@@ -1,5 +1,8 @@
 #![allow(unused, dead_code)]
-use gpui::{prelude::*, View};
+use core::fmt;
+use std::fmt::{Display, Formatter};
+
+use gpui::{prelude::*, Hsla, View};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ui::prelude::*;
@@ -13,6 +16,12 @@ use runtimelib::{DisplayData, ErrorOutput, ExecuteResult, StreamContent};
 
 #[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct CellId(String);
+
+impl Display for CellId {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
 
 impl Default for CellId {
     fn default() -> Self {
@@ -242,6 +251,7 @@ impl Cell {
                 cell_type: CellType::Markdown,
                 metadata,
                 source: source.join("\n"),
+                selected: false,
             })),
             DeserializedCell::Code {
                 id,
@@ -256,6 +266,7 @@ impl Cell {
                 execution_count,
                 source: source.join("\n"),
                 outputs: convert_outputs(outputs, cx),
+                selected: false,
             })),
             DeserializedCell::Raw {
                 id,
@@ -266,6 +277,7 @@ impl Cell {
                 cell_type: CellType::Raw,
                 metadata,
                 source: source.join("\n"),
+                selected: false,
             })),
         }
     }
@@ -279,6 +291,17 @@ pub trait RenderableCell: Render {
     fn metadata(&self) -> &DeserializedCellMetadata;
     fn source(&self) -> &String;
     fn selected(&self) -> bool;
+    fn set_selected(&mut self, selected: bool) -> &mut Self;
+    fn selected_bg_color(&self, cx: &ViewContext<Self>) -> Hsla {
+        if self.selected() {
+            let mut color = cx.theme().colors().icon_accent;
+            color.fade_out(0.9);
+            color
+        } else {
+            // TODO: this is wrong
+            cx.theme().colors().tab_bar_background
+        }
+    }
     fn control(&self) -> Option<CellControl> {
         None
     }
@@ -329,6 +352,7 @@ pub struct MarkdownCell {
     cell_type: CellType,
     metadata: DeserializedCellMetadata,
     source: String,
+    selected: bool,
 }
 
 impl Default for MarkdownCell {
@@ -338,6 +362,7 @@ impl Default for MarkdownCell {
             cell_type: CellType::Markdown,
             metadata: Default::default(),
             source: "".to_string(),
+            selected: false,
         }
     }
 }
@@ -366,7 +391,12 @@ impl RenderableCell for MarkdownCell {
     }
 
     fn selected(&self) -> bool {
-        false
+        self.selected
+    }
+
+    fn set_selected(&mut self, selected: bool) -> &mut Self {
+        self.selected = selected;
+        self
     }
 
     fn control(&self) -> Option<CellControl> {
@@ -378,8 +408,10 @@ impl Render for MarkdownCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
+            .pr_3()
             .items_start()
             .gap(Spacing::Large.rems(cx))
+            .bg(self.selected_bg_color(cx))
             .child(self.gutter(cx))
             .child(
                 div()
@@ -401,6 +433,7 @@ pub struct CodeCell {
     execution_count: Option<i32>,
     source: String,
     outputs: Vec<Output>,
+    selected: bool,
 }
 
 impl CodeCell {
@@ -432,12 +465,17 @@ impl RenderableCell for CodeCell {
         &self.source
     }
 
-    fn selected(&self) -> bool {
-        false
-    }
-
     fn control(&self) -> Option<CellControl> {
         Some(CellControl::RunCell)
+    }
+
+    fn selected(&self) -> bool {
+        self.selected
+    }
+
+    fn set_selected(&mut self, selected: bool) -> &mut Self {
+        self.selected = selected;
+        self
     }
 }
 
@@ -445,22 +483,27 @@ impl Render for CodeCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
+            .pr_3()
             .items_start()
             .gap(Spacing::Large.rems(cx))
+            .bg(self.selected_bg_color(cx))
             .child(self.gutter(cx))
             .child(
-                div()
-                    .flex()
-                    .size_full()
-                    .flex_1()
-                    .p_3()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(cx.theme().colors().border)
-                    .bg(cx.theme().colors().editor_background)
-                    .font_buffer(cx)
-                    .text_size(TextSize::Editor.rems(cx))
-                    .child(self.source.clone()),
+                div().py_1p5().w_full().child(
+                    div()
+                        .flex()
+                        .size_full()
+                        .flex_1()
+                        .py_3()
+                        .px_5()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(cx.theme().colors().border)
+                        .bg(cx.theme().colors().editor_background)
+                        .font_buffer(cx)
+                        .text_size(TextSize::Editor.rems(cx))
+                        .child(self.source.clone()),
+                ),
             )
     }
 }
@@ -470,6 +513,7 @@ pub struct RawCell {
     cell_type: CellType,
     metadata: DeserializedCellMetadata,
     source: String,
+    selected: bool,
 }
 
 impl RenderableCell for RawCell {
@@ -491,12 +535,17 @@ impl RenderableCell for RawCell {
         &self.source
     }
 
-    fn selected(&self) -> bool {
-        false
-    }
-
     fn control(&self) -> Option<CellControl> {
         None
+    }
+
+    fn selected(&self) -> bool {
+        self.selected
+    }
+
+    fn set_selected(&mut self, selected: bool) -> &mut Self {
+        self.selected = selected;
+        self
     }
 }
 
@@ -504,8 +553,10 @@ impl Render for RawCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
+            .pr_3()
             .items_start()
             .gap(Spacing::Large.rems(cx))
+            .bg(self.selected_bg_color(cx))
             .child(self.gutter(cx))
             .child(
                 div()
