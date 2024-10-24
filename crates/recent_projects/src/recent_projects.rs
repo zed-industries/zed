@@ -31,7 +31,10 @@ use ui::{
     prelude::*, tooltip_container, ButtonLike, IconWithIndicator, Indicator, KeyBinding, ListItem,
     ListItemSpacing, Tooltip,
 };
-use util::{paths::PathExt, ResultExt};
+use util::{
+    paths::{PathExt, SanitizedPathBuf},
+    ResultExt,
+};
 use workspace::{
     AppState, CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace,
     WorkspaceId, WORKSPACE_DB,
@@ -453,7 +456,11 @@ impl PickerDelegate for RecentProjectsDelegate {
                     .iter()
                     .zip(paths.paths().iter())
                     .sorted_by_key(|(i, _)| **i)
-                    .map(|(_, path)| path.compact())
+                    .map(|(_, path)| {
+                        SanitizedPathBuf::from(path.compact())
+                            .as_trimmed_path_buf()
+                            .clone()
+                    })
                     .collect(),
             ),
             SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
