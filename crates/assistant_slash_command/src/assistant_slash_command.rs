@@ -130,14 +130,6 @@ pub enum SlashCommandEvent {
     },
 }
 
-#[derive(Debug, Default, PartialEq)]
-pub struct SlashCommandMessage {
-    pub role: Option<Role>,
-    pub text: String,
-    pub sections: Vec<SlashCommandOutputSection<usize>>,
-    pub run_commands_in_text: bool,
-}
-
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct SlashCommandOutput {
     pub text: String,
