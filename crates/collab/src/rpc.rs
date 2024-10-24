@@ -1713,11 +1713,6 @@ fn notify_rejoined_projects(
 
     for project in rejoined_projects {
         for worktree in mem::take(&mut project.worktrees) {
-            #[cfg(any(test, feature = "test-support"))]
-            const MAX_CHUNK_SIZE: usize = 2;
-            #[cfg(not(any(test, feature = "test-support")))]
-            const MAX_CHUNK_SIZE: usize = 256;
-
             // Stream this worktree's entries.
             let message = proto::UpdateWorktree {
                 project_id: project.id.to_proto(),
@@ -1731,7 +1726,7 @@ fn notify_rejoined_projects(
                 updated_repositories: worktree.updated_repositories,
                 removed_repositories: worktree.removed_repositories,
             };
-            for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+            for update in proto::split_worktree_update(message) {
                 session.peer.send(session.connection_id, update.clone())?;
             }
 
@@ -2195,11 +2190,6 @@ fn join_project_internal(
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
-        #[cfg(any(test, feature = "test-support"))]
-        const MAX_CHUNK_SIZE: usize = 2;
-        #[cfg(not(any(test, feature = "test-support")))]
-        const MAX_CHUNK_SIZE: usize = 256;
-
         // Stream this worktree's entries.
         let message = proto::UpdateWorktree {
             project_id: project_id.to_proto(),
@@ -2213,7 +2203,7 @@ fn join_project_internal(
             updated_repositories: worktree.repository_entries.into_values().collect(),
             removed_repositories: Default::default(),
         };
-        for update in proto::split_worktree_update(message, MAX_CHUNK_SIZE) {
+        for update in proto::split_worktree_update(message) {
             session.peer.send(session.connection_id, update.clone())?;
         }
 

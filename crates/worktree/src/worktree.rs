@@ -36,7 +36,10 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::{proto, AnyProtoClient};
+use rpc::{
+    proto::{self, split_worktree_update},
+    AnyProtoClient,
+};
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{smallvec, SmallVec};
@@ -1721,11 +1724,6 @@ impl LocalWorktree {
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
         Fut: Send + Future<Output = bool>,
     {
-        #[cfg(any(test, feature = "test-support"))]
-        const MAX_CHUNK_SIZE: usize = 2;
-        #[cfg(not(any(test, feature = "test-support")))]
-        const MAX_CHUNK_SIZE: usize = 256;
-
         if let Some(observer) = self.update_observer.as_mut() {
             *observer.resume_updates.borrow_mut() = ();
             return;
@@ -1751,7 +1749,7 @@ impl LocalWorktree {
                         snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes);
                 }
 
-                for update in proto::split_worktree_update(update, MAX_CHUNK_SIZE) {
+                for update in proto::split_worktree_update(update) {
                     let _ = resume_updates_rx.try_recv();
                     loop {
                         let result = callback(update.clone());
@@ -1817,13 +1815,17 @@ impl RemoteWorktree {
         self.update_observer = Some(tx);
         cx.spawn(|this, mut cx| async move {
             let mut update = initial_update;
-            loop {
+            'outer: loop {
                 // SSH projects use a special project ID of 0, and we need to
                 // remap it to the correct one here.
                 update.project_id = project_id;
-                if !callback(update).await {
-                    break;
+
+                for chunk in split_worktree_update(update) {
+                    if !callback(chunk).await {
+                        break 'outer;
+                    }
                 }
+
                 if let Some(next_update) = rx.next().await {
                     update = next_update;
                 } else {
