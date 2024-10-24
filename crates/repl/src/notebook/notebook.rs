@@ -10,24 +10,6 @@ use super::{deserialize_cells, Cell, CellId, DeserializedCell};
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
 
-pub struct Notebook {
-    metadata: DeserializedMetadata,
-    nbformat: i32,
-    nbformat_minor: i32,
-    cells: HashMap<CellId, View<Cell>>,
-}
-
-impl Default for Notebook {
-    fn default() -> Self {
-        Self {
-            metadata: Default::default(),
-            nbformat: DEFAULT_NOTEBOOK_FORMAT,
-            nbformat_minor: DEFAULT_NOTEBOOK_FORMAT_MINOR,
-            cells: HashMap::default(),
-        }
-    }
-}
-
 impl Default for DeserializedMetadata {
     fn default() -> Self {
         Self {

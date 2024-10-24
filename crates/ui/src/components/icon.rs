@@ -212,6 +212,7 @@ pub enum IconName {
     LineHeight,
     Link,
     ListTree,
+    ListX,
     MagnifyingGlass,
     MailOpen,
     Maximize,
