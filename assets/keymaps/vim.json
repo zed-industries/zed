@@ -340,7 +340,8 @@
       "ctrl-d": "vim::Outdent",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "ctrl-r": ["vim::PushOperator", "Register"],
-      "insert": "vim::ToggleReplace"
+      "insert": "vim::ToggleReplace",
+      "ctrl-o": "vim::TemporaryNormal"
     }
   },
   {
