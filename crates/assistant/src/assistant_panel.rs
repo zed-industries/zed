@@ -4991,19 +4991,26 @@ fn invoked_slash_command_renderer(
         };
 
         h_flex()
-            .pl_6()
+            .px_1()
+            .ml_6()
             .gap_2()
-            .child(h_flex().child("/").child(command.name.clone()))
-            .child(match &command.status {
-                InvokedSlashCommandStatus::Running(_) => div().child("Running command").into_any(),
-                InvokedSlashCommandStatus::Error(message) => div()
-                    .child(
-                        Label::new(format!("error: {}", message))
-                            .single_line()
-                            .color(Color::Error),
-                    )
-                    .into_any_element(),
-                InvokedSlashCommandStatus::Finished => Empty.into_any(),
+            .bg(cx.theme().colors().surface_background)
+            .rounded_md()
+            .child(Label::new(format!("/{}", command.name.clone())))
+            .map(|parent| match &command.status {
+                InvokedSlashCommandStatus::Running(_) => {
+                    parent.child(Icon::new(IconName::ArrowCircle).with_animation(
+                        "arrow-circle",
+                        Animation::new(Duration::from_secs(4)).repeat(),
+                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                    ))
+                }
+                InvokedSlashCommandStatus::Error(message) => parent.child(
+                    Label::new(format!("error: {message}"))
+                        .single_line()
+                        .color(Color::Error),
+                ),
+                InvokedSlashCommandStatus::Finished => parent,
             })
             .into_any_element()
     })
