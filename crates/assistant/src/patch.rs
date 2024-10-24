@@ -860,6 +860,46 @@ mod tests {
             .unindent(),
             cx,
         );
+
+        assert_edits(
+            "
+            impl Person {
+                fn set_name(&mut self, name: String) {
+                    self.name = name;
+                }
+
+                fn name(&self) -> String {
+                    return self.name;
+                }
+            }
+            "
+            .unindent(),
+            vec![
+                AssistantEditKind::Update {
+                    old_text: "self.name = name;".unindent(),
+                    new_text: "self._name = name;".unindent(),
+                    description: None,
+                },
+                AssistantEditKind::Update {
+                    old_text: "return self.name;\n".unindent(),
+                    new_text: "return self._name;\n".unindent(),
+                    description: None,
+                },
+            ],
+            "
+                impl Person {
+                    fn set_name(&mut self, name: String) {
+                        self._name = name;
+                    }
+
+                    fn name(&self) -> String {
+                        return self._name;
+                    }
+                }
+            "
+            .unindent(),
+            cx,
+        );
     }
 
     fn init_test(cx: &mut AppContext) {
