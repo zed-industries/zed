@@ -272,6 +272,16 @@ impl Database {
         update: &proto::UpdateWorktree,
         connection: ConnectionId,
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
+        if update.removed_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
+            || update.updated_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
+        {
+            return Err(anyhow!(
+                "invalid worktree update. removed entries: {}, updated entries: {}",
+                update.removed_entries.len(),
+                update.updated_entries.len()
+            ))?;
+        }
+
         let project_id = ProjectId::from_proto(update.project_id);
         let worktree_id = update.worktree_id as i64;
         self.project_transaction(project_id, |tx| async move {
