@@ -1526,14 +1526,15 @@ impl SshRemoteConnection {
         platform: SshPlatform,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .context("failed to get timestamp")?
-            .as_secs();
-        let source_port = self.get_ssh_source_port().await?;
-
         let lock_file = dst_path.with_extension("lock");
-        let lock_content = format!("{} {}", source_port, timestamp);
+        let lock_content = {
+            let timestamp = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .context("failed to get timestamp")?
+                .as_secs();
+            let source_port = self.get_ssh_source_port().await?;
+            format!("{} {}", source_port, timestamp)
+        };
 
         let lock_stale_age = Duration::from_secs(10 * 60);
         let max_wait_time = Duration::from_secs(10 * 60);
@@ -1552,10 +1553,7 @@ impl SshRemoteConnection {
 
                 return result;
             } else {
-                if let Ok(is_stale) = self
-                    .is_lock_stale(&lock_file, &lock_stale_age, &source_port)
-                    .await
-                {
+                if let Ok(is_stale) = self.is_lock_stale(&lock_file, &lock_stale_age).await {
                     if is_stale {
                         delegate.set_status(
                             Some("Detected lock file on host being stale. Removing"),
@@ -1623,11 +1621,7 @@ impl SshRemoteConnection {
         Ok(output.trim() == "created")
     }
 
-    fn generate_stale_check_script(
-        lock_file: &Path,
-        our_source_port: &str,
-        threshold: u64,
-    ) -> String {
+    fn generate_stale_check_script(lock_file: &Path, max_age: u64) -> String {
         format!(
             r#"
             if [ ! -f "{lock_file}" ]; then
@@ -1636,12 +1630,6 @@ impl SshRemoteConnection {
             fi
 
             read -r port timestamp < "{lock_file}"
-
-            # If it is our port, consider it stale
-            if [ "$port" = "{our_source_port}" ]; then
-                echo "lock file contains our port"
-                exit 0
-            fi
 
             # Check if port is still active
             if command -v ss >/dev/null 2>&1; then
@@ -1657,26 +1645,20 @@ impl SshRemoteConnection {
             fi
 
             # Check timestamp
-            if [ $(( $(date +%s) - timestamp )) -gt {threshold} ]; then
+            if [ $(( $(date +%s) - timestamp )) -gt {max_age} ]; then
                 echo "timestamp in lockfile is too old"
             else
                 echo "recent"
             fi"#,
             lock_file = lock_file.display(),
-            our_source_port = our_source_port,
-            threshold = threshold
+            max_age = max_age
         )
     }
 
-    async fn is_lock_stale(
-        &self,
-        lock_file: &Path,
-        max_age: &Duration,
-        our_source_port: &str,
-    ) -> Result<bool> {
+    async fn is_lock_stale(&self, lock_file: &Path, max_age: &Duration) -> Result<bool> {
         let script = format!(
             "'{}'",
-            Self::generate_stale_check_script(lock_file, our_source_port, max_age.as_secs())
+            Self::generate_stale_check_script(lock_file, max_age.as_secs())
         );
 
         let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(&script))
@@ -2361,10 +2343,8 @@ mod tests {
     fn run_stale_check_script(
         lock_file: &Path,
         max_age: Duration,
-        our_source_port: &str,
         simulate_port_open: Option<&str>,
     ) -> Result<String> {
-        // Wrapper script simulates ss/netstat behavior
         let wrapper = format!(
             r#"
             # Mock ss/netstat commands
@@ -2385,11 +2365,7 @@ mod tests {
             # Real script starts here
             {script}"#,
             simulated_port = simulate_port_open.unwrap_or(""),
-            script = SshRemoteConnection::generate_stale_check_script(
-                lock_file,
-                our_source_port,
-                max_age.as_secs()
-            )
+            script = SshRemoteConnection::generate_stale_check_script(lock_file, max_age.as_secs())
         );
 
         let output = std::process::Command::new("bash")
@@ -2406,42 +2382,28 @@ mod tests {
 
     #[test]
     fn test_lock_staleness() -> Result<()> {
-        let epoch = SystemTime::now().duration_since(UNIX_EPOCH)?;
-
         let temp_dir = TempDir::new()?;
         let lock_file = temp_dir.path().join("test.lock");
 
-        let max_age = Duration::from_secs(600);
-        let our_source_port = "12345";
-
         // Test 1: No lock file
-        let output = run_stale_check_script(&lock_file, max_age, our_source_port, None)?;
+        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), None)?;
         assert_eq!(output, "lock file does not exist");
 
-        // Test 2: Lock file with our port
-        fs::write(&lock_file, "12345 1234567890")?;
-        let output = run_stale_check_script(&lock_file, max_age, our_source_port, None)?;
-        assert_eq!(output, "lock file contains our port");
-
-        // Test 3: Lock file with different port that's not open
+        // Test 2: Lock file with port that's not open
         fs::write(&lock_file, "54321 1234567890")?;
-        let output = run_stale_check_script(&lock_file, max_age, our_source_port, Some("98765"))?;
+        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("98765"))?;
         assert_eq!(output, "ss reports port 54321 is not open");
 
-        // Test 4: Lock file with different port that is open but old timestamp
-        let too_old_age = max_age + Duration::from_secs(100);
-        let old_timestamp = (epoch - too_old_age).as_secs();
+        // Test 3: Lock file with port that is open but old timestamp
+        let old_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - 700; // 700 seconds ago
         fs::write(&lock_file, format!("54321 {}", old_timestamp))?;
-
-        let output = run_stale_check_script(&lock_file, max_age, our_source_port, Some("54321"))?;
+        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("54321"))?;
         assert_eq!(output, "timestamp in lockfile is too old");
 
-        // Test 5: Lock file with different port that is open and recent timestamp
-        let recent_age = Duration::from_secs(60);
-        let recent_timestamp = (epoch - recent_age).as_secs();
+        // Test 4: Lock file with port that is open and recent timestamp
+        let recent_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - 60; // 1 minute ago
         fs::write(&lock_file, format!("54321 {}", recent_timestamp))?;
-
-        let output = run_stale_check_script(&lock_file, max_age, our_source_port, Some("54321"))?;
+        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("54321"))?;
         assert_eq!(output, "recent");
 
         Ok(())
