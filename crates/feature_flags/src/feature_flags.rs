@@ -59,6 +59,12 @@ impl FeatureFlag for ZedPro {
     const NAME: &'static str = "zed-pro";
 }
 
+pub struct NotebookFeatureFlag;
+
+impl FeatureFlag for NotebookFeatureFlag {
+    const NAME: &'static str = "notebooks";
+}
+
 pub struct AutoCommand {}
 impl FeatureFlag for AutoCommand {
     const NAME: &'static str = "auto-command";
