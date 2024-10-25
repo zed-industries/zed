@@ -90,7 +90,7 @@ function build() {
 
     channel=$(<RELEASE_CHANNEL)
     cp Cargo.toml Cargo.toml.backup
-    sed -i .backup \
+    sed -i.backup \
         "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
         Cargo.toml
     if [ "$local_only" = true ]; then
