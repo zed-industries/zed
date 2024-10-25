@@ -18,10 +18,8 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects, SshSettings};
-use remote::SshConnectionOptions;
+use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto;
-use settings::Settings;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -29,7 +27,7 @@ use ui::{
     h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
-use util::{maybe, ResultExt};
+use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -268,15 +266,11 @@ impl TitleBar {
         let options = self.project.read(cx).ssh_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
-        let nickname = maybe!({
-            SshSettings::get_global(cx)
-                .ssh_connections
-                .as_ref()?
-                .into_iter()
-                .find(|connection| SshConnectionOptions::from((*connection).clone()) == options)
-                .and_then(|connection| connection.nickname.clone())
-        })
-        .unwrap_or_else(|| host.clone());
+        let nickname = options
+            .nickname
+            .clone()
+            .map(|nick| nick.into())
+            .unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
