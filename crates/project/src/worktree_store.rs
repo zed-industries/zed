@@ -73,6 +73,7 @@ impl WorktreeStore {
         client.add_model_request_handler(Self::handle_copy_project_entry);
         client.add_model_request_handler(Self::handle_delete_project_entry);
         client.add_model_request_handler(Self::handle_expand_project_entry);
+        client.add_model_request_handler(Self::handle_git_branches);
     }
 
     pub fn local(retain_worktrees: bool, fs: Arc<dyn Fs>) -> Self {
@@ -916,6 +917,71 @@ impl WorktreeStore {
             .update(&mut cx, |this, cx| this.worktree_for_entry(entry_id, cx))?
             .ok_or_else(|| anyhow!("invalid request"))?;
         Worktree::handle_expand_entry(worktree, envelope.payload, cx).await
+    }
+
+    pub async fn handle_git_branches(
+        this: Model<Self>,
+        mut branches: TypedEnvelope<proto::GitBranches>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::GitBranchesResponse> {
+        let project_path = branches
+            .payload
+            .project_path
+            .clone()
+            .context("Invalid GitBranches call")?;
+        let worktree_id = WorktreeId::from_proto(project_path.worktree_id);
+        let path = Path::new(&project_path.path);
+
+        this.update(&mut cx, |this, cx| match &this.state {
+            WorktreeStoreState::Local { .. } => {
+                let worktree = this
+                    .worktree_for_id(worktree_id, cx)
+                    .context("no such worktree")?;
+
+                let worktree = worktree
+                    .read(cx)
+                    .as_local()
+                    .context("Non local worktree on local worktree store")?;
+
+                let worktree = worktree.snapshot();
+
+                let (_, local_repository) = worktree
+                    .repo_for_path(path)
+                    .context("no repository found")?;
+
+                anyhow::Ok(Task::ready(Ok(proto::GitBranchesResponse {
+                    branches: local_repository
+                        .repo()
+                        .branches()?
+                        .into_iter()
+                        .map(|branch| proto::Branch {
+                            is_head: branch.is_head,
+                            name: branch.name.to_string(),
+                            unix_timestamp: branch.unix_timestamp.map(|timestamp| timestamp as u64),
+                        })
+                        .collect(),
+                })))
+            }
+            WorktreeStoreState::Remote {
+                upstream_client,
+                upstream_project_id,
+            } => {
+                // WorktreeStore, is either a replica (Remote), or primary (Local)
+                // The only way for us to get a GitBranches message, is if we're the SSH or Collab Host
+                // If we're the SSH host, then we are the primary Worktree, and our state is Local.
+                // If we're on Collab, then we are not the primary worktree, but we still have to handle
+                // this request. So, we have to rebroadcast this request with the primary's project ID set.
+                // This should always be equal to the SSH_PROJECT_ID, so let's just make sure that's true.
+                debug_assert!(*upstream_project_id == SSH_PROJECT_ID);
+                branches.payload.project_id = *upstream_project_id;
+
+                let upstream_client = upstream_client.clone();
+                Ok(cx
+                    .background_executor()
+                    .spawn(async move { upstream_client.request(branches.payload).await }))
+            }
+        })??
+        .await
     }
 }
 

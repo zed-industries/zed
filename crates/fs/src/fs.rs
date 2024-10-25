@@ -1184,7 +1184,22 @@ impl FakeFs {
 
     pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
         self.with_git_state(dot_git, true, |state| {
-            state.branch_name = branch.map(Into::into)
+            let branch = branch.map(Into::into);
+            state.branches.extend(branch.clone());
+            state.current_branch_name = branch.map(Into::into)
+        })
+    }
+
+    pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
+        self.with_git_state(dot_git, true, |state| {
+            if let Some(first) = branches.first() {
+                if state.current_branch_name.is_none() {
+                    state.current_branch_name = Some(first.to_string())
+                }
+            }
+            state
+                .branches
+                .extend(branches.iter().map(ToString::to_string));
         })
     }
 

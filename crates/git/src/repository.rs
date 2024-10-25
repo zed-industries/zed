@@ -1,8 +1,9 @@
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{Context, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use git2::BranchType;
+use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
@@ -17,7 +18,7 @@ use util::ResultExt;
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct Branch {
     pub is_head: bool,
-    pub name: Box<str>,
+    pub name: SharedString,
     /// Timestamp of most recent commit, normalized to Unix Epoch format.
     pub unix_timestamp: Option<i64>,
 }
@@ -139,7 +140,11 @@ impl GitRepository for RealGitRepository {
             .filter_map(|branch| {
                 branch.ok().and_then(|(branch, _)| {
                     let is_head = branch.is_head();
-                    let name = branch.name().ok().flatten().map(Box::from)?;
+                    let name = branch
+                        .name()
+                        .ok()
+                        .flatten()
+                        .map(|name| name.to_string().into())?;
                     let timestamp = branch.get().peel_to_commit().ok()?.time();
                     let unix_timestamp = timestamp.seconds();
                     let timezone_offset = timestamp.offset_minutes();
@@ -211,7 +216,8 @@ pub struct FakeGitRepositoryState {
     pub index_contents: HashMap<PathBuf, String>,
     pub blames: HashMap<PathBuf, Blame>,
     pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
-    pub branch_name: Option<String>,
+    pub current_branch_name: Option<String>,
+    pub branches: HashSet<String>,
 }
 
 impl FakeGitRepository {
@@ -234,7 +240,7 @@ impl GitRepository for FakeGitRepository {
 
     fn branch_name(&self) -> Option<String> {
         let state = self.state.lock();
-        state.branch_name.clone()
+        state.current_branch_name.clone()
     }
 
     fn head_sha(&self) -> Option<String> {
@@ -264,18 +270,28 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
-        Ok(vec![])
+        let state = self.state.lock();
+        let current_branch = &state.current_branch_name;
+        Ok(state
+            .branches
+            .iter()
+            .map(|branch_name| Branch {
+                is_head: Some(branch_name) == current_branch.as_ref(),
+                name: branch_name.into(),
+                unix_timestamp: None,
+            })
+            .collect())
     }
 
     fn change_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
-        state.branch_name = Some(name.to_owned());
+        state.current_branch_name = Some(name.to_owned());
         Ok(())
     }
 
     fn create_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
-        state.branch_name = Some(name.to_owned());
+        state.current_branch_name = Some(name.to_owned());
         Ok(())
     }
 
