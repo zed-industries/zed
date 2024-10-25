@@ -1206,11 +1206,25 @@ impl Pane {
             return None;
         }
 
-        Some(
-            self.close_items(cx, action.save_intent.unwrap_or(SaveIntent::Close), |_| {
-                true
-            }),
-        )
+        // Close all un-pinned tabs.
+        let items_to_close: Vec<_> = self
+            .items
+            .iter()
+            .map(|item| item.item_id())
+            .filter(|item_id| {
+                if let Some(ix) = self.index_for_item_id(*item_id) {
+                    !self.is_tab_pinned(ix)
+                } else {
+                    true
+                }
+            })
+            .collect();
+
+        Some(self.close_items(
+            cx,
+            action.save_intent.unwrap_or(SaveIntent::Close),
+            |item_id| items_to_close.contains(&item_id),
+        ))
     }
 
     pub(super) fn file_names_for_prompt(
