@@ -11,11 +11,6 @@ export CXXFLAGS="-stdlib=libc++"
 GIT_VERSION="v2.43.3"
 GIT_VERSION_SHA="fa29823"
 
-build_flag="--release"
-target_dir="release"
-local_only=false
-bundle_name=""
-
 function help_info() {
     echo "Usage: ${0##*/} [options] [bundle_name]"
     echo "Build the application bundle for macOS."
@@ -26,6 +21,10 @@ function help_info() {
 }
 
 function handle_args {
+    build_flag="--release"
+    target_dir="release"
+    local_only=false
+
     while getopts 'dlh' flag
     do
         case "${flag}" in
@@ -53,10 +52,10 @@ function handle_args {
     done
     shift $((OPTIND-1))
 
-    if [[ $# -gt 0 ]]; then
-        if [ "$1" ]; then
-            bundle_name=$1
-        fi
+    bundle_name=${1:-}
+    # If bundle_name doesn't end in .app, append it
+    if [[ "$bundle_name" != *.app ]]; then
+        bundle_name="$bundle_name.app"
     fi
 
     # Check if GNU Parallel is installed
@@ -104,11 +103,6 @@ function build() {
     # If bundle_name is not set or empty, use the basename of $app_path
     if [ -z "$bundle_name" ]; then
         bundle_name=$(basename "$app_path")
-    else
-        # If bundle_name doesn't end in .app, append it
-        if [[ "$bundle_name" != *.app ]]; then
-            bundle_name="$bundle_name.app"
-        fi
     fi
 
     mv Cargo.toml.backup Cargo.toml
@@ -251,7 +245,6 @@ function process() {
         gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
     fi
 }
-
 
 handle_args "$@"
 setup_cargo_bundle
