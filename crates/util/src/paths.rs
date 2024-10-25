@@ -106,6 +106,10 @@ impl SanitizedPath {
     pub fn as_path(&self) -> &Arc<Path> {
         &self.0
     }
+
+    pub fn to_string(&self) -> String {
+        self.0.to_string_lossy().to_string()
+    }
 }
 
 impl From<SanitizedPath> for Arc<Path> {
