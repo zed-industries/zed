@@ -44,7 +44,7 @@ function handle_args {
                 exit 0
                 ;;
             *)
-                echo "Error: Invalid option -${OPTARG}" >&2
+                echo "Error: Invalid options: $@" >&2
                 help_info
                 exit 1
                 ;;
@@ -185,10 +185,11 @@ function prepare_binaries() {
     gzip "target/${architecture}/${target_dir}/Zed.dwarf"
 
     echo "Uploading dSYMs for $architecture"
-    upload_to_blob_store_public \
-        "zed-debug-symbols" \
-        "target/${architecture}/${target_dir}/Zed.dwarf.gz" \
-        "$channel/Zed-$version-${architecture}.dwarf.gz"
+    # FIXME: Uncomment this back.
+    # upload_to_blob_store_public \
+    #     "zed-debug-symbols" \
+    #     "target/${architecture}/${target_dir}/Zed.dwarf.gz" \
+    #     "$channel/Zed-$version-${architecture}.dwarf.gz"
 
     cp "target/${architecture}/${target_dir}/zed" "${app_path}/Contents/MacOS/zed"
     cp "target/${architecture}/${target_dir}/cli" "${app_path}/Contents/MacOS/cli"
@@ -200,9 +201,9 @@ function process() {
         host_line=$(echo "$version_info" | grep host)
         local_target_triple=${host_line#*: }
         # script/notarize-mac sign_app_binaries <bundle_name> <target_dir> <channel> <app_path> <architecture> <architecture_dir>
-        ./script/sign-mac sign_app_binaries "$bundle_name" "$target_dir" "$channel" "$app_path" "$local_target_triple" "$local_target_triple"
+        ./script/notarize-mac sign_app_binaries "$bundle_name" "$target_dir" "$channel" "$app_path" "$local_target_triple" "$local_target_triple"
 
-        ./script/sign-mac sign_binary "target/release/remote_server"
+        ./script/notarize-mac sign_binary "target/release/remote_server"
     else
         # Create universal binary
         prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
@@ -228,18 +229,18 @@ function process() {
         prefix4="sed 's/^/\x1b[33m[Remote x86_x64] \x1b[0m/'" # yellow
         prefix5="sed 's/^/\x1b[32m[Remote x86_x64] \x1b[0m/'" # green
 
-        # ./script/sign-mac sign_app_binaries <target_dir> <channel> <app_path> <architecture> <architecture_dir>"
-        # ./script/sign-mac sign_binary <binary_path>
+        # ./script/notarize-mac sign_app_binaries <target_dir> <channel> <app_path> <architecture> <architecture_dir>"
+        # ./script/notarize-mac sign_binary <binary_path>
 
         # These each take approximately 4minutes. Use GNU Parallel to submit them simultaneously.
         # Output is interlaced between all tasks, so add unique prefixes (sed) and line numbers (nl)
         # to preserve de-interlacing if necessary e.g. Copy output to clipboard and then: pbpaste | sort | pbcopy
         parallel --progress --line-buffer ::: \
-          "./script/sign-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
-          "./script/sign-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
-          "./script/sign-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path\"         universal             .                    | nl | $prefix3" \
-          "./script/sign-mac sign_binary  target/x86_64-apple-darwin/release/remote_server | nl | $prefix4" \
-          "./script/sign-mac sign_binary target/aarch64-apple-darwin/release/remote_server | nl | $prefix5"
+          "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
+          "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
+          "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path\"         universal             .                    | nl | $prefix3" \
+          "./script/notarize-mac sign_binary  target/x86_64-apple-darwin/release/remote_server | nl | $prefix4" \
+          "./script/notarize-mac sign_binary target/aarch64-apple-darwin/release/remote_server | nl | $prefix5"
 
         gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
         gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
