@@ -1,5 +1,5 @@
 use std::cmp;
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 use std::{
     ffi::OsStr,
     path::{Path, PathBuf},
@@ -94,6 +94,9 @@ impl<T: AsRef<Path>> PathExt for T {
         self.as_ref().file_name()?.to_str()?.split('.').last()
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct SanitizedPath(Arc<Path>);
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
