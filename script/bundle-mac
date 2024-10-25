@@ -239,8 +239,7 @@ function full_run() {
         -output "${app_path}/Contents/MacOS/cli"
     download_git universal "${app_path}/Contents/MacOS/git"
 
-    echo "Downloading git binaries"
-
+    echo "Beginning parallel work..."
 
     # Piping output through these will add a prefix and colorize the line
     prefix1="sed 's/^/\x1b[35m[Bundle aarch64] \x1b[0m/'" # magenta
@@ -249,16 +248,24 @@ function full_run() {
     prefix4="sed 's/^/\x1b[33m[Remote aarch64] \x1b[0m/'" # yellow
     prefix5="sed 's/^/\x1b[32m[Remote x86_x64] \x1b[0m/'" # green
 
+
     # These each take approximately 4minutes. Use GNU Parallel to submit them simultaneously.
     # Output is interlaced between all tasks, so add unique prefixes (sed) and line numbers (nl)
     # to preserve de-interlacing if necessary e.g. Copy output to clipboard and then: pbpaste | sort | pbcopy
+    # Parallel inherits PATH, SHELL, HOME, LANG, LC_* environment variables by default.
     export PARALLEL_CITATION_SILENT=1
-    parallel --env _ --jobs 8 --halt soon,fail=1 --line-buffer  ::: \
-      "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
-      "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
-      "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path\"         universal             .                    | nl | $prefix3" \
-      "./script/notarize-mac sign_binary target/aarch64-apple-darwin/release/remote_server | nl | $prefix4"
-      "./script/notarize-mac sign_binary target/x86_64-apple-darwin/release/remote_server | nl | $prefix5" \
+    parallel --jobs 8 --halt soon,fail=1 --line-buffer \
+        --env local_only \
+        --env MACOS_CERTIFICATE \
+        --env MACOS_CERTIFICATE_PASSWORD \
+        --env APPLE_NOTARIZATION_USERNAME \
+        --env APPLE_NOTARIZATION_PASSWORD
+        ::: \
+        "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
+        "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
+        "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path\"         universal             .                    | nl | $prefix3" \
+        "./script/notarize-mac sign_binary target/aarch64-apple-darwin/release/remote_server | nl | $prefix4"
+        "./script/notarize-mac sign_binary target/x86_64-apple-darwin/release/remote_server | nl | $prefix5" \
 
     gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
     gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
