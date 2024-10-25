@@ -46,7 +46,7 @@ impl SshSettings {
             if conn.host == host && conn.username == username && conn.port == port {
                 return SshConnectionOptions {
                     nickname: conn.nickname,
-                    upload_binary: conn.upload_binary.unwrap_or_default(),
+                    upload_binary_over_ssh: conn.upload_binary_over_ssh.unwrap_or_default(),
                     args: Some(conn.args),
                     host,
                     port,
@@ -71,15 +71,20 @@ pub struct SshConnection {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
     pub projects: Vec<SshProject>,
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[serde(default)]
-    pub args: Vec<String>,
+    // By default Zed will download the binary to the host directly.
+    // If this is set to true, Zed will download the binary to your local machine,
+    // and then upload it over the SSH connection. Useful if your SSH server has
+    // limited outbound internet access.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub upload_binary: Option<bool>,
+    pub upload_binary_over_ssh: Option<bool>,
 }
 
 impl From<SshConnection> for SshConnectionOptions {
@@ -91,7 +96,7 @@ impl From<SshConnection> for SshConnectionOptions {
             password: None,
             args: Some(val.args),
             nickname: val.nickname,
-            upload_binary: val.upload_binary.unwrap_or_default(),
+            upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
         }
     }
 }

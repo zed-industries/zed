@@ -852,7 +852,7 @@ impl RemoteServerProjects {
                     projects: vec![],
                     nickname: None,
                     args: connection_options.args.unwrap_or_default(),
-                    upload_binary: None,
+                    upload_binary_over_ssh: None,
                 })
         });
     }

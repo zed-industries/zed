@@ -66,7 +66,7 @@ pub struct SshConnectionOptions {
     pub args: Option<Vec<String>>,
 
     pub nickname: Option<String>,
-    pub upload_binary: bool,
+    pub upload_binary_over_ssh: bool,
 }
 
 impl SshConnectionOptions {
@@ -147,7 +147,7 @@ impl SshConnectionOptions {
             args: Some(args),
             password: None,
             nickname: None,
-            upload_binary: false,
+            upload_binary_over_ssh: false,
         })
     }
 
@@ -1711,7 +1711,7 @@ impl SshRemoteConnection {
             return Ok(());
         }
 
-        let upload_binary_over_ssh = self.socket.connection_options.upload_binary;
+        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
         let (binary, version) = delegate
             .get_server_binary(platform, upload_binary_over_ssh, cx)
             .await??;
