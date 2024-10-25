@@ -3196,7 +3196,7 @@ impl EditorElement {
                         );
                         Some((
                             hunk_bounds,
-                            cx.theme().status().modified,
+                            cx.theme().status().modified_background,
                             Corners::all(px(0.)),
                         ))
                     }
@@ -3204,12 +3204,12 @@ impl EditorElement {
                         hitbox.as_ref().map(|hunk_hitbox| match status {
                             DiffHunkStatus::Added => (
                                 hunk_hitbox.bounds,
-                                cx.theme().status().created,
+                                cx.theme().status().created_background,
                                 Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Modified => (
                                 hunk_hitbox.bounds,
-                                cx.theme().status().modified,
+                                cx.theme().status().modified_background,
                                 Corners::all(px(0.)),
                             ),
                             DiffHunkStatus::Removed => (
@@ -3220,7 +3220,7 @@ impl EditorElement {
                                     ),
                                     size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
                                 ),
-                                cx.theme().status().deleted,
+                                cx.theme().status().deleted_background,
                                 Corners::all(1. * line_height),
                             ),
                         })
