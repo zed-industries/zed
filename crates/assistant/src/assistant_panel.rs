@@ -27,8 +27,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease,
-        CreaseMetadata, CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
+        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
+        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
@@ -1990,6 +1990,31 @@ impl ContextEditor {
                         cx,
                     );
 
+                    // todo!(): Added on `main`, do we still need?
+                    // let block_ids = editor.insert_blocks(
+                    //     updated
+                    //         .iter()
+                    //         .filter_map(|command| match &command.status {
+                    //             PendingSlashCommandStatus::Error(error) => {
+                    //                 Some((command, error.clone()))
+                    //             }
+                    //             _ => None,
+                    //         })
+                    //         .map(|(command, error_message)| BlockProperties {
+                    //             style: BlockStyle::Fixed,
+                    //             height: 1,
+                    //             placement: BlockPlacement::Below(Anchor {
+                    //                 buffer_id: Some(buffer_id),
+                    //                 excerpt_id,
+                    //                 text_anchor: command.source_range.start,
+                    //             }),
+                    //             render: slash_command_error_block_renderer(error_message),
+                    //             priority: 0,
+                    //         }),
+                    //     None,
+                    //     cx,
+                    // );
+
                     self.pending_slash_command_creases.extend(
                         updated
                             .iter()
@@ -2137,13 +2162,12 @@ impl ContextEditor {
                     let block_ids = editor.insert_blocks(
                         [BlockProperties {
                             style: BlockStyle::Fixed,
-                            position: Anchor {
+                            placement: BlockPlacement::Above(Anchor {
                                 buffer_id: Some(buffer_id),
                                 excerpt_id,
                                 text_anchor: invoked_slash_command.position,
-                            },
+                            }),
                             height: 1,
-                            disposition: BlockDisposition::Above,
                             render: invoked_slash_command_renderer(
                                 command_id,
                                 context,
@@ -2264,11 +2288,10 @@ impl ContextEditor {
                 } else {
                     let block_ids = editor.insert_blocks(
                         [BlockProperties {
-                            position: patch_start,
                             height: path_count as u32 + 1,
                             style: BlockStyle::Flex,
                             render: render_block,
-                            disposition: BlockDisposition::Below,
+                            placement: BlockPlacement::Below(patch_start),
                             priority: 0,
                         }],
                         None,
@@ -2753,12 +2776,13 @@ impl ContextEditor {
                 })
             };
             let create_block_properties = |message: &Message| BlockProperties {
-                position: buffer
-                    .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
-                    .unwrap(),
                 height: 2,
                 style: BlockStyle::Sticky,
-                disposition: BlockDisposition::Above,
+                placement: BlockPlacement::Above(
+                    buffer
+                        .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
+                        .unwrap(),
+                ),
                 priority: usize::MAX,
                 render: render_block(MessageMetadata::from(message)),
             };
@@ -3394,7 +3418,7 @@ impl ContextEditor {
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
                     let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
-                        position: anchor,
+                        placement: BlockPlacement::Above(anchor),
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
                         render: Box::new(move |cx| {
@@ -3415,8 +3439,6 @@ impl ContextEditor {
                                 )
                                 .into_any_element()
                         }),
-
-                        disposition: BlockDisposition::Above,
                         priority: 0,
                     })
                 })
@@ -3971,7 +3993,7 @@ impl Render for ContextEditor {
                         .bg(cx.theme().colors().editor_background)
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(render_inject_context_menu(cx.view().downgrade(), cx))
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
@@ -4271,11 +4293,11 @@ fn render_inject_context_menu(
     slash_command_picker::SlashCommandSelector::new(
         commands.clone(),
         active_context_editor,
-        IconButton::new("trigger", IconName::SlashSquare)
+        Button::new("trigger", "Add Context")
+            .icon(IconName::Plus)
             .icon_size(IconSize::Small)
-            .tooltip(|cx| {
-                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-            }),
+            .icon_position(IconPosition::Start)
+            .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
     )
 }
 

@@ -7,7 +7,6 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
-use assistant::PromptBuilder;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -134,142 +133,6 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
         })
         .detach();
     }
-}
-
-// init_common is called for both headless and normal mode.
-fn init_common(app_state: Arc<AppState>, cx: &mut AppContext) -> Arc<PromptBuilder> {
-    SystemAppearance::init(cx);
-    theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
-    command_palette::init(cx);
-    let copilot_language_server_id = app_state.languages.next_language_server_id();
-    copilot::init(
-        copilot_language_server_id,
-        app_state.fs.clone(),
-        app_state.client.http_client(),
-        app_state.node_runtime.clone(),
-        cx,
-    );
-    supermaven::init(app_state.client.clone(), cx);
-    language_model::init(
-        app_state.user_store.clone(),
-        app_state.client.clone(),
-        app_state.fs.clone(),
-        cx,
-    );
-    snippet_provider::init(cx);
-    inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-    let prompt_builder = assistant::init(
-        app_state.fs.clone(),
-        app_state.client.clone(),
-        stdout_is_a_pty(),
-        cx,
-    );
-    repl::init(
-        app_state.fs.clone(),
-        app_state.client.telemetry().clone(),
-        cx,
-    );
-    extension::init(
-        app_state.fs.clone(),
-        app_state.client.clone(),
-        app_state.node_runtime.clone(),
-        app_state.languages.clone(),
-        ThemeRegistry::global(cx),
-        cx,
-    );
-    recent_projects::init(cx);
-    prompt_builder
-}
-
-fn init_ui(
-    app_state: Arc<AppState>,
-    prompt_builder: Arc<PromptBuilder>,
-    cx: &mut AppContext,
-) -> Result<()> {
-    load_embedded_fonts(cx);
-
-    #[cfg(target_os = "linux")]
-    crate::zed::linux_prompts::init(cx);
-
-    app_state.languages.set_theme(cx.theme().clone());
-    editor::init(cx);
-    image_viewer::init(cx);
-    diagnostics::init(cx);
-
-    audio::init(Assets, cx);
-    workspace::init(app_state.clone(), cx);
-
-    go_to_line::init(cx);
-    file_finder::init(cx);
-    tab_switcher::init(cx);
-    outline::init(cx);
-    project_symbols::init(cx);
-    project_panel::init(Assets, cx);
-    outline_panel::init(Assets, cx);
-    tasks_ui::init(cx);
-    snippets_ui::init(cx);
-    channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
-    search::init(cx);
-    vim::init(cx);
-    terminal_view::init(cx);
-    journal::init(app_state.clone(), cx);
-    language_selector::init(cx);
-    theme_selector::init(cx);
-    language_tools::init(cx);
-    call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-    notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
-    collab_ui::init(&app_state, cx);
-    feedback::init(cx);
-    markdown_preview::init(cx);
-    welcome::init(cx);
-    settings_ui::init(cx);
-    extensions_ui::init(cx);
-
-    cx.observe_global::<SettingsStore>({
-        let languages = app_state.languages.clone();
-        let http = app_state.client.http_client();
-        let client = app_state.client.clone();
-
-        move |cx| {
-            for &mut window in cx.windows().iter_mut() {
-                let background_appearance = cx.theme().window_background_appearance();
-                window
-                    .update(cx, |_, cx| {
-                        cx.set_background_appearance(background_appearance)
-                    })
-                    .ok();
-            }
-            languages.set_theme(cx.theme().clone());
-            let new_host = &client::ClientSettings::get_global(cx).server_url;
-            if &http.base_url() != new_host {
-                http.set_base_url(new_host);
-                if client.status().borrow().is_connected() {
-                    client.reconnect(&cx.to_async());
-                }
-            }
-        }
-    })
-    .detach();
-    let telemetry = app_state.client.telemetry();
-    telemetry.report_setting_event("theme", cx.theme().name.to_string());
-    telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
-    telemetry.flush_events();
-
-    let fs = app_state.fs.clone();
-    load_user_themes_in_background(fs.clone(), cx);
-    watch_themes(fs.clone(), cx);
-    watch_languages(fs.clone(), app_state.languages.clone(), cx);
-    watch_file_types(fs.clone(), cx);
-
-    cx.set_menus(app_menus());
-    initialize_workspace(app_state.clone(), prompt_builder, cx);
-
-    cx.activate(true);
-
-    cx.spawn(|cx| async move { authenticate(app_state.client.clone(), &cx).await })
-        .detach_and_log_err(cx);
-
-    Ok(())
 }
 
 fn main() {
@@ -509,7 +372,133 @@ fn main() {
             installation_id.clone().map(|id| id.to_string()),
             cx,
         );
-        let prompt_builder = init_common(app_state.clone(), cx);
+
+        SystemAppearance::init(cx);
+        theme::init(theme::LoadThemes::All(Box::new(Assets)), cx);
+        command_palette::init(cx);
+        let copilot_language_server_id = app_state.languages.next_language_server_id();
+        copilot::init(
+            copilot_language_server_id,
+            app_state.fs.clone(),
+            app_state.client.http_client(),
+            app_state.node_runtime.clone(),
+            cx,
+        );
+        supermaven::init(app_state.client.clone(), cx);
+        language_model::init(
+            app_state.user_store.clone(),
+            app_state.client.clone(),
+            app_state.fs.clone(),
+            cx,
+        );
+        snippet_provider::init(cx);
+        inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
+        let prompt_builder = assistant::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            stdout_is_a_pty(),
+            cx,
+        );
+        repl::init(
+            app_state.fs.clone(),
+            app_state.client.telemetry().clone(),
+            cx,
+        );
+        extension::init(
+            app_state.fs.clone(),
+            app_state.client.clone(),
+            app_state.node_runtime.clone(),
+            app_state.languages.clone(),
+            ThemeRegistry::global(cx),
+            cx,
+        );
+        recent_projects::init(cx);
+
+        load_embedded_fonts(cx);
+
+        #[cfg(target_os = "linux")]
+        crate::zed::linux_prompts::init(cx);
+
+        app_state.languages.set_theme(cx.theme().clone());
+        editor::init(cx);
+        image_viewer::init(cx);
+        diagnostics::init(cx);
+
+        audio::init(Assets, cx);
+        workspace::init(app_state.clone(), cx);
+
+        go_to_line::init(cx);
+        file_finder::init(cx);
+        tab_switcher::init(cx);
+        outline::init(cx);
+        project_symbols::init(cx);
+        project_panel::init(Assets, cx);
+        outline_panel::init(Assets, cx);
+        tasks_ui::init(cx);
+        snippets_ui::init(cx);
+        channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);
+        search::init(cx);
+        vim::init(cx);
+        terminal_view::init(cx);
+        journal::init(app_state.clone(), cx);
+        language_selector::init(cx);
+        theme_selector::init(cx);
+        language_tools::init(cx);
+        call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        notifications::init(app_state.client.clone(), app_state.user_store.clone(), cx);
+        collab_ui::init(&app_state, cx);
+        feedback::init(cx);
+        markdown_preview::init(cx);
+        welcome::init(cx);
+        settings_ui::init(cx);
+        extensions_ui::init(cx);
+
+        cx.observe_global::<SettingsStore>({
+            let languages = app_state.languages.clone();
+            let http = app_state.client.http_client();
+            let client = app_state.client.clone();
+
+            move |cx| {
+                for &mut window in cx.windows().iter_mut() {
+                    let background_appearance = cx.theme().window_background_appearance();
+                    window
+                        .update(cx, |_, cx| {
+                            cx.set_background_appearance(background_appearance)
+                        })
+                        .ok();
+                }
+                languages.set_theme(cx.theme().clone());
+                let new_host = &client::ClientSettings::get_global(cx).server_url;
+                if &http.base_url() != new_host {
+                    http.set_base_url(new_host);
+                    if client.status().borrow().is_connected() {
+                        client.reconnect(&cx.to_async());
+                    }
+                }
+            }
+        })
+        .detach();
+        let telemetry = app_state.client.telemetry();
+        telemetry.report_setting_event("theme", cx.theme().name.to_string());
+        telemetry.report_setting_event("keymap", BaseKeymap::get_global(cx).to_string());
+        telemetry.flush_events();
+
+        let fs = app_state.fs.clone();
+        load_user_themes_in_background(fs.clone(), cx);
+        watch_themes(fs.clone(), cx);
+        watch_languages(fs.clone(), app_state.languages.clone(), cx);
+        watch_file_types(fs.clone(), cx);
+
+        cx.set_menus(app_menus());
+        initialize_workspace(app_state.clone(), prompt_builder, cx);
+
+        cx.activate(true);
+
+        cx.spawn({
+            let client = app_state.client.clone();
+            |cx| async move { authenticate(client, &cx).await }
+        })
+        .detach_and_log_err(cx);
 
         let args = Args::parse();
         let urls: Vec<_> = args
@@ -529,10 +518,9 @@ fn main() {
             .and_then(|urls| OpenRequest::parse(urls, cx).log_err())
         {
             Some(request) => {
-                handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
+                handle_open_request(request, app_state.clone(), cx);
             }
             None => {
-                init_ui(app_state.clone(), prompt_builder.clone(), cx).unwrap();
                 cx.spawn({
                     let app_state = app_state.clone();
                     |mut cx| async move {
@@ -546,12 +534,11 @@ fn main() {
         }
 
         let app_state = app_state.clone();
-        let prompt_builder = prompt_builder.clone();
         cx.spawn(move |cx| async move {
             while let Some(urls) = open_rx.next().await {
                 cx.update(|cx| {
                     if let Some(request) = OpenRequest::parse(urls, cx).log_err() {
-                        handle_open_request(request, app_state.clone(), prompt_builder.clone(), cx);
+                        handle_open_request(request, app_state.clone(), cx);
                     }
                 })
                 .ok();
@@ -621,23 +608,13 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     }
 }
 
-fn handle_open_request(
-    request: OpenRequest,
-    app_state: Arc<AppState>,
-    prompt_builder: Arc<PromptBuilder>,
-    cx: &mut AppContext,
-) {
+fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut AppContext) {
     if let Some(connection) = request.cli_connection {
         let app_state = app_state.clone();
-        cx.spawn(move |cx| handle_cli_connection(connection, app_state, prompt_builder, cx))
+        cx.spawn(move |cx| handle_cli_connection(connection, app_state, cx))
             .detach();
         return;
     }
-
-    if let Err(e) = init_ui(app_state.clone(), prompt_builder, cx) {
-        fail_to_open_window(e, cx);
-        return;
-    };
 
     if let Some(connection_info) = request.ssh_connection {
         cx.spawn(|mut cx| async move {

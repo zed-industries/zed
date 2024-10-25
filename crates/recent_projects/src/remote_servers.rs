@@ -17,6 +17,7 @@ use gpui::{
 use picker::Picker;
 use project::Project;
 use remote::SshConnectionOptions;
+use remote::SshRemoteClient;
 use settings::update_settings_file;
 use settings::Settings;
 use ui::{
@@ -46,6 +47,7 @@ pub struct RemoteServerProjects {
     scroll_handle: ScrollHandle,
     workspace: WeakView<Workspace>,
     selectable_items: SelectableItemList,
+    retained_connections: Vec<Model<SshRemoteClient>>,
 }
 
 struct CreateRemoteServer {
@@ -355,6 +357,7 @@ impl RemoteServerProjects {
             scroll_handle: ScrollHandle::new(),
             workspace,
             selectable_items: Default::default(),
+            retained_connections: Vec::new(),
         }
     }
 
@@ -424,7 +427,7 @@ impl RemoteServerProjects {
         let address_editor = editor.clone();
         let creating = cx.spawn(move |this, mut cx| async move {
             match connection.await {
-                Some(_) => this
+                Some(Some(client)) => this
                     .update(&mut cx, |this, cx| {
                         let _ = this.workspace.update(cx, |workspace, _| {
                             workspace
@@ -432,14 +435,14 @@ impl RemoteServerProjects {
                                 .telemetry()
                                 .report_app_event("create ssh server".to_string())
                         });
-
+                        this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::default_mode();
                         this.selectable_items.reset_selection();
                         cx.notify()
                     })
                     .log_err(),
-                None => this
+                _ => this
                     .update(&mut cx, |this, cx| {
                         address_editor.update(cx, |this, _| {
                             this.set_read_only(false);
@@ -1056,7 +1059,7 @@ impl RemoteServerProjects {
                             );
 
                             cx.spawn(|mut cx| async move {
-                                if confirmation.await.ok() == Some(1) {
+                                if confirmation.await.ok() == Some(0) {
                                     remote_servers
                                         .update(&mut cx, |this, cx| {
                                             this.delete_ssh_server(index, cx);
