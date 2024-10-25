@@ -2559,7 +2559,8 @@ message LanguageServerPromptResponse {
 
 message ListToolchains {
     uint64 project_id = 1;
-    string language_name = 2;
+    uint64 worktree_id = 2;
+    string language_name = 3;
 }
 
 message Toolchain {
@@ -2569,9 +2570,12 @@ message Toolchain {
 
 message ListToolchainsResponse {
     repeated Toolchain toolchains = 1;
+    bool has_values = 2;
 }
 
 message ActivateToolchain {
     uint64 project_id = 1;
-    Toolchain toolchain = 2;
+    uint64 worktree_id = 2;
+    Toolchain toolchain = 3;
+    string language_name = 4;
 }

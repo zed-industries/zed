@@ -23,7 +23,6 @@ pub struct Toolchain {
 #[async_trait(?Send)]
 pub trait ToolchainLister: Send + Sync {
     async fn list(&self, _: PathBuf) -> ToolchainList;
-    async fn activate(&self, _: Toolchain);
 }
 
 type DefaultIndex = usize;

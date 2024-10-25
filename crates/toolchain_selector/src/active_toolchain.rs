@@ -4,6 +4,7 @@ use gpui::{
     ViewContext, WeakModel, WeakView,
 };
 use language::{Buffer, LanguageName, Toolchain};
+use project::WorktreeId;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
@@ -12,7 +13,7 @@ use crate::ToolchainSelector;
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,
     workspace: WeakView<Workspace>,
-    active_buffer: Option<WeakModel<Buffer>>,
+    active_buffer: Option<(WorktreeId, WeakModel<Buffer>)>,
     _observe_active_editor: Option<Subscription>,
     _observe_language_changes: Subscription,
     _update_toolchain_task: Task<Option<()>>,
@@ -43,11 +44,18 @@ impl ActiveToolchain {
                 .ok()?;
 
             let language_name = active_file
+                .1
                 .update(&mut cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
 
-            let toolchain = Self::active_toolchain(workspace, language_name, cx.clone()).await?;
+            let worktree_id = active_file
+                .1
+                .update(&mut cx, |this, cx| Some(this.file()?.worktree_id(cx)))
+                .ok()
+                .flatten()?;
+            let toolchain =
+                Self::active_toolchain(workspace, worktree_id, language_name, cx.clone()).await?;
             let _ = this.update(&mut cx, |this, cx| {
                 this.active_toolchain = Some(toolchain);
 
@@ -60,7 +68,9 @@ impl ActiveToolchain {
     fn update_lister(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
-            self.active_buffer = Some(buffer.downgrade());
+            if let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
+                self.active_buffer = Some((worktree_id, buffer.downgrade()));
+            }
         }
 
         cx.notify();
@@ -68,6 +78,7 @@ impl ActiveToolchain {
 
     fn active_toolchain(
         workspace: WeakView<Workspace>,
+        worktree_id: WorktreeId,
         language_name: LanguageName,
         cx: AsyncWindowContext,
     ) -> Task<Option<Toolchain>> {
@@ -89,7 +100,11 @@ impl ActiveToolchain {
                     .update(&mut cx, |this, _| this.project().clone())
                     .ok()?;
                 let toolchains = cx
-                    .update(|cx| project.read(cx).available_toolchains(language_name, cx))
+                    .update(|cx| {
+                        project
+                            .read(cx)
+                            .available_toolchains(worktree_id, language_name, cx)
+                    })
                     .ok()?
                     .await?;
                 toolchains.toolchains.first().cloned()

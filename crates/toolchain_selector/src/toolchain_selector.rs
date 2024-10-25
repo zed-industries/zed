@@ -9,7 +9,7 @@ use gpui::{
 };
 use language::{LanguageName, ToolchainList};
 use picker::{Picker, PickerDelegate};
-use project::Project;
+use project::{Project, WorktreeId};
 use std::sync::Arc;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
@@ -41,9 +41,10 @@ impl ToolchainSelector {
         let project = workspace.project().clone();
 
         let language_name = buffer.read(cx).language()?.name();
+        let worktree_id = buffer.read(cx).file()?.worktree_id(cx);
         let weak = workspace.weak_handle();
         workspace.toggle_modal(cx, move |cx| {
-            ToolchainSelector::new(weak, project, language_name, cx)
+            ToolchainSelector::new(weak, project, worktree_id, language_name, cx)
         });
         Some(())
     }
@@ -51,13 +52,20 @@ impl ToolchainSelector {
     fn new(
         workspace: WeakView<Workspace>,
         project: Model<Project>,
+        worktree_id: WorktreeId,
         language_name: LanguageName,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let view = cx.view().downgrade();
         let picker = cx.new_view(|cx| {
-            let delegate =
-                ToolchainSelectorDelegate::new(view, workspace, project, language_name, cx);
+            let delegate = ToolchainSelectorDelegate::new(
+                view,
+                workspace,
+                worktree_id,
+                project,
+                language_name,
+                cx,
+            );
             Picker::uniform_list(delegate, cx)
         });
         Self { picker }
@@ -85,6 +93,7 @@ pub struct ToolchainSelectorDelegate {
     matches: Vec<StringMatch>,
     selected_index: usize,
     workspace: WeakView<Workspace>,
+    worktree_id: WorktreeId,
     _fetch_candidates_task: Task<Option<()>>,
 }
 
@@ -92,6 +101,7 @@ impl ToolchainSelectorDelegate {
     fn new(
         language_selector: WeakView<ToolchainSelector>,
         workspace: WeakView<Workspace>,
+        worktree_id: WorktreeId,
         project: Model<Project>,
         language_name: LanguageName,
         cx: &mut ViewContext<Picker<Self>>,
@@ -101,7 +111,7 @@ impl ToolchainSelectorDelegate {
             move |this, mut cx| async move {
                 let available_toolchains = project
                     .update(&mut cx, |this, cx| {
-                        this.available_toolchains(language_name, cx)
+                        this.available_toolchains(worktree_id, language_name, cx)
                     })
                     .ok()?
                     .await?;
@@ -121,6 +131,7 @@ impl ToolchainSelectorDelegate {
             matches: vec![],
             selected_index: 0,
             workspace,
+            worktree_id,
             _fetch_candidates_task,
         }
     }
@@ -147,14 +158,20 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 .flatten()
             {
                 let workspace = self.workspace.clone();
-                cx.spawn(|_, mut cx| async move {
+                cx.spawn(|this, mut cx| async move {
+                    let worktree_id = this
+                        .update(&mut cx, |this, _| this.delegate.worktree_id)
+                        .ok()?;
                     workspace::WORKSPACE_DB
                         .set_toolchain(workspace_id, toolchain.clone())
                         .await
                         .ok()?;
+
                     workspace
                         .update(&mut cx, |this, cx| {
-                            this.project().read(cx).activate_toolchain(toolchain, cx)
+                            this.project().update(cx, |this, cx| {
+                                this.activate_toolchain(worktree_id, toolchain, cx)
+                            })
                         })
                         .ok()?
                         .await;

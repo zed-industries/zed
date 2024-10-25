@@ -651,8 +651,13 @@ impl Project {
                 )
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
-            let toolchain_store = Some(cx.new_model(|_| {
-                ToolchainStore::local(languages.clone(), worktree_store.clone(), lsp_store.clone())
+            let toolchain_store = Some(cx.new_model(|cx| {
+                ToolchainStore::local(
+                    languages.clone(),
+                    worktree_store.clone(),
+                    lsp_store.clone(),
+                    cx,
+                )
             }));
             Self {
                 buffer_ordered_messages_tx: tx,
@@ -760,7 +765,7 @@ impl Project {
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
             let toolchain_store =
-                Some(cx.new_model(|cx| ToolchainStore::remote(ssh.read(cx).proto_client())));
+                Some(cx.new_model(|cx| ToolchainStore::remote(ssh.read(cx).proto_client(), cx)));
             let this = Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -831,6 +836,7 @@ impl Project {
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
             TaskStore::init(Some(&ssh_proto));
+            ToolchainStore::init(&ssh_proto);
 
             this
         })
@@ -2479,36 +2485,43 @@ impl Project {
 
     pub fn available_toolchains(
         &self,
+        worktree_id: WorktreeId,
         language_name: LanguageName,
         cx: &AppContext,
     ) -> Task<Option<ToolchainList>> {
         if let Some(toolchain_store) = self.toolchain_store.as_ref() {
-            toolchain_store.read(cx).list_toolchains(language_name, cx)
+            toolchain_store
+                .read(cx)
+                .list_toolchains(worktree_id, language_name, cx)
         } else {
             Task::ready(None)
         }
     }
-    pub fn activate_toolchain(&self, toolchain: Toolchain, cx: &AppContext) -> Task<Option<()>> {
+    pub fn activate_toolchain(
+        &self,
+        worktree_id: WorktreeId,
+        toolchain: Toolchain,
+        cx: &mut AppContext,
+    ) -> Task<Option<()>> {
         let Some(toolchain_store) = self.toolchain_store.clone() else {
             return Task::ready(None);
         };
-        if self.is_local() {
-            let registry = self.languages.clone();
-            let lsp_store = self.lsp_store.downgrade();
-            cx.spawn(move |cx| async move {
-                let language = registry
-                    .language_for_name(&toolchain.language_name.0)
-                    .await
-                    .ok()?;
-                language.toolchain_lister()?.activate(toolchain).await;
-                LspStore::refresh_workspace_configurations(&lsp_store, cx).await;
-                Some(())
-            })
-        } else if self.is_via_ssh() {
-            Task::ready(None)
-        } else {
-            Task::ready(None)
-        }
+        toolchain_store.update(cx, |this, cx| {
+            this.activate_toolchain(worktree_id, toolchain, cx)
+        })
+    }
+    pub fn active_toolchain(
+        &self,
+        worktree_id: WorktreeId,
+        language_name: LanguageName,
+        cx: &AppContext,
+    ) -> Task<Option<Toolchain>> {
+        let Some(toolchain_store) = self.toolchain_store.clone() else {
+            return Task::ready(None);
+        };
+        toolchain_store
+            .read(cx)
+            .active_toolchain(worktree_id, language_name, cx)
     }
     pub fn language_server_statuses<'a>(
         &'a self,

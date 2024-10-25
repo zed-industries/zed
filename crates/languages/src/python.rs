@@ -34,14 +34,13 @@ fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
 
 pub struct PythonLspAdapter {
     node: NodeRuntime,
-    toolchain: Arc<PythonToolchainProvider>,
 }
 
 impl PythonLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
-    pub fn new(node: NodeRuntime, toolchain: Arc<PythonToolchainProvider>) -> Self {
-        PythonLspAdapter { node, toolchain }
+    pub fn new(node: NodeRuntime) -> Self {
+        PythonLspAdapter { node }
     }
 }
 
@@ -209,7 +208,7 @@ impl LspAdapter for PythonLspAdapter {
         adapter: &Arc<dyn LspAdapterDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        let toolchain = self.toolchain.active_toolchain.lock().await.clone();
+        //let toolchain = self.toolchain.active_toolchain.lock().await.clone();
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
@@ -217,21 +216,21 @@ impl LspAdapter for PythonLspAdapter {
                     .unwrap_or_default();
 
             // If python.pythonPath is not set in user config, do so using our toolchain picker.
-            if let Some(toolchain) = toolchain {
-                if user_settings.is_null() {
-                    user_settings = Value::Object(serde_json::Map::default());
-                }
-                let object = user_settings.as_object_mut().unwrap();
-                object
-                    .entry("python")
-                    .or_insert(Value::Object(serde_json::Map::default()))
-                    .as_object_mut()
-                    .map(|python| {
-                        python
-                            .entry("pythonPath")
-                            .or_insert(Value::String(toolchain.path.into()));
-                    });
-            }
+            // if let Some(toolchain) = toolchain {
+            //     if user_settings.is_null() {
+            //         user_settings = Value::Object(serde_json::Map::default());
+            //     }
+            //     let object = user_settings.as_object_mut().unwrap();
+            //     object
+            //         .entry("python")
+            //         .or_insert(Value::Object(serde_json::Map::default()))
+            //         .as_object_mut()
+            //         .map(|python| {
+            //             python
+            //                 .entry("pythonPath")
+            //                 .or_insert(Value::String(toolchain.path.into()));
+            //         });
+            // }
             user_settings
         })
     }
@@ -348,9 +347,7 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
 }
 
 #[derive(Default)]
-pub(crate) struct PythonToolchainProvider {
-    active_toolchain: Arc<Mutex<Option<Toolchain>>>,
-}
+pub(crate) struct PythonToolchainProvider {}
 
 #[async_trait(?Send)]
 impl ToolchainLister for PythonToolchainProvider {
@@ -397,9 +394,6 @@ impl ToolchainLister for PythonToolchainProvider {
             toolchains,
             default: None,
         }
-    }
-    async fn activate(&self, toolchain: Toolchain) {
-        let _ = self.active_toolchain.lock().await.insert(toolchain);
     }
 }
 
