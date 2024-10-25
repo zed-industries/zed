@@ -123,6 +123,7 @@ impl EditorLspTestContext {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
                 },
+                line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
                 ..Default::default()
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
