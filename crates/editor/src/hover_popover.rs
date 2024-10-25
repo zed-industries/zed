@@ -1,7 +1,6 @@
 use crate::{
     display_map::{InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
-    is_invisible,
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover, RangeToAnchorExt,
@@ -12,7 +11,7 @@ use gpui::{
     StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
 use itertools::Itertools;
-use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
+use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
@@ -200,6 +199,7 @@ fn show_hover(
     if editor.pending_rename.is_some() {
         return None;
     }
+
     let snapshot = editor.snapshot(cx);
 
     let (buffer, buffer_position) = editor
@@ -259,7 +259,7 @@ fn show_hover(
             }
 
             // If there's a diagnostic, assign it on the hover state and notify
-            let mut local_diagnostic = snapshot
+            let local_diagnostic = snapshot
                 .buffer_snapshot
                 .diagnostics_in_range::<_, usize>(anchor..anchor, false)
                 // Find the entry with the most specific range
@@ -281,42 +281,6 @@ fn show_hover(
                     })
             });
 
-            if let Some(invisible) = snapshot
-                .buffer_snapshot
-                .chars_at(anchor)
-                .next()
-                .filter(|&c| is_invisible(c))
-            {
-                let after = snapshot.buffer_snapshot.anchor_after(
-                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
-                );
-                local_diagnostic = Some(DiagnosticEntry {
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: format!("Unicode character U+{:02X}", invisible as u32),
-                        ..Default::default()
-                    },
-                    range: anchor..after,
-                })
-            } else if let Some(invisible) = snapshot
-                .buffer_snapshot
-                .reversed_chars_at(anchor)
-                .next()
-                .filter(|&c| is_invisible(c))
-            {
-                let before = snapshot.buffer_snapshot.anchor_before(
-                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
-                );
-                local_diagnostic = Some(DiagnosticEntry {
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: format!("Unicode character U+{:02X}", invisible as u32),
-                        ..Default::default()
-                    },
-                    range: before..anchor,
-                })
-            }
-
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
                     Some(ref source) => {
@@ -324,6 +288,7 @@ fn show_hover(
                     }
                     None => local_diagnostic.diagnostic.message.clone(),
                 };
+
                 let mut border_color: Option<Hsla> = None;
                 let mut background_color: Option<Hsla> = None;
 
@@ -379,6 +344,7 @@ fn show_hover(
                         Markdown::new_text(text, markdown_style.clone(), None, cx, None)
                     })
                     .ok();
+
                 Some(DiagnosticPopover {
                     local_diagnostic,
                     primary_diagnostic,
@@ -466,6 +432,7 @@ fn show_hover(
                 cx.notify();
                 cx.refresh();
             })?;
+
             anyhow::Ok(())
         }
         .log_err()
