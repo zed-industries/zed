@@ -10728,44 +10728,8 @@ impl Editor {
         self.fold_ranges(fold_ranges, true, cx);
     }
 
-    pub fn fold_at_level_one(&mut self, _: &FoldAtLevelOne, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(1), cx);
-    }
-
-    pub fn fold_at_level_two(&mut self, _: &FoldAtLevelTwo, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(2), cx);
-    }
-
-    pub fn fold_at_level_three(&mut self, _: &FoldAtLevelThree, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(3), cx);
-    }
-
-    pub fn fold_at_level_four(&mut self, _: &FoldAtLevelFour, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(4), cx);
-    }
-
-    pub fn fold_at_level_five(&mut self, _: &FoldAtLevelFive, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(5), cx);
-    }
-
-    pub fn fold_at_level_six(&mut self, _: &FoldAtLevelSix, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(6), cx);
-    }
-
-    pub fn fold_at_level_seven(&mut self, _: &FoldAtLevelSeven, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(7), cx);
-    }
-
-    pub fn fold_at_level_eight(&mut self, _: &FoldAtLevelEight, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(8), cx);
-    }
-
-    pub fn fold_at_level_nine(&mut self, _: &FoldAtLevelNine, cx: &mut ViewContext<Self>) {
-        self.fold_at_level(&FoldAtLevel(9), cx);
-    }
-
     fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
-        let target_depth = fold_at.0;
+        let target_depth = fold_at.level;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut fold_ranges = Vec::new();
         self.internal_fold_at_level(
@@ -13481,8 +13445,6 @@ fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) 
         MultiBufferRow(next_selection.end.row)
     }
 }
-
-struct FoldAtLevel(pub u32);
 
 impl EditorSnapshot {
     pub fn remote_selections_in_range<'a>(
