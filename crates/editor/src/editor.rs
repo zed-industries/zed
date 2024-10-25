@@ -10732,7 +10732,7 @@ impl Editor {
         let target_depth = fold_at.level;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut fold_ranges = Vec::new();
-        self.internal_fold_at_level(
+        self.fold_at_level_internal(
             0,
             snapshot.max_buffer_row().0,
             1,
@@ -10743,7 +10743,7 @@ impl Editor {
         self.fold_ranges(fold_ranges, true, cx);
     }
 
-    fn internal_fold_at_level(
+    fn fold_at_level_internal(
         &mut self,
         mut start: u32,
         end: u32,
@@ -10765,7 +10765,7 @@ impl Editor {
                     fold_ranges.push(foldable_range);
                 }
 
-                self.internal_fold_at_level(
+                self.fold_at_level_internal(
                     range_start + 1,
                     range_end,
                     current_depth + 1,
