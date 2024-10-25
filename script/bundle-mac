@@ -17,17 +17,21 @@ function help_info() {
     echo "Options:"
     echo "  -d    Compile in debug mode"
     echo "  -l    Compile for local architecture only."
+    echo "  -o    Open dir with the resulting DMG or launch the app itself in local mode."
+    echo "  -i    Install the resulting DMG into /Applications in local mode. Noop without -l."
     echo "  -h    Display this help and exit."
 }
 
 function handle_args {
     build_flag="--release"
     target_dir="release"
-    local_only=false
+    # This gets exported because we need to handle local/full differently in notarize-mac script
+    export local_only=false
 
-    while getopts 'dlh' flag
+    while getopts 'dloih' flag
     do
         case "${flag}" in
+            o) open_result=true;;
             d)
                 export CARGO_INCREMENTAL=true
                 export CARGO_BUNDLE_SKIP_BUILD=true
@@ -37,17 +41,18 @@ function handle_args {
             l)
                 export CARGO_INCREMENTAL=true
                 export CARGO_BUNDLE_SKIP_BUILD=true
-                local_only=true
+                export local_only=true
                 ;;
+            i) local_install=true;;
             h)
                 help_info
                 exit 0
                 ;;
-            *)
-                echo "Error: Invalid options: $@" >&2
-                help_info
-                exit 1
-                ;;
+            # *)
+            #     echo "Error: Invalid options: $@" >&2
+            #     help_info
+            #     exit 1
+            #     ;;
         esac
     done
     shift $((OPTIND-1))
@@ -165,7 +170,7 @@ function download_git() {
 # Prepare binaries for a specific architecture
 function prepare_binaries() {
     local architecture=$1
-    local app_path=$2
+    local this_app_path=$2
 
     echo "Unpacking dSYMs for $architecture"
     if ! dsymutil --flat "target/${architecture}/${target_dir}/Zed" 2> target/dsymutil.log; then
@@ -191,63 +196,79 @@ function prepare_binaries() {
     #     "target/${architecture}/${target_dir}/Zed.dwarf.gz" \
     #     "$channel/Zed-$version-${architecture}.dwarf.gz"
 
-    cp "target/${architecture}/${target_dir}/zed" "${app_path}/Contents/MacOS/zed"
-    cp "target/${architecture}/${target_dir}/cli" "${app_path}/Contents/MacOS/cli"
+    cp "target/${architecture}/${target_dir}/zed" "${this_app_path}/Contents/MacOS/zed"
+    cp "target/${architecture}/${target_dir}/cli" "${this_app_path}/Contents/MacOS/cli"
 }
 
-function process() {
-    if [ "$local_only" = true ]; then
-        version_info=$(rustc --version --verbose)
-        host_line=$(echo "$version_info" | grep host)
-        local_target_triple=${host_line#*: }
-        # script/notarize-mac sign_app_binaries <bundle_name> <target_dir> <channel> <app_path> <architecture> <architecture_dir>
-        ./script/notarize-mac sign_app_binaries "$bundle_name" "$target_dir" "$channel" "$app_path" "$local_target_triple" "$local_target_triple"
-
-        ./script/notarize-mac sign_binary "target/release/remote_server"
-    else
-        # Create universal binary
-        prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
-        prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
-
-        cp -R "$app_path_x64" target/release/
-        app_path=target/release/$(basename "$app_path_x64")
-        lipo \
-            -create \
-            target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/zed \
-            -output \
-            "${app_path}/Contents/MacOS/zed"
-        lipo \
-            -create \
-            target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
-            -output \
-            "${app_path}/Contents/MacOS/cli"
-
-        # Piping output through these will add a prefix and colorize the line
-        prefix1="sed 's/^/\x1b[35m[Bundle aarch64] \x1b[0m/'" # magenta
-        prefix2="sed 's/^/\x1b[34m[Bundle x86_x64] \x1b[0m/'" # blue
-        prefix3="sed 's/^/\x1b[36m[Bundle Combine] \x1b[0m/'" # cyan
-        prefix4="sed 's/^/\x1b[33m[Remote x86_x64] \x1b[0m/'" # yellow
-        prefix5="sed 's/^/\x1b[32m[Remote x86_x64] \x1b[0m/'" # green
-
-        # ./script/notarize-mac sign_app_binaries <target_dir> <channel> <app_path> <architecture> <architecture_dir>"
-        # ./script/notarize-mac sign_binary <binary_path>
-
-        # These each take approximately 4minutes. Use GNU Parallel to submit them simultaneously.
-        # Output is interlaced between all tasks, so add unique prefixes (sed) and line numbers (nl)
-        # to preserve de-interlacing if necessary e.g. Copy output to clipboard and then: pbpaste | sort | pbcopy
-        parallel --progress --line-buffer ::: \
-          "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
-          "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
-          "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path\"         universal             .                    | nl | $prefix3" \
-          "./script/notarize-mac sign_binary  target/x86_64-apple-darwin/release/remote_server | nl | $prefix4" \
-          "./script/notarize-mac sign_binary target/aarch64-apple-darwin/release/remote_server | nl | $prefix5"
-
-        gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
-        gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
+function local_run() {
+    version_info=$(rustc --version --verbose)
+    host_line=$(echo "$version_info" | grep host)
+    local_target_triple=${host_line#*: }
+    # script/notarize-mac sign_app_binaries <bundle_name> <target_dir> <channel> <app_path> <architecture> <architecture_dir>
+    ./script/notarize-mac sign_app_binaries "$bundle_name" "$target_dir" "$channel" "$app_path" "$local_target_triple" "$local_target_triple"
+    ./script/notarize-mac sign_binary "target/release/remote_server"
+    if [ "$local_install" = true ]; then
+        rm -rf "/Applications/$bundle_name"
+        mv "$app_path" "/Applications/$bundle_name"
+        echo "Installed application bundle: /Applications/$bundle_name"
     fi
+    if [ "$open_result" = true ]; then
+        open "$app_path"
+    fi
+}
+
+function full_run() {
+    echo "Creating aarch64 app bundle..."
+    prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
+    download_git aarch64-apple-darwin "${app_path_aarch64}/Contents/MacOS/git"
+
+    echo "Creating aarch64 x86_64 bundle..."
+    prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
+    download_git x86_64-apple-darwin "${app_path_x64}/Contents/MacOS/git"
+
+    echo "Creating universal app bundle..."
+    cp -R "$app_path_x64" target/release/
+    app_path=target/release/$(basename "$app_path_x64")
+    lipo -create \
+        "target/x86_64-apple-darwin/${target_dir}/zed" \
+        "target/aarch64-apple-darwin/${target_dir}/zed" \
+        -output "${app_path}/Contents/MacOS/zed"
+    lipo -create \
+        "target/x86_64-apple-darwin/${target_dir}/cli" \
+        "target/aarch64-apple-darwin/${target_dir}/cli" \
+        -output "${app_path}/Contents/MacOS/cli"
+    download_git universal "${app_path}/Contents/MacOS/git"
+
+    echo "Downloading git binaries"
+
+
+    # Piping output through these will add a prefix and colorize the line
+    prefix1="sed 's/^/\x1b[35m[Bundle aarch64] \x1b[0m/'" # magenta
+    prefix2="sed 's/^/\x1b[34m[Bundle x86_x64] \x1b[0m/'" # blue
+    prefix3="sed 's/^/\x1b[36m[Bundle Combine] \x1b[0m/'" # cyan
+    prefix4="sed 's/^/\x1b[33m[Remote aarch64] \x1b[0m/'" # yellow
+    prefix5="sed 's/^/\x1b[32m[Remote x86_x64] \x1b[0m/'" # green
+
+    # These each take approximately 4minutes. Use GNU Parallel to submit them simultaneously.
+    # Output is interlaced between all tasks, so add unique prefixes (sed) and line numbers (nl)
+    # to preserve de-interlacing if necessary e.g. Copy output to clipboard and then: pbpaste | sort | pbcopy
+    export PARALLEL_CITATION_SILENT=1
+    parallel --env _ --jobs 8 --halt soon,fail=1 --line-buffer  ::: \
+      "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
+      "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
+      "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path\"         universal             .                    | nl | $prefix3" \
+      "./script/notarize-mac sign_binary target/aarch64-apple-darwin/release/remote_server | nl | $prefix4"
+      "./script/notarize-mac sign_binary target/x86_64-apple-darwin/release/remote_server | nl | $prefix5" \
+
+    gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
+    gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
 }
 
 handle_args "$@"
 setup_cargo_bundle
 build
-process
+if [ "$local_only" = true ]; then
+  local_run
+else
+  full_run
+fi

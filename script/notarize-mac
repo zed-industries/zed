@@ -17,12 +17,14 @@ function handle_args() {
         echo "This script should not be called directly and only invoked from script/bundle-mac."
         exit 1
     elif [ "$1" = "sign_binary" ] && [ $# -eq 2 ]; then
+        setup_keychains
         sign_binary "$2"
-    elif [ "$1" = "sign_app_binaries" ] && [ $# -eq 6 ]; then
-        sign_app_binaries "$2" "$3" "$4" "$5" "$6"
+    elif [ "$1" = "sign_app_binaries" ] && [ $# -eq 7 ]; then
+        setup_keychains
+        sign_app_binaries "$2" "$3" "$4" "$5" "$6" "$7"
     else
         echo "Usage: $0 sign_binary <binary_path>"
-        echo "   or: $0 sign_app_binaries <target_dir> <channel> <app_path> <architecture> <architecture_dir>"
+        echo "   or: $0 sign_app_binaries <bundle_name> <target_dir> <channel> <app_path> <architecture> <architecture_dir>"
         exit 1
     fi
 }
@@ -88,9 +90,6 @@ function sign_app_binaries() {
         cp -R "target/${target_dir}/cli" "${app_path}/Contents/MacOS/"
     fi
 
-    echo "Downloading git binary"
-    download_git "${architecture}" "${app_path}/Contents/MacOS/git"
-
     # Note: The app identifier for our development builds is the same as the app identifier for nightly.
     cp "crates/zed/contents/$channel/embedded.provisionprofile" "${app_path}/Contents/"
 
@@ -125,6 +124,9 @@ function sign_app_binaries() {
         codesign --force --deep \
             --entitlements "${app_path}/Contents/Resources/zed.entitlements" \
             --sign "${MACOS_SIGNING_KEY:- -}" "${app_path}" -v
+
+        echo "Created application bundle:"
+        echo "$app_path"
     fi
 
 
