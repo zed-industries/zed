@@ -80,6 +80,8 @@ pub struct ConfirmCodeAction {
 pub struct ToggleComments {
     #[serde(default)]
     pub advance_downwards: bool,
+    #[serde(default)]
+    pub ignore_indent: bool,
 }
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
