@@ -3,140 +3,120 @@
 set -euo pipefail
 source script/lib/blob-store.sh
 
-build_flag="--release"
-target_dir="release"
-open_result=false
-local_arch=false
-local_only=false
-local_install=false
-bundle_name=""
-can_code_sign=false
-
-# This must match the team in the provisioning profile.
-IDENTITY="Zed Industries, Inc."
-APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
-
-# Function for displaying help info
-help_info() {
-  echo "
-Usage: ${0##*/} [options] [bundle_name]
-Build the application bundle for macOS.
-
-Options:
-  -d    Compile in debug mode
-  -l    Compile for local architecture only.
-  -o    Open dir with the resulting DMG or launch the app itself in local mode.
-  -i    Install the resulting DMG into /Applications in local mode. Noop without -l.
-  -h    Display this help and exit.
-  "
-}
-
-while getopts 'dloih' flag
-do
-    case "${flag}" in
-        o) open_result=true;;
-        d)
-            export CARGO_INCREMENTAL=true
-            export CARGO_BUNDLE_SKIP_BUILD=true
-            build_flag="";
-            target_dir="debug"
-            ;;
-        l)
-            export CARGO_INCREMENTAL=true
-            export CARGO_BUNDLE_SKIP_BUILD=true
-            local_arch=true
-            local_only=true
-            ;;
-        i) local_install=true;;
-        h)
-           help_info
-           exit 0
-           ;;
-    esac
-done
-
-shift $((OPTIND-1))
-
-if [[ $# -gt 0 ]]; then
-    if [ "$1" ]; then
-        bundle_name=$1
-    fi
-fi
-
 export ZED_BUNDLE=true
 export MACOSX_DEPLOYMENT_TARGET=10.15.7
-
-cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
-if [ "$cargo_bundle_version" != "cargo-bundle v0.6.0-zed" ]; then
-    cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
-fi
-
 # Deal with versions of macOS that don't include libstdc++ headers
 export CXXFLAGS="-stdlib=libc++"
-
-version_info=$(rustc --version --verbose)
-host_line=$(echo "$version_info" | grep host)
-local_target_triple=${host_line#*: }
-
-if [ "$local_arch" = true ]; then
-    echo "Building for local target only."
-    cargo build ${build_flag} --package zed --package cli --package remote_server
-else
-    echo "Compiling zed binaries"
-    cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
-    # Build remote_server in separate invocation to prevent feature unification from other crates
-    # from influencing dynamic libraries required by it.
-    cargo build ${build_flag} --package remote_server     --target aarch64-apple-darwin --target x86_64-apple-darwin
-fi
-
-echo "Creating application bundle"
-pushd crates/zed
-channel=$(<RELEASE_CHANNEL)
-popd
-
-pushd crates/zed
-cp Cargo.toml Cargo.toml.backup
-sed \
-    -i .backup \
-    "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
-    Cargo.toml
-
-if [ "$local_arch" = true ]; then
-    app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
-else
-    app_path_x64=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
-    app_path_aarch64=$(cargo bundle ${build_flag} --target aarch64-apple-darwin --select-workspace-root | xargs)
-    app_path=$app_path_x64
-fi
-
-mv Cargo.toml.backup Cargo.toml
-popd
-echo "Bundled ${app_path}"
-
-if [[ -n "${MACOS_CERTIFICATE:-}" && -n "${MACOS_CERTIFICATE_PASSWORD:-}" && -n "${APPLE_NOTARIZATION_USERNAME:-}" && -n "${APPLE_NOTARIZATION_PASSWORD:-}" ]]; then
-    can_code_sign=true
-
-    echo "Setting up keychain for code signing..."
-    security create-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain || echo ""
-    security default-keychain -s zed.keychain
-    security unlock-keychain -p "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-    echo "$MACOS_CERTIFICATE" | base64 --decode > /tmp/zed-certificate.p12
-    security import /tmp/zed-certificate.p12 -k zed.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
-    rm /tmp/zed-certificate.p12
-    security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$MACOS_CERTIFICATE_PASSWORD" zed.keychain
-
-    function cleanup() {
-        echo "Cleaning up keychain"
-        security default-keychain -s login.keychain
-        security delete-keychain zed.keychain
-    }
-
-    trap cleanup EXIT
-fi
-
+# Version of Git to Bundle with Zed from github.com/desktop/dugite-native
 GIT_VERSION="v2.43.3"
 GIT_VERSION_SHA="fa29823"
 
+build_flag="--release"
+target_dir="release"
+local_only=false
+bundle_name=""
+
+function help_info() {
+    echo "Usage: ${0##*/} [options] [bundle_name]"
+    echo "Build the application bundle for macOS."
+    echo "Options:"
+    echo "  -d    Compile in debug mode"
+    echo "  -l    Compile for local architecture only."
+    echo "  -h    Display this help and exit."
+}
+
+function handle_args {
+    while getopts 'dlh' flag
+    do
+        case "${flag}" in
+            d)
+                export CARGO_INCREMENTAL=true
+                export CARGO_BUNDLE_SKIP_BUILD=true
+                build_flag="";
+                target_dir="debug"
+                ;;
+            l)
+                export CARGO_INCREMENTAL=true
+                export CARGO_BUNDLE_SKIP_BUILD=true
+                local_only=true
+                ;;
+            h)
+                help_info
+                exit 0
+                ;;
+            *)
+                echo "Error: Invalid option -${OPTARG}" >&2
+                help_info
+                exit 1
+                ;;
+        esac
+    done
+    shift $((OPTIND-1))
+
+    if [[ $# -gt 0 ]]; then
+        if [ "$1" ]; then
+            bundle_name=$1
+        fi
+    fi
+
+    # Check if GNU Parallel is installed
+    if ! command -v parallel &> /dev/null; then
+        echo "GNU Parallel is not installed. Please install it to continue."
+        exit 1
+    fi
+}
+
+function setup_cargo_bundle() {
+    cargo_bundle_version=$(cargo -q bundle --help 2>&1 | head -n 1 || echo "")
+    if [ "$cargo_bundle_version" != "cargo-bundle v0.6.0-zed" ]; then
+        cargo install cargo-bundle --git https://github.com/zed-industries/cargo-bundle.git --branch zed-deploy
+    fi
+}
+
+function build() {
+    if [ "$local_only" = true ]; then
+        echo "Building for local target only."
+        cargo build ${build_flag} --package zed --package cli --package remote_server
+    else
+        echo "Compiling zed binaries"
+        cargo build ${build_flag} --package zed --package cli --target aarch64-apple-darwin --target x86_64-apple-darwin
+        # Build remote_server in separate invocation to prevent feature unification from other crates
+        # from influencing dynamic libraries required by it.
+        cargo build ${build_flag} --package remote_server     --target aarch64-apple-darwin --target x86_64-apple-darwin
+    fi
+
+    echo "Creating application bundle"
+    pushd crates/zed
+
+    channel=$(<RELEASE_CHANNEL)
+    cp Cargo.toml Cargo.toml.backup
+    sed -i .backup \
+        "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
+        Cargo.toml
+    if [ "$local_only" = true ]; then
+        app_path=$(cargo bundle ${build_flag} --select-workspace-root | xargs)
+    else
+        app_path_x64=$(cargo bundle ${build_flag} --target x86_64-apple-darwin --select-workspace-root | xargs)
+        app_path_aarch64=$(cargo bundle ${build_flag} --target aarch64-apple-darwin --select-workspace-root | xargs)
+        app_path=$app_path_x64
+    fi
+
+    # If bundle_name is not set or empty, use the basename of $app_path
+    if [ -z "$bundle_name" ]; then
+        bundle_name=$(basename "$app_path")
+    else
+        # If bundle_name doesn't end in .app, append it
+        if [[ "$bundle_name" != *.app ]]; then
+            bundle_name="$bundle_name.app"
+        fi
+    fi
+
+    mv Cargo.toml.backup Cargo.toml
+    popd
+    echo "Bundled ${app_path}"
+}
+
+# Download and unpack a specific git version
 function download_and_unpack() {
     local url=$1
     local path_to_unpack=$2
@@ -149,13 +129,14 @@ function download_and_unpack() {
         exit 1
     fi
 
-    curl --silent --fail --location "$url" | tar -xvz -C "$temp_dir" -f - $path_to_unpack
+    curl --silent --fail --location "$url" | tar -xvz -C "$temp_dir" -f - "$path_to_unpack"
 
     mv "$temp_dir/$path_to_unpack" "$target_path"
 
     rm -rf "$temp_dir"
 }
 
+# Download
 function download_git() {
     local architecture=$1
     local target_binary=$2
@@ -187,12 +168,13 @@ function download_git() {
     rm -rf "$tmp_dir"
 }
 
+# Prepare binaries for a specific architecture
 function prepare_binaries() {
     local architecture=$1
     local app_path=$2
 
     echo "Unpacking dSYMs for $architecture"
-    if ! dsymutil --flat target/${architecture}/${target_dir}/Zed 2> target/dsymutil.log; then
+    if ! dsymutil --flat "target/${architecture}/${target_dir}/Zed" 2> target/dsymutil.log; then
         echo "dsymutil failed"
         cat target/dsymutil.log
         exit 1
@@ -203,196 +185,75 @@ function prepare_binaries() {
     fi
 
     echo "Removing existing gzipped dSYMs for $architecture"
-    rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
+    rm -f "target/${architecture}/${target_dir}/Zed.dwarf.gz"
 
     echo "Gzipping dSYMs for $architecture"
-    gzip target/${architecture}/${target_dir}/Zed.dwarf
+    gzip "target/${architecture}/${target_dir}/Zed.dwarf"
 
     echo "Uploading dSYMs for $architecture"
     upload_to_blob_store_public \
         "zed-debug-symbols" \
-        target/${architecture}/${target_dir}/Zed.dwarf.gz \
+        "target/${architecture}/${target_dir}/Zed.dwarf.gz" \
         "$channel/Zed-$version-${architecture}.dwarf.gz"
 
-    cp target/${architecture}/${target_dir}/zed "${app_path}/Contents/MacOS/zed"
-    cp target/${architecture}/${target_dir}/cli "${app_path}/Contents/MacOS/cli"
+    cp "target/${architecture}/${target_dir}/zed" "${app_path}/Contents/MacOS/zed"
+    cp "target/${architecture}/${target_dir}/cli" "${app_path}/Contents/MacOS/cli"
 }
 
-function sign_app_binaries() {
-    local app_path=$1
-    local architecture=$2
-    local architecture_dir=$3
-    echo "Copying WebRTC.framework into the frameworks folder"
-    mkdir "${app_path}/Contents/Frameworks"
-    if [ "$local_arch" = false ]; then
-        cp -R target/${local_target_triple}/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
-    else
-        cp -R target/${target_dir}/WebRTC.framework "${app_path}/Contents/Frameworks/"
-        cp -R target/${target_dir}/cli "${app_path}/Contents/MacOS/"
-    fi
-
-    echo "Downloading git binary"
-    download_git "${architecture}" "${app_path}/Contents/MacOS/git"
-
-    # Note: The app identifier for our development builds is the same as the app identifier for nightly.
-    cp crates/zed/contents/$channel/embedded.provisionprofile "${app_path}/Contents/"
-
-    if [[ $can_code_sign = true ]]; then
-        echo "Code signing binaries"
-        # sequence of codesign commands modeled after this example: https://developer.apple.com/forums/thread/701514
-        /usr/bin/codesign --deep --force --timestamp --sign "$IDENTITY" "${app_path}/Contents/Frameworks/WebRTC.framework" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/cli" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "${app_path}/Contents/MacOS/git" -v
-        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}/Contents/MacOS/zed" -v
-        /usr/bin/codesign --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${app_path}" -v
-    else
-        echo "One or more of the following variables are missing: MACOS_CERTIFICATE, MACOS_CERTIFICATE_PASSWORD, APPLE_NOTARIZATION_USERNAME, APPLE_NOTARIZATION_PASSWORD"
-        if [[ "$local_only" = false ]]; then
-            echo "To create a self-signed local build use ./scripts/build.sh -ldf"
-            exit 1
-        fi
-
-        echo "====== WARNING ======"
-        echo "This bundle is being signed without all entitlements, some features (e.g. universal links) will not work"
-        echo "====== WARNING ======"
-
-        # NOTE: if you need to test universal links you have a few paths forward:
-        # - create a PR and tag it with the `run-bundling` label, and download the .dmg file from there.
-        # - get a signing key for the MQ55VZLNZQ team from Nathan.
-        # - create your own signing key, and update references to MQ55VZLNZQ to your own team ID
-        # then comment out this line.
-        cat crates/zed/resources/zed.entitlements | sed '/com.apple.developer.associated-domains/,+1d' > "${app_path}/Contents/Resources/zed.entitlements"
-
-        codesign --force --deep --entitlements "${app_path}/Contents/Resources/zed.entitlements" --sign ${MACOS_SIGNING_KEY:- -} "${app_path}" -v
-    fi
-
-    if [[ "$target_dir" = "debug" && "$local_only" = false ]]; then
-        if [ "$open_result" = true ]; then
-            open "$app_path"
-        else
-            echo "Created application bundle:"
-            echo "$app_path"
-        fi
-        exit 0
-    fi
-
-    # If bundle_name is not set or empty, use the basename of $app_path
-    if [ -z "$bundle_name" ]; then
-        bundle_name=$(basename "$app_path")
-    else
-        # If bundle_name doesn't end in .app, append it
-        if [[ "$bundle_name" != *.app ]]; then
-            bundle_name="$bundle_name.app"
-        fi
-    fi
-
+function process() {
     if [ "$local_only" = true ]; then
-        if [ "$local_install" = true ]; then
-            rm -rf "/Applications/$bundle_name"
-            mv "$app_path" "/Applications/$bundle_name"
-            echo "Installed application bundle: /Applications/$bundle_name"
-            if [ "$open_result" = true ]; then
-                echo "Opening /Applications/$bundle_name"
-                open "/Applications/$bundle_name"
-            fi
-        else
-            if [ "$open_result" = true ]; then
-                echo "Opening $app_path"
-                open "$app_path"
-            fi
-        fi
+        version_info=$(rustc --version --verbose)
+        host_line=$(echo "$version_info" | grep host)
+        local_target_triple=${host_line#*: }
+        # script/notarize-mac sign_app_binaries <bundle_name> <target_dir> <channel> <app_path> <architecture> <architecture_dir>
+        ./script/sign-mac sign_app_binaries "$bundle_name" "$target_dir" "$channel" "$app_path" "$local_target_triple" "$local_target_triple"
+
+        ./script/sign-mac sign_binary "target/release/remote_server"
     else
-        dmg_target_directory="target/${architecture_dir}/${target_dir}"
-        dmg_source_directory="${dmg_target_directory}/dmg"
-        dmg_file_path="${dmg_target_directory}/Zed.dmg"
-        xcode_bin_dir_path="$(xcode-select -p)/usr/bin"
+        # Create universal binary
+        prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
+        prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
 
-        rm -rf ${dmg_source_directory}
-        mkdir -p ${dmg_source_directory}
-        mv "${app_path}" "${dmg_source_directory}"
+        cp -R "$app_path_x64" target/release/
+        app_path=target/release/$(basename "$app_path_x64")
+        lipo \
+            -create \
+            target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/zed \
+            -output \
+            "${app_path}/Contents/MacOS/zed"
+        lipo \
+            -create \
+            target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
+            -output \
+            "${app_path}/Contents/MacOS/cli"
 
-        if [[ $can_code_sign = true ]]; then
-            echo "Creating temporary DMG at ${dmg_file_path} using ${dmg_source_directory} to notarize app bundle"
-            hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
+        # Piping output through these will add a prefix and colorize the line
+        prefix1="sed 's/^/\x1b[35m[Bundle aarch64] \x1b[0m/'" # magenta
+        prefix2="sed 's/^/\x1b[34m[Bundle x86_x64] \x1b[0m/'" # blue
+        prefix3="sed 's/^/\x1b[36m[Bundle Combine] \x1b[0m/'" # cyan
+        prefix4="sed 's/^/\x1b[33m[Remote x86_x64] \x1b[0m/'" # yellow
+        prefix5="sed 's/^/\x1b[32m[Remote x86_x64] \x1b[0m/'" # green
 
-            echo "Code-signing DMG"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
+        # ./script/sign-mac sign_app_binaries <target_dir> <channel> <app_path> <architecture> <architecture_dir>"
+        # ./script/sign-mac sign_binary <binary_path>
 
-            echo "Notarizing DMG with Apple"
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+        # These each take approximately 4minutes. Use GNU Parallel to submit them simultaneously.
+        # Output is interlaced between all tasks, so add unique prefixes (sed) and line numbers (nl)
+        # to preserve de-interlacing if necessary e.g. Copy output to clipboard and then: pbpaste | sort | pbcopy
+        parallel --progress --line-buffer ::: \
+          "./script/sign-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
+          "./script/sign-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
+          "./script/sign-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path\"         universal             .                    | nl | $prefix3" \
+          "./script/sign-mac sign_binary  target/x86_64-apple-darwin/release/remote_server | nl | $prefix4" \
+          "./script/sign-mac sign_binary target/aarch64-apple-darwin/release/remote_server | nl | $prefix5"
 
-            echo "Removing temporary DMG (used only for notarization)"
-            rm "${dmg_file_path}"
-
-            echo "Stapling notarization ticket to ${dmg_source_directory}/${bundle_name}"
-            "${xcode_bin_dir_path}/stapler" staple "${dmg_source_directory}/${bundle_name}"
-        fi
-
-        echo "Adding symlink to /Applications to ${dmg_source_directory}"
-        ln -s /Applications ${dmg_source_directory}
-
-        echo "Creating final DMG at ${dmg_file_path} using ${dmg_source_directory}"
-        hdiutil create -volname Zed -srcfolder "${dmg_source_directory}" -ov -format UDZO "${dmg_file_path}"
-
-        # If someone runs this bundle script locally, a symlink will be placed in `dmg_source_directory`.
-        # This symlink causes CPU issues with Zed if the Zed codebase is the project being worked on, so we simply remove it for now.
-        echo "Removing symlink to /Applications from ${dmg_source_directory}"
-        rm ${dmg_source_directory}/Applications
-
-        echo "Adding license agreement to DMG"
-        npm install --global dmg-license minimist
-        dmg-license script/terms/terms.json "${dmg_file_path}"
-
-        if [[ $can_code_sign = true ]]; then
-            echo "Notarizing DMG with Apple"
-            /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
-            "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
-        fi
-
-        if [ "$open_result" = true ]; then
-            open $dmg_target_directory
-        fi
+        gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
+        gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
     fi
 }
 
-function sign_binary() {
-    local binary_path=$1
 
-    if [[ $can_code_sign = true ]]; then
-        echo "Code signing executable $binary_path"
-        /usr/bin/codesign --deep --force --timestamp --options runtime --entitlements crates/zed/resources/zed.entitlements --sign "$IDENTITY" "${binary_path}" -v
-    fi
-}
-
-if [ "$local_arch" = true ]; then
-    sign_app_binaries "$app_path" "$local_target_triple" "$local_target_triple"
-
-    sign_binary "target/release/remote_server"
-else
-    # Create universal binary
-    prepare_binaries "aarch64-apple-darwin" "$app_path_aarch64"
-    prepare_binaries "x86_64-apple-darwin" "$app_path_x64"
-
-    cp -R "$app_path_x64" target/release/
-    app_path=target/release/$(basename "$app_path_x64")
-    lipo \
-        -create \
-        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/zed \
-        -output \
-        "${app_path}/Contents/MacOS/zed"
-    lipo \
-        -create \
-        target/{x86_64-apple-darwin,aarch64-apple-darwin}/${target_dir}/cli \
-        -output \
-        "${app_path}/Contents/MacOS/cli"
-
-    sign_app_binaries "$app_path" "universal" "."
-    sign_app_binaries "$app_path_x64" "x86_64-apple-darwin" "x86_64-apple-darwin"
-    sign_app_binaries "$app_path_aarch64" "aarch64-apple-darwin" "aarch64-apple-darwin"
-
-    sign_binary "target/x86_64-apple-darwin/release/remote_server"
-    sign_binary "target/aarch64-apple-darwin/release/remote_server"
-    gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
-    gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
-fi
+handle_args "$@"
+setup_cargo_bundle
+build
+process
