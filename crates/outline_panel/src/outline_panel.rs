@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::SyntaxTheme;
-use ui::IndentGuideColors;
+use ui::{IndentGuideColors, IndentGuideLayout};
 use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -4070,16 +4070,25 @@ impl Render for OutlinePanel {
                             )
                             .with_render_fn(
                                 cx.view().clone(),
-                                move |_, params, _| {
+                                move |outline_panel, params, _| {
                                     const LEFT_OFFSET: f32 = 10.;
 
                                     let indent_size = params.indent_size;
                                     let item_height = params.item_height;
+                                    let active_indent_guide_ix =
+                                        outline_panel.selected_entry().and_then(|selected_entry| {
+                                            find_active_indent_guide_ix(
+                                                outline_panel,
+                                                selected_entry,
+                                                &params.indent_guides,
+                                            )
+                                        });
 
                                     params
                                         .indent_guides
                                         .into_iter()
-                                        .map(|layout| {
+                                        .enumerate()
+                                        .map(|(ix, layout)| {
                                             let bounds = Bounds::new(
                                                 point(
                                                     px(layout.offset.x as f32) * indent_size
@@ -4094,7 +4103,7 @@ impl Render for OutlinePanel {
                                             ui::RenderedIndentGuide {
                                                 bounds,
                                                 layout,
-                                                is_active: false,
+                                                is_active: active_indent_guide_ix == Some(ix),
                                                 hitbox: None,
                                             }
                                         })
@@ -4145,6 +4154,40 @@ impl Render for OutlinePanel {
             ),
         )
     }
+}
+
+fn find_active_indent_guide_ix(
+    outline_panel: &OutlinePanel,
+    selected_entry: &PanelEntry,
+    candidates: &[IndentGuideLayout],
+) -> Option<usize> {
+    let (target_ix, target_depth) = outline_panel
+        .cached_entries
+        .iter()
+        .enumerate()
+        .find(|(_, cached_entry)| &cached_entry.entry == selected_entry)
+        .map(|(i, entry)| (i, entry.depth))?;
+
+    let (target_ix, target_depth) = if let Some(target_depth) = outline_panel
+        .cached_entries
+        .get(target_ix + 1)
+        .filter(|cached_entry| cached_entry.depth > target_depth)
+        .map(|entry| entry.depth)
+    {
+        (target_ix + 1, target_depth.saturating_sub(1))
+    } else {
+        (target_ix, target_depth.saturating_sub(1))
+    };
+
+    candidates
+        .iter()
+        .enumerate()
+        .find(|(_, guide)| {
+            guide.offset.y <= target_ix
+                && target_ix < guide.offset.y + guide.length
+                && guide.offset.x == target_depth
+        })
+        .map(|(ix, _)| ix)
 }
 
 fn subscribe_for_editor_events(
