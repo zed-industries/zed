@@ -324,13 +324,6 @@ impl Block {
         }
     }
 
-    fn priority(&self) -> usize {
-        match self {
-            Block::Custom(block) => block.priority,
-            Block::ExcerptBoundary { .. } => usize::MAX,
-        }
-    }
-
     pub fn height(&self) -> u32 {
         match self {
             Block::Custom(block) => block.height,
@@ -796,8 +789,42 @@ impl BlockMap {
     }
 
     fn sort_blocks(blocks: &mut Vec<(BlockPlacement<WrapRow>, Block)>) {
-        blocks.sort_unstable_by_key(|(placement, block)| {
-            (placement.clone(), block.priority(), block.id())
+        blocks.sort_unstable_by(|(placement_a, block_a), (placement_b, block_b)| {
+            placement_a
+                .cmp(&placement_b)
+                .then_with(|| match (block_a, block_b) {
+                    (
+                        Block::ExcerptBoundary {
+                            next_excerpt: next_excerpt_a,
+                            ..
+                        },
+                        Block::ExcerptBoundary {
+                            next_excerpt: next_excerpt_b,
+                            ..
+                        },
+                    ) => next_excerpt_a
+                        .as_ref()
+                        .map(|excerpt| excerpt.id)
+                        .cmp(&next_excerpt_b.as_ref().map(|excerpt| excerpt.id)),
+                    (Block::ExcerptBoundary { next_excerpt, .. }, Block::Custom(_)) => {
+                        if next_excerpt.is_some() {
+                            Ordering::Less
+                        } else {
+                            Ordering::Greater
+                        }
+                    }
+                    (Block::Custom(_), Block::ExcerptBoundary { next_excerpt, .. }) => {
+                        if next_excerpt.is_some() {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Less
+                        }
+                    }
+                    (Block::Custom(block_a), Block::Custom(block_b)) => block_a
+                        .priority
+                        .cmp(&block_b.priority)
+                        .then_with(|| block_a.id.cmp(&block_b.id)),
+                })
         });
         blocks.dedup_by(|(right, _), (left, _)| match (left, right) {
             (BlockPlacement::Replace(range), BlockPlacement::Above(row)) => {
