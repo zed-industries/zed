@@ -490,7 +490,7 @@ impl Render for NotebookEditor {
             .flex()
             .items_start()
             // .size_full()
-            // i'm lazy to figure out this flex height issue right now
+            // todo: figure out the flex height issue
             .h(px(800.))
             .w(px(1000.))
             .overflow_hidden()

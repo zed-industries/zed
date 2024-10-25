@@ -7,11 +7,13 @@ use std::{
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, Hsla, Task, View, WeakView};
+use gpui::{prelude::*, Hsla, Task, TextStyleRefinement, View, WeakView};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use settings::Settings as _;
+use theme::ThemeSettings;
 use ui::prelude::*;
 use uuid::Uuid;
 
@@ -315,8 +317,20 @@ impl Cell {
                         cx,
                     );
 
+                    let theme = ThemeSettings::get_global(cx);
+
+                    let refinement = TextStyleRefinement {
+                        font_family: Some(theme.buffer_font.family.clone()),
+                        font_size: Some(theme.buffer_font_size.into()),
+                        color: Some(cx.theme().colors().editor_foreground),
+                        background_color: Some(gpui::transparent_black()),
+                        ..Default::default()
+                    };
+
                     editor.set_text(text, cx);
                     editor.set_show_gutter(false, cx);
+                    editor.set_text_style_refinement(refinement);
+
                     // editor.set_read_only(true);
                     editor
                 });
