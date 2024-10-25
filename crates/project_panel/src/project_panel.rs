@@ -94,16 +94,10 @@ pub struct ProjectPanel {
 struct EditState {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
-    leaf_entry_id: Option<ProjectEntryId>,
+    is_new_entry: bool,
     is_dir: bool,
     depth: usize,
     processing_filename: Option<String>,
-}
-
-impl EditState {
-    fn is_new_entry(&self) -> bool {
-        self.leaf_entry_id.is_none()
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -830,10 +824,10 @@ impl ProjectPanel {
         cx.focus(&self.focus_handle);
 
         let worktree_id = edit_state.worktree_id;
-        let is_new_entry = edit_state.is_new_entry();
+        let is_new_entry = edit_state.is_new_entry;
         let filename = self.filename_editor.read(cx).text(cx);
         edit_state.is_dir = edit_state.is_dir
-            || (edit_state.is_new_entry() && filename.ends_with(std::path::MAIN_SEPARATOR));
+            || (edit_state.is_new_entry && filename.ends_with(std::path::MAIN_SEPARATOR));
         let is_dir = edit_state.is_dir;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
@@ -841,7 +835,6 @@ impl ProjectPanel {
         let path_already_exists = |path| worktree.read(cx).entry_for_path(path).is_some();
         let edit_task;
         let edited_entry_id;
-        let leaf_entry_id = edit_state.leaf_entry_id.clone();
         if is_new_entry {
             self.selection = Some(SelectedEntry {
                 worktree_id,
@@ -884,7 +877,6 @@ impl ProjectPanel {
 
             match new_entry {
                 Err(e) => {
-                    dbg!("Error");
                     project_panel.update(&mut cx, |project_panel, cx| {
                         project_panel.marked_entries.clear();
                         project_panel.update_visible_entries(None, cx);
@@ -892,12 +884,11 @@ impl ProjectPanel {
                     Err(e)?;
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
-                    dbg!("Included");
                     project_panel.update(&mut cx, |project_panel, cx| {
-                        dbg!(edited_entry_id, new_entry.id);
                         if let Some(selection) = &mut project_panel.selection {
-                            if Some(selection.entry_id) == leaf_entry_id {
+                            if selection.entry_id == edited_entry_id {
                                 selection.worktree_id = worktree_id;
+                                selection.entry_id = new_entry.id;
                                 project_panel.marked_entries.clear();
                                 project_panel.expand_to_selection(cx);
                             }
@@ -910,7 +901,6 @@ impl ProjectPanel {
                     })?;
                 }
                 Ok(CreatedEntry::Excluded { abs_path }) => {
-                    dbg!("Excluded");
                     if let Some(open_task) = project_panel
                         .update(&mut cx, |project_panel, cx| {
                             project_panel.marked_entries.clear();
@@ -1023,7 +1013,7 @@ impl ProjectPanel {
             self.edit_state = Some(EditState {
                 worktree_id,
                 entry_id: directory_id,
-                leaf_entry_id: None,
+                is_new_entry: true,
                 is_dir,
                 processing_filename: None,
                 depth: 0,
@@ -1053,16 +1043,16 @@ impl ProjectPanel {
     fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
         if let Some(SelectedEntry {
             worktree_id,
-            entry_id: leaf_entry_id,
+            entry_id,
         }) = self.selection
         {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
-                let entry_id = self.unflatten_entry_id(leaf_entry_id);
+                let entry_id = self.unflatten_entry_id(entry_id);
                 if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                     self.edit_state = Some(EditState {
                         worktree_id,
                         entry_id,
-                        leaf_entry_id: Some(leaf_entry_id),
+                        is_new_entry: false,
                         is_dir: entry.is_dir(),
                         processing_filename: None,
                         depth: 0,
@@ -1845,7 +1835,7 @@ impl ProjectPanel {
             let mut new_entry_parent_id = None;
             let mut new_entry_kind = EntryKind::Dir;
             if let Some(edit_state) = &self.edit_state {
-                if edit_state.worktree_id == worktree_id && edit_state.is_new_entry() {
+                if edit_state.worktree_id == worktree_id && edit_state.is_new_entry {
                     new_entry_parent_id = Some(edit_state.entry_id);
                     new_entry_kind = if edit_state.is_dir {
                         EntryKind::Dir
@@ -2361,7 +2351,7 @@ impl ProjectPanel {
                     };
 
                     if let Some(edit_state) = &self.edit_state {
-                        let is_edited_entry = if edit_state.is_new_entry() {
+                        let is_edited_entry = if edit_state.is_new_entry {
                             entry.id == NEW_ENTRY_ID
                         } else {
                             entry.id == edit_state.entry_id
@@ -2382,7 +2372,7 @@ impl ProjectPanel {
                                 details.filename.clear();
                                 details.filename.push_str(processing_filename);
                             } else {
-                                if edit_state.is_new_entry() {
+                                if edit_state.is_new_entry {
                                     details.filename.clear();
                                 }
                                 details.is_editing = true;
