@@ -140,13 +140,18 @@ mod uniform_list {
             visible_range: Range<usize>,
             bounds: Bounds<Pixels>,
             item_height: Pixels,
+            item_count: usize,
             cx: &mut WindowContext,
         ) -> AnyElement {
             let mut visible_range = visible_range.clone();
-            visible_range.end += 1;
+            let includes_trailing_indent = visible_range.end < item_count;
+            // Check if we have entries after the visible range,
+            // if so extend the visible range so we can fetch a trailing indent,
+            // which is needed to compute indent guides correctly.
+            if includes_trailing_indent {
+                visible_range.end += 1;
+            }
             let visible_entries = &(self.compute_indents_fn)(visible_range.clone(), cx);
-            // Check if we have an additional indent that is outside of the visible range
-            let includes_trailing_indent = visible_entries.len() == visible_range.len();
             let indent_guides = compute_indent_guides(
                 &visible_entries,
                 visible_range.start,
