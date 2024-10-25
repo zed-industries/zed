@@ -3589,6 +3589,7 @@ impl LspStore {
             let abs_path = abs_path
                 .to_file_path()
                 .map_err(|_| anyhow!("can't convert URI to path"))?;
+            println!("--> open local buffer abs_path: {:?}", abs_path);
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(&mut cx, move |lsp_store, cx| match lsp_store.as_local() {
@@ -5556,7 +5557,7 @@ impl LspStore {
 
         let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
-        let worktree_path = worktree.abs_path();
+        let root_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
 
         if self.language_server_ids.contains_key(&key) {
@@ -5578,7 +5579,6 @@ impl LspStore {
             as Arc<dyn LspAdapterDelegate>;
 
         let server_id = self.languages.next_language_server_id();
-        let root_path = worktree_path.clone();
         log::info!(
             "attempting to start language server {:?}, path: {root_path:?}, id: {server_id}",
             adapter.name.0

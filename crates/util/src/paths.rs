@@ -95,8 +95,68 @@ impl<T: AsRef<Path>> PathExt for T {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SanitizedPath(Arc<Path>);
+
+impl SanitizedPath {
+    pub fn starts_with(&self, prefix: &SanitizedPath) -> bool {
+        self.0.starts_with(&prefix.0)
+    }
+
+    pub fn as_path(&self) -> &Arc<Path> {
+        &self.0
+    }
+}
+
+impl From<SanitizedPath> for Arc<Path> {
+    fn from(sanitized_path: SanitizedPath) -> Self {
+        sanitized_path.0
+    }
+}
+
+impl<T: AsRef<Path>> From<T> for SanitizedPath {
+    #[cfg(not(target_os = "windows"))]
+    fn from(path: &Path) -> Self {
+        SanitizedPath(path.into())
+    }
+
+    #[cfg(target_os = "windows")]
+    fn from(path: T) -> Self {
+        let path = path.as_ref();
+        SanitizedPath(dunce::simplified(path).into())
+    }
+}
+
+// impl From<&Path> for SanitizedPath {
+//     #[cfg(not(target_os = "windows"))]
+//     fn from(path: &Path) -> Self {
+//         SanitizedPath(path.into())
+//     }
+
+//     #[cfg(target_os = "windows")]
+//     fn from(path: &Path) -> Self {
+//         let path = dunce::simplified(path);
+//         SanitizedPath(path.into())
+//     }
+// }
+
+// impl From<Arc<Path>> for SanitizedPath {
+//     fn from(path: Arc<Path>) -> Self {
+//         Self(path)
+//     }
+// }
+
+// impl From<&PathBuf> for SanitizedPath {
+//     fn from(path: &PathBuf) -> Self {
+//         SanitizedPath(path.as_path().into())
+//     }
+// }
+
+// impl From<&Arc<Path>> for SanitizedPath {
+//     fn from(path: &Arc<Path>) -> Self {
+//         SanitizedPath(path.clone())
+//     }
+// }
 
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';

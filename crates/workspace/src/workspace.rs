@@ -2023,6 +2023,7 @@ impl Workspace {
 
                 let this = this.clone();
                 let abs_path = abs_path.clone();
+                println!("==> abs_path: {abs_path:?}");
                 let fs = fs.clone();
                 let pane = pane.clone();
                 let task = cx.spawn(move |mut cx| async move {
@@ -2031,6 +2032,8 @@ impl Workspace {
                         this.update(&mut cx, |workspace, cx| {
                             let worktree = worktree.read(cx);
                             let worktree_abs_path = worktree.abs_path();
+                            println!("--> abs_path: {abs_path:?}, worktree_abs_path: {worktree_abs_path:?}");
+                            println!("--> equal: {}", abs_path == worktree_abs_path.as_ref());
                             let entry_id = if abs_path == worktree_abs_path.as_ref() {
                                 worktree.root_entry()
                             } else {
