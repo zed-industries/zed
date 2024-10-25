@@ -73,6 +73,8 @@ use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
 
+const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+
 struct SelectionLayout {
     head: DisplayPoint,
     cursor_shape: CursorShape,
@@ -1451,8 +1453,6 @@ impl EditorElement {
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
 
         let start_x = {
-            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
-
             let line_end = if let Some(crease_trailer) = crease_trailer {
                 crease_trailer.bounds.right()
             } else {
@@ -4951,12 +4951,66 @@ impl Element for EditorElement {
                     );
                     let text_width = bounds.size.width - gutter_dimensions.width;
 
+                    let blame_overflow = self.editor.update(cx, |editor, cx| {
+                        if !editor.render_git_blame_inline(cx) {
+                            return None;
+                        }
+
+                        let cursor_position = editor.selections.newest_anchor().head();
+                        let buffer_snapshot = editor.buffer.read(cx).snapshot(cx);
+                        let buffer_row =
+                            MultiBufferRow(cursor_position.to_point(&buffer_snapshot).row);
+                        let line_width = buffer_snapshot.line_len(buffer_row) as f32 * em_advance;
+
+                        let blame_length = editor.blame.as_ref().map_or(0., |blame| {
+                            blame
+                                .update(cx, |blame, cx| {
+                                    blame.blame_for_rows([Some(buffer_row)], cx).next()
+                                })
+                                .flatten()
+                                .map_or(0., |entry| {
+                                    const MAX_TIMESTAMP_LENGTH: f32 = 14.;
+                                    const GAP_AND_GLYPHS: f32 = 5.;
+
+                                    let author_length =
+                                        entry.author.map_or(0., |author| author.len() as f32);
+                                    let max_char_count =
+                                        author_length + MAX_TIMESTAMP_LENGTH + GAP_AND_GLYPHS;
+                                    max_char_count
+                                })
+                        });
+
+                        let blame_width =
+                            (INLINE_BLAME_PADDING_EM_WIDTHS + blame_length) * em_advance;
+
+                        let longest_line_width =
+                            layout_line(snapshot.longest_row(), &snapshot, &style, text_width, cx)
+                                .width;
+
+                        // Blame is outside the scroll bounds.
+                        if line_width > longest_line_width {
+                            return Some(blame_width);
+                        }
+
+                        // Blame is partially outside the scroll bounds.
+                        if line_width + blame_width > longest_line_width {
+                            return Some(line_width + blame_width - longest_line_width);
+                        }
+
+                        // Blame is inside the scroll bounds.
+                        None
+                    });
+
                     let right_margin = if snapshot.mode == EditorMode::Full {
                         EditorElement::SCROLLBAR_WIDTH
                     } else {
                         px(0.)
                     };
-                    let overscroll = size(em_width + right_margin, px(0.));
+
+                    let overscroll = size(
+                        em_width + right_margin + blame_overflow.unwrap_or_default(),
+                        px(0.),
+                    );
 
                     let editor_width =
                         text_width - gutter_dimensions.margin - overscroll.width - em_width;
