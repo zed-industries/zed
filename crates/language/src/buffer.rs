@@ -4035,7 +4035,7 @@ impl<'a> BufferChunks<'a> {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack

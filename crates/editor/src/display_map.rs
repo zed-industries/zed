@@ -1168,6 +1168,7 @@ pub mod tests {
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
     use theme::{LoadThemes, SyntaxTheme};
+    use unindent::Unindent as _;
     use util::test::{marked_text_ranges, sample_text};
     use Bias::*;
 
@@ -1624,8 +1625,6 @@ pub mod tests {
 
     #[gpui::test]
     async fn test_chunks(cx: &mut gpui::TestAppContext) {
-        use unindent::Unindent as _;
-
         let text = r#"
             fn outer() {}
 
@@ -1722,12 +1721,110 @@ pub mod tests {
         );
     }
 
+    #[gpui::test]
+    async fn test_chunks_with_syntax_highlighting_across_blocks(cx: &mut gpui::TestAppContext) {
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        let text = r#"
+            const A: &str = "
+                one
+                two
+                three
+            ";
+            const B: &str = "four";
+        "#
+        .unindent();
+
+        let theme = SyntaxTheme::new_test(vec![
+            ("string", Hsla::red()),
+            ("punctuation", Hsla::blue()),
+            ("keyword", Hsla::green()),
+        ]);
+        let language = Arc::new(
+            Language::new(
+                LanguageConfig {
+                    name: "Rust".into(),
+                    ..Default::default()
+                },
+                Some(tree_sitter_rust::LANGUAGE.into()),
+            )
+            .with_highlights_query(
+                r#"
+                (string_literal) @string
+                "const" @keyword
+                [":" ";"] @punctuation
+                "#,
+            )
+            .unwrap(),
+        );
+        language.set_theme(&theme);
+
+        cx.update(|cx| init_test(cx, |_| {}));
+
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+        cx.condition(&buffer, |buf, _| !buf.is_parsing()).await;
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Courier"),
+                px(16.0),
+                None,
+                true,
+                1,
+                1,
+                0,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
+
+        // Insert a block in the middle of a multi-line string literal
+        map.update(cx, |map, cx| {
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Below(
+                        buffer_snapshot.anchor_before(Point::new(1, 0)),
+                    ),
+                    height: 1,
+                    style: BlockStyle::Sticky,
+                    render: Box::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            )
+        });
+
+        pretty_assertions::assert_eq!(
+            cx.update(|cx| syntax_chunks(DisplayRow(0)..DisplayRow(7), &map, &theme, cx)),
+            [
+                ("const".into(), Some(Hsla::green())),
+                (" A".into(), None),
+                (":".into(), Some(Hsla::blue())),
+                (" &str = ".into(), None),
+                ("\"\n    one\n".into(), Some(Hsla::red())),
+                ("\n".into(), None),
+                ("    two\n    three\n\"".into(), Some(Hsla::red())),
+                (";".into(), Some(Hsla::blue())),
+                ("\n".into(), None),
+                ("const".into(), Some(Hsla::green())),
+                (" B".into(), None),
+                (":".into(), Some(Hsla::blue())),
+                (" &str = ".into(), None),
+                ("\"four\"".into(), Some(Hsla::red())),
+                (";".into(), Some(Hsla::blue())),
+                ("\n".into(), None),
+            ]
+        );
+    }
+
     // todo(linux) fails due to pixel differences in text rendering
     #[cfg(target_os = "macos")]
     #[gpui::test]
     async fn test_chunks_with_soft_wrapping(cx: &mut gpui::TestAppContext) {
-        use unindent::Unindent as _;
-
         cx.background_executor
             .set_block_on_ticks(usize::MAX..=usize::MAX);
 
