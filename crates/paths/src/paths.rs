@@ -101,10 +101,10 @@ pub fn logs_dir() -> &'static PathBuf {
     })
 }
 
-/// Returns the path to the zed server directory on this ssh host.
+/// Returns the path to the Zed server directory on this SSH host.
 pub fn remote_server_state_dir() -> &'static PathBuf {
     static REMOTE_SERVER_STATE: OnceLock<PathBuf> = OnceLock::new();
-    REMOTE_SERVER_STATE.get_or_init(|| return support_dir().join("server_state"))
+    REMOTE_SERVER_STATE.get_or_init(|| support_dir().join("server_state"))
 }
 
 /// Returns the path to the `Zed.log` file.
@@ -293,3 +293,6 @@ pub fn local_tasks_file_relative_path() -> &'static Path {
 pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
     Path::new(".vscode/tasks.json")
 }
+
+/// A default editorconfig file name to use when resolving project settings.
+pub const EDITORCONFIG_NAME: &str = ".editorconfig";

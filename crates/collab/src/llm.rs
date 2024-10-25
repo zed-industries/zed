@@ -459,28 +459,27 @@ async fn check_usage_limit(
             Utc::now(),
         )
         .await?;
+    let free_tier = claims.free_tier_monthly_spending_limit();
 
-    if state.config.is_llm_billing_enabled() {
-        if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
-            if !claims.has_llm_subscription {
-                return Err(Error::http(
-                    StatusCode::PAYMENT_REQUIRED,
-                    "Maximum spending limit reached for this month.".to_string(),
-                ));
-            }
+    if usage.spending_this_month >= free_tier {
+        if !claims.has_llm_subscription {
+            return Err(Error::http(
+                StatusCode::PAYMENT_REQUIRED,
+                "Maximum spending limit reached for this month.".to_string(),
+            ));
+        }
 
-            if usage.spending_this_month >= Cents(claims.max_monthly_spend_in_cents) {
-                return Err(Error::Http(
-                    StatusCode::FORBIDDEN,
-                    "Maximum spending limit reached for this month.".to_string(),
-                    [(
-                        HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
-                        HeaderValue::from_static("true"),
-                    )]
-                    .into_iter()
-                    .collect(),
-                ));
-            }
+        if (usage.spending_this_month - free_tier) >= Cents(claims.max_monthly_spend_in_cents) {
+            return Err(Error::Http(
+                StatusCode::FORBIDDEN,
+                "Maximum spending limit reached for this month.".to_string(),
+                [(
+                    HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
+                    HeaderValue::from_static("true"),
+                )]
+                .into_iter()
+                .collect(),
+            ));
         }
     }
 
@@ -625,7 +624,6 @@ where
 impl<S> Drop for TokenCountingStream<S> {
     fn drop(&mut self) {
         let state = self.state.clone();
-        let is_llm_billing_enabled = state.config.is_llm_billing_enabled();
         let claims = self.claims.clone();
         let provider = self.provider;
         let model = std::mem::take(&mut self.model);
@@ -639,15 +637,9 @@ impl<S> Drop for TokenCountingStream<S> {
                     provider,
                     &model,
                     tokens,
-                    // We're passing `false` here if LLM billing is not enabled
-                    // so that we don't write any records to the
-                    // `billing_events` table until we're ready to bill users.
-                    if is_llm_billing_enabled {
-                        claims.has_llm_subscription
-                    } else {
-                        false
-                    },
+                    claims.has_llm_subscription,
                     Cents(claims.max_monthly_spend_in_cents),
+                    claims.free_tier_monthly_spending_limit(),
                     Utc::now(),
                 )
                 .await

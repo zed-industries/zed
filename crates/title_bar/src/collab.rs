@@ -285,8 +285,7 @@ impl TitleBar {
         let room = room.read(cx);
         let project = self.project.read(cx);
         let is_local = project.is_local() || project.is_via_ssh();
-        let is_dev_server_project = project.dev_server_project_id().is_some();
-        let is_shared = (is_local || is_dev_server_project) && project.is_shared();
+        let is_shared = is_local && project.is_shared();
         let is_muted = room.is_muted();
         let is_deafened = room.is_deafened().unwrap_or(false);
         let is_screen_sharing = room.is_screen_sharing();
@@ -299,7 +298,7 @@ impl TitleBar {
 
         let mut children = Vec::new();
 
-        if (is_local || is_dev_server_project) && can_share_projects {
+        if is_local && can_share_projects {
             children.push(
                 Button::new(
                     "toggle_sharing",

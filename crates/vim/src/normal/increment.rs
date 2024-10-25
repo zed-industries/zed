@@ -98,32 +98,40 @@ impl Vim {
     }
 }
 
-fn increment_decimal_string(mut num: &str, mut delta: i64) -> String {
-    let mut negative = false;
-    if num.chars().next() == Some('-') {
-        negative = true;
-        delta = 0 - delta;
-        num = &num[1..];
-    }
-    let result = if let Ok(value) = u64::from_str_radix(num, 10) {
-        let wrapped = value.wrapping_add_signed(delta);
-        if delta < 0 && wrapped > value {
-            negative = !negative;
-            (u64::MAX - wrapped).wrapping_add(1)
-        } else if delta > 0 && wrapped < value {
-            negative = !negative;
-            u64::MAX - wrapped
-        } else {
-            wrapped
+fn increment_decimal_string(num: &str, delta: i64) -> String {
+    let (negative, delta, num_str) = match num.strip_prefix('-') {
+        Some(n) => (true, -delta, n),
+        None => (false, delta, num),
+    };
+    let num_length = num_str.len();
+    let leading_zero = num_str.starts_with('0');
+
+    let (result, new_negative) = match u64::from_str_radix(num_str, 10) {
+        Ok(value) => {
+            let wrapped = value.wrapping_add_signed(delta);
+            if delta < 0 && wrapped > value {
+                ((u64::MAX - wrapped).wrapping_add(1), !negative)
+            } else if delta > 0 && wrapped < value {
+                (u64::MAX - wrapped, !negative)
+            } else {
+                (wrapped, negative)
+            }
         }
-    } else {
-        u64::MAX
+        Err(_) => (u64::MAX, negative),
     };
 
-    if result == 0 || !negative {
-        format!("{}", result)
+    let formatted = format!("{}", result);
+    let new_significant_digits = formatted.len();
+    let padding = if leading_zero {
+        num_length.saturating_sub(new_significant_digits)
     } else {
-        format!("-{}", result)
+        0
+    };
+
+    if new_negative && result != 0 {
+        format!("-{}{}", "0".repeat(padding), formatted)
+    } else {
+        format!("{}{}", "0".repeat(padding), formatted)
     }
 }
 
@@ -287,6 +295,63 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_increment_with_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            000ˇ9
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            001ˇ0
+            "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            000ˇ8
+            "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_leading_zeros_and_zero(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            01ˇ1
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            01ˇ2
+            "});
+        cx.simulate_shared_keystrokes("1 2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            00ˇ0
+            "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_with_changing_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {"
+            099ˇ9
+            "})
+            .await;
+
+        cx.simulate_shared_keystrokes("ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            100ˇ0
+            "});
+        cx.simulate_shared_keystrokes("2 ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+            99ˇ8
+            "});
+    }
+
+    #[gpui::test]
     async fn test_increment_with_two_dots(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
@@ -319,6 +384,27 @@ mod test {
         cx.simulate_shared_keystrokes("2 ctrl-a").await;
         cx.shared_state().await.assert_eq(indoc! {"
                 ˇ1
+                "});
+    }
+
+    #[gpui::test]
+    async fn test_increment_sign_change_with_leading_zeros(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_shared_state(indoc! {"
+                00ˇ1
+                "})
+            .await;
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                00ˇ0
+                "});
+        cx.simulate_shared_keystrokes("ctrl-x").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                -00ˇ1
+                "});
+        cx.simulate_shared_keystrokes("2 ctrl-a").await;
+        cx.shared_state().await.assert_eq(indoc! {"
+                00ˇ1
                 "});
     }
 

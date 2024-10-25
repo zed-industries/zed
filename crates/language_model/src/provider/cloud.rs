@@ -8,7 +8,7 @@ use crate::{
 use anthropic::AnthropicError;
 use anyhow::{anyhow, Result};
 use client::{
-    Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
+    zed_urls, Client, PerformCompletionParams, UserStore, EXPIRED_LLM_TOKEN_HEADER_NAME,
     MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
 };
 use collections::BTreeMap;
@@ -905,7 +905,6 @@ impl ConfigurationView {
 impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
-        const ACCOUNT_SETTINGS_URL: &str = "https://zed.dev/account";
 
         let is_connected = !self.state.read(cx).is_signed_out();
         let plan = self.state.read(cx).user_store.read(cx).current_plan();
@@ -922,7 +921,7 @@ impl Render for ConfigurationView {
                 h_flex().child(
                     Button::new("manage_settings", "Manage Subscription")
                         .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                        .on_click(cx.listener(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))),
                 ),
             )
         } else if cx.has_flag::<ZedPro>() {
@@ -938,7 +937,9 @@ impl Render for ConfigurationView {
                         Button::new("upgrade", "Upgrade")
                             .style(ButtonStyle::Subtle)
                             .color(Color::Accent)
-                            .on_click(cx.listener(|_, _, cx| cx.open_url(ACCOUNT_SETTINGS_URL))),
+                            .on_click(
+                                cx.listener(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                            ),
                     ),
             )
         } else {

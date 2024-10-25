@@ -3,7 +3,7 @@
     (mod_item
         name: (_) @run
         (#eq? @run "tests")
-    ) @rust-mod-test
+    )
     (#set! tag rust-mod-test)
 )
 
@@ -14,14 +14,14 @@
                 (scoped_identifier (identifier) @_attribute)
                 ])
             (#match? @_attribute "test")
-        ) @start
+        ) @_start
         .
         (attribute_item) *
         .
         (function_item
             name: (_) @run
             body: _
-        ) @end
+        ) @_end
     )
     (#set! tag rust-test)
 )

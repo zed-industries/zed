@@ -7,7 +7,7 @@
             (attribute (identifier) @_superclass)]
         )
         (#eq? @_superclass "TestCase")
-    ) @python-unittest-class
+    ) @_python-unittest-class
     (#set! tag python-unittest-class)
 )
 
@@ -24,7 +24,7 @@
                 (function_definition
                     name: (identifier) @run @_unittest_method_name
                     (#match? @_unittest_method_name "^test.*")
-                ) @python-unittest-method
+                ) @_python-unittest-method
                 (#set! tag python-unittest-method)
             )
         )

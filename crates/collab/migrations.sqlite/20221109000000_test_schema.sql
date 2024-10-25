@@ -11,7 +11,8 @@ CREATE TABLE "users" (
     "metrics_id" TEXT,
     "github_user_id" INTEGER NOT NULL,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
-    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE
+    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE,
+    "custom_llm_monthly_allowance_in_cents" INTEGER
 );
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
 CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
@@ -78,10 +79,10 @@ CREATE TABLE "worktree_entries" (
     "id" INTEGER NOT NULL,
     "is_dir" BOOL NOT NULL,
     "path" VARCHAR NOT NULL,
+    "canonical_path" TEXT,
     "inode" INTEGER NOT NULL,
     "mtime_seconds" INTEGER NOT NULL,
     "mtime_nanos" INTEGER NOT NULL,
-    "is_symlink" BOOL NOT NULL,
     "is_external" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,
