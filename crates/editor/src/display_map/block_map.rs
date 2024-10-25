@@ -2495,11 +2495,24 @@ mod tests {
 
             let expected_lines = expected_text.split('\n').collect::<Vec<_>>();
             let expected_row_count = expected_lines.len();
+
+            assert_eq!(
+                blocks_snapshot.max_point().row + 1,
+                expected_row_count as u32
+            );
+
+            log::info!("expected text: {:?}", expected_text);
+
             for start_row in 0..expected_row_count {
-                let expected_text = expected_lines[start_row..].join("\n");
+                let end_row = rng.gen_range(start_row + 1..=expected_row_count);
+                let mut expected_text = expected_lines[start_row..end_row].join("\n");
+                if end_row < expected_row_count {
+                    expected_text.push('\n');
+                }
+
                 let actual_text = blocks_snapshot
                     .chunks(
-                        start_row as u32..blocks_snapshot.max_point().row + 1,
+                        start_row as u32..end_row as u32,
                         false,
                         false,
                         Highlights::default(),
@@ -2507,9 +2520,10 @@ mod tests {
                     .map(|chunk| chunk.text)
                     .collect::<String>();
                 assert_eq!(
-                    actual_text, expected_text,
-                    "incorrect text starting from row {}",
-                    start_row
+                    actual_text,
+                    expected_text,
+                    "incorrect text starting row row range {:?}",
+                    start_row..end_row
                 );
                 assert_eq!(
                     blocks_snapshot
