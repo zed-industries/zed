@@ -72,25 +72,24 @@ impl OpenRequest {
             .ok_or_else(|| anyhow!("missing host in ssh url: {}", file))?
             .to_string();
         let username = Some(url.username().to_string()).filter(|s| !s.is_empty());
-        let password = url.password().map(|s| s.to_string());
         let port = url.port();
         if !self.open_paths.is_empty() {
             return Err(anyhow!("cannot open both local and ssh paths"));
         }
-        let args = SshSettings::get_global(cx).args_for(&host, port, &username);
-        let connection = SshConnectionOptions {
-            username,
-            password,
-            host,
+        let mut connection_options = SshSettings::get_global(cx).connection_options_for(
+            host.clone(),
             port,
-            args,
-        };
+            username.clone(),
+        );
+        if let Some(password) = url.password() {
+            connection_options.password = Some(password.to_string());
+        }
         if let Some(ssh_connection) = &self.ssh_connection {
-            if *ssh_connection != connection {
+            if *ssh_connection != connection_options {
                 return Err(anyhow!("cannot open multiple ssh connections"));
             }
         }
-        self.ssh_connection = Some(connection);
+        self.ssh_connection = Some(connection_options);
         self.parse_file_path(url.path());
         Ok(())
     }
@@ -374,40 +373,28 @@ async fn open_workspaces(
                 }
                 SerializedWorkspaceLocation::Ssh(ssh) => {
                     let app_state = app_state.clone();
-                    let args = cx
-                        .update(|cx| {
-                            SshSettings::get_global(cx).args_for(&ssh.host, ssh.port, &ssh.user)
+                    let connection_options = cx.update(|cx| {
+                        SshSettings::get_global(cx)
+                            .connection_options_for(ssh.host, ssh.port, ssh.user)
+                    });
+                    if let Ok(connection_options) = connection_options {
+                        cx.spawn(|mut cx| async move {
+                            open_ssh_project(
+                                connection_options,
+                                ssh.paths.into_iter().map(PathBuf::from).collect(),
+                                app_state,
+                                OpenOptions::default(),
+                                &mut cx,
+                            )
+                            .await
+                            .log_err();
                         })
-                        .ok()
-                        .flatten();
-                    let connection_options = SshConnectionOptions {
-                        args,
-                        host: ssh.host.clone(),
-                        username: ssh.user.clone(),
-                        port: ssh.port,
-                        password: None,
-                    };
-                    let nickname = cx
-                        .update(|cx| {
-                            SshSettings::get_global(cx).nickname_for(&ssh.host, ssh.port, &ssh.user)
-                        })
-                        .ok()
-                        .flatten();
-                    cx.spawn(|mut cx| async move {
-                        open_ssh_project(
-                            connection_options,
-                            ssh.paths.into_iter().map(PathBuf::from).collect(),
-                            app_state,
-                            OpenOptions::default(),
-                            nickname,
-                            &mut cx,
-                        )
-                        .await
-                        .log_err();
-                    })
-                    .detach();
-                    // We don't set `errored` here, because for ssh projects, the
-                    // error is displayed in the window.
+                        .detach();
+                        // We don't set `errored` here if `open_ssh_project` fails, because for ssh projects, the
+                        // error is displayed in the window.
+                    } else {
+                        errored = false;
+                    }
                 }
             }
         }

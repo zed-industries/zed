@@ -1,7 +1,6 @@
 pub mod disconnected_overlay;
 mod remote_servers;
 mod ssh_connections;
-use remote::SshConnectionOptions;
 pub use ssh_connections::open_ssh_project;
 
 use disconnected_overlay::DisconnectedOverlay;
@@ -331,23 +330,12 @@ impl PickerDelegate for RecentProjectsDelegate {
                                     ..Default::default()
                                 };
 
-                                let args = SshSettings::get_global(cx).args_for(
-                                    &ssh_project.host,
-                                    ssh_project.port,
-                                    &ssh_project.user,
-                                );
-                                let nickname = SshSettings::get_global(cx).nickname_for(
-                                    &ssh_project.host,
-                                    ssh_project.port,
-                                    &ssh_project.user,
-                                );
-                                let connection_options = SshConnectionOptions {
-                                    host: ssh_project.host.clone(),
-                                    username: ssh_project.user.clone(),
-                                    port: ssh_project.port,
-                                    password: None,
-                                    args,
-                                };
+                                let connection_options = SshSettings::get_global(cx)
+                                    .connection_options_for(
+                                        ssh_project.host.clone(),
+                                        ssh_project.port,
+                                        ssh_project.user.clone(),
+                                    );
 
                                 let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
@@ -357,7 +345,6 @@ impl PickerDelegate for RecentProjectsDelegate {
                                         paths,
                                         app_state,
                                         open_options,
-                                        nickname,
                                         &mut cx,
                                     )
                                     .await

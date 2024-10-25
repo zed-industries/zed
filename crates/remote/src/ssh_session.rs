@@ -64,6 +64,9 @@ pub struct SshConnectionOptions {
     pub port: Option<u16>,
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
+
+    pub nickname: Option<String>,
+    pub upload_binary_over_ssh: bool,
 }
 
 impl SshConnectionOptions {
@@ -141,8 +144,10 @@ impl SshConnectionOptions {
             host: hostname.to_string(),
             username: username.clone(),
             port,
-            password: None,
             args: Some(args),
+            password: None,
+            nickname: None,
+            upload_binary_over_ssh: false,
         })
     }
 
@@ -236,6 +241,7 @@ pub trait SshClientDelegate: Send + Sync {
     fn get_server_binary(
         &self,
         platform: SshPlatform,
+        upload_binary_over_ssh: bool,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
@@ -1705,7 +1711,10 @@ impl SshRemoteConnection {
             return Ok(());
         }
 
-        let (binary, version) = delegate.get_server_binary(platform, cx).await??;
+        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
+        let (binary, version) = delegate
+            .get_server_binary(platform, upload_binary_over_ssh, cx)
+            .await??;
 
         let mut remote_version = None;
         if cfg!(not(debug_assertions)) {
@@ -2336,6 +2345,7 @@ mod fake {
         fn get_server_binary(
             &self,
             _: SshPlatform,
+            _: bool,
             _: &mut AsyncAppContext,
         ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
             unreachable!()
