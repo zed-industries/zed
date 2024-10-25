@@ -49,7 +49,7 @@ impl FakeServer {
                         let mut state = state.lock();
                         state.auth_count += 1;
                         let access_token = state.access_token.to_string();
-                        Ok(Credentials::User {
+                        Ok(Credentials {
                             user_id: client_user_id,
                             access_token,
                         })
@@ -73,7 +73,7 @@ impl FakeServer {
                         }
 
                         if credentials
-                            != (Credentials::User {
+                            != (Credentials {
                                 user_id: client_user_id,
                                 access_token: state.lock().access_token.to_string(),
                             })

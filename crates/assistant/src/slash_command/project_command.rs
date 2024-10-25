@@ -4,7 +4,7 @@ use super::{
 };
 use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
@@ -76,7 +76,7 @@ impl SlashCommand for ProjectSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let current_model = model_registry.active_model();
         let prompt_builder = self.prompt_builder.clone();
@@ -162,7 +162,8 @@ impl SlashCommand for ProjectSlashCommand {
                         text: output,
                         sections,
                         run_commands_in_text: true,
-                    })
+                    }
+                    .to_event_stream())
                 })
                 .await
         })

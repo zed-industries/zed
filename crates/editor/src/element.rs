@@ -68,6 +68,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use unicode_segmentation::UnicodeSegmentation;
 use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
@@ -1040,23 +1041,21 @@ impl EditorElement {
                     }
                     let block_text = if let CursorShape::Block = selection.cursor_shape {
                         snapshot
-                            .display_chars_at(cursor_position)
-                            .next()
+                            .grapheme_at(cursor_position)
                             .or_else(|| {
                                 if cursor_column == 0 {
-                                    snapshot
-                                        .placeholder_text()
-                                        .and_then(|s| s.chars().next())
-                                        .map(|c| (c, cursor_position))
+                                    snapshot.placeholder_text().and_then(|s| {
+                                        s.graphemes(true).next().map(|s| s.to_owned())
+                                    })
                                 } else {
                                     None
                                 }
                             })
-                            .and_then(|(character, _)| {
-                                let text = if character == '\n' {
+                            .and_then(|grapheme| {
+                                let text = if grapheme == "\n" {
                                     SharedString::from(" ")
                                 } else {
-                                    SharedString::from(character.to_string())
+                                    SharedString::from(grapheme)
                                 };
                                 let len = text.len();
 
@@ -2214,7 +2213,7 @@ impl EditorElement {
         let mut element = match block {
             Block::Custom(block) => {
                 let align_to = block
-                    .position()
+                    .start()
                     .to_point(&snapshot.buffer_snapshot)
                     .to_display_point(snapshot);
                 let anchor_x = text_x
@@ -6627,7 +6626,7 @@ fn compute_auto_height_layout(
 mod tests {
     use super::*;
     use crate::{
-        display_map::{BlockDisposition, BlockProperties},
+        display_map::{BlockPlacement, BlockProperties},
         editor_tests::{init_test, update_test_language_settings},
         Editor, MultiBuffer,
     };
@@ -6883,9 +6882,8 @@ mod tests {
                 editor.insert_blocks(
                     [BlockProperties {
                         style: BlockStyle::Fixed,
-                        disposition: BlockDisposition::Above,
+                        placement: BlockPlacement::Above(Anchor::min()),
                         height: 3,
-                        position: Anchor::min(),
                         render: Box::new(|cx| div().h(3. * cx.line_height()).into_any()),
                         priority: 0,
                     }],

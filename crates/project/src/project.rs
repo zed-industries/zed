@@ -22,11 +22,10 @@ pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
 use client::{
-    proto, Client, Collaborator, DevServerProjectId, PendingEntitySubscription, ProjectId,
-    TypedEnvelope, UserStore,
+    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
 };
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
@@ -40,8 +39,8 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Hsla, Model,
-    ModelContext, SharedString, Task, WeakModel, WindowContext,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
+    Model, ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -52,6 +51,7 @@ use language::{
 };
 use lsp::{
     CompletionContext, CompletionItemKind, DocumentHighlightKind, LanguageServer, LanguageServerId,
+    MessageActionItem,
 };
 use lsp_command::*;
 use node_runtime::NodeRuntime;
@@ -59,7 +59,10 @@ use parking_lot::{Mutex, RwLock};
 pub use prettier_store::PrettierStore;
 use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
-use rpc::{proto::SSH_PROJECT_ID, AnyProtoClient, ErrorCode};
+use rpc::{
+    proto::{LanguageServerPromptResponse, SSH_PROJECT_ID},
+    AnyProtoClient, ErrorCode,
+};
 use search::{SearchInputKind, SearchQuery, SearchResult};
 use search_history::SearchHistory;
 use settings::{InvalidSettingsError, Settings, SettingsLocation, SettingsStore};
@@ -152,7 +155,6 @@ pub struct Project {
     terminals: Terminals,
     node: Option<NodeRuntime>,
     hosted_project_id: Option<ProjectId>,
-    dev_server_project_id: Option<client::DevServerProjectId>,
     search_history: SearchHistory,
     search_included_history: SearchHistory,
     search_excluded_history: SearchHistory,
@@ -213,7 +215,6 @@ enum ProjectClientState {
         capability: Capability,
         remote_id: u64,
         replica_id: ReplicaId,
-        in_room: bool,
     },
 }
 
@@ -671,7 +672,6 @@ impl Project {
                 },
                 node: Some(node),
                 hosted_project_id: None,
-                dev_server_project_id: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_models: Default::default(),
@@ -701,7 +701,7 @@ impl Project {
 
             let ssh_proto = ssh.read(cx).proto_client();
             let worktree_store =
-                cx.new_model(|_| WorktreeStore::remote(false, ssh_proto.clone(), 0, None));
+                cx.new_model(|_| WorktreeStore::remote(false, ssh_proto.clone(), 0));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -728,12 +728,7 @@ impl Project {
             });
 
             let settings_observer = cx.new_model(|cx| {
-                SettingsObserver::new_ssh(
-                    ssh_proto.clone(),
-                    worktree_store.clone(),
-                    task_store.clone(),
-                    cx,
-                )
+                SettingsObserver::new_remote(worktree_store.clone(), task_store.clone(), cx)
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
@@ -795,7 +790,6 @@ impl Project {
                 },
                 node: Some(node),
                 hosted_project_id: None,
-                dev_server_project_id: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_models: Default::default(),
@@ -815,6 +809,7 @@ impl Project {
             ssh_proto.add_model_message_handler(Self::handle_update_worktree);
             ssh_proto.add_model_message_handler(Self::handle_update_project);
             ssh_proto.add_model_message_handler(Self::handle_toast);
+            ssh_proto.add_model_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_model_message_handler(Self::handle_hide_toast);
             ssh_proto.add_model_request_handler(BufferStore::handle_update_buffer);
             BufferStore::init(&ssh_proto);
@@ -898,15 +893,7 @@ impl Project {
         let role = response.payload.role();
 
         let worktree_store = cx.new_model(|_| {
-            WorktreeStore::remote(
-                true,
-                client.clone().into(),
-                response.payload.project_id,
-                response
-                    .payload
-                    .dev_server_project_id
-                    .map(DevServerProjectId),
-            )
+            WorktreeStore::remote(true, client.clone().into(), response.payload.project_id)
         })?;
         let buffer_store = cx.new_model(|cx| {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
@@ -992,7 +979,6 @@ impl Project {
                     capability: Capability::ReadWrite,
                     remote_id,
                     replica_id,
-                    in_room: response.payload.dev_server_project_id.is_none(),
                 },
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
@@ -1001,10 +987,6 @@ impl Project {
                 },
                 node: None,
                 hosted_project_id: None,
-                dev_server_project_id: response
-                    .payload
-                    .dev_server_project_id
-                    .map(DevServerProjectId),
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
@@ -1185,6 +1167,7 @@ impl Project {
         cx: &mut gpui::TestAppContext,
     ) -> Model<Project> {
         use clock::FakeSystemClock;
+        use gpui::Context;
 
         let languages = LanguageRegistry::test(cx.executor());
         let clock = Arc::new(FakeSystemClock::default());
@@ -1304,39 +1287,23 @@ impl Project {
         self.hosted_project_id
     }
 
-    pub fn dev_server_project_id(&self) -> Option<DevServerProjectId> {
-        self.dev_server_project_id
-    }
-
-    pub fn supports_terminal(&self, cx: &AppContext) -> bool {
+    pub fn supports_terminal(&self, _cx: &AppContext) -> bool {
         if self.is_local() {
             return true;
         }
         if self.is_via_ssh() {
             return true;
         }
-        let Some(id) = self.dev_server_project_id else {
-            return false;
-        };
-        let Some(server) = dev_server_projects::Store::global(cx)
-            .read(cx)
-            .dev_server_for_project(id)
-        else {
-            return false;
-        };
-        server.ssh_connection_string.is_some()
+
+        return false;
     }
 
     pub fn ssh_connection_string(&self, cx: &AppContext) -> Option<SharedString> {
         if let Some(ssh_state) = &self.ssh_client {
             return Some(ssh_state.read(cx).connection_string().into());
         }
-        let dev_server_id = self.dev_server_project_id()?;
-        dev_server_projects::Store::global(cx)
-            .read(cx)
-            .dev_server_for_project(dev_server_id)?
-            .ssh_connection_string
-            .clone()
+
+        return None;
     }
 
     pub fn ssh_connection_state(&self, cx: &AppContext) -> Option<remote::ConnectionState> {
@@ -1548,17 +1515,9 @@ impl Project {
 
     pub fn shared(&mut self, project_id: u64, cx: &mut ModelContext<Self>) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
-            if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
-                if *in_room || self.dev_server_project_id.is_none() {
-                    return Err(anyhow!("project was already shared"));
-                } else {
-                    *in_room = true;
-                    return Ok(());
-                }
-            } else {
-                return Err(anyhow!("project was already shared"));
-            }
+            return Err(anyhow!("project was already shared"));
         }
+
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
@@ -1656,14 +1615,7 @@ impl Project {
 
     fn unshare_internal(&mut self, cx: &mut AppContext) -> Result<()> {
         if self.is_via_collab() {
-            if self.dev_server_project_id().is_some() {
-                if let ProjectClientState::Remote { in_room, .. } = &mut self.client_state {
-                    *in_room = false
-                }
-                return Ok(());
-            } else {
-                return Err(anyhow!("attempted to unshare a remote project"));
-            }
+            return Err(anyhow!("attempted to unshare a remote project"));
         }
 
         if let ProjectClientState::Shared { remote_id, .. } = self.client_state {
@@ -1923,11 +1875,7 @@ impl Project {
         })
     }
 
-    pub fn get_open_buffer(
-        &mut self,
-        path: &ProjectPath,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Buffer>> {
+    pub fn get_open_buffer(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<Buffer>> {
         self.buffer_store.read(cx).get_by_path(path, cx)
     }
 
@@ -2223,8 +2171,10 @@ impl Project {
                 cx.emit(Event::WorktreeAdded);
             }
             WorktreeStoreEvent::WorktreeRemoved(_, id) => {
-                self.on_worktree_removed(*id, cx);
                 cx.emit(Event::WorktreeRemoved(*id));
+            }
+            WorktreeStoreEvent::WorktreeReleased(_, id) => {
+                self.on_worktree_released(*id, cx);
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
             WorktreeStoreEvent::WorktreeUpdateSent(_) => {}
@@ -2261,30 +2211,7 @@ impl Project {
         cx.notify();
     }
 
-    fn on_worktree_removed(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
-        if let Some(dev_server_project_id) = self.dev_server_project_id {
-            let paths: Vec<String> = self
-                .visible_worktrees(cx)
-                .filter_map(|worktree| {
-                    if worktree.read(cx).id() == id_to_remove {
-                        None
-                    } else {
-                        Some(worktree.read(cx).abs_path().to_string_lossy().to_string())
-                    }
-                })
-                .collect();
-            if !paths.is_empty() {
-                let request = self.client.request(proto::UpdateDevServerProject {
-                    dev_server_project_id: dev_server_project_id.0,
-                    paths,
-                });
-                cx.background_executor()
-                    .spawn(request)
-                    .detach_and_log_err(cx);
-            }
-            return;
-        }
-
+    fn on_worktree_released(&mut self, id_to_remove: WorktreeId, cx: &mut ModelContext<Self>) {
         if let Some(ssh) = &self.ssh_client {
             ssh.read(cx)
                 .proto_client()
@@ -3149,7 +3076,7 @@ impl Project {
         match &self.client_state {
             ProjectClientState::Shared { .. } => true,
             ProjectClientState::Local => false,
-            ProjectClientState::Remote { in_room, .. } => *in_room,
+            ProjectClientState::Remote { .. } => true,
         }
     }
 
@@ -3276,20 +3203,6 @@ impl Project {
                 let response = response.await?;
                 Ok(response.entries.into_iter().map(PathBuf::from).collect())
             })
-        } else if let Some(dev_server) = self.dev_server_project_id().and_then(|id| {
-            dev_server_projects::Store::global(cx)
-                .read(cx)
-                .dev_server_for_project(id)
-        }) {
-            let request = proto::ListRemoteDirectory {
-                dev_server_id: dev_server.id.0,
-                path: query,
-            };
-            let response = self.client.request(request);
-            cx.background_executor().spawn(async move {
-                let response = response.await?;
-                Ok(response.entries.into_iter().map(PathBuf::from).collect())
-            })
         } else {
             Task::ready(Err(anyhow!("cannot list directory in remote project")))
         }
@@ -3378,17 +3291,10 @@ impl Project {
     }
 
     pub fn absolute_path(&self, project_path: &ProjectPath, cx: &AppContext) -> Option<PathBuf> {
-        let workspace_root = self
-            .worktree_for_id(project_path.worktree_id, cx)?
+        self.worktree_for_id(project_path.worktree_id, cx)?
             .read(cx)
-            .abs_path();
-        let project_path = project_path.path.as_ref();
-
-        Some(if project_path == Path::new("") {
-            workspace_root.to_path_buf()
-        } else {
-            workspace_root.join(project_path)
-        })
+            .absolutize(&project_path.path)
+            .ok()
     }
 
     /// Attempts to find a `ProjectPath` corresponding to the given path. If the path
@@ -3623,6 +3529,45 @@ impl Project {
             });
             Ok(())
         })?
+    }
+
+    async fn handle_language_server_prompt_request(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::LanguageServerPromptRequest>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::LanguageServerPromptResponse> {
+        let (tx, mut rx) = smol::channel::bounded(1);
+        let actions: Vec<_> = envelope
+            .payload
+            .actions
+            .into_iter()
+            .map(|action| MessageActionItem {
+                title: action,
+                properties: Default::default(),
+            })
+            .collect();
+        this.update(&mut cx, |_, cx| {
+            cx.emit(Event::LanguageServerPrompt(LanguageServerPromptRequest {
+                level: proto_to_prompt(envelope.payload.level.context("Invalid prompt level")?),
+                message: envelope.payload.message,
+                actions: actions.clone(),
+                lsp_name: envelope.payload.lsp_name,
+                response_channel: tx,
+            }));
+
+            anyhow::Ok(())
+        })??;
+
+        let answer = rx.next().await;
+
+        Ok(LanguageServerPromptResponse {
+            action_response: answer.and_then(|answer| {
+                actions
+                    .iter()
+                    .position(|action| *action == answer)
+                    .map(|index| index as u64)
+            }),
+        })
     }
 
     async fn handle_hide_toast(
@@ -4259,4 +4204,12 @@ pub fn sort_worktree_entries(entries: &mut [Entry]) {
             (&entry_b.path, entry_b.is_file()),
         )
     });
+}
+
+fn proto_to_prompt(level: proto::language_server_prompt_request::Level) -> gpui::PromptLevel {
+    match level {
+        proto::language_server_prompt_request::Level::Info(_) => gpui::PromptLevel::Info,
+        proto::language_server_prompt_request::Level::Warning(_) => gpui::PromptLevel::Warning,
+        proto::language_server_prompt_request::Level::Critical(_) => gpui::PromptLevel::Critical,
+    }
 }

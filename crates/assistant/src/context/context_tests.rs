@@ -6,7 +6,7 @@ use crate::{
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandRegistry,
+    SlashCommandRegistry, SlashCommandResult,
 };
 use collections::HashSet;
 use fs::FakeFs;
@@ -1097,7 +1097,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             text: output_text,
                             sections,
                             run_commands_in_text: false,
-                        })),
+                        }
+                        .to_event_stream())),
                         true,
                         false,
                         cx,
@@ -1416,11 +1417,12 @@ impl SlashCommand for FakeSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),
             sections: vec![],
             run_commands_in_text: false,
-        }))
+        }
+        .to_event_stream()))
     }
 }

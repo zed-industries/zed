@@ -501,6 +501,8 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
+    /// Whether this chunk of text is an invisible character.
+    pub is_invisible: bool,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
 }
@@ -4211,7 +4213,6 @@ impl<'a> Iterator for BufferChunks<'a> {
             if self.range.start == self.chunks.offset() + chunk.len() {
                 self.chunks.next().unwrap();
             }
-
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,

@@ -84,6 +84,8 @@ async fn main() -> Result<()> {
 
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
+            init_panic_hook();
+
             let mut app = Router::new()
                 .route("/", get(handle_root))
                 .route("/healthz", get(handle_liveness_probe))
@@ -377,4 +379,21 @@ pub fn init_tracing(config: &Config) -> Option<()> {
         .init();
 
     None
+}
+
+fn init_panic_hook() {
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let panic_message = match panic_info.payload().downcast_ref::<&'static str>() {
+            Some(message) => *message,
+            None => match panic_info.payload().downcast_ref::<String>() {
+                Some(message) => message.as_str(),
+                None => "Box<Any>",
+            },
+        };
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let location = panic_info
+            .location()
+            .map(|loc| format!("{}:{}", loc.file(), loc.line()));
+        tracing::error!(panic = true, ?location, %panic_message, %backtrace, "Server Panic");
+    }));
 }

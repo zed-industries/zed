@@ -1100,6 +1100,17 @@ pub struct FoldBufferRows<'a> {
     fold_point: FoldPoint,
 }
 
+impl<'a> FoldBufferRows<'a> {
+    pub(crate) fn seek(&mut self, row: u32) {
+        let fold_point = FoldPoint::new(row, 0);
+        self.cursor.seek(&fold_point, Bias::Left, &());
+        let overshoot = fold_point.0 - self.cursor.start().0 .0;
+        let inlay_point = InlayPoint(self.cursor.start().1 .0 + overshoot);
+        self.input_buffer_rows.seek(inlay_point.row());
+        self.fold_point = fold_point;
+    }
+}
+
 impl<'a> Iterator for FoldBufferRows<'a> {
     type Item = Option<u32>;
 
@@ -1133,6 +1144,38 @@ pub struct FoldChunks<'a> {
     inlay_offset: InlayOffset,
     output_offset: FoldOffset,
     max_output_offset: FoldOffset,
+}
+
+impl<'a> FoldChunks<'a> {
+    pub(crate) fn seek(&mut self, range: Range<FoldOffset>) {
+        self.transform_cursor.seek(&range.start, Bias::Right, &());
+
+        let inlay_start = {
+            let overshoot = range.start.0 - self.transform_cursor.start().0 .0;
+            self.transform_cursor.start().1 + InlayOffset(overshoot)
+        };
+
+        let transform_end = self.transform_cursor.end(&());
+
+        let inlay_end = if self
+            .transform_cursor
+            .item()
+            .map_or(true, |transform| transform.is_fold())
+        {
+            inlay_start
+        } else if range.end < transform_end.0 {
+            let overshoot = range.end.0 - self.transform_cursor.start().0 .0;
+            self.transform_cursor.start().1 + InlayOffset(overshoot)
+        } else {
+            transform_end.1
+        };
+
+        self.inlay_chunks.seek(inlay_start..inlay_end);
+        self.inlay_chunk = None;
+        self.inlay_offset = inlay_start;
+        self.output_offset = range.start;
+        self.max_output_offset = range.end;
+    }
 }
 
 impl<'a> Iterator for FoldChunks<'a> {
