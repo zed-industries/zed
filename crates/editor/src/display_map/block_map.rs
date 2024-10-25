@@ -1450,27 +1450,25 @@ impl<'a> Iterator for BlockChunks<'a> {
             if let Some(input_chunk) = self.input_chunks.next() {
                 self.input_chunk = input_chunk;
             } else {
-                self.output_row += 1;
                 if self.output_row < self.max_output_row {
+                    self.output_row += 1;
                     self.advance();
-                    return Some(Chunk {
-                        text: "\n",
-                        ..Default::default()
-                    });
-                } else {
-                    return None;
+                    if self.transforms.item().is_some() {
+                        return Some(Chunk {
+                            text: "\n",
+                            ..Default::default()
+                        });
+                    }
                 }
+                return None;
             }
         }
 
         let transform_end = self.transforms.end(&()).0 .0;
-        let (prefix_rows, mut prefix_bytes) =
+        let (prefix_rows, prefix_bytes) =
             offset_for_row(self.input_chunk.text, transform_end - self.output_row);
         self.output_row += prefix_rows;
-        // Exclude trailing newline if this chunk contains the last line of the queried range.
-        if self.output_row == self.max_output_row {
-            prefix_bytes -= 1;
-        }
+
         let (mut prefix, suffix) = self.input_chunk.text.split_at(prefix_bytes);
         self.input_chunk.text = suffix;
         if self.output_row == transform_end {
