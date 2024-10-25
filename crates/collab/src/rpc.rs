@@ -287,7 +287,6 @@ impl Server {
             .add_request_handler(share_project)
             .add_message_handler(unshare_project)
             .add_request_handler(join_project)
-            .add_request_handler(join_hosted_project)
             .add_message_handler(leave_project)
             .add_request_handler(update_project)
             .add_request_handler(update_worktree)
@@ -1793,11 +1792,6 @@ impl JoinProjectInternalResponse for Response<proto::JoinProject> {
         Response::<proto::JoinProject>::send(self, result)
     }
 }
-impl JoinProjectInternalResponse for Response<proto::JoinHostedProject> {
-    fn send(self, result: proto::JoinProjectResponse) -> Result<()> {
-        Response::<proto::JoinHostedProject>::send(self, result)
-    }
-}
 
 fn join_project_internal(
     response: impl JoinProjectInternalResponse,
@@ -1921,11 +1915,6 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     let sender_id = session.connection_id;
     let project_id = ProjectId::from_proto(request.project_id);
     let db = session.db().await;
-    if db.is_hosted_project(project_id).await? {
-        let project = db.leave_hosted_project(project_id, sender_id).await?;
-        project_left(&project, &session);
-        return Ok(());
-    }
 
     let (room, project) = &*db.leave_project(project_id, sender_id).await?;
     tracing::info!(
@@ -1939,24 +1928,6 @@ async fn leave_project(request: proto::LeaveProject, session: Session) -> Result
     }
 
     Ok(())
-}
-
-async fn join_hosted_project(
-    request: proto::JoinHostedProject,
-    response: Response<proto::JoinHostedProject>,
-    session: Session,
-) -> Result<()> {
-    let (mut project, replica_id) = session
-        .db()
-        .await
-        .join_hosted_project(
-            ProjectId(request.project_id as i32),
-            session.user_id(),
-            session.connection_id,
-        )
-        .await?;
-
-    join_project_internal(response, session, &mut project, &replica_id)
 }
 
 /// Updates other participants with changes to the project
@@ -4200,7 +4171,6 @@ fn build_channels_update(channels: ChannelsForUser) -> proto::UpdateChannels {
         update.channel_invitations.push(channel.to_proto());
     }
 
-    update.hosted_projects = channels.hosted_projects;
     update
 }
 
