@@ -1970,18 +1970,24 @@ impl Buffer {
                     let range_len = range.end - range.start;
                     delta += new_text_length as isize - range_len as isize;
 
+                    // Decide what range of the insertion to auto-indent, and whether
+                    // the first line of the insertion should be considered a newly-inserted line
+                    // or an edit to an existing line.
                     let mut range_of_insertion_to_indent = 0..new_text_length;
-                    let mut first_line_is_new = false;
-                    let mut original_indent_column = None;
+                    let mut first_line_is_new = true;
 
-                    // When replacing an entire line, or inserting an entire line at the beginning of
-                    // an existing line, treat the insertion as new.
-                    if old_start.column <= before_edit.indent_size_for_line(old_start.row).len
-                        && (new_text.contains('\n')
-                            || old_start.column + range_len as u32
-                                >= before_edit.line_len(old_start.row))
+                    let old_line_start = before_edit.indent_size_for_line(old_start.row).len;
+                    let old_line_end = before_edit.line_len(old_start.row);
+
+                    if old_start.column > old_line_start {
+                        first_line_is_new = false;
+                    }
+
+                    if !new_text.contains('\n')
+                        && (old_start.column + (range_len as u32) < old_line_end
+                            || old_line_end == old_line_start)
                     {
-                        first_line_is_new = true;
+                        first_line_is_new = false;
                     }
 
                     // When inserting text starting with a newline, avoid auto-indenting the
@@ -1991,7 +1997,7 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    // Avoid auto-indenting after the insertion.
+                    let mut original_indent_column = None;
                     if let AutoindentMode::Block {
                         original_indent_columns,
                     } = &mode
@@ -2003,6 +2009,8 @@ impl Buffer {
                                 )
                                 .len
                             }));
+
+                        // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
