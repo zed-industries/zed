@@ -9,6 +9,7 @@ use collections::HashMap;
 use gpui::{AppContext, Model, Pixels};
 use itertools::Itertools;
 use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
+use multi_buffer::AnchorRangeExt as _;
 use util::post_inc;
 
 use crate::{
@@ -96,11 +97,28 @@ impl SelectionsCollection {
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Option<Selection<D>> {
-        self.pending_anchor()
-            .as_ref()
-            .map(|pending| pending.map(|p| p.summary::<D>(&self.buffer(cx))))
+        let selection = self.pending_anchor()?;
+        if self.line_mode {
+            let map = self.display_map(cx);
+            let range = selection.range().to_point(&map.buffer_snapshot);
+            let expanded_range = map.expand_to_line(range);
+            let mut endpoints = map
+                .buffer_snapshot
+                .dimensions_from_points::<D>([expanded_range.start, expanded_range.end]);
+            let start = endpoints.next().unwrap();
+            let end = endpoints.next().unwrap();
+            Some(Selection {
+                id: selection.id,
+                start,
+                end,
+                reversed: selection.reversed,
+                goal: selection.goal,
+            })
+        } else {
+            Some(selection.map(|p| p.summary::<D>(&self.buffer(cx))))
+        }
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
@@ -121,13 +139,26 @@ impl SelectionsCollection {
         //         selection.end = new_range.end;
         //     }
         // }
+        let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint =
-            resolve_multiple::<D, _>(disjoint_anchors.iter(), &self.buffer(cx)).peekable();
+        let mut disjoint = resolve_multiple::<Point, _>(disjoint_anchors.iter(), &self.buffer(cx))
+            .map(|mut selection| {
+                if self.line_mode {
+                    let new_range = map.expand_to_line(selection.range());
+                    selection.start = new_range.start;
+                    selection.end = new_range.end;
+                }
+                // todo!(expand selection to encompass folds and blocks)
+                // let start = map.display_point_to_point(map.point_to_display_point(selection.start, Bias::Left), Bias::Left);
+                // let end = map.display_point_to_point(map.point_to_display_point(selection.end, Bias::Right), Bias::Right);
+                selection
+            })
+            .peekable();
 
-        let mut pending_opt = self.pending::<D>(cx);
+        let mut pending_opt = self.pending::<Point>(cx);
 
         iter::from_fn(move || {
+            // todo!(return merged selections)
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
                     if pending.start <= next_selection.end && pending.end >= next_selection.start {
@@ -150,6 +181,7 @@ impl SelectionsCollection {
                 disjoint.next()
             }
         })
+        // todo!("convert selections to D in a batched way")
         .collect()
     }
 
