@@ -1714,6 +1714,15 @@ impl SshRemoteConnection {
             }
         }
 
+        if self.is_binary_in_use(dst_path).await? {
+            log::info!("server binary is opened by another process. not updating");
+            delegate.set_status(
+                Some("Skipping update of remote development server, since it's still in use"),
+                cx,
+            );
+            return Ok(());
+        }
+
         let (binary, version) = delegate.get_server_binary(platform, cx).await??;
 
         let mut server_binary_exists = false;
@@ -1743,6 +1752,33 @@ impl SshRemoteConnection {
                     .await
             }
         }
+    }
+
+    async fn is_binary_in_use(&self, binary_path: &Path) -> Result<bool> {
+        let script = format!(
+            r#"'
+            if command -v lsof >/dev/null 2>&1; then
+                if lsof "{}" >/dev/null 2>&1; then
+                    echo "in_use"
+                    exit 0
+                fi
+            elif command -v fuser >/dev/null 2>&1; then
+                if fuser "{}" >/dev/null 2>&1; then
+                    echo "in_use"
+                    exit 0
+                fi
+            fi
+            echo "not_in_use"
+            '"#,
+            binary_path.display(),
+            binary_path.display(),
+        );
+
+        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(script))
+            .await
+            .context("failed to check if binary is in use")?;
+
+        Ok(output.trim() == "in_use")
     }
 
     async fn download_binary_on_server(
