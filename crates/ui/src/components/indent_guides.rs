@@ -206,7 +206,7 @@ mod uniform_list {
     enum IndentGuidesElementPrepaintState {
         Static,
         Interactive {
-            hitboxes: SmallVec<[Hitbox; 12]>,
+            hitboxes: Rc<SmallVec<[Hitbox; 12]>>,
             on_hovered_indent_guide_click: Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>,
         },
     }
@@ -243,7 +243,7 @@ mod uniform_list {
                     .map(|guide| cx.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false))
                     .collect();
                 Self::PrepaintState::Interactive {
-                    hitboxes,
+                    hitboxes: Rc::new(hitboxes),
                     on_hovered_indent_guide_click,
                 }
             } else {
@@ -322,7 +322,7 @@ mod uniform_list {
                         let hitboxes = hitboxes.clone();
                         move |_: &MouseMoveEvent, phase, cx| {
                             let mut hovered_hitbox_id = None;
-                            for hitbox in &hitboxes {
+                            for hitbox in hitboxes.as_ref() {
                                 if hitbox.is_hovered(cx) {
                                     hovered_hitbox_id = Some(hitbox.id);
                                     break;
