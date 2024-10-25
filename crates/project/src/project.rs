@@ -3371,9 +3371,9 @@ impl Project {
     }
 
     pub fn root_branches(
-        &mut self,
+        &self,
         worktree_id: WorktreeId,
-        cx: &mut ModelContext<Project>,
+        cx: &AppContext,
     ) -> Task<Result<Vec<git::repository::Branch>>> {
         let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
             return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
