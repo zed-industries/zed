@@ -10729,56 +10729,34 @@ impl Editor {
     }
 
     fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
-        let target_depth = fold_at.level;
+        let fold_at_level = fold_at.level;
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut fold_ranges = Vec::new();
-        self.fold_at_level_internal(
-            0,
-            snapshot.max_buffer_row().0,
-            1,
-            target_depth,
-            &mut fold_ranges,
-            cx,
-        );
-        self.fold_ranges(fold_ranges, true, cx);
-    }
+        let mut stack = vec![(0, snapshot.max_buffer_row().0, 1)];
 
-    fn fold_at_level_internal(
-        &mut self,
-        mut start: u32,
-        end: u32,
-        current_depth: u32,
-        target_depth: u32,
-        fold_ranges: &mut Vec<(Range<Point>, FoldPlaceholder)>,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if current_depth > target_depth {
-            return;
-        }
+        while let Some((mut start_row, end_row, current_level)) = stack.pop() {
+            while start_row < end_row {
+                match self.snapshot(cx).foldable_range(MultiBufferRow(start_row)) {
+                    Some(foldable_range) => {
+                        let nested_start_row = foldable_range.0.start.row + 1;
+                        let nested_end_row = foldable_range.0.end.row;
 
-        while start < end {
-            if let Some(foldable_range) = self.snapshot(cx).foldable_range(MultiBufferRow(start)) {
-                let range_start = foldable_range.0.start.row;
-                let range_end = foldable_range.0.end.row;
+                        if current_level == fold_at_level {
+                            fold_ranges.push(foldable_range);
+                        }
 
-                if current_depth == target_depth {
-                    fold_ranges.push(foldable_range);
+                        if current_level <= fold_at_level {
+                            stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        }
+
+                        start_row = nested_end_row + 1;
+                    }
+                    None => start_row += 1,
                 }
-
-                self.fold_at_level_internal(
-                    range_start + 1,
-                    range_end,
-                    current_depth + 1,
-                    target_depth,
-                    fold_ranges,
-                    cx,
-                );
-
-                start = range_end + 1;
-            } else {
-                start += 1;
             }
         }
+
+        self.fold_ranges(fold_ranges, true, cx);
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
