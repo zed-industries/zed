@@ -4071,7 +4071,7 @@ impl Render for OutlinePanel {
                             .with_render_fn(
                                 cx.view().clone(),
                                 move |outline_panel, params, _| {
-                                    const LEFT_OFFSET: f32 = 10.;
+                                    const LEFT_OFFSET: f32 = 14.;
 
                                     let indent_size = params.indent_size;
                                     let item_height = params.item_height;
