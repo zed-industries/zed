@@ -68,7 +68,6 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 id: ActiveValue::NotSet,
-                hosted_project_id: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
