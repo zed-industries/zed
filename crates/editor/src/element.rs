@@ -337,6 +337,15 @@ impl EditorElement {
         register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
+        register_action(view, cx, Editor::fold_at_level_one);
+        register_action(view, cx, Editor::fold_at_level_two);
+        register_action(view, cx, Editor::fold_at_level_three);
+        register_action(view, cx, Editor::fold_at_level_four);
+        register_action(view, cx, Editor::fold_at_level_five);
+        register_action(view, cx, Editor::fold_at_level_six);
+        register_action(view, cx, Editor::fold_at_level_seven);
+        register_action(view, cx, Editor::fold_at_level_eight);
+        register_action(view, cx, Editor::fold_at_level_nine);
         register_action(view, cx, Editor::fold_all);
         register_action(view, cx, Editor::fold_at);
         register_action(view, cx, Editor::fold_recursive);

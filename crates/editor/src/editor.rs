@@ -10728,15 +10728,102 @@ impl Editor {
         self.fold_ranges(fold_ranges, true, cx);
     }
 
+    pub fn fold_at_level_one(&mut self, _: &FoldAtLevelOne, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(1), cx);
+    }
+
+    pub fn fold_at_level_two(&mut self, _: &FoldAtLevelTwo, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(2), cx);
+    }
+
+    pub fn fold_at_level_three(&mut self, _: &FoldAtLevelThree, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(3), cx);
+    }
+
+    pub fn fold_at_level_four(&mut self, _: &FoldAtLevelFour, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(4), cx);
+    }
+
+    pub fn fold_at_level_five(&mut self, _: &FoldAtLevelFive, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(5), cx);
+    }
+
+    pub fn fold_at_level_six(&mut self, _: &FoldAtLevelSix, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(6), cx);
+    }
+
+    pub fn fold_at_level_seven(&mut self, _: &FoldAtLevelSeven, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(7), cx);
+    }
+
+    pub fn fold_at_level_eight(&mut self, _: &FoldAtLevelEight, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(8), cx);
+    }
+
+    pub fn fold_at_level_nine(&mut self, _: &FoldAtLevelNine, cx: &mut ViewContext<Self>) {
+        self.fold_at_level(&FoldAtLevel(9), cx);
+    }
+
+    fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
+        let target_depth = fold_at.0;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut fold_ranges = Vec::new();
+        self.internal_fold_at_level(
+            0,
+            snapshot.max_buffer_row().0,
+            1,
+            target_depth,
+            &mut fold_ranges,
+            cx,
+        );
+        self.fold_ranges(fold_ranges, true, cx);
+    }
+
+    fn internal_fold_at_level(
+        &mut self,
+        mut start: u32,
+        end: u32,
+        current_depth: u32,
+        target_depth: u32,
+        fold_ranges: &mut Vec<(Range<Point>, FoldPlaceholder)>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if current_depth > target_depth {
+            return;
+        }
+
+        while start < end {
+            if let Some(foldable_range) = self.snapshot(cx).foldable_range(MultiBufferRow(start)) {
+                let range_start = foldable_range.0.start.row;
+                let range_end = foldable_range.0.end.row;
+
+                if current_depth == target_depth {
+                    fold_ranges.push(foldable_range);
+                }
+
+                self.internal_fold_at_level(
+                    range_start + 1,
+                    range_end,
+                    current_depth + 1,
+                    target_depth,
+                    fold_ranges,
+                    cx,
+                );
+
+                start = range_end + 1;
+            } else {
+                start += 1;
+            }
+        }
+    }
+
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        for row in 0..display_map.max_buffer_row().0 {
-            if let Some((foldable_range, fold_text)) =
-                display_map.foldable_range(MultiBufferRow(row))
-            {
-                fold_ranges.push((foldable_range, fold_text));
+        for row in 0..snapshot.max_buffer_row().0 {
+            if let Some(foldable_range) = self.snapshot(cx).foldable_range(MultiBufferRow(row)) {
+                fold_ranges.push(foldable_range);
             }
         }
 
@@ -10894,6 +10981,7 @@ impl Editor {
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
         for (fold_range, fold_text) in ranges {
+            println!("Processing fold range: {:?}", fold_range);
             if let Some((_, buffer, _)) =
                 multi_buffer.excerpt_containing(fold_range.start.clone(), cx)
             {
@@ -13394,6 +13482,8 @@ fn ending_row(next_selection: &Selection<Point>, display_map: &DisplaySnapshot) 
         MultiBufferRow(next_selection.end.row)
     }
 }
+
+struct FoldAtLevel(pub u32);
 
 impl EditorSnapshot {
     pub fn remote_selections_in_range<'a>(
