@@ -10728,15 +10728,44 @@ impl Editor {
         self.fold_ranges(fold_ranges, true, cx);
     }
 
+    fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
+        let fold_at_level = fold_at.level;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut fold_ranges = Vec::new();
+        let mut stack = vec![(0, snapshot.max_buffer_row().0, 1)];
+
+        while let Some((mut start_row, end_row, current_level)) = stack.pop() {
+            while start_row < end_row {
+                match self.snapshot(cx).foldable_range(MultiBufferRow(start_row)) {
+                    Some(foldable_range) => {
+                        let nested_start_row = foldable_range.0.start.row + 1;
+                        let nested_end_row = foldable_range.0.end.row;
+
+                        if current_level == fold_at_level {
+                            fold_ranges.push(foldable_range);
+                        }
+
+                        if current_level <= fold_at_level {
+                            stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        }
+
+                        start_row = nested_end_row + 1;
+                    }
+                    None => start_row += 1,
+                }
+            }
+        }
+
+        self.fold_ranges(fold_ranges, true, cx);
+    }
+
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        for row in 0..display_map.max_buffer_row().0 {
-            if let Some((foldable_range, fold_text)) =
-                display_map.foldable_range(MultiBufferRow(row))
-            {
-                fold_ranges.push((foldable_range, fold_text));
+        for row in 0..snapshot.max_buffer_row().0 {
+            if let Some(foldable_range) = self.snapshot(cx).foldable_range(MultiBufferRow(row)) {
+                fold_ranges.push(foldable_range);
             }
         }
 
