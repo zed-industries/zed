@@ -3273,6 +3273,15 @@ impl<'a> WindowContext<'a> {
             return;
         };
 
+        #[cfg(target_os = "linux")]
+        {
+            if keystroke.is_valid_ime_commit() {
+                self.propagate_event = true;
+                self.finish_dispatch_key_event(event, dispatch_path);
+                return;
+            }
+        }
+
         let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
         if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
             currently_pending = PendingInput::default();
