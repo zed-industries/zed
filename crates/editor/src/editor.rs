@@ -10210,7 +10210,7 @@ impl Editor {
                     let block_id = this.insert_blocks(
                         [BlockProperties {
                             style: BlockStyle::Flex,
-                            position: range.start,
+                            placement: BlockPlacement::Below(range.start),
                             height: 1,
                             render: Box::new({
                                 let rename_editor = rename_editor.clone();
@@ -10246,7 +10246,6 @@ impl Editor {
                                         .into_any_element()
                                 }
                             }),
-                            disposition: BlockDisposition::Below,
                             priority: 0,
                         }],
                         Some(Autoscroll::fit()),
@@ -10531,10 +10530,11 @@ impl Editor {
                         let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
                         BlockProperties {
                             style: BlockStyle::Fixed,
-                            position: buffer.anchor_after(entry.range.start),
+                            placement: BlockPlacement::Below(
+                                buffer.anchor_after(entry.range.start),
+                            ),
                             height: message_height,
                             render: diagnostic_block_renderer(diagnostic, None, true, true),
-                            disposition: BlockDisposition::Below,
                             priority: 0,
                         }
                     }),
