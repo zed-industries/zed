@@ -155,6 +155,7 @@ impl DispatchTree {
         self.nodes.clear();
         self.focusable_node_ids.clear();
         self.view_node_ids.clear();
+        self.modifiers_changed_listeners.clear();
     }
 
     pub fn len(&self) -> usize {
