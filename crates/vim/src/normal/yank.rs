@@ -79,7 +79,7 @@ impl Vim {
             true,
             editor
                 .selections
-                .all_adjusted(cx)
+                .all::<Point>(cx)
                 .iter()
                 .map(|s| s.range())
                 .collect(),
@@ -99,7 +99,7 @@ impl Vim {
             false,
             editor
                 .selections
-                .all_adjusted(cx)
+                .all::<Point>(cx)
                 .iter()
                 .map(|s| s.range())
                 .collect(),

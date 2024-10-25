@@ -56,8 +56,8 @@ impl GoToLine {
     }
 
     pub fn new(active_editor: View<Editor>, cx: &mut ViewContext<Self>) -> Self {
-        let editor = active_editor.read(cx);
-        let cursor = editor.selections.last::<Point>(cx).head();
+        let cursor =
+            active_editor.update(cx, |editor, cx| editor.selections.last::<Point>(cx).head());
 
         let line = cursor.row + 1;
         let column = cursor.column + 1;

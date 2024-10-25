@@ -8,14 +8,14 @@ use std::{
 use collections::HashMap;
 use gpui::{AppContext, Model, Pixels};
 use itertools::Itertools;
-use language::{Bias, Point, Selection, SelectionGoal, TextDimension, ToPoint};
+use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
     Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
-    ToOffset,
+    ToOffset, ToPoint,
 };
 
 #[derive(Debug, Clone)]
@@ -107,10 +107,20 @@ impl SelectionsCollection {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn all<'a, D>(&self, cx: &AppContext) -> Vec<Selection<D>>
+    pub fn all<'a, D>(&self, cx: &mut AppContext) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
+        // todo!()
+        // let mut selections = self.all::<Point>(cx);
+        // if self.line_mode {
+        //     let map = self.display_map(cx);
+        //     for selection in &mut selections {
+        //         let new_range = map.expand_to_line(selection.range());
+        //         selection.start = new_range.start;
+        //         selection.end = new_range.end;
+        //     }
+        // }
         let disjoint_anchors = &self.disjoint;
         let mut disjoint =
             resolve_multiple::<D, _>(disjoint_anchors.iter(), &self.buffer(cx)).peekable();
@@ -141,20 +151,6 @@ impl SelectionsCollection {
             }
         })
         .collect()
-    }
-
-    /// Returns all of the selections, adjusted to take into account the selection line_mode
-    pub fn all_adjusted(&self, cx: &mut AppContext) -> Vec<Selection<Point>> {
-        let mut selections = self.all::<Point>(cx);
-        if self.line_mode {
-            let map = self.display_map(cx);
-            for selection in &mut selections {
-                let new_range = map.expand_to_line(selection.range());
-                selection.start = new_range.start;
-                selection.end = new_range.end;
-            }
-        }
-        selections
     }
 
     /// Returns the newest selection, adjusted to take into account the selection line_mode
@@ -276,14 +272,14 @@ impl SelectionsCollection {
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
         self.all(cx).first().unwrap().clone()
     }
 
     pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
         self.all(cx).last().unwrap().clone()
     }
@@ -298,7 +294,7 @@ impl SelectionsCollection {
     #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Vec<Range<D>> {
         self.all::<D>(cx)
             .iter()
@@ -475,7 +471,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
     {
-        let mut selections = self.all(self.cx);
+        let mut selections = self.collection.all(self.cx);
         let mut start = range.start.to_offset(&self.buffer());
         let mut end = range.end.to_offset(&self.buffer());
         let reversed = if start > end {
@@ -649,6 +645,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         let mut changed = false;
         let display_map = self.display_map();
         let selections = self
+            .collection
             .all::<Point>(self.cx)
             .into_iter()
             .map(|selection| {
@@ -676,6 +673,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         let mut changed = false;
         let snapshot = self.buffer().clone();
         let selections = self
+            .collection
             .all::<usize>(self.cx)
             .into_iter()
             .map(|selection| {

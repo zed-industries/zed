@@ -3218,7 +3218,7 @@ impl Editor {
             return;
         }
 
-        let selections = self.selections.all_adjusted(cx);
+        let selections = self.selections.all::<Point>(cx);
         let mut bracket_inserted = false;
         let mut edits = Vec::new();
         let mut linked_edits = HashMap::<_, Vec<_>>::default();
@@ -3716,7 +3716,7 @@ impl Editor {
         let mut edits = Vec::new();
         let mut rows = Vec::new();
 
-        for (rows_inserted, selection) in self.selections.all_adjusted(cx).into_iter().enumerate() {
+        for (rows_inserted, selection) in self.selections.all::<Point>(cx).into_iter().enumerate() {
             let cursor = selection.head();
             let row = cursor.row;
 
@@ -3774,7 +3774,7 @@ impl Editor {
         let mut rows = Vec::new();
         let mut rows_inserted = 0;
 
-        for selection in self.selections.all_adjusted(cx) {
+        for selection in self.selections.all::<Point>(cx) {
             let cursor = selection.head();
             let row = cursor.row;
 
@@ -3845,7 +3845,7 @@ impl Editor {
 
         let text: Arc<str> = text.into();
         self.transact(cx, |this, cx| {
-            let old_selections = this.selections.all_adjusted(cx);
+            let old_selections = this.selections.all::<Point>(cx);
             let selection_anchors = this.buffer.update(cx, |buffer, cx| {
                 let anchors = {
                     let snapshot = buffer.read(cx);
@@ -5803,7 +5803,7 @@ impl Editor {
             return;
         }
 
-        let mut selections = self.selections.all_adjusted(cx);
+        let mut selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
         let rows_iter = selections.iter().map(|s| s.head().row);
@@ -10377,7 +10377,7 @@ impl Editor {
 
         let selections = self
             .selections
-            .all_adjusted(cx)
+            .all::<Point>(cx)
             .into_iter()
             .filter(|s| !s.is_empty())
             .collect_vec();
@@ -10686,7 +10686,7 @@ impl Editor {
     pub fn fold(&mut self, _: &actions::Fold, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.all_adjusted(cx);
+        let selections = self.selections.all::<Point>(cx);
 
         for selection in selections {
             let range = selection.range().sorted();
@@ -10746,7 +10746,7 @@ impl Editor {
     pub fn fold_recursive(&mut self, _: &actions::FoldRecursive, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        let selections = self.selections.all_adjusted(cx);
+        let selections = self.selections.all::<Point>(cx);
 
         for selection in selections {
             let range = selection.range().sorted();
@@ -12328,9 +12328,10 @@ impl Editor {
             return;
         };
 
+        let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx);
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in selections {
             for (buffer, range, _) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
@@ -12375,6 +12376,7 @@ impl Editor {
     }
 
     fn open_excerpts_common(&mut self, split: bool, cx: &mut ViewContext<Self>) {
+        let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx);
         if buffer.is_singleton() {
             cx.propagate();
@@ -12387,7 +12389,7 @@ impl Editor {
         };
 
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in selections {
             for (mut buffer_handle, mut range, _) in
                 buffer.range_to_buffer_ranges(selection.range(), cx)
             {
@@ -12503,7 +12505,7 @@ impl Editor {
     fn selection_replacement_ranges(
         &self,
         range: Range<OffsetUtf16>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Vec<Range<OffsetUtf16>> {
         let selections = self.selections.all::<OffsetUtf16>(cx);
         let newest_selection = selections

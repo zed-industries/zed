@@ -189,11 +189,16 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
-        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
+            (
+                editor.buffer().read(cx).snapshot(cx),
+                editor.selections.all::<Point>(cx),
+            )
+        });
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
-        for mut selection in editor.read(cx).selections.all::<Point>(cx) {
+        for mut selection in initial_selections {
             if selection.end > selection.start {
                 selection.start.column = 0;
                 // If the selection ends at the start of the line, we don't want to include it.

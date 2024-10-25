@@ -1667,8 +1667,10 @@ impl ContextEditor {
         });
     }
 
-    fn cursors(&self, cx: &AppContext) -> Vec<usize> {
-        let selections = self.editor.read(cx).selections.all::<usize>(cx);
+    fn cursors(&self, cx: &mut WindowContext) -> Vec<usize> {
+        let selections = self
+            .editor
+            .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
         selections
             .into_iter()
             .map(|selection| selection.head())
@@ -2964,7 +2966,7 @@ impl ContextEditor {
 
         let mut creases = vec![];
         editor.update(cx, |editor, cx| {
-            let selections = editor.selections.all_adjusted(cx);
+            let selections = editor.selections.all::<Point>(cx);
             let buffer = editor.buffer().read(cx).snapshot(cx);
             for selection in selections {
                 let range = editor::ToOffset::to_offset(&selection.start, &buffer)

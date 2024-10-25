@@ -242,7 +242,7 @@ async fn test_row_column_numbers_query_inside_file(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
 
     editor.update(cx, |editor, cx| {
-            let all_selections = editor.selections.all_adjusted(cx);
+            let all_selections = editor.selections.all::<Point>(cx);
             assert_eq!(
                 all_selections.len(),
                 1,
@@ -317,7 +317,7 @@ async fn test_row_column_numbers_query_outside_file(cx: &mut TestAppContext) {
     cx.executor().advance_clock(Duration::from_secs(2));
 
     editor.update(cx, |editor, cx| {
-            let all_selections = editor.selections.all_adjusted(cx);
+            let all_selections = editor.selections.all::<Point>(cx);
             assert_eq!(
                 all_selections.len(),
                 1,
