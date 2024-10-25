@@ -143,6 +143,8 @@ impl Vim {
                             cursor_positions.push(selection.start..selection.start);
                         }
                     }
+
+                    Mode::HelixNormal | Mode::HelixVisual => {}
                     Mode::Insert | Mode::Normal | Mode::Replace => {
                         let start = selection.start;
                         let mut end = start;
