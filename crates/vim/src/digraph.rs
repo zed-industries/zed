@@ -143,8 +143,7 @@ impl Vim {
                         let ch: char = u32::from_str_radix(&prefix[1..], 16)
                             .ok()
                             .and_then(|n| n.try_into().ok())
-                            .unwrap_or('\u{FFFD}')
-                            .into();
+                            .unwrap_or('\u{FFFD}');
                         return self.insert_literal(Some(ch), "", cx);
                     }
                 } else {
@@ -153,8 +152,7 @@ impl Vim {
                             u32::from_str_radix(&prefix[1..], 16)
                                 .ok()
                                 .and_then(|n| n.try_into().ok())
-                                .unwrap_or('\u{FFFD}')
-                                .into(),
+                                .unwrap_or('\u{FFFD}'),
                         )
                     } else {
                         None
