@@ -3885,7 +3885,9 @@ impl Render for OutlinePanel {
         let project = self.project.read(cx);
         let query = self.query(cx);
         let pinned = self.pinned;
-        let indent_size = OutlinePanelSettings::get_global(cx).indent_size;
+        let settings = OutlinePanelSettings::get_global(cx);
+        let indent_size = settings.indent_size;
+        let show_indent_guides = settings.indent_guides;
 
         let outline_panel = v_flex()
             .id("outline-panel")
@@ -4051,51 +4053,56 @@ impl Render for OutlinePanel {
                     })
                     .size_full()
                     .track_scroll(self.scroll_handle.clone())
-                    .with_decoration(
-                        ui::indent_guides(
-                            cx.view().clone(),
-                            px(indent_size),
-                            IndentGuideColors::panel(cx),
-                            |outline_panel, range, _| {
-                                let entries = outline_panel.cached_entries.get(range);
-                                if let Some(entries) = entries {
-                                    entries.into_iter().map(|item| item.depth).collect()
-                                } else {
-                                    smallvec::SmallVec::new()
-                                }
-                            },
+                    .when(show_indent_guides, |list| {
+                        list.with_decoration(
+                            ui::indent_guides(
+                                cx.view().clone(),
+                                px(indent_size),
+                                IndentGuideColors::panel(cx),
+                                |outline_panel, range, _| {
+                                    let entries = outline_panel.cached_entries.get(range);
+                                    if let Some(entries) = entries {
+                                        entries.into_iter().map(|item| item.depth).collect()
+                                    } else {
+                                        smallvec::SmallVec::new()
+                                    }
+                                },
+                            )
+                            .with_render_fn(
+                                cx.view().clone(),
+                                move |_, params, _| {
+                                    const LEFT_OFFSET: f32 = 10.;
+
+                                    let indent_size = params.indent_size;
+                                    let item_height = params.item_height;
+
+                                    params
+                                        .indent_guides
+                                        .into_iter()
+                                        .map(|layout| {
+                                            let bounds = Bounds::new(
+                                                point(
+                                                    px(layout.offset.x as f32) * indent_size
+                                                        + px(LEFT_OFFSET),
+                                                    px(layout.offset.y as f32) * item_height,
+                                                ),
+                                                size(
+                                                    px(1.),
+                                                    px(layout.length as f32) * item_height,
+                                                ),
+                                            );
+                                            ui::RenderedIndentGuide {
+                                                bounds,
+                                                layout,
+                                                is_active: false,
+                                                hitbox: None,
+                                            }
+                                        })
+                                        .collect()
+                                },
+                            ),
                         )
-                        .with_render_fn(
-                            cx.view().clone(),
-                            move |_, params, _| {
-                                const LEFT_OFFSET: f32 = 10.;
-
-                                let indent_size = params.indent_size;
-                                let item_height = params.item_height;
-
-                                params
-                                    .indent_guides
-                                    .into_iter()
-                                    .map(|layout| {
-                                        let bounds = Bounds::new(
-                                            point(
-                                                px(layout.offset.x as f32) * indent_size
-                                                    + px(LEFT_OFFSET),
-                                                px(layout.offset.y as f32) * item_height,
-                                            ),
-                                            size(px(1.), px(layout.length as f32) * item_height),
-                                        );
-                                        ui::RenderedIndentGuide {
-                                            bounds,
-                                            layout,
-                                            is_active: false,
-                                            hitbox: None,
-                                        }
-                                    })
-                                    .collect()
-                            },
-                        ),
-                    )
+                    })
                 })
         }
         .children(self.context_menu.as_ref().map(|(menu, position, _)| {
