@@ -517,17 +517,31 @@ impl SshClientDelegate {
             }
         }
 
+        // For nightly channel, always get latest
+        let current_version = if release_channel == ReleaseChannel::Nightly {
+            None
+        } else {
+            Some(version)
+        };
+
+        self.update_status(
+            Some(&format!("Checking remote server release {}", version)),
+            cx,
+        );
+
         if download_binary_on_host {
-            let (request_url, request_body) = AutoUpdater::get_latest_remote_server_release_url(
+            let (request_url, request_body) = AutoUpdater::get_remote_server_release_url(
                 platform.os,
                 platform.arch,
                 release_channel,
+                current_version,
                 cx,
             )
             .await
             .map_err(|e| {
                 anyhow!(
-                    "Failed to get remote server binary download url (os: {}, arch: {}): {}",
+                    "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
+                    version,
                     platform.os,
                     platform.arch,
                     e
@@ -542,17 +556,18 @@ impl SshClientDelegate {
                 version,
             ))
         } else {
-            self.update_status(Some("Checking for latest version of remote server"), cx);
-            let binary_path = AutoUpdater::get_latest_remote_server_release(
+            let binary_path = AutoUpdater::download_remote_server_release(
                 platform.os,
                 platform.arch,
                 release_channel,
+                current_version,
                 cx,
             )
             .await
             .map_err(|e| {
                 anyhow!(
-                    "Failed to download remote server binary (os: {}, arch: {}): {}",
+                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
+                    version,
                     platform.os,
                     platform.arch,
                     e
