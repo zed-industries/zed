@@ -1,4 +1,4 @@
-use crate::{Editor, EditorEvent, SemanticsProvider};
+use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
 use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task, View};
@@ -8,7 +8,7 @@ use project::Project;
 use smol::stream::StreamExt;
 use std::{any::TypeId, ops::Range, rc::Rc, time::Duration};
 use text::ToOffset;
-use ui::prelude::*;
+use ui::{prelude::*, ButtonLike, KeyBinding};
 use workspace::{
     searchable::SearchableItemHandle, Item, ItemHandle as _, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace,
@@ -232,7 +232,10 @@ impl ProposedChangesEditor {
 
 impl Render for ProposedChangesEditor {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        self.editor.clone()
+        div()
+            .size_full()
+            .key_context("ProposedChangesEditor")
+            .child(self.editor.clone())
     }
 }
 
@@ -331,17 +334,21 @@ impl ProposedChangesEditorToolbar {
 }
 
 impl Render for ProposedChangesEditorToolbar {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let editor = self.current_editor.clone();
-        Button::new("apply-changes", "Apply All").on_click(move |_, cx| {
-            if let Some(editor) = &editor {
-                editor.update(cx, |editor, cx| {
-                    editor.editor.update(cx, |editor, cx| {
-                        editor.apply_all_diff_hunks(cx);
-                    })
-                });
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let button_like = ButtonLike::new("apply-changes").child(Label::new("Apply All"));
+
+        match &self.current_editor {
+            Some(editor) => {
+                let focus_handle = editor.focus_handle(cx);
+                let keybinding = KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, cx)
+                    .map(|binding| binding.into_any_element());
+
+                button_like.children(keybinding).on_click({
+                    move |_event, cx| focus_handle.dispatch_action(&ApplyAllDiffHunks, cx)
+                })
             }
-        })
+            None => button_like.disabled(true),
+        }
     }
 }
 

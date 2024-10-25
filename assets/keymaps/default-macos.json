@@ -539,6 +539,13 @@
     }
   },
   {
+    "context": "ProposedChangesEditor",
+    "bindings": {
+      "cmd-shift-y": "editor::ApplyDiffHunk",
+      "cmd-shift-a": "editor::ApplyAllDiffHunks"
+    }
+  },
+  {
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
