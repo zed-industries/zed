@@ -4,6 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use client::proto::ViewId;
 use collections::HashMap;
+use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::{future::Shared, FutureExt};
 use gpui::{
     actions, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, Model, Task, View,
@@ -45,12 +46,14 @@ pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|_, _: &OpenNotebook, cx| {
-            let workspace = cx.view().clone();
-            cx.window_context()
-                .defer(move |cx| NotebookEditor::open(workspace, cx).detach_and_log_err(cx));
-        });
+    cx.observe_new_views(|workspace: &mut Workspace, cx| {
+        if cx.has_flag::<NotebookFeatureFlag>() {
+            workspace.register_action(|_, _: &OpenNotebook, cx| {
+                let workspace = cx.view().clone();
+                cx.window_context()
+                    .defer(move |cx| NotebookEditor::open(workspace, cx).detach_and_log_err(cx));
+            });
+        }
     })
     .detach();
 }

@@ -9173,6 +9173,7 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "env_logger",
+ "feature_flags",
  "futures 0.3.30",
  "gpui",
  "http_client",
