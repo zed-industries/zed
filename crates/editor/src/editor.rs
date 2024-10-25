@@ -10981,7 +10981,6 @@ impl Editor {
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
         for (fold_range, fold_text) in ranges {
-            println!("Processing fold range: {:?}", fold_range);
             if let Some((_, buffer, _)) =
                 multi_buffer.excerpt_containing(fold_range.start.clone(), cx)
             {
