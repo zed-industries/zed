@@ -3589,7 +3589,6 @@ impl LspStore {
             let abs_path = abs_path
                 .to_file_path()
                 .map_err(|_| anyhow!("can't convert URI to path"))?;
-            println!("--> open local buffer abs_path: {:?}", abs_path);
             let p = abs_path.clone();
             let yarn_worktree = lsp_store
                 .update(&mut cx, move |lsp_store, cx| match lsp_store.as_local() {

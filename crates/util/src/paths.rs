@@ -127,37 +127,6 @@ impl<T: AsRef<Path>> From<T> for SanitizedPath {
     }
 }
 
-// impl From<&Path> for SanitizedPath {
-//     #[cfg(not(target_os = "windows"))]
-//     fn from(path: &Path) -> Self {
-//         SanitizedPath(path.into())
-//     }
-
-//     #[cfg(target_os = "windows")]
-//     fn from(path: &Path) -> Self {
-//         let path = dunce::simplified(path);
-//         SanitizedPath(path.into())
-//     }
-// }
-
-// impl From<Arc<Path>> for SanitizedPath {
-//     fn from(path: Arc<Path>) -> Self {
-//         Self(path)
-//     }
-// }
-
-// impl From<&PathBuf> for SanitizedPath {
-//     fn from(path: &PathBuf) -> Self {
-//         SanitizedPath(path.as_path().into())
-//     }
-// }
-
-// impl From<&Arc<Path>> for SanitizedPath {
-//     fn from(path: &Arc<Path>) -> Self {
-//         SanitizedPath(path.clone())
-//     }
-// }
-
 /// A delimiter to use in `path_query:row_number:column_number` strings parsing.
 pub const FILE_ROW_COLUMN_DELIMITER: char = ':';
 
