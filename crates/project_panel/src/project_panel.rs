@@ -94,10 +94,16 @@ pub struct ProjectPanel {
 struct EditState {
     worktree_id: WorktreeId,
     entry_id: ProjectEntryId,
-    is_new_entry: bool,
+    leaf_entry_id: Option<ProjectEntryId>,
     is_dir: bool,
     depth: usize,
     processing_filename: Option<String>,
+}
+
+impl EditState {
+    fn is_new_entry(&self) -> bool {
+        self.leaf_entry_id.is_none()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -824,10 +830,10 @@ impl ProjectPanel {
         cx.focus(&self.focus_handle);
 
         let worktree_id = edit_state.worktree_id;
-        let is_new_entry = edit_state.is_new_entry;
+        let is_new_entry = edit_state.is_new_entry();
         let filename = self.filename_editor.read(cx).text(cx);
         edit_state.is_dir = edit_state.is_dir
-            || (edit_state.is_new_entry && filename.ends_with(std::path::MAIN_SEPARATOR));
+            || (edit_state.is_new_entry() && filename.ends_with(std::path::MAIN_SEPARATOR));
         let is_dir = edit_state.is_dir;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
@@ -858,7 +864,6 @@ impl ProjectPanel {
             if path_already_exists(new_path.as_path()) {
                 return None;
             }
-
             edited_entry_id = entry.id;
             edit_task = self.project.update(cx, |project, cx| {
                 project.rename_entry(entry.id, new_path.as_path(), cx)
@@ -1013,7 +1018,7 @@ impl ProjectPanel {
             self.edit_state = Some(EditState {
                 worktree_id,
                 entry_id: directory_id,
-                is_new_entry: true,
+                leaf_entry_id: None,
                 is_dir,
                 processing_filename: None,
                 depth: 0,
@@ -1047,12 +1052,12 @@ impl ProjectPanel {
         }) = self.selection
         {
             if let Some(worktree) = self.project.read(cx).worktree_for_id(worktree_id, cx) {
-                let entry_id = self.unflatten_entry_id(entry_id);
-                if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
+                let sub_entry_id = self.unflatten_entry_id(entry_id);
+                if let Some(entry) = worktree.read(cx).entry_for_id(sub_entry_id) {
                     self.edit_state = Some(EditState {
                         worktree_id,
-                        entry_id,
-                        is_new_entry: false,
+                        entry_id: sub_entry_id,
+                        leaf_entry_id: Some(entry_id),
                         is_dir: entry.is_dir(),
                         processing_filename: None,
                         depth: 0,
@@ -1835,7 +1840,7 @@ impl ProjectPanel {
             let mut new_entry_parent_id = None;
             let mut new_entry_kind = EntryKind::Dir;
             if let Some(edit_state) = &self.edit_state {
-                if edit_state.worktree_id == worktree_id && edit_state.is_new_entry {
+                if edit_state.worktree_id == worktree_id && edit_state.is_new_entry() {
                     new_entry_parent_id = Some(edit_state.entry_id);
                     new_entry_kind = if edit_state.is_dir {
                         EntryKind::Dir
@@ -2351,7 +2356,7 @@ impl ProjectPanel {
                     };
 
                     if let Some(edit_state) = &self.edit_state {
-                        let is_edited_entry = if edit_state.is_new_entry {
+                        let is_edited_entry = if edit_state.is_new_entry() {
                             entry.id == NEW_ENTRY_ID
                         } else {
                             entry.id == edit_state.entry_id
@@ -2369,10 +2374,41 @@ impl ProjectPanel {
                         if is_edited_entry {
                             if let Some(processing_filename) = &edit_state.processing_filename {
                                 details.is_processing = true;
-                                details.filename.clear();
-                                details.filename.push_str(processing_filename);
+                                if let Some(ancestors) = edit_state
+                                    .leaf_entry_id
+                                    .and_then(|entry| self.ancestors.get(&entry))
+                                {
+                                    let position = ancestors.ancestors.iter().position(|entry_id| *entry_id == edit_state.entry_id).expect("Edited sub-entry should be an ancestor of selected leaf entry") + 1;
+                                    let all_components = ancestors.ancestors.len();
+
+                                    let prefix_components = all_components - position;
+                                    let suffix_components = position.checked_sub(1);
+                                    let mut previous_components =
+                                        Path::new(&details.filename).components();
+                                    let mut new_path = previous_components
+                                        .by_ref()
+                                        .take(prefix_components)
+                                        .collect::<PathBuf>();
+                                    if let Some(last_component) =
+                                        Path::new(processing_filename).components().last()
+                                    {
+                                        new_path.push(last_component);
+                                        previous_components.next();
+                                    }
+
+                                    if let Some(_) = suffix_components {
+                                        new_path.push(previous_components);
+                                    }
+                                    if let Some(str) = new_path.to_str() {
+                                        details.filename.clear();
+                                        details.filename.push_str(str);
+                                    }
+                                } else {
+                                    details.filename.clear();
+                                    details.filename.push_str(processing_filename);
+                                }
                             } else {
-                                if edit_state.is_new_entry {
+                                if edit_state.is_new_entry() {
                                     details.filename.clear();
                                 }
                                 details.is_editing = true;
@@ -2571,6 +2607,7 @@ impl ProjectPanel {
                                             comp_str
                                         })
                                         .collect::<Vec<_>>();
+
                                     let components_len = components.len();
                                     let active_index = components_len
                                         - 1
