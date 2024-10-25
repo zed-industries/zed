@@ -92,6 +92,7 @@ impl LspAdapter for YamlLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn ToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let location = SettingsLocation {

@@ -37,8 +37,8 @@ use language::{
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageName,
     LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    ToolchainStore, Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
@@ -3029,7 +3029,11 @@ impl LspStore {
         None
     }
 
-    pub async fn refresh_workspace_configurations(this: &WeakModel<Self>, mut cx: AsyncAppContext) {
+    pub async fn refresh_workspace_configurations(
+        this: &WeakModel<Self>,
+        toolchains: Arc<dyn ToolchainStore>,
+        mut cx: AsyncAppContext,
+    ) {
         maybe!(async move {
             let servers = this
                 .update(&mut cx, |this, cx| {
@@ -3059,7 +3063,7 @@ impl LspStore {
 
             for (adapter, server, delegate) in servers {
                 let settings = adapter
-                    .workspace_configuration(&delegate, &mut cx)
+                    .workspace_configuration(&delegate, toolchains.clone(), &mut cx)
                     .await
                     .ok()?;
 

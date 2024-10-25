@@ -41,8 +41,8 @@ use futures::{
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
-    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
-    Model, ModelContext, SharedString, Task, WeakModel, WindowContext,
+    AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, Entity, EventEmitter,
+    Hsla, Model, ModelContext, SharedString, Task, WeakModel, WindowContext,
 };
 use itertools::Itertools;
 use language::{
@@ -655,7 +655,7 @@ impl Project {
                 ToolchainStore::local(
                     languages.clone(),
                     worktree_store.clone(),
-                    lsp_store.clone(),
+                    lsp_store.downgrade(),
                     cx,
                 )
             }));

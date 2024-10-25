@@ -4,10 +4,11 @@
 //! which is a set of tools used to interact with the projects written in said language.
 //! For example, a Python project can have an associated virtual environment; a Rust project can have a toolchain override.
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
-use gpui::SharedString;
+use gpui::{AppContext, SharedString};
+use settings::WorktreeId;
 
 use crate::LanguageName;
 
@@ -23,6 +24,16 @@ pub struct Toolchain {
 #[async_trait(?Send)]
 pub trait ToolchainLister: Send + Sync {
     async fn list(&self, _: PathBuf) -> ToolchainList;
+}
+
+#[async_trait(?Send)]
+pub trait ToolchainStore {
+    async fn active_toolchain(
+        self: Arc<Self>,
+        worktree_id: WorktreeId,
+        language_name: LanguageName,
+        cx: &mut AppContext,
+    ) -> Option<Toolchain>;
 }
 
 type DefaultIndex = usize;

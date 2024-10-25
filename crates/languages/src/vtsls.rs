@@ -183,6 +183,7 @@ impl LspAdapter for VtslsLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn ToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let tsdk_path = Self::tsdk_path(delegate).await;

@@ -230,6 +230,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn ToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
@@ -325,6 +326,7 @@ impl LspAdapter for EsLintLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn ToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();

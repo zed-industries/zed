@@ -9,6 +9,7 @@ use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
     CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
+    ToolchainStore,
 };
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
 use serde::Serialize;
@@ -194,6 +195,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn ToolchainStore>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let delegate = delegate.clone();

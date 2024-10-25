@@ -198,6 +198,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn ToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {

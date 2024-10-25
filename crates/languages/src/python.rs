@@ -206,9 +206,12 @@ impl LspAdapter for PythonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn ToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        //let toolchain = self.toolchain.active_toolchain.lock().await.clone();
+        let toolchain = toolchains
+            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"))
+            .await;
         cx.update(move |cx| {
             let mut user_settings =
                 language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
