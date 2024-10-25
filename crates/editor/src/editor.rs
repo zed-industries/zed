@@ -3282,10 +3282,25 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
 
+                            let is_closing_quote = if bracket_pair.end == bracket_pair.start
+                                && bracket_pair.start.len() == 1
+                            {
+                                let target = bracket_pair.start.chars().next().unwrap();
+                                let current_line_count = snapshot
+                                    .reversed_chars_at(selection.start)
+                                    .take_while(|&c| c != '\n')
+                                    .filter(|&c| c == target)
+                                    .count();
+                                current_line_count % 2 == 1
+                            } else {
+                                false
+                            };
+
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
+                                && !is_closing_quote
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
                                 new_selections.push((selection.map(|_| anchor), text.len()));
