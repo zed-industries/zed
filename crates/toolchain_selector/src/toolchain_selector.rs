@@ -163,7 +163,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                         .update(&mut cx, |this, _| this.delegate.worktree_id)
                         .ok()?;
                     workspace::WORKSPACE_DB
-                        .set_toolchain(workspace_id, toolchain.clone())
+                        .set_toolchain(workspace_id, worktree_id, toolchain.clone())
                         .await
                         .ok()?;
 

@@ -8,6 +8,7 @@ use db::{define_connection, query, sqlez::connection::Connection, sqlez_macros::
 use gpui::{point, size, Axis, Bounds, WindowBounds, WindowId};
 
 use language::{LanguageName, Toolchain};
+use project::WorktreeId;
 use remote::ssh_session::SshProjectId;
 use sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
@@ -374,10 +375,11 @@ define_connection! {
     sql!(
         CREATE TABLE toolchains (
             workspace_id INTEGER,
+            worktree_id INTEGER,
             language_name TEXT NOT NULL,
             name TEXT NOT NULL,
             path TEXT NOT NULL,
-            PRIMARY KEY (workspace_id, language_name)
+            PRIMARY KEY (workspace_id, worktree_id, language_name)
         );
     ),
     ];
@@ -1236,17 +1238,18 @@ impl WorkspaceDb {
     pub async fn toolchain(
         &self,
         workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
         language_name: LanguageName,
     ) -> Result<Option<Toolchain>> {
         self.write(move |this| {
             let mut select = this
                 .select_bound(sql!(
-                    SELECT name, path FROM toolchains WHERE workspace_id = ? AND language_name = ?
+                    SELECT name, path FROM toolchains WHERE workspace_id = ? AND language_name = ? AND worktree_id = ?
                 ))
                 .context("Preparing insertion")?;
 
             let toolchain: Vec<(String, String)> =
-                select((workspace_id, language_name.0.to_owned()))?;
+                select((workspace_id, language_name.0.to_owned(), worktree_id.to_usize()))?;
 
             Ok(toolchain.into_iter().next().map(|(name, path)| Toolchain {
                 label: name.into(),
@@ -1260,12 +1263,13 @@ impl WorkspaceDb {
     pub async fn set_toolchain(
         &self,
         workspace_id: WorkspaceId,
+        worktree_id: WorktreeId,
         toolchain: Toolchain,
     ) -> Result<()> {
         self.write(move |conn| {
             let mut insert = conn
                 .exec_bound(sql!(
-                    INSERT INTO toolchains(workspace_id, language_name, name, path) VALUES (?, ?, ?,  ?)
+                    INSERT INTO toolchains(workspace_id, worktree_id, language_name, name, path) VALUES (?, ?, ?, ?,  ?)
                     ON CONFLICT DO
                     UPDATE SET
                         path = ?4,
@@ -1275,6 +1279,7 @@ impl WorkspaceDb {
 
             insert((
                 workspace_id,
+                worktree_id.to_usize(),
                 toolchain.language_name.0.as_ref(),
                 toolchain.label.as_ref(),
                 toolchain.path.as_ref(),

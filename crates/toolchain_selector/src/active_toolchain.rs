@@ -88,7 +88,7 @@ impl ActiveToolchain {
                 .ok()
                 .flatten()?;
             let selected_toolchain = workspace::WORKSPACE_DB
-                .toolchain(workspace_id, language_name.clone())
+                .toolchain(workspace_id, worktree_id, language_name.clone())
                 .await
                 .ok()
                 .flatten();
