@@ -45,7 +45,7 @@ impl SshSettings {
         for conn in self.ssh_connections() {
             if conn.host == host && conn.username == username && conn.port == port {
                 return SshConnectionOptions {
-                    nickname: conn.nickname.into(),
+                    nickname: conn.nickname,
                     upload_binary: conn.upload_binary.unwrap_or_default(),
                     args: Some(conn.args),
                     host,
