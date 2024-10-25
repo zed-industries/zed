@@ -48,11 +48,10 @@ function handle_args {
                 help_info
                 exit 0
                 ;;
-            # *)
-            #     echo "Error: Invalid options: $@" >&2
-            #     help_info
-            #     exit 1
-            #     ;;
+            *)
+                help_info
+                exit 1
+                ;;
         esac
     done
     shift $((OPTIND-1))
@@ -63,8 +62,7 @@ function handle_args {
         bundle_name="$bundle_name.app"
     fi
 
-    # Check if GNU Parallel is installed
-    if ! command -v parallel &> /dev/null; then
+    if [ "$local_only" = false ] && ! command -v parallel &> /dev/null; then
         echo "GNU Parallel is not installed. Please install it to continue."
         exit 1
     fi
@@ -259,7 +257,7 @@ function full_run() {
         --env MACOS_CERTIFICATE \
         --env MACOS_CERTIFICATE_PASSWORD \
         --env APPLE_NOTARIZATION_USERNAME \
-        --env APPLE_NOTARIZATION_PASSWORD
+        --env APPLE_NOTARIZATION_PASSWORD \
         ::: \
         "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_aarch64\" aarch64-apple-darwin  aarch64-apple-darwin | nl | $prefix1" \
         "./script/notarize-mac sign_app_binaries \"$bundle_name\" \"$target_dir\" \"$channel\" \"$app_path_x64\"     x86_64-apple-darwin   x86_64-apple-darwin  | nl | $prefix2" \
