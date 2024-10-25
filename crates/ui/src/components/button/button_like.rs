@@ -149,8 +149,8 @@ pub(crate) struct ButtonLikeStyles {
 fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut WindowContext) -> Hsla {
     match elevation {
         Some(ElevationIndex::Background) => cx.theme().colors().element_background,
-        Some(ElevationIndex::ElevatedSurface) => cx.theme().colors().surface_background,
-        Some(ElevationIndex::Surface) => cx.theme().colors().elevated_surface_background,
+        Some(ElevationIndex::ElevatedSurface) => cx.theme().colors().elevated_surface_background,
+        Some(ElevationIndex::Surface) => cx.theme().colors().surface_background,
         Some(ElevationIndex::ModalSurface) => cx.theme().colors().background,
         _ => cx.theme().colors().element_background,
     }
@@ -162,11 +162,9 @@ impl ButtonStyle {
         elevation: Option<ElevationIndex>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        let filled_background = element_bg_from_elevation(elevation, cx);
-
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
-                background: filled_background,
+                background: element_bg_from_elevation(elevation, cx),
                 border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -192,16 +190,18 @@ impl ButtonStyle {
         elevation: Option<ElevationIndex>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        let mut filled_background = element_bg_from_elevation(elevation, cx);
-        filled_background.fade_out(0.92);
-
         match self {
-            ButtonStyle::Filled => ButtonLikeStyles {
-                background: filled_background,
-                border_color: transparent_black(),
-                label_color: Color::Default.color(cx),
-                icon_color: Color::Default.color(cx),
-            },
+            ButtonStyle::Filled => {
+                let mut filled_background = element_bg_from_elevation(elevation, cx);
+                filled_background.fade_out(0.92);
+
+                ButtonLikeStyles {
+                    background: filled_background,
+                    border_color: transparent_black(),
+                    label_color: Color::Default.color(cx),
+                    icon_color: Color::Default.color(cx),
+                }
+            }
             ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
@@ -277,8 +277,6 @@ impl ButtonStyle {
         elevation: Option<ElevationIndex>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        element_bg_from_elevation(elevation, cx).fade_out(0.82);
-
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,

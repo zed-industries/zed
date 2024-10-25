@@ -501,8 +501,6 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// Whether this chunk of text is an invisible character.
-    pub is_invisible: bool,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
 }
@@ -4040,7 +4038,7 @@ impl<'a> BufferChunks<'a> {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack
@@ -4216,6 +4214,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             if self.range.start == self.chunks.offset() + chunk.len() {
                 self.chunks.next().unwrap();
             }
+
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,

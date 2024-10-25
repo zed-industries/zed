@@ -11,6 +11,7 @@ use gpui::{
 };
 
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
+use paths::remote_servers_dir;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -431,10 +432,11 @@ impl AutoUpdater {
         cx.notify();
     }
 
-    pub async fn get_latest_remote_server_release(
+    pub async fn download_remote_server_release(
         os: &str,
         arch: &str,
-        mut release_channel: ReleaseChannel,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
         let this = cx.update(|cx| {
@@ -444,15 +446,12 @@ impl AutoUpdater {
                 .ok_or_else(|| anyhow!("auto-update not initialized"))
         })??;
 
-        if release_channel == ReleaseChannel::Dev {
-            release_channel = ReleaseChannel::Nightly;
-        }
-
-        let release = Self::get_latest_release(
+        let release = Self::get_release(
             &this,
             "zed-remote-server",
             os,
             arch,
+            version,
             Some(release_channel),
             cx,
         )
@@ -467,17 +466,21 @@ impl AutoUpdater {
         let client = this.read_with(cx, |this, _| this.http_client.clone())?;
 
         if smol::fs::metadata(&version_path).await.is_err() {
-            log::info!("downloading zed-remote-server {os} {arch}");
+            log::info!(
+                "downloading zed-remote-server {os} {arch} version {}",
+                release.version
+            );
             download_remote_server_binary(&version_path, release, client, cx).await?;
         }
 
         Ok(version_path)
     }
 
-    pub async fn get_latest_remote_server_release_url(
+    pub async fn get_remote_server_release_url(
         os: &str,
         arch: &str,
-        mut release_channel: ReleaseChannel,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
     ) -> Result<(String, String)> {
         let this = cx.update(|cx| {
@@ -487,15 +490,12 @@ impl AutoUpdater {
                 .ok_or_else(|| anyhow!("auto-update not initialized"))
         })??;
 
-        if release_channel == ReleaseChannel::Dev {
-            release_channel = ReleaseChannel::Nightly;
-        }
-
-        let release = Self::get_latest_release(
+        let release = Self::get_release(
             &this,
             "zed-remote-server",
             os,
             arch,
+            version,
             Some(release_channel),
             cx,
         )
@@ -507,6 +507,56 @@ impl AutoUpdater {
         Ok((release.url, body))
     }
 
+    async fn get_release(
+        this: &Model<Self>,
+        asset: &str,
+        os: &str,
+        arch: &str,
+        version: Option<SemanticVersion>,
+        release_channel: Option<ReleaseChannel>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<JsonRelease> {
+        let client = this.read_with(cx, |this, _| this.http_client.clone())?;
+
+        if let Some(version) = version {
+            let channel = release_channel.map(|c| c.dev_name()).unwrap_or("stable");
+
+            let url = format!("/api/releases/{channel}/{version}/{asset}-{os}-{arch}.gz?update=1",);
+
+            Ok(JsonRelease {
+                version: version.to_string(),
+                url: client.build_url(&url),
+            })
+        } else {
+            let mut url_string = client.build_url(&format!(
+                "/api/releases/latest?asset={}&os={}&arch={}",
+                asset, os, arch
+            ));
+            if let Some(param) = release_channel.and_then(|c| c.release_query_param()) {
+                url_string += "&";
+                url_string += param;
+            }
+
+            let mut response = client.get(&url_string, Default::default(), true).await?;
+            let mut body = Vec::new();
+            response.body_mut().read_to_end(&mut body).await?;
+
+            if !response.status().is_success() {
+                return Err(anyhow!(
+                    "failed to fetch release: {:?}",
+                    String::from_utf8_lossy(&body),
+                ));
+            }
+
+            serde_json::from_slice(body.as_slice()).with_context(|| {
+                format!(
+                    "error deserializing release {:?}",
+                    String::from_utf8_lossy(&body),
+                )
+            })
+        }
+    }
+
     async fn get_latest_release(
         this: &Model<Self>,
         asset: &str,
@@ -515,38 +565,7 @@ impl AutoUpdater {
         release_channel: Option<ReleaseChannel>,
         cx: &mut AsyncAppContext,
     ) -> Result<JsonRelease> {
-        let client = this.read_with(cx, |this, _| this.http_client.clone())?;
-        let mut url_string = client.build_url(&format!(
-            "/api/releases/latest?asset={}&os={}&arch={}",
-            asset, os, arch
-        ));
-        if let Some(param) = release_channel.and_then(|c| c.release_query_param()) {
-            url_string += "&";
-            url_string += param;
-        }
-
-        let mut response = client.get(&url_string, Default::default(), true).await?;
-
-        let mut body = Vec::new();
-        response
-            .body_mut()
-            .read_to_end(&mut body)
-            .await
-            .context("error reading release")?;
-
-        if !response.status().is_success() {
-            Err(anyhow!(
-                "failed to fetch release: {:?}",
-                String::from_utf8_lossy(&body),
-            ))?;
-        }
-
-        serde_json::from_slice(body.as_slice()).with_context(|| {
-            format!(
-                "error deserializing release {:?}",
-                String::from_utf8_lossy(&body),
-            )
-        })
+        Self::get_release(this, asset, os, arch, None, release_channel, cx).await
     }
 
     async fn update(this: Model<Self>, mut cx: AsyncAppContext) -> Result<()> {
@@ -661,12 +680,15 @@ async fn download_remote_server_binary(
     client: Arc<HttpClientWithUrl>,
     cx: &AsyncAppContext,
 ) -> Result<()> {
-    let mut target_file = File::create(&target_path).await?;
+    let temp = tempfile::Builder::new().tempfile_in(remote_servers_dir())?;
+    let mut temp_file = File::create(&temp).await?;
     let update_request_body = build_remote_server_update_request_body(cx)?;
     let request_body = AsyncBody::from(serde_json::to_string(&update_request_body)?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
-    smol::io::copy(response.body_mut(), &mut target_file).await?;
+    smol::io::copy(response.body_mut(), &mut temp_file).await?;
+    smol::fs::rename(&temp, &target_path).await?;
+
     Ok(())
 }
 

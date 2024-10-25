@@ -330,6 +330,7 @@ impl TerminalBuilder {
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
+        is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
         cx: &AppContext,
@@ -469,6 +470,7 @@ impl TerminalBuilder {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
+            is_ssh_terminal,
         };
 
         Ok(TerminalBuilder {
@@ -626,6 +628,7 @@ pub struct Terminal {
     word_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
+    is_ssh_terminal: bool,
 }
 
 pub struct TaskState {
@@ -732,10 +735,6 @@ impl Terminal {
 
     pub fn selection_started(&self) -> bool {
         self.selection_phase == SelectionPhase::Selecting
-    }
-
-    pub fn get_cwd(&self) -> Option<PathBuf> {
-        self.pty_info.current.as_ref().map(|info| info.cwd.clone())
     }
 
     ///Takes events from Alacritty and translates them to behavior on this view
@@ -951,7 +950,7 @@ impl Terminal {
                             } else {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                                     maybe_path: maybe_url_or_path,
-                                    terminal_dir: self.get_cwd(),
+                                    terminal_dir: self.working_directory(),
                                 })
                             };
                             cx.emit(Event::Open(target));
@@ -1006,7 +1005,7 @@ impl Terminal {
         } else {
             MaybeNavigationTarget::PathLike(PathLikeTarget {
                 maybe_path: word,
-                terminal_dir: self.get_cwd(),
+                terminal_dir: self.working_directory(),
             })
         };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
@@ -1636,6 +1635,23 @@ impl Terminal {
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
+        if self.is_ssh_terminal {
+            // We can't yet reliably detect the working directory of a shell on the
+            // SSH host. Until we can do that, it doesn't make sense to display
+            // the working directory on the client and persist that.
+            None
+        } else {
+            self.client_side_working_directory()
+        }
+    }
+
+    /// Returns the working directory of the process that's connected to the PTY.
+    /// That means it returns the working directory of the local shell or program
+    /// that's running inside the terminal.
+    ///
+    /// This does *not* return the working directory of the shell that runs on the
+    /// remote host, in case Zed is connected to a remote host.
+    fn client_side_working_directory(&self) -> Option<PathBuf> {
         self.pty_info
             .current
             .as_ref()

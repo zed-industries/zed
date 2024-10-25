@@ -7,7 +7,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
+    SlashCommandOutput, SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
 use assistant_tool::ToolRegistry;
 use client::{self, proto, telemetry::Telemetry};
@@ -1688,19 +1688,13 @@ impl Context {
             let command_range = command_range.clone();
             async move {
                 let output = output.await;
+                let output = match output {
+                    Ok(output) => SlashCommandOutput::from_event_stream(output).await,
+                    Err(err) => Err(err),
+                };
                 this.update(&mut cx, |this, cx| match output {
                     Ok(mut output) => {
-                        // Ensure section ranges are valid.
-                        for section in &mut output.sections {
-                            section.range.start = section.range.start.min(output.text.len());
-                            section.range.end = section.range.end.min(output.text.len());
-                            while !output.text.is_char_boundary(section.range.start) {
-                                section.range.start -= 1;
-                            }
-                            while !output.text.is_char_boundary(section.range.end) {
-                                section.range.end += 1;
-                            }
-                        }
+                        output.ensure_valid_section_ranges();
 
                         // Ensure there is a newline after the last section.
                         if ensure_trailing_newline {

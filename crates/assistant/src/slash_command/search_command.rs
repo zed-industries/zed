@@ -130,6 +130,7 @@ impl SlashCommand for SearchSlashCommand {
                         sections,
                         run_commands_in_text: false,
                     }
+                    .to_event_stream()
                 })
                 .await;
 
