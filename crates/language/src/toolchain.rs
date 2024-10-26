@@ -7,7 +7,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
-use gpui::{AppContext, SharedString};
+use gpui::{AsyncAppContext, SharedString};
 use settings::WorktreeId;
 
 use crate::LanguageName;
@@ -27,12 +27,12 @@ pub trait ToolchainLister: Send + Sync {
 }
 
 #[async_trait(?Send)]
-pub trait ToolchainStore {
+pub trait LanguageToolchainStore {
     async fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        cx: &mut AppContext,
+        cx: &mut AsyncAppContext,
     ) -> Option<Toolchain>;
 }
 

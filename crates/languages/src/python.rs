@@ -4,6 +4,7 @@ use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
 use language::LanguageName;
+use language::LanguageToolchainStore;
 use language::Toolchain;
 use language::ToolchainList;
 use language::ToolchainLister;
@@ -13,7 +14,6 @@ use node_runtime::NodeRuntime;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
-use smol::lock::Mutex;
 
 use std::{
     any::Any,
@@ -206,11 +206,11 @@ impl LspAdapter for PythonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
-        toolchains: Arc<dyn ToolchainStore>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let toolchain = toolchains
-            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"))
+            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
             .await;
         cx.update(move |cx| {
             let mut user_settings =
@@ -219,21 +219,21 @@ impl LspAdapter for PythonLspAdapter {
                     .unwrap_or_default();
 
             // If python.pythonPath is not set in user config, do so using our toolchain picker.
-            // if let Some(toolchain) = toolchain {
-            //     if user_settings.is_null() {
-            //         user_settings = Value::Object(serde_json::Map::default());
-            //     }
-            //     let object = user_settings.as_object_mut().unwrap();
-            //     object
-            //         .entry("python")
-            //         .or_insert(Value::Object(serde_json::Map::default()))
-            //         .as_object_mut()
-            //         .map(|python| {
-            //             python
-            //                 .entry("pythonPath")
-            //                 .or_insert(Value::String(toolchain.path.into()));
-            //         });
-            // }
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+                object
+                    .entry("python")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                    .map(|python| {
+                        python
+                            .entry("pythonPath")
+                            .or_insert(Value::String(toolchain.path.into()));
+                    });
+            }
             user_settings
         })
     }

@@ -637,12 +637,15 @@ impl Project {
             });
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
-
+            let toolchain_store = cx.new_model(|cx| {
+                ToolchainStore::local(languages.clone(), worktree_store.clone(), cx)
+            });
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
                     buffer_store.clone(),
                     worktree_store.clone(),
                     prettier_store.clone(),
+                    toolchain_store.clone(),
                     environment.clone(),
                     languages.clone(),
                     client.http_client(),
@@ -651,14 +654,7 @@ impl Project {
                 )
             });
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
-            let toolchain_store = Some(cx.new_model(|cx| {
-                ToolchainStore::local(
-                    languages.clone(),
-                    worktree_store.clone(),
-                    lsp_store.downgrade(),
-                    cx,
-                )
-            }));
+
             Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -693,7 +689,7 @@ impl Project {
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
 
-                toolchain_store,
+                toolchain_store: Some(toolchain_store),
             }
         })
     }
@@ -750,10 +746,13 @@ impl Project {
                 .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
+            let toolchain_store =
+                Some(cx.new_model(|cx| ToolchainStore::remote(ssh.read(cx).proto_client(), cx)));
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_remote(
                     buffer_store.clone(),
                     worktree_store.clone(),
+                    toolchain_store.clone(),
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
@@ -764,8 +763,7 @@ impl Project {
 
             cx.subscribe(&ssh, Self::on_ssh_event).detach();
             cx.observe(&ssh, |_, _, cx| cx.notify()).detach();
-            let toolchain_store =
-                Some(cx.new_model(|cx| ToolchainStore::remote(ssh.read(cx).proto_client(), cx)));
+
             let this = Self {
                 buffer_ordered_messages_tx: tx,
                 collaborators: Default::default(),
@@ -932,6 +930,7 @@ impl Project {
             let mut lsp_store = LspStore::new_remote(
                 buffer_store.clone(),
                 worktree_store.clone(),
+                None,
                 languages.clone(),
                 client.clone().into(),
                 remote_id,

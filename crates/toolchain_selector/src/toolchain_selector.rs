@@ -158,15 +158,12 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                 .flatten()
             {
                 let workspace = self.workspace.clone();
-                cx.spawn(|this, mut cx| async move {
-                    let worktree_id = this
-                        .update(&mut cx, |this, _| this.delegate.worktree_id)
-                        .ok()?;
+                let worktree_id = self.worktree_id;
+                cx.spawn(|_, mut cx| async move {
                     workspace::WORKSPACE_DB
                         .set_toolchain(workspace_id, worktree_id, toolchain.clone())
                         .await
-                        .ok()?;
-
+                        .log_err();
                     workspace
                         .update(&mut cx, |this, cx| {
                             this.project().update(cx, |this, cx| {

@@ -4,18 +4,21 @@ use anyhow::{bail, Result};
 
 use async_trait::async_trait;
 use collections::BTreeMap;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, Task, WeakModel};
-use language::{LanguageName, LanguageRegistry, Toolchain, ToolchainList, ToolchainLister};
+use gpui::{
+    AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, Subscription,
+    Task, WeakModel,
+};
+use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
 
-use crate::{worktree_store::WorktreeStore, LspStore};
-
+use crate::worktree_store::WorktreeStore;
 pub(crate) enum ToolchainStore {
-    Local(Model<LocalToolchainStore>),
+    Local(Model<LocalToolchainStore>, Subscription),
     Remote(Model<RemoteToolchainStore>),
 }
 
+impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
 impl ToolchainStore {
     pub(super) fn init(client: &AnyProtoClient) {
         client.add_model_request_handler(Self::handle_activate_toolchain);
@@ -24,15 +27,17 @@ impl ToolchainStore {
     pub(super) fn local(
         languages: Arc<LanguageRegistry>,
         worktree_store: Model<WorktreeStore>,
-        lsp_store: WeakModel<LspStore>,
-        cx: &mut AppContext,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
-        Self::Local(cx.new_model(|_| LocalToolchainStore {
+        let model = cx.new_model(|_| LocalToolchainStore {
             languages,
             worktree_store,
-            lsp_store,
             active_toolchains: Default::default(),
-        }))
+        });
+        let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
+            cx.emit(e.clone())
+        });
+        Self::Local(model, subscription)
     }
     pub(super) fn remote(client: AnyProtoClient, cx: &mut AppContext) -> Self {
         Self::Remote(cx.new_model(|_| RemoteToolchainStore { client }))
@@ -44,7 +49,7 @@ impl ToolchainStore {
         cx: &mut AppContext,
     ) -> Task<Option<()>> {
         match self {
-            ToolchainStore::Local(local) => local.update(cx, |this, cx| {
+            ToolchainStore::Local(local, _) => local.update(cx, |this, cx| {
                 this.activate_toolchain(worktree_id, toolchain, cx)
             }),
             ToolchainStore::Remote(remote) => {
@@ -61,7 +66,7 @@ impl ToolchainStore {
         cx: &AppContext,
     ) -> Task<Option<ToolchainList>> {
         match self {
-            ToolchainStore::Local(local) => {
+            ToolchainStore::Local(local, _) => {
                 local
                     .read(cx)
                     .list_toolchains(worktree_id, language_name, cx)
@@ -80,7 +85,7 @@ impl ToolchainStore {
         cx: &AppContext,
     ) -> Task<Option<Toolchain>> {
         match self {
-            ToolchainStore::Local(local) => {
+            ToolchainStore::Local(local, _) => {
                 local
                     .read(cx)
                     .active_toolchain(worktree_id, language_name, cx)
@@ -144,22 +149,27 @@ impl ToolchainStore {
             toolchains,
         })
     }
+    pub(crate) fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
+        match self {
+            ToolchainStore::Local(local, _) => Arc::new(LocalStore(local.downgrade())),
+            ToolchainStore::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
+        }
+    }
 }
 
 struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Model<WorktreeStore>,
-    lsp_store: WeakModel<LspStore>,
     active_toolchains: BTreeMap<(WorktreeId, LanguageName), Toolchain>,
 }
 
 #[async_trait(?Send)]
-impl language::ToolchainStore for LocalStore {
+impl language::LanguageToolchainStore for LocalStore {
     async fn active_toolchain(
         self: Arc<Self>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        cx: &mut AppContext,
+        cx: &mut AsyncAppContext,
     ) -> Option<Toolchain> {
         self.0
             .update(cx, |this, cx| {
@@ -169,7 +179,45 @@ impl language::ToolchainStore for LocalStore {
             .await
     }
 }
+
+#[async_trait(?Send)]
+impl language::LanguageToolchainStore for RemoteStore {
+    async fn active_toolchain(
+        self: Arc<Self>,
+        worktree_id: WorktreeId,
+        language_name: LanguageName,
+        cx: &mut AsyncAppContext,
+    ) -> Option<Toolchain> {
+        self.0
+            .update(cx, |this, cx| {
+                this.active_toolchain(worktree_id, language_name, cx)
+            })
+            .ok()?
+            .await
+    }
+}
+#[derive(Default)]
+pub(crate) struct EmptyToolchainStore;
+#[async_trait(?Send)]
+impl language::LanguageToolchainStore for EmptyToolchainStore {
+    async fn active_toolchain(
+        self: Arc<Self>,
+        _: WorktreeId,
+        _: LanguageName,
+        _: &mut AsyncAppContext,
+    ) -> Option<Toolchain> {
+        None
+    }
+}
 struct LocalStore(WeakModel<LocalToolchainStore>);
+struct RemoteStore(WeakModel<RemoteToolchainStore>);
+
+#[derive(Clone)]
+pub(crate) enum ToolchainStoreEvent {
+    ToolchainActivated,
+}
+
+impl EventEmitter<ToolchainStoreEvent> for LocalToolchainStore {}
 
 impl LocalToolchainStore {
     pub(crate) fn activate_toolchain(
@@ -178,14 +226,15 @@ impl LocalToolchainStore {
         toolchain: Toolchain,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<()>> {
-        let lsp_store = self.lsp_store.clone();
         cx.spawn(move |this, mut cx| async move {
-            this.update(&mut cx, |this, _| {
-                this.active_toolchains
-                    .insert((worktree_id, toolchain.language_name.clone()), toolchain)
-            });
-            LspStore::refresh_workspace_configurations(&lsp_store, Arc::new(LocalStore(this)), cx)
-                .await;
+            this.update(&mut cx, |this, cx| {
+                this.active_toolchains.insert(
+                    (worktree_id, toolchain.language_name.clone()),
+                    toolchain.clone(),
+                );
+                cx.emit(ToolchainStoreEvent::ToolchainActivated);
+            })
+            .ok();
             Some(())
         })
     }
@@ -214,9 +263,13 @@ impl LocalToolchainStore {
         &self,
         worktree_id: WorktreeId,
         language_name: LanguageName,
-        cx: &AppContext,
+        _: &AppContext,
     ) -> Task<Option<Toolchain>> {
-        Task::ready(None)
+        Task::ready(
+            self.active_toolchains
+                .get(&(worktree_id, language_name))
+                .cloned(),
+        )
     }
 }
 struct RemoteToolchainStore {

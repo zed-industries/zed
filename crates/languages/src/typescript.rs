@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AsyncAppContext;
 use http_client::github::{build_asset_url, AssetKind, GitHubLspBinaryVersion};
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::{CodeActionKind, LanguageServerBinary};
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
@@ -230,7 +230,7 @@ impl LspAdapter for TypeScriptLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn ToolchainStore>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let override_options = cx.update(|cx| {
@@ -326,7 +326,7 @@ impl LspAdapter for EsLintLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
-        _: Arc<dyn ToolchainStore>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let workspace_root = delegate.worktree_root_path();
