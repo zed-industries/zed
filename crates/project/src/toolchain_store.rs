@@ -223,7 +223,7 @@ impl language::LanguageToolchainStore for RemoteStore {
             .await
     }
 }
-#[derive(Default)]
+
 pub(crate) struct EmptyToolchainStore;
 #[async_trait(?Send)]
 impl language::LanguageToolchainStore for EmptyToolchainStore {

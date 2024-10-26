@@ -3115,7 +3115,7 @@ impl LspStore {
         if let Some(toolchain_store) = self.toolchain_store.as_ref() {
             toolchain_store.read(cx).as_language_toolchain_store()
         } else {
-            Arc::new(EmptyToolchainStore::default())
+            Arc::new(EmptyToolchainStore)
         }
     }
     fn maintain_workspace_config(
