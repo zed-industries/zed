@@ -17,7 +17,7 @@ use crate::worktree_store::WorktreeStore;
 
 pub struct ToolchainStore(ToolchainStoreInner);
 enum ToolchainStoreInner {
-    Local(Model<LocalToolchainStore>, Subscription),
+    Local(Model<LocalToolchainStore>, #[allow(dead_code)] Subscription),
     Remote(Model<RemoteToolchainStore>),
 }
 
@@ -26,6 +26,7 @@ impl ToolchainStore {
     pub(super) fn init(client: &AnyProtoClient) {
         client.add_model_request_handler(Self::handle_activate_toolchain);
         client.add_model_request_handler(Self::handle_list_toolchains);
+        client.add_model_request_handler(Self::handle_active_toolchain);
     }
 
     pub fn local(
@@ -123,6 +124,26 @@ impl ToolchainStore {
         })??
         .await;
         Ok(proto::Ack {})
+    }
+    async fn handle_active_toolchain(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ActiveToolchain>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ActiveToolchainResponse> {
+        let toolchain = this
+            .update(&mut cx, |this, cx| {
+                let language_name = LanguageName::from_proto(envelope.payload.language_name);
+                let worktree_id = WorktreeId::from_proto(envelope.payload.worktree_id);
+                this.active_toolchain(worktree_id, language_name, cx)
+            })?
+            .await;
+
+        Ok(proto::ActiveToolchainResponse {
+            toolchain: toolchain.map(|toolchain| proto::Toolchain {
+                name: toolchain.label.into(),
+                path: toolchain.path.into(),
+            }),
+        })
     }
 
     async fn handle_list_toolchains(
