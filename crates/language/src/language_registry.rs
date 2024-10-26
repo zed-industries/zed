@@ -75,6 +75,13 @@ impl<'a> From<&'a str> for LanguageName {
     }
 }
 
+impl From<LanguageName> for String {
+    fn from(value: LanguageName) -> Self {
+        let value: &str = &value.0;
+        Self::from(value)
+    }
+}
+
 pub struct LanguageRegistry {
     state: RwLock<LanguageRegistryState>,
     language_server_download_dir: Option<Arc<Path>>,

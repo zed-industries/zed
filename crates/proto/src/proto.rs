@@ -377,7 +377,9 @@ messages!(
     (LanguageServerPromptResponse, Foreground),
     (ListToolchains, Foreground),
     (ListToolchainsResponse, Foreground),
-    (ActivateToolchain, Foreground)
+    (ActivateToolchain, Foreground),
+    (ActiveToolchain, Foreground),
+    (ActiveToolchainResponse, Foreground)
 );
 
 request_messages!(
@@ -507,7 +509,8 @@ request_messages!(
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
     (ListToolchains, ListToolchainsResponse),
-    (ActivateToolchain, Ack)
+    (ActivateToolchain, Ack),
+    (ActiveToolchain, ActiveToolchainResponse)
 );
 
 entity_messages!(
@@ -588,6 +591,7 @@ entity_messages!(
     LanguageServerPromptRequest,
     ListToolchains,
     ActivateToolchain,
+    ActiveToolchain
 );
 
 entity_messages!(

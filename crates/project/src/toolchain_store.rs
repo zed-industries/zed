@@ -11,6 +11,7 @@ use gpui::{
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
+use util::ResultExt as _;
 
 use crate::worktree_store::WorktreeStore;
 
@@ -42,9 +43,9 @@ impl ToolchainStore {
         });
         Self(ToolchainStoreInner::Local(model, subscription))
     }
-    pub(super) fn remote(client: AnyProtoClient, cx: &mut AppContext) -> Self {
+    pub(super) fn remote(project_id: u64, client: AnyProtoClient, cx: &mut AppContext) -> Self {
         Self(ToolchainStoreInner::Remote(
-            cx.new_model(|_| RemoteToolchainStore { client }),
+            cx.new_model(|_| RemoteToolchainStore { client, project_id }),
         ))
     }
     pub(crate) fn activate_toolchain(
@@ -279,6 +280,7 @@ impl LocalToolchainStore {
 }
 struct RemoteToolchainStore {
     client: AnyProtoClient,
+    project_id: u64,
 }
 
 impl RemoteToolchainStore {
@@ -288,7 +290,23 @@ impl RemoteToolchainStore {
         toolchain: Toolchain,
         cx: &AppContext,
     ) -> Task<Option<()>> {
-        Task::ready(None)
+        let project_id = self.project_id;
+        let client = self.client.clone();
+        cx.spawn(move |_| async move {
+            let _ = client
+                .request(proto::ActivateToolchain {
+                    project_id,
+                    worktree_id: worktree_id.to_proto(),
+                    language_name: toolchain.language_name.into(),
+                    toolchain: Some(proto::Toolchain {
+                        name: toolchain.label.into(),
+                        path: toolchain.path.into(),
+                    }),
+                })
+                .await
+                .log_err()?;
+            Some(())
+        })
     }
     pub(crate) fn list_toolchains(
         &self,
@@ -296,7 +314,34 @@ impl RemoteToolchainStore {
         language_name: LanguageName,
         cx: &AppContext,
     ) -> Task<Option<ToolchainList>> {
-        Task::ready(None)
+        let project_id = self.project_id;
+        let client = self.client.clone();
+        cx.spawn(move |_| async move {
+            let response = client
+                .request(proto::ListToolchains {
+                    project_id,
+                    worktree_id: worktree_id.to_proto(),
+                    language_name: language_name.clone().into(),
+                })
+                .await
+                .log_err()?;
+            if !response.has_values {
+                return None;
+            }
+            let toolchains = response
+                .toolchains
+                .into_iter()
+                .map(|toolchain| Toolchain {
+                    language_name: language_name.clone(),
+                    label: toolchain.name.into(),
+                    path: toolchain.path.into(),
+                })
+                .collect();
+            Some(ToolchainList {
+                toolchains,
+                default: None,
+            })
+        })
     }
     pub(crate) fn active_toolchain(
         &self,
@@ -304,6 +349,23 @@ impl RemoteToolchainStore {
         language_name: LanguageName,
         cx: &AppContext,
     ) -> Task<Option<Toolchain>> {
-        Task::ready(None)
+        let project_id = self.project_id;
+        let client = self.client.clone();
+        cx.spawn(move |_| async move {
+            let response = client
+                .request(proto::ActiveToolchain {
+                    project_id,
+                    worktree_id: worktree_id.to_proto(),
+                    language_name: language_name.clone().into(),
+                })
+                .await
+                .log_err()?;
+
+            response.toolchain.map(|toolchain| Toolchain {
+                language_name: language_name.clone(),
+                label: toolchain.name.into(),
+                path: toolchain.path.into(),
+            })
+        })
     }
 }

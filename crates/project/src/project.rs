@@ -746,8 +746,9 @@ impl Project {
                 .detach();
 
             let environment = ProjectEnvironment::new(&worktree_store, None, cx);
-            let toolchain_store =
-                Some(cx.new_model(|cx| ToolchainStore::remote(ssh.read(cx).proto_client(), cx)));
+            let toolchain_store = Some(cx.new_model(|cx| {
+                ToolchainStore::remote(SSH_PROJECT_ID, ssh.read(cx).proto_client(), cx)
+            }));
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_remote(
                     buffer_store.clone(),

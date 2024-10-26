@@ -304,7 +304,9 @@ message Envelope {
         LanguageServerPromptResponse language_server_prompt_response = 269;
         ListToolchains list_toolchains = 270;
         ListToolchainsResponse list_toolchains_response = 271;
-        ActivateToolchain activate_toolchain = 272; // current max
+        ActivateToolchain activate_toolchain = 272;
+        ActiveToolchain active_toolchain = 273;
+        ActiveToolchainResponse active_toolchain_response = 274; // current max
     }
 
     reserved 87 to 88;
@@ -2531,7 +2533,6 @@ message GetPermalinkToLine {
 message GetPermalinkToLineResponse {
     string permalink = 1;
 }
-
 message FlushBufferedMessages {}
 message FlushBufferedMessagesResponse {}
 
@@ -2578,4 +2579,14 @@ message ActivateToolchain {
     uint64 worktree_id = 2;
     Toolchain toolchain = 3;
     string language_name = 4;
+}
+
+message ActiveToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+}
+
+message ActiveToolchainResponse {
+    optional Toolchain toolchain = 1;
 }
