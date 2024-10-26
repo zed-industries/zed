@@ -14,7 +14,8 @@ use settings::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
 
-pub enum ToolchainStore {
+pub struct ToolchainStore(ToolchainStoreInner);
+enum ToolchainStoreInner {
     Local(Model<LocalToolchainStore>, Subscription),
     Remote(Model<RemoteToolchainStore>),
 }
@@ -39,10 +40,12 @@ impl ToolchainStore {
         let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
             cx.emit(e.clone())
         });
-        Self::Local(model, subscription)
+        Self(ToolchainStoreInner::Local(model, subscription))
     }
     pub(super) fn remote(client: AnyProtoClient, cx: &mut AppContext) -> Self {
-        Self::Remote(cx.new_model(|_| RemoteToolchainStore { client }))
+        Self(ToolchainStoreInner::Remote(
+            cx.new_model(|_| RemoteToolchainStore { client }),
+        ))
     }
     pub(crate) fn activate_toolchain(
         &self,
@@ -50,11 +53,11 @@ impl ToolchainStore {
         toolchain: Toolchain,
         cx: &mut AppContext,
     ) -> Task<Option<()>> {
-        match self {
-            ToolchainStore::Local(local, _) => local.update(cx, |this, cx| {
+        match &self.0 {
+            ToolchainStoreInner::Local(local, _) => local.update(cx, |this, cx| {
                 this.activate_toolchain(worktree_id, toolchain, cx)
             }),
-            ToolchainStore::Remote(remote) => {
+            ToolchainStoreInner::Remote(remote) => {
                 remote
                     .read(cx)
                     .activate_toolchain(worktree_id, toolchain, cx)
@@ -67,13 +70,13 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &AppContext,
     ) -> Task<Option<ToolchainList>> {
-        match self {
-            ToolchainStore::Local(local, _) => {
+        match &self.0 {
+            ToolchainStoreInner::Local(local, _) => {
                 local
                     .read(cx)
                     .list_toolchains(worktree_id, language_name, cx)
             }
-            ToolchainStore::Remote(remote) => {
+            ToolchainStoreInner::Remote(remote) => {
                 remote
                     .read(cx)
                     .list_toolchains(worktree_id, language_name, cx)
@@ -86,13 +89,13 @@ impl ToolchainStore {
         language_name: LanguageName,
         cx: &AppContext,
     ) -> Task<Option<Toolchain>> {
-        match self {
-            ToolchainStore::Local(local, _) => {
+        match &self.0 {
+            ToolchainStoreInner::Local(local, _) => {
                 local
                     .read(cx)
                     .active_toolchain(worktree_id, language_name, cx)
             }
-            ToolchainStore::Remote(remote) => {
+            ToolchainStoreInner::Remote(remote) => {
                 remote
                     .read(cx)
                     .active_toolchain(worktree_id, language_name, cx)
@@ -152,9 +155,9 @@ impl ToolchainStore {
         })
     }
     pub(crate) fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
-        match self {
-            ToolchainStore::Local(local, _) => Arc::new(LocalStore(local.downgrade())),
-            ToolchainStore::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
+        match &self.0 {
+            ToolchainStoreInner::Local(local, _) => Arc::new(LocalStore(local.downgrade())),
+            ToolchainStoreInner::Remote(remote) => Arc::new(RemoteStore(remote.downgrade())),
         }
     }
 }
