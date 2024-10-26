@@ -1,6 +1,7 @@
 #![allow(missing_docs)]
 
 use anyhow::Result;
+use collections::HashMap;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
 use palette::FromColor;
@@ -33,6 +34,56 @@ pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     );
 
     Ok(hsla)
+}
+
+fn resolve_color_references(
+    initial_colors: &HashMap<String, String>,
+    max_iterations: usize,
+) -> HashMap<String, Hsla> {
+    let mut resolved_colors: HashMap<String, Hsla> = HashMap::default();
+    let mut unresolved_refs: HashMap<String, String> = HashMap::default();
+
+    for (key, color_str) in initial_colors {
+        match try_parse_color(color_str) {
+            Ok(color) => {
+                resolved_colors.insert(key.clone(), color);
+            }
+            Err(e) => {
+                if let Some(ref_str) = e.to_string().strip_prefix("REFERENCE:") {
+                    unresolved_refs.insert(key.clone(), ref_str.to_string());
+                }
+            }
+        }
+    }
+
+    let mut iterations = 0;
+    while !unresolved_refs.is_empty() && iterations < max_iterations {
+        let mut new_resolved: HashMap<String, Hsla> = HashMap::default();
+        let mut new_unresolved: HashMap<String, String> = HashMap::default();
+
+        for (key, ref_name) in &unresolved_refs {
+            if let Some(&color) = resolved_colors.get(ref_name) {
+                new_resolved.insert(key.clone(), color);
+            } else if let Some(next_ref) = unresolved_refs.get(ref_name) {
+                new_unresolved.insert(key.clone(), next_ref.clone());
+            } else {
+                new_unresolved.insert(key.clone(), ref_name.clone());
+            }
+        }
+
+        resolved_colors.extend(new_resolved);
+        unresolved_refs = new_unresolved;
+        iterations += 1;
+    }
+
+    if iterations == max_iterations {
+        log::warn!(
+            "Hit iteration limit of {} while resolving color references. Some colors may not be resolved.",
+            max_iterations
+        );
+    }
+
+    resolved_colors
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Serialize, Deserialize, JsonSchema)]
@@ -558,39 +609,19 @@ pub struct ThemeColorsContent {
 }
 
 impl ThemeColorsContent {
-    // Don't format this function, as it reduces readability.
-    #[rustfmt::skip]
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeColorsContent`].
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
-        let mut resolved_colors = std::collections::HashMap::new();
-        let mut unresolved_refs = std::collections::HashMap::new();
-
-        fn process_color(
-            key: &str,
-            color_str: &str,
-            resolved: &mut std::collections::HashMap<String, Hsla>,
-            unresolved: &mut std::collections::HashMap<String, String>,
-        ) {
-            match try_parse_color(color_str) {
-                Ok(color) => {
-                    resolved.insert(key.to_string(), color);
-                }
-                Err(e) => {
-                    if let Some(ref_str) = e.to_string().strip_prefix("REFERENCE:") {
-                        unresolved.insert(key.to_string(), ref_str.to_string());
-                    }
-                }
-            }
-        }
-
-        for (key, value) in [
+        let initial_colors: HashMap<String, String> = [
             ("border", &self.border),
             ("border.variant", &self.border_variant),
             ("border.focused", &self.border_focused),
             ("border.selected", &self.border_selected),
             ("border.transparent", &self.border_transparent),
             ("border.disabled", &self.border_disabled),
-            ("elevated_surface.background", &self.elevated_surface_background),
+            (
+                "elevated_surface.background",
+                &self.elevated_surface_background,
+            ),
             ("surface.background", &self.surface_background),
             ("background", &self.background),
             ("element.background", &self.element_background),
@@ -616,7 +647,10 @@ impl ThemeColorsContent {
             ("icon.accent", &self.icon_accent),
             ("status_bar.background", &self.status_bar_background),
             ("title_bar.background", &self.title_bar_background),
-            ("title_bar.inactive_background", &self.title_bar_inactive_background),
+            (
+                "title_bar.inactive_background",
+                &self.title_bar_inactive_background,
+            ),
             ("toolbar.background", &self.toolbar_background),
             ("tab_bar.background", &self.tab_bar_background),
             ("tab.inactive_background", &self.tab_inactive_background),
@@ -629,91 +663,111 @@ impl ThemeColorsContent {
             ("panel.indent_guide_active", &self.panel_indent_guide_active),
             ("pane.focused_border", &self.pane_focused_border),
             ("pane_group.border", &self.pane_group_border),
-            ("scrollbar.thumb.background", &self.scrollbar_thumb_background),
-            ("scrollbar.thumb.hover_background", &self.scrollbar_thumb_hover_background),
+            (
+                "scrollbar.thumb.background",
+                &self.scrollbar_thumb_background,
+            ),
+            (
+                "scrollbar.thumb.hover_background",
+                &self.scrollbar_thumb_hover_background,
+            ),
             ("scrollbar.thumb.border", &self.scrollbar_thumb_border),
-            ("scrollbar.track.background", &self.scrollbar_track_background),
+            (
+                "scrollbar.track.background",
+                &self.scrollbar_track_background,
+            ),
             ("scrollbar.track.border", &self.scrollbar_track_border),
             ("editor.foreground", &self.editor_foreground),
             ("editor.background", &self.editor_background),
             ("editor.gutter.background", &self.editor_gutter_background),
-            ("editor.subheader.background", &self.editor_subheader_background),
-            ("editor.active_line.background", &self.editor_active_line_background),
-            ("editor.highlighted_line.background", &self.editor_highlighted_line_background),
+            (
+                "editor.subheader.background",
+                &self.editor_subheader_background,
+            ),
+            (
+                "editor.active_line.background",
+                &self.editor_active_line_background,
+            ),
+            (
+                "editor.highlighted_line.background",
+                &self.editor_highlighted_line_background,
+            ),
             ("editor.line_number", &self.editor_line_number),
             ("editor.active_line_number", &self.editor_active_line_number),
             ("editor.invisible", &self.editor_invisible),
             ("editor.wrap_guide", &self.editor_wrap_guide),
             ("editor.active_wrap_guide", &self.editor_active_wrap_guide),
             ("editor.indent_guide", &self.editor_indent_guide),
-            ("editor.indent_guide_active", &self.editor_indent_guide_active),
-            ("editor.document_highlight.read_background", &self.editor_document_highlight_read_background),
-            ("editor.document_highlight.write_background", &self.editor_document_highlight_write_background),
-            ("editor.document_highlight.bracket_background", &self.editor_document_highlight_bracket_background),
+            (
+                "editor.indent_guide_active",
+                &self.editor_indent_guide_active,
+            ),
+            (
+                "editor.document_highlight.read_background",
+                &self.editor_document_highlight_read_background,
+            ),
+            (
+                "editor.document_highlight.write_background",
+                &self.editor_document_highlight_write_background,
+            ),
+            (
+                "editor.document_highlight.bracket_background",
+                &self.editor_document_highlight_bracket_background,
+            ),
             ("terminal.background", &self.terminal_background),
             ("terminal.ansi.background", &self.terminal_ansi_background),
             ("terminal.foreground", &self.terminal_foreground),
-            ("terminal.bright_foreground", &self.terminal_bright_foreground),
+            (
+                "terminal.bright_foreground",
+                &self.terminal_bright_foreground,
+            ),
             ("terminal.dim_foreground", &self.terminal_dim_foreground),
             ("terminal.ansi.black", &self.terminal_ansi_black),
-            ("terminal.ansi.bright_black", &self.terminal_ansi_bright_black),
+            (
+                "terminal.ansi.bright_black",
+                &self.terminal_ansi_bright_black,
+            ),
             ("terminal.ansi.dim_black", &self.terminal_ansi_dim_black),
             ("terminal.ansi.red", &self.terminal_ansi_red),
             ("terminal.ansi.bright_red", &self.terminal_ansi_bright_red),
             ("terminal.ansi.dim_red", &self.terminal_ansi_dim_red),
             ("terminal.ansi.green", &self.terminal_ansi_green),
-            ("terminal.ansi.bright_green", &self.terminal_ansi_bright_green),
+            (
+                "terminal.ansi.bright_green",
+                &self.terminal_ansi_bright_green,
+            ),
             ("terminal.ansi.dim_green", &self.terminal_ansi_dim_green),
             ("terminal.ansi.yellow", &self.terminal_ansi_yellow),
-            ("terminal.ansi.bright_yellow", &self.terminal_ansi_bright_yellow),
+            (
+                "terminal.ansi.bright_yellow",
+                &self.terminal_ansi_bright_yellow,
+            ),
             ("terminal.ansi.dim_yellow", &self.terminal_ansi_dim_yellow),
             ("terminal.ansi.blue", &self.terminal_ansi_blue),
             ("terminal.ansi.bright_blue", &self.terminal_ansi_bright_blue),
             ("terminal.ansi.dim_blue", &self.terminal_ansi_dim_blue),
             ("terminal.ansi.magenta", &self.terminal_ansi_magenta),
-            ("terminal.ansi.bright_magenta", &self.terminal_ansi_bright_magenta),
+            (
+                "terminal.ansi.bright_magenta",
+                &self.terminal_ansi_bright_magenta,
+            ),
             ("terminal.ansi.dim_magenta", &self.terminal_ansi_dim_magenta),
             ("terminal.ansi.cyan", &self.terminal_ansi_cyan),
             ("terminal.ansi.bright_cyan", &self.terminal_ansi_bright_cyan),
             ("terminal.ansi.dim_cyan", &self.terminal_ansi_dim_cyan),
             ("terminal.ansi.white", &self.terminal_ansi_white),
-            ("terminal.ansi.bright_white", &self.terminal_ansi_bright_white),
+            (
+                "terminal.ansi.bright_white",
+                &self.terminal_ansi_bright_white,
+            ),
             ("terminal.ansi.dim_white", &self.terminal_ansi_dim_white),
             ("link_text.hover", &self.link_text_hover),
-        ] {
-            if let Some(color_str) = value {
-                process_color(key, color_str, &mut resolved_colors, &mut unresolved_refs);
-            }
-        }
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.as_ref().map(|v| (key.to_string(), v.clone())))
+        .collect();
 
-        let max_iterations = MAX_RESOLUTION_DEPTH;
-        let mut iterations = 0;
-        let mut changed = true;
-        while changed && iterations < max_iterations {
-            changed = false;
-            let mut new_resolved = std::collections::HashMap::new();
-            let mut new_unresolved = std::collections::HashMap::new();
-
-            for (key, ref_name) in &unresolved_refs {
-                if let Some(&color) = resolved_colors.get(ref_name) {
-                    new_resolved.insert(key.clone(), color);
-                    changed = true;
-                } else if let Some(next_ref) = unresolved_refs.get(ref_name) {
-                    new_unresolved.insert(key.clone(), next_ref.clone());
-                    changed = true;
-                } else {
-                    new_unresolved.insert(key.clone(), ref_name.clone());
-                }
-            }
-
-            resolved_colors.extend(new_resolved);
-            unresolved_refs = new_unresolved;
-            iterations += 1;
-        }
-
-        if iterations == max_iterations {
-            log::warn!("Hit iteration limit of {} while resolving color references. Some colors may not be resolved.", MAX_RESOLUTION_DEPTH);
-        }
+        let resolved_colors = resolve_color_references(&initial_colors, MAX_RESOLUTION_DEPTH);
 
         ThemeColorsRefinement {
             border: resolved_colors.get("border").copied(),
@@ -722,7 +776,9 @@ impl ThemeColorsContent {
             border_selected: resolved_colors.get("border.selected").copied(),
             border_transparent: resolved_colors.get("border.transparent").copied(),
             border_disabled: resolved_colors.get("border.disabled").copied(),
-            elevated_surface_background: resolved_colors.get("elevated_surface.background").copied(),
+            elevated_surface_background: resolved_colors
+                .get("elevated_surface.background")
+                .copied(),
             surface_background: resolved_colors.get("surface.background").copied(),
             background: resolved_colors.get("background").copied(),
             element_background: resolved_colors.get("element.background").copied(),
@@ -748,7 +804,9 @@ impl ThemeColorsContent {
             icon_accent: resolved_colors.get("icon.accent").copied(),
             status_bar_background: resolved_colors.get("status_bar.background").copied(),
             title_bar_background: resolved_colors.get("title_bar.background").copied(),
-            title_bar_inactive_background: resolved_colors.get("title_bar.inactive_background").copied(),
+            title_bar_inactive_background: resolved_colors
+                .get("title_bar.inactive_background")
+                .copied(),
             toolbar_background: resolved_colors.get("toolbar.background").copied(),
             tab_bar_background: resolved_colors.get("tab_bar.background").copied(),
             tab_inactive_background: resolved_colors.get("tab.inactive_background").copied(),
@@ -762,16 +820,24 @@ impl ThemeColorsContent {
             pane_focused_border: resolved_colors.get("pane.focused_border").copied(),
             pane_group_border: resolved_colors.get("pane_group.border").copied(),
             scrollbar_thumb_background: resolved_colors.get("scrollbar.thumb.background").copied(),
-            scrollbar_thumb_hover_background: resolved_colors.get("scrollbar.thumb.hover_background").copied(),
+            scrollbar_thumb_hover_background: resolved_colors
+                .get("scrollbar.thumb.hover_background")
+                .copied(),
             scrollbar_thumb_border: resolved_colors.get("scrollbar.thumb.border").copied(),
             scrollbar_track_background: resolved_colors.get("scrollbar.track.background").copied(),
             scrollbar_track_border: resolved_colors.get("scrollbar.track.border").copied(),
             editor_foreground: resolved_colors.get("editor.foreground").copied(),
             editor_background: resolved_colors.get("editor.background").copied(),
             editor_gutter_background: resolved_colors.get("editor.gutter.background").copied(),
-            editor_subheader_background: resolved_colors.get("editor.subheader.background").copied(),
-            editor_active_line_background: resolved_colors.get("editor.active_line.background").copied(),
-            editor_highlighted_line_background: resolved_colors.get("editor.highlighted_line.background").copied(),
+            editor_subheader_background: resolved_colors
+                .get("editor.subheader.background")
+                .copied(),
+            editor_active_line_background: resolved_colors
+                .get("editor.active_line.background")
+                .copied(),
+            editor_highlighted_line_background: resolved_colors
+                .get("editor.highlighted_line.background")
+                .copied(),
             editor_line_number: resolved_colors.get("editor.line_number").copied(),
             editor_active_line_number: resolved_colors.get("editor.active_line_number").copied(),
             editor_invisible: resolved_colors.get("editor.invisible").copied(),
@@ -779,9 +845,15 @@ impl ThemeColorsContent {
             editor_active_wrap_guide: resolved_colors.get("editor.active_wrap_guide").copied(),
             editor_indent_guide: resolved_colors.get("editor.indent_guide").copied(),
             editor_indent_guide_active: resolved_colors.get("editor.indent_guide_active").copied(),
-            editor_document_highlight_read_background: resolved_colors.get("editor.document_highlight.read_background").copied(),
-            editor_document_highlight_write_background: resolved_colors.get("editor.document_highlight.write_background").copied(),
-            editor_document_highlight_bracket_background: resolved_colors.get("editor.document_highlight.bracket_background").copied(),
+            editor_document_highlight_read_background: resolved_colors
+                .get("editor.document_highlight.read_background")
+                .copied(),
+            editor_document_highlight_write_background: resolved_colors
+                .get("editor.document_highlight.write_background")
+                .copied(),
+            editor_document_highlight_bracket_background: resolved_colors
+                .get("editor.document_highlight.bracket_background")
+                .copied(),
             terminal_background: resolved_colors.get("terminal.background").copied(),
             terminal_ansi_background: resolved_colors.get("terminal.ansi.background").copied(),
             terminal_foreground: resolved_colors.get("terminal.foreground").copied(),
@@ -797,13 +869,17 @@ impl ThemeColorsContent {
             terminal_ansi_bright_green: resolved_colors.get("terminal.ansi.bright_green").copied(),
             terminal_ansi_dim_green: resolved_colors.get("terminal.ansi.dim_green").copied(),
             terminal_ansi_yellow: resolved_colors.get("terminal.ansi.yellow").copied(),
-            terminal_ansi_bright_yellow: resolved_colors.get("terminal.ansi.bright_yellow").copied(),
+            terminal_ansi_bright_yellow: resolved_colors
+                .get("terminal.ansi.bright_yellow")
+                .copied(),
             terminal_ansi_dim_yellow: resolved_colors.get("terminal.ansi.dim_yellow").copied(),
             terminal_ansi_blue: resolved_colors.get("terminal.ansi.blue").copied(),
             terminal_ansi_bright_blue: resolved_colors.get("terminal.ansi.bright_blue").copied(),
             terminal_ansi_dim_blue: resolved_colors.get("terminal.ansi.dim_blue").copied(),
             terminal_ansi_magenta: resolved_colors.get("terminal.ansi.magenta").copied(),
-            terminal_ansi_bright_magenta: resolved_colors.get("terminal.ansi.bright_magenta").copied(),
+            terminal_ansi_bright_magenta: resolved_colors
+                .get("terminal.ansi.bright_magenta")
+                .copied(),
             terminal_ansi_dim_magenta: resolved_colors.get("terminal.ansi.dim_magenta").copied(),
             terminal_ansi_cyan: resolved_colors.get("terminal.ansi.cyan").copied(),
             terminal_ansi_bright_cyan: resolved_colors.get("terminal.ansi.bright_cyan").copied(),
@@ -964,28 +1040,7 @@ pub struct StatusColorsContent {
 impl StatusColorsContent {
     /// Returns a [`StatusColorsRefinement`] based on the colors in the [`StatusColorsContent`].
     pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
-        let mut resolved_colors = std::collections::HashMap::new();
-        let mut unresolved_refs = std::collections::HashMap::new();
-
-        fn process_color(
-            key: &str,
-            color_str: &str,
-            resolved: &mut std::collections::HashMap<String, Hsla>,
-            unresolved: &mut std::collections::HashMap<String, String>,
-        ) {
-            match try_parse_color(color_str) {
-                Ok(color) => {
-                    resolved.insert(key.to_string(), color);
-                }
-                Err(e) => {
-                    if let Some(ref_str) = e.to_string().strip_prefix("REFERENCE:") {
-                        unresolved.insert(key.to_string(), ref_str.to_string());
-                    }
-                }
-            }
-        }
-
-        for (key, value) in [
+        let initial_colors = [
             ("conflict", &self.conflict),
             ("conflict.background", &self.conflict_background),
             ("conflict.border", &self.conflict_border),
@@ -1028,40 +1083,12 @@ impl StatusColorsContent {
             ("warning", &self.warning),
             ("warning.background", &self.warning_background),
             ("warning.border", &self.warning_border),
-        ] {
-            if let Some(color_str) = value {
-                process_color(key, color_str, &mut resolved_colors, &mut unresolved_refs);
-            }
-        }
+        ]
+        .into_iter()
+        .filter_map(|(key, value)| value.as_ref().map(|v| (key.to_string(), v.clone())))
+        .collect();
 
-        let max_iterations = MAX_RESOLUTION_DEPTH;
-        let mut iterations = 0;
-        let mut changed = true;
-        while changed && iterations < max_iterations {
-            changed = false;
-            let mut new_resolved = std::collections::HashMap::new();
-            let mut new_unresolved = std::collections::HashMap::new();
-
-            for (key, ref_name) in &unresolved_refs {
-                if let Some(&color) = resolved_colors.get(ref_name) {
-                    new_resolved.insert(key.clone(), color);
-                    changed = true;
-                } else if let Some(next_ref) = unresolved_refs.get(ref_name) {
-                    new_unresolved.insert(key.clone(), next_ref.clone());
-                    changed = true;
-                } else {
-                    new_unresolved.insert(key.clone(), ref_name.clone());
-                }
-            }
-
-            resolved_colors.extend(new_resolved);
-            unresolved_refs = new_unresolved;
-            iterations += 1;
-        }
-
-        if iterations == max_iterations {
-            log::warn!("Hit iteration limit of {} while resolving color references. Some colors may not be resolved.", MAX_RESOLUTION_DEPTH);
-        }
+        let resolved_colors = resolve_color_references(&initial_colors, MAX_RESOLUTION_DEPTH);
 
         StatusColorsRefinement {
             conflict: resolved_colors.get("conflict").copied(),
