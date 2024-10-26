@@ -1,5 +1,8 @@
 #![allow(unused)]
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use anyhow::Result;
 use client::proto::ViewId;
@@ -11,11 +14,11 @@ use gpui::{
     WeakView,
 };
 use language::{Language, LanguageRegistry};
-use project::Project;
+use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
 use uuid::Uuid;
-use workspace::{FollowableItem, Item, ItemHandle, Pane, SerializableItem, Workspace};
+use workspace::{FollowableItem, Item, ItemHandle, Pane, ProjectItem, SerializableItem, Workspace};
 
 use super::{
     deserialize_notebook,
@@ -46,23 +49,16 @@ pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        if cx.has_flag::<NotebookFeatureFlag>() {
-            workspace.register_action(|_, _: &OpenNotebook, cx| {
-                let workspace = cx.view().clone();
-                cx.window_context()
-                    .defer(move |cx| NotebookEditor::open(workspace, cx).detach_and_log_err(cx));
-            });
-        }
-    })
-    .detach();
+    // if cx.has_flag::<NotebookFeatureFlag>() {
+    eprintln!("Registering NotebookEditor...");
+    workspace::register_project_item::<NotebookEditor>(cx);
+    // }
 }
 
 pub struct NotebookEditor {
     languages: Arc<LanguageRegistry>,
 
     focus_handle: FocusHandle,
-    workspace: WeakView<Workspace>,
     project: Model<Project>,
     remote_id: Option<ViewId>,
 
@@ -76,7 +72,6 @@ pub struct NotebookEditor {
 
 impl NotebookEditor {
     pub fn new(
-        workspace: WeakView<Workspace>,
         project: Model<Project>,
         notebook: DeserializedNotebook,
         cx: &mut ViewContext<Self>,
@@ -140,7 +135,6 @@ impl NotebookEditor {
         Self {
             languages: languages.clone(),
             focus_handle,
-            workspace,
             project,
             remote_id: None,
             selected_cell_index: 0,
@@ -152,37 +146,37 @@ impl NotebookEditor {
         }
     }
 
-    pub fn load(workspace: View<Workspace>, cx: &mut WindowContext) -> Task<Result<View<Self>>> {
-        let weak_workspace = workspace.downgrade();
-        let workspace = workspace.read(cx);
-        let project = workspace.project().to_owned();
+    // pub fn load(workspace: View<Workspace>, cx: &mut WindowContext) -> Task<Result<View<Self>>> {
+    //     let weak_workspace = workspace.downgrade();
+    //     let workspace = workspace.read(cx);
+    //     let project = workspace.project().to_owned();
 
-        cx.spawn(|mut cx| async move {
-            let notebook = deserialize_notebook(simple_example())?;
+    //     cx.spawn(|mut cx| async move {
+    //         let notebook = deserialize_notebook(simple_example())?;
 
-            cx.new_view(|cx| Self::new(weak_workspace.clone(), project, notebook, cx))
-        })
-    }
+    //         cx.new_view(|cx| Self::new(weak_workspace.clone(), project, notebook, cx))
+    //     })
+    // }
 
-    pub fn open(
-        workspace_view: View<Workspace>,
-        cx: &mut WindowContext,
-    ) -> Task<Result<View<Self>>> {
-        let weak_workspace = workspace_view.downgrade();
-        let workspace = workspace_view.read(cx);
-        let project = workspace.project().to_owned();
-        let pane = workspace.active_pane().clone();
-        let notebook = Self::load(workspace_view, cx);
+    // pub fn open(
+    //     workspace_view: View<Workspace>,
+    //     cx: &mut WindowContext,
+    // ) -> Task<Result<View<Self>>> {
+    //     let weak_workspace = workspace_view.downgrade();
+    //     let workspace = workspace_view.read(cx);
+    //     let project = workspace.project().to_owned();
+    //     let pane = workspace.active_pane().clone();
+    //     let notebook = Self::load(workspace_view, cx);
 
-        cx.spawn(|mut cx| async move {
-            let notebook = notebook.await?;
-            pane.update(&mut cx, |pane, cx| {
-                pane.add_item(Box::new(notebook.clone()), true, true, None, cx);
-            })?;
+    //     cx.spawn(|mut cx| async move {
+    //         let notebook = notebook.await?;
+    //         pane.update(&mut cx, |pane, cx| {
+    //             pane.add_item(Box::new(notebook.clone()), true, true, None, cx);
+    //         })?;
 
-            anyhow::Ok(notebook)
-        })
-    }
+    //         anyhow::Ok(notebook)
+    //     })
+    // }
 
     fn cells(&self) -> impl Iterator<Item = &Cell> {
         self.cell_order
@@ -516,6 +510,52 @@ impl FocusableView for NotebookEditor {
     }
 }
 
+pub struct NotebookItem {
+    path: PathBuf,
+    project_path: ProjectPath,
+}
+
+impl project::Item for NotebookItem {
+    fn try_open(
+        project: &Model<Project>,
+        path: &ProjectPath,
+        cx: &mut AppContext,
+    ) -> Option<Task<gpui::Result<Model<Self>>>> {
+        let path = path.clone();
+        let project = project.clone();
+
+        eprintln!("Trying to open notebook: {:?}", path);
+
+        if path.path.extension().unwrap_or_default() == "ipynb" {
+            Some(cx.spawn(|mut cx| async move {
+                let abs_path = project
+                    .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
+                    .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
+
+                cx.new_model(|_| NotebookItem {
+                    path: abs_path,
+                    project_path: path,
+                })
+            }))
+        } else {
+            None
+        }
+    }
+
+    fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
+        None
+    }
+
+    fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
+        Some(self.project_path.clone())
+    }
+}
+
+fn deserialize_notebook_from_path(path: &Path) -> Result<DeserializedNotebook> {
+    let file_content = std::fs::read_to_string(path)?;
+    deserialize_notebook(&file_content)
+}
+
 impl EventEmitter<()> for NotebookEditor {}
 
 impl Item for NotebookEditor {
@@ -537,3 +577,23 @@ impl Item for NotebookEditor {
 
 // TODO: Implement this to allow us to persist to the database, etc:
 // impl SerializableItem for NotebookEditor {}
+
+impl ProjectItem for NotebookEditor {
+    type Item = NotebookItem;
+
+    fn for_project_item(
+        project: Model<Project>,
+        item: Model<Self::Item>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self
+    // todo... no workspace (?)
+    where
+        Self: Sized,
+    {
+        let path = item.read(cx).path.clone();
+        let notebook =
+            deserialize_notebook_from_path(&path).expect("Failed to deserialize notebook");
+        // todo... no workspace (?)
+        Self::new(project, notebook, cx)
+    }
+}
