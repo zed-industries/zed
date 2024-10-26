@@ -5,14 +5,15 @@ use anyhow::{bail, Result};
 use async_trait::async_trait;
 use collections::BTreeMap;
 use gpui::{
-    AppContext, AsyncAppContext, Context, Entity, EventEmitter, Model, ModelContext, Subscription,
-    Task, WeakModel,
+    AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Subscription, Task,
+    WeakModel,
 };
 use language::{LanguageName, LanguageRegistry, LanguageToolchainStore, Toolchain, ToolchainList};
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
+
 pub(crate) enum ToolchainStore {
     Local(Model<LocalToolchainStore>, Subscription),
     Remote(Model<RemoteToolchainStore>),
@@ -22,6 +23,7 @@ impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
 impl ToolchainStore {
     pub(super) fn init(client: &AnyProtoClient) {
         client.add_model_request_handler(Self::handle_activate_toolchain);
+        client.add_model_request_handler(Self::handle_list_toolchains);
     }
 
     pub(super) fn local(

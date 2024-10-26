@@ -952,7 +952,7 @@ impl LspStore {
         })
     }
 
-    pub fn new_remote(
+    pub(super) fn new_remote(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         toolchain_store: Option<Model<ToolchainStore>>,
