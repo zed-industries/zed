@@ -155,21 +155,6 @@ pub struct DeserializedCellMetadata {
     tags: Option<Vec<String>>,
 }
 
-impl Default for DeserializedCellMetadata {
-    fn default() -> Self {
-        Self {
-            id: None,
-            collapsed: None,
-            scrolled: None,
-            deletable: None,
-            editable: None,
-            format: None,
-            name: None,
-            tags: None,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(tag = "output_type")]
 pub enum DeserializedOutput {

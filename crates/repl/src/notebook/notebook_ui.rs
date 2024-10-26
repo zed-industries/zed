@@ -4,7 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::Result;
+use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
@@ -21,11 +21,64 @@ use uuid::Uuid;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, ProjectItem, SerializableItem, Workspace};
 
 use super::{
-    deserialize_notebook,
+    deserialize_cells,
     static_sample::{complex_example, no_cells_example, simple_example},
-    Cell, CellId, DeserializedCell, DeserializedMetadata, DeserializedNotebook, RenderableCell,
-    DEFAULT_NOTEBOOK_FORMAT, DEFAULT_NOTEBOOK_FORMAT_MINOR,
+    Cell, CellId, DeserializedCell, RenderableCell,
 };
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
+pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
+
+#[derive(Deserialize, Debug)]
+pub struct DeserializedNotebook {
+    pub metadata: DeserializedMetadata,
+    pub nbformat: i32,
+    pub nbformat_minor: i32,
+    #[serde(deserialize_with = "deserialize_cells")]
+    pub cells: Vec<DeserializedCell>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct DeserializedMetadata {
+    pub kernelspec: Option<DeserializedKernelSpec>,
+    pub language_info: Option<DeserializedLanguageInfo>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct DeserializedKernelSpec {
+    pub name: String,
+    pub language: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct DeserializedLanguageInfo {
+    pub name: String,
+    pub version: Option<String>,
+    #[serde(default)]
+    pub codemirror_mode: Option<CodemirrorMode>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(untagged)]
+pub enum CodemirrorMode {
+    String(String),
+    Object(Value),
+}
+
+impl Default for CodemirrorMode {
+    fn default() -> Self {
+        CodemirrorMode::String(String::new())
+    }
+}
+
+pub fn deserialize_notebook(notebook: &str) -> Result<DeserializedNotebook> {
+    let deserialized: DeserializedNotebook =
+        serde_json::from_str(notebook).context("Failed to deserialize notebook")?;
+    Ok(deserialized)
+}
 
 actions!(
     notebook,
@@ -61,7 +114,6 @@ pub fn init(cx: &mut AppContext) {
             } else {
                 // todo: there is no way to unregister a project item, so if the feature flag
                 // gets turned off they need to restart Zed.
-                //
             }
         }
     })
