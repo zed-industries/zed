@@ -23,7 +23,7 @@ enum ToolchainStoreInner {
 
 impl EventEmitter<ToolchainStoreEvent> for ToolchainStore {}
 impl ToolchainStore {
-    pub(super) fn init(client: &AnyProtoClient) {
+    pub fn init(client: &AnyProtoClient) {
         client.add_model_request_handler(Self::handle_activate_toolchain);
         client.add_model_request_handler(Self::handle_list_toolchains);
         client.add_model_request_handler(Self::handle_active_toolchain);
