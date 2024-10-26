@@ -41,7 +41,7 @@ use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
-use theme::SyntaxTheme;
+use theme::{SyntaxTheme, ThemeSettings};
 use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -653,13 +653,25 @@ impl OutlinePanel {
             });
 
             let mut outline_panel_settings = *OutlinePanelSettings::get_global(cx);
-            let settings_subscription = cx.observe_global::<SettingsStore>(move |_, cx| {
-                let new_settings = *OutlinePanelSettings::get_global(cx);
-                if outline_panel_settings != new_settings {
-                    outline_panel_settings = new_settings;
-                    cx.notify();
-                }
-            });
+            let mut current_theme = ThemeSettings::get_global(cx).clone();
+            let settings_subscription =
+                cx.observe_global::<SettingsStore>(move |outline_panel, cx| {
+                    let new_settings = OutlinePanelSettings::get_global(cx);
+                    let new_theme = ThemeSettings::get_global(cx);
+                    if &current_theme != new_theme {
+                        outline_panel_settings = *new_settings;
+                        current_theme = new_theme.clone();
+                        for excerpts in outline_panel.excerpts.values_mut() {
+                            for excerpt in excerpts.values_mut() {
+                                excerpt.invalidate_outlines();
+                            }
+                        }
+                        outline_panel.update_non_fs_items(cx);
+                    } else if &outline_panel_settings != new_settings {
+                        outline_panel_settings = *new_settings;
+                        cx.notify();
+                    }
+                });
 
             let mut outline_panel = Self {
                 mode: ItemsDisplayMode::Outline,

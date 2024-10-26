@@ -8,7 +8,7 @@ Remote Development allows you to code at the speed of thought, even when your co
 
 Remote development requires two computers, your local machine that runs the Zed UI and the remote server which runs a Zed headless server. The two communicate over SSH, so you will need to be able to SSH from your local machine into the remote server to use this feature.
 
-> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use this mode.
+> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use that mode.
 
 ## Setup
 
@@ -29,7 +29,63 @@ The remote machine must be able to run Zed's server. The following platforms sho
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
 - Windows is not yet supported.
 
-## Settings
+## Configuration
+
+The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialogue {#kb projects::OpenRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "projects": ["~/code/zed/zed"]
+    }
+  ]
+}
+```
+
+Zed shells out to the `ssh` on your path, and so it will inherit any configuration you have in `~/.ssh/config` for the given host. That said, if you need to override anything you can configure the following additional options on each connection:
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "projects": ["~/code/zed/zed"],
+      // any argument to pass to the ssh master process
+      "args": ["-i", "~/.ssh/work_id_file"],
+      "port": 22, // defaults to 22
+      // defaults to your username on your local machine
+      "username": "me"
+    }
+  ]
+}
+```
+
+There are two additional Zed-specific options per connection, `upload_binary_over_ssh` and `nickname`:
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "projects": ["~/code/zed/zed"],
+      // by default Zed will download the server binary from the internet on the remote.
+      // When this is true, it'll be downloaded to your laptop and uploaded over SSH.
+      // This is useful when your remote server has restricted internet access.
+      "upload_binary_over_ssh": true,
+      // Shown in the Zed UI to help distinguish multiple hosts.
+      "nickname": "lil-linux"
+    }
+  ]
+}
+```
+
+If you use the command line to open a connection to a host by doing `zed ssh://192.168.1.10/~/.vimrc`, then extra options are read from your settings file by finding the first connection that matches the host/username/port of the URL on the command line.
+
+Additionally it's worth noting that while you can pass a password on the command line `zed ssh://user:password@host/~`, we do not support writing a password to your settings file. If you're connecting repeatedly to the same host, you should configure key-based authentication.
+
+## Zed settings
 
 When opening a remote project there are three relevant settings locations:
 

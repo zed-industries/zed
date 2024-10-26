@@ -32,7 +32,6 @@ impl Database {
         connection: ConnectionId,
         worktrees: &[proto::WorktreeMetadata],
         is_ssh_project: bool,
-        dev_server_project_id: Option<DevServerProjectId>,
     ) -> Result<TransactionGuard<(ProjectId, proto::Room)>> {
         self.room_transaction(room_id, |tx| async move {
             let participant = room_participant::Entity::find()
@@ -61,38 +60,6 @@ impl Database {
                 return Err(anyhow!("guests cannot share projects"))?;
             }
 
-            if let Some(dev_server_project_id) = dev_server_project_id {
-                let project = project::Entity::find()
-                    .filter(project::Column::DevServerProjectId.eq(Some(dev_server_project_id)))
-                    .one(&*tx)
-                    .await?
-                    .ok_or_else(|| anyhow!("no remote project"))?;
-
-                let (_, dev_server) = dev_server_project::Entity::find_by_id(dev_server_project_id)
-                    .find_also_related(dev_server::Entity)
-                    .one(&*tx)
-                    .await?
-                    .ok_or_else(|| anyhow!("no dev_server_project"))?;
-
-                if !dev_server.is_some_and(|dev_server| dev_server.user_id == participant.user_id) {
-                    return Err(anyhow!("not your dev server"))?;
-                }
-
-                if project.room_id.is_some() {
-                    return Err(anyhow!("project already shared"))?;
-                };
-
-                let project = project::Entity::update(project::ActiveModel {
-                    room_id: ActiveValue::Set(Some(room_id)),
-                    ..project.into_active_model()
-                })
-                .exec(&*tx)
-                .await?;
-
-                let room = self.get_room(room_id, &tx).await?;
-                return Ok((project.id, room));
-            }
-
             let project = project::ActiveModel {
                 room_id: ActiveValue::set(Some(participant.room_id)),
                 host_user_id: ActiveValue::set(Some(participant.user_id)),
@@ -102,7 +69,6 @@ impl Database {
                 ))),
                 id: ActiveValue::NotSet,
                 hosted_project_id: ActiveValue::Set(None),
-                dev_server_project_id: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
@@ -156,7 +122,6 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection: ConnectionId,
-        user_id: Option<UserId>,
     ) -> Result<TransactionGuard<(bool, Option<proto::Room>, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             let guest_connection_ids = self.project_guest_connection_ids(project_id, &tx).await?;
@@ -172,25 +137,6 @@ impl Database {
             if project.host_connection()? == connection {
                 return Ok((true, room, guest_connection_ids));
             }
-            if let Some(dev_server_project_id) = project.dev_server_project_id {
-                if let Some(user_id) = user_id {
-                    if user_id
-                        != self
-                            .owner_for_dev_server_project(dev_server_project_id, &tx)
-                            .await?
-                    {
-                        Err(anyhow!("cannot unshare a project hosted by another user"))?
-                    }
-                    project::Entity::update(project::ActiveModel {
-                        room_id: ActiveValue::Set(None),
-                        ..project.into_active_model()
-                    })
-                    .exec(&*tx)
-                    .await?;
-                    return Ok((false, room, guest_connection_ids));
-                }
-            }
-
             Err(anyhow!("cannot unshare a project hosted by another user"))?
         })
         .await
@@ -272,6 +218,16 @@ impl Database {
         update: &proto::UpdateWorktree,
         connection: ConnectionId,
     ) -> Result<TransactionGuard<Vec<ConnectionId>>> {
+        if update.removed_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
+            || update.updated_entries.len() > proto::MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE
+        {
+            return Err(anyhow!(
+                "invalid worktree update. removed entries: {}, updated entries: {}",
+                update.removed_entries.len(),
+                update.updated_entries.len()
+            ))?;
+        }
+
         let project_id = ProjectId::from_proto(update.project_id);
         let worktree_id = update.worktree_id as i64;
         self.project_transaction(project_id, |tx| async move {
@@ -623,17 +579,6 @@ impl Database {
         .await
     }
 
-    pub async fn find_dev_server_project(&self, id: DevServerProjectId) -> Result<project::Model> {
-        self.transaction(|tx| async move {
-            Ok(project::Entity::find()
-                .filter(project::Column::DevServerProjectId.eq(id))
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such project"))?)
-        })
-        .await
-    }
-
     /// Adds the given connection to the specified project
     /// in the current room.
     pub async fn join_project(
@@ -644,13 +589,7 @@ impl Database {
     ) -> Result<TransactionGuard<(Project, ReplicaId)>> {
         self.project_transaction(project_id, |tx| async move {
             let (project, role) = self
-                .access_project(
-                    project_id,
-                    connection,
-                    PrincipalId::UserId(user_id),
-                    Capability::ReadOnly,
-                    &tx,
-                )
+                .access_project(project_id, connection, Capability::ReadOnly, &tx)
                 .await?;
             self.join_project_internal(project, user_id, connection, role, &tx)
                 .await
@@ -841,7 +780,6 @@ impl Database {
                     worktree_id: None,
                 })
                 .collect(),
-            dev_server_project_id: project.dev_server_project_id,
         };
         Ok((project, replica_id as ReplicaId))
     }
@@ -997,28 +935,13 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-        principal_id: PrincipalId,
         capability: Capability,
         tx: &DatabaseTransaction,
     ) -> Result<(project::Model, ChannelRole)> {
-        let (mut project, dev_server_project) = project::Entity::find_by_id(project_id)
-            .find_also_related(dev_server_project::Entity)
+        let project = project::Entity::find_by_id(project_id)
             .one(tx)
             .await?
             .ok_or_else(|| anyhow!("no such project"))?;
-
-        let user_id = match principal_id {
-            PrincipalId::DevServerId(_) => {
-                if project
-                    .host_connection()
-                    .is_ok_and(|connection| connection == connection_id)
-                {
-                    return Ok((project, ChannelRole::Admin));
-                }
-                return Err(anyhow!("not the project host"))?;
-            }
-            PrincipalId::UserId(user_id) => user_id,
-        };
 
         let role_from_room = if let Some(room_id) = project.room_id {
             room_participant::Entity::find()
@@ -1030,34 +953,8 @@ impl Database {
         } else {
             None
         };
-        let role_from_dev_server = if let Some(dev_server_project) = dev_server_project {
-            let dev_server = dev_server::Entity::find_by_id(dev_server_project.dev_server_id)
-                .one(tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such channel"))?;
-            if user_id == dev_server.user_id {
-                // If the user left the room "uncleanly" they may rejoin the
-                // remote project before leave_room runs. IN that case kick
-                // the project out of the room pre-emptively.
-                if role_from_room.is_none() {
-                    project = project::Entity::update(project::ActiveModel {
-                        room_id: ActiveValue::Set(None),
-                        ..project.into_active_model()
-                    })
-                    .exec(tx)
-                    .await?;
-                }
-                Some(ChannelRole::Admin)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
 
-        let role = role_from_dev_server
-            .or(role_from_room)
-            .unwrap_or(ChannelRole::Banned);
+        let role = role_from_room.unwrap_or(ChannelRole::Banned);
 
         match capability {
             Capability::ReadWrite => {
@@ -1080,17 +977,10 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-        user_id: UserId,
     ) -> Result<ConnectionId> {
         self.project_transaction(project_id, |tx| async move {
             let (project, _) = self
-                .access_project(
-                    project_id,
-                    connection_id,
-                    PrincipalId::UserId(user_id),
-                    Capability::ReadOnly,
-                    &tx,
-                )
+                .access_project(project_id, connection_id, Capability::ReadOnly, &tx)
                 .await?;
             project.host_connection()
         })
@@ -1103,48 +993,11 @@ impl Database {
         &self,
         project_id: ProjectId,
         connection_id: ConnectionId,
-        user_id: UserId,
     ) -> Result<ConnectionId> {
         self.project_transaction(project_id, |tx| async move {
             let (project, _) = self
-                .access_project(
-                    project_id,
-                    connection_id,
-                    PrincipalId::UserId(user_id),
-                    Capability::ReadWrite,
-                    &tx,
-                )
+                .access_project(project_id, connection_id, Capability::ReadWrite, &tx)
                 .await?;
-            project.host_connection()
-        })
-        .await
-        .map(|guard| guard.into_inner())
-    }
-
-    /// Returns the host connection for a request to join a shared project.
-    pub async fn host_for_owner_project_request(
-        &self,
-        project_id: ProjectId,
-        _connection_id: ConnectionId,
-        user_id: UserId,
-    ) -> Result<ConnectionId> {
-        self.project_transaction(project_id, |tx| async move {
-            let (project, dev_server_project) = project::Entity::find_by_id(project_id)
-                .find_also_related(dev_server_project::Entity)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
-
-            let Some(dev_server_project) = dev_server_project else {
-                return Err(anyhow!("not a dev server project"))?;
-            };
-            let dev_server = dev_server::Entity::find_by_id(dev_server_project.dev_server_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such dev server"))?;
-            if dev_server.user_id != user_id {
-                return Err(anyhow!("not your project"))?;
-            }
             project.host_connection()
         })
         .await
@@ -1154,14 +1007,13 @@ impl Database {
     pub async fn connections_for_buffer_update(
         &self,
         project_id: ProjectId,
-        principal_id: PrincipalId,
         connection_id: ConnectionId,
         capability: Capability,
     ) -> Result<TransactionGuard<(ConnectionId, Vec<ConnectionId>)>> {
         self.project_transaction(project_id, |tx| async move {
             // Authorize
             let (project, _) = self
-                .access_project(project_id, connection_id, principal_id, capability, &tx)
+                .access_project(project_id, connection_id, capability, &tx)
                 .await?;
 
             let host_connection_id = project.host_connection()?;

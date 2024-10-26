@@ -1,6 +1,7 @@
 use std::{
     borrow::Cow,
     ops::{Deref, DerefMut, Range},
+    path::Path,
     sync::Arc,
 };
 
@@ -66,10 +67,12 @@ impl EditorLspTestContext {
         );
         language_registry.add(Arc::new(language));
 
+        let root = Self::root_path();
+
         app_state
             .fs
             .as_fake()
-            .insert_tree("/root", json!({ "dir": { file_name.clone(): "" }}))
+            .insert_tree(root, json!({ "dir": { file_name.clone(): "" }}))
             .await;
 
         let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
@@ -79,7 +82,7 @@ impl EditorLspTestContext {
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project
             .update(&mut cx, |project, cx| {
-                project.find_or_create_worktree("/root", true, cx)
+                project.find_or_create_worktree(root, true, cx)
             })
             .await
             .unwrap();
@@ -108,7 +111,7 @@ impl EditorLspTestContext {
             },
             lsp,
             workspace,
-            buffer_lsp_url: lsp::Url::from_file_path(format!("/root/dir/{file_name}")).unwrap(),
+            buffer_lsp_url: lsp::Url::from_file_path(root.join("dir").join(file_name)).unwrap(),
         }
     }
 
@@ -123,6 +126,7 @@ impl EditorLspTestContext {
                     path_suffixes: vec!["rs".to_string()],
                     ..Default::default()
                 },
+                line_comments: vec!["// ".into(), "/// ".into(), "//! ".into()],
                 ..Default::default()
             },
             Some(tree_sitter_rust::LANGUAGE.into()),
@@ -308,6 +312,16 @@ impl EditorLspTestContext {
 
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
         self.lsp.notify::<T>(params);
+    }
+
+    #[cfg(target_os = "windows")]
+    fn root_path() -> &'static Path {
+        Path::new("C:\\root")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn root_path() -> &'static Path {
+        Path::new("/root")
     }
 }
 

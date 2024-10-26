@@ -37,11 +37,8 @@ pub enum TerminalKind {
 
 /// SshCommand describes how to connect to a remote server
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SshCommand {
-    /// DevServers give a string from the user
-    DevServer(String),
-    /// Direct ssh has a list of arguments to pass to ssh
-    Direct(Vec<String>),
+pub struct SshCommand {
+    arguments: Vec<String>,
 }
 
 impl Project {
@@ -73,19 +70,12 @@ impl Project {
             if let Some(args) = ssh_client.ssh_args() {
                 return Some((
                     ssh_client.connection_options().host.clone(),
-                    SshCommand::Direct(args),
+                    SshCommand { arguments: args },
                 ));
             }
         }
 
-        let dev_server_project_id = self.dev_server_project_id()?;
-        let projects_store = dev_server_projects::Store::global(cx).read(cx);
-        let ssh_command = projects_store
-            .dev_server_for_project(dev_server_project_id)?
-            .ssh_connection_string
-            .as_ref()?
-            .to_string();
-        Some(("".to_string(), SshCommand::DevServer(ssh_command)))
+        return None;
     }
 
     pub fn create_terminal(
@@ -399,14 +389,8 @@ pub fn wrap_for_ssh(
     };
     let shell_invocation = format!("sh -c {}", shlex::try_quote(&commands).unwrap());
 
-    let (program, mut args) = match ssh_command {
-        SshCommand::DevServer(ssh_command) => {
-            let mut args = shlex::split(ssh_command).unwrap_or_default();
-            let program = args.drain(0..1).next().unwrap_or("ssh".to_string());
-            (program, args)
-        }
-        SshCommand::Direct(ssh_args) => ("ssh".to_string(), ssh_args.clone()),
-    };
+    let program = "ssh".to_string();
+    let mut args = ssh_command.arguments.clone();
 
     args.push("-t".to_string());
     args.push(shell_invocation);

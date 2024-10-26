@@ -97,7 +97,7 @@ popd
 pushd crates/zed
 cp Cargo.toml Cargo.toml.backup
 sed \
-    -i .backup \
+    -i.backup \
     "s/package.metadata.bundle-${channel}/package.metadata.bundle/" \
     Cargo.toml
 
