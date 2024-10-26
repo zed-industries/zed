@@ -10,7 +10,7 @@ use project::{
     search::SearchQuery,
     task_store::TaskStore,
     worktree_store::WorktreeStore,
-    LspStore, LspStoreEvent, PrettierStore, ProjectPath, WorktreeId,
+    LspStore, LspStoreEvent, PrettierStore, ProjectPath, ToolchainStore, WorktreeId,
 };
 use remote::ssh_session::ChannelClient;
 use rpc::{
@@ -108,11 +108,14 @@ impl HeadlessProject {
             observer.shared(SSH_PROJECT_ID, session.clone().into(), cx);
             observer
         });
+        let toolchain_store =
+            cx.new_model(|cx| ToolchainStore::local(languages.clone(), worktree_store.clone(), cx));
         let lsp_store = cx.new_model(|cx| {
             let mut lsp_store = LspStore::new_local(
                 buffer_store.clone(),
                 worktree_store.clone(),
                 prettier_store.clone(),
+                toolchain_store.clone(),
                 environment,
                 languages.clone(),
                 http_client,

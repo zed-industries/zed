@@ -14,7 +14,7 @@ use settings::WorktreeId;
 
 use crate::worktree_store::WorktreeStore;
 
-pub(crate) enum ToolchainStore {
+pub enum ToolchainStore {
     Local(Model<LocalToolchainStore>, Subscription),
     Remote(Model<RemoteToolchainStore>),
 }
@@ -26,7 +26,7 @@ impl ToolchainStore {
         client.add_model_request_handler(Self::handle_list_toolchains);
     }
 
-    pub(super) fn local(
+    pub fn local(
         languages: Arc<LanguageRegistry>,
         worktree_store: Model<WorktreeStore>,
         cx: &mut ModelContext<Self>,
