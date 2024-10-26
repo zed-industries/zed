@@ -10,7 +10,7 @@ use gpui::{
 use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
 use project::{Project, WorktreeId};
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
@@ -42,6 +42,11 @@ impl ToolchainSelector {
 
         let language_name = buffer.read(cx).language()?.name();
         let worktree_id = buffer.read(cx).file()?.worktree_id(cx);
+        let worktree_root_path = project
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)?
+            .read(cx)
+            .abs_path();
         let workspace_id = workspace.database_id()?;
         let weak = workspace.weak_handle();
         cx.spawn(move |workspace, mut cx| async move {
@@ -58,6 +63,7 @@ impl ToolchainSelector {
                             project,
                             active_toolchain,
                             worktree_id,
+                            worktree_root_path,
                             language_name,
                             cx,
                         )
@@ -75,6 +81,7 @@ impl ToolchainSelector {
         project: Model<Project>,
         active_toolchain: Option<Toolchain>,
         worktree_id: WorktreeId,
+        worktree_root: Arc<Path>,
         language_name: LanguageName,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -85,6 +92,7 @@ impl ToolchainSelector {
                 view,
                 workspace,
                 worktree_id,
+                worktree_root,
                 project,
                 language_name,
                 cx,
@@ -117,6 +125,7 @@ pub struct ToolchainSelectorDelegate {
     selected_index: usize,
     workspace: WeakView<Workspace>,
     worktree_id: WorktreeId,
+    worktree_abs_path_root: Arc<Path>,
     _fetch_candidates_task: Task<Option<()>>,
 }
 
@@ -126,6 +135,7 @@ impl ToolchainSelectorDelegate {
         language_selector: WeakView<ToolchainSelector>,
         workspace: WeakView<Workspace>,
         worktree_id: WorktreeId,
+        worktree_abs_path_root: Arc<Path>,
         project: Model<Project>,
         language_name: LanguageName,
         cx: &mut ViewContext<Picker<Self>>,
@@ -167,8 +177,17 @@ impl ToolchainSelectorDelegate {
             selected_index: 0,
             workspace,
             worktree_id,
+            worktree_abs_path_root,
             _fetch_candidates_task,
         }
+    }
+    fn relativize_path(path: SharedString, worktree_root: &Path) -> SharedString {
+        Path::new(&path.as_ref())
+            .strip_prefix(&worktree_root)
+            .ok()
+            .map(|suffix| Path::new(".").join(suffix))
+            .and_then(|path| path.to_str().map(String::from).map(SharedString::from))
+            .unwrap_or(path)
     }
 }
 
@@ -236,6 +255,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
     ) -> gpui::Task<()> {
         let background = cx.background_executor().clone();
         let candidates = self.candidates.clone();
+        let worktree_root_path = self.worktree_abs_path_root.clone();
         cx.spawn(|this, mut cx| async move {
             let matches = if query.is_empty() {
                 candidates
@@ -243,7 +263,8 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .into_iter()
                     .enumerate()
                     .map(|(index, candidate)| {
-                        let string = format!("{}{}", candidate.label, candidate.path);
+                        let path = Self::relativize_path(candidate.path, &worktree_root_path);
+                        let string = format!("{}{}", candidate.label, path);
                         StringMatch {
                             candidate_id: index,
                             string,
@@ -258,7 +279,8 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .into_iter()
                     .enumerate()
                     .map(|(candidate_id, toolchain)| {
-                        let string = format!("{}{}", toolchain.label, toolchain.path);
+                        let path = Self::relativize_path(toolchain.path, &worktree_root_path);
+                        let string = format!("{}{}", toolchain.label, path);
                         StringMatchCandidate::new(candidate_id, string)
                     })
                     .collect::<Vec<_>>();
@@ -295,7 +317,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         let toolchain = &self.candidates.toolchains[mat.candidate_id];
 
         let label = toolchain.label.clone();
-        let path = toolchain.path.clone();
+        let path = Self::relativize_path(toolchain.path.clone(), &self.worktree_abs_path_root);
         let (name_highlights, mut path_highlights) = mat
             .positions
             .iter()
