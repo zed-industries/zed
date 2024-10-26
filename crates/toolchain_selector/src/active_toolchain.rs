@@ -107,6 +107,13 @@ impl ActiveToolchain {
                     })
                     .ok()?
                     .await?;
+                if let Some(toolchain) = toolchains.toolchains.first() {
+                    workspace::WORKSPACE_DB
+                        .set_toolchain(workspace_id, worktree_id, toolchain.clone())
+                        .await
+                        .ok()?;
+                }
+
                 toolchains.toolchains.first().cloned()
             }
         })
