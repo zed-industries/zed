@@ -84,7 +84,6 @@ impl Render for TitleBar {
         } else {
             cx.theme().colors().title_bar_background
         };
-        let workspace = self.workspace.clone();
 
         h_flex()
             .id("titlebar")

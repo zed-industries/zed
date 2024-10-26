@@ -51,7 +51,6 @@ util.workspace = true
 vcs_menu.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-repl.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
