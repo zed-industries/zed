@@ -4898,6 +4898,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "git_panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "collections",
+ "db",
+ "editor",
+ "file_icons",
+ "fuzzy",
+ "gpui",
+ "itertools 0.13.0",
+ "language",
+ "log",
+ "menu",
+ "pretty_assertions",
+ "project",
+ "schemars",
+ "search",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "theme",
+ "util",
+ "workspace",
+ "worktree",
+]
+
+[[package]]
 name = "glob"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14597,6 +14626,7 @@ dependencies = [
  "futures 0.3.30",
  "git",
  "git_hosting_providers",
+ "git_panel",
  "go_to_line",
  "gpui",
  "http_client",

@@ -433,6 +433,7 @@ fn main() {
         project_symbols::init(cx);
         project_panel::init(Assets, cx);
         outline_panel::init(Assets, cx);
+        git_panel::init(Assets, cx);
         tasks_ui::init(cx);
         snippets_ui::init(cx);
         channel::init(&app_state.client.clone(), app_state.user_store.clone(), cx);

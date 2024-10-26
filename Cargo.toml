@@ -70,6 +70,7 @@ members = [
     "crates/open_ai",
     "crates/outline",
     "crates/outline_panel",
+    "crates/git_panel",
     "crates/paths",
     "crates/picker",
     "crates/prettier",
@@ -242,6 +243,7 @@ ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
+git_panel = { path = "crates/git_panel" }
 paths = { path = "crates/paths" }
 picker = { path = "crates/picker" }
 plugin = { path = "crates/plugin" }
