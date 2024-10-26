@@ -14,8 +14,8 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
 pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
-    if color.starts_with('@') {
-        return Err(anyhow::anyhow!("REFERENCE:{}", &color[1..]));
+    if let Some(reference) = color.strip_prefix('@') {
+        return Err(anyhow::anyhow!("REFERENCE:{}", reference));
     }
 
     let rgba = gpui::Rgba::try_from(color)?;
