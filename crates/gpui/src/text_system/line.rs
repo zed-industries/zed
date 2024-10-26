@@ -1,7 +1,6 @@
 use crate::{
-    black, fill, point, px, size, Bounds, Half, Hsla, LineLayout, Pixels, Point, Result,
-    SharedString, StrikethroughStyle, UnderlineStyle, WindowContext, WrapBoundary,
-    WrappedLineLayout,
+    black, fill, point, px, size, Bounds, Hsla, LineLayout, Pixels, Point, Result, SharedString,
+    StrikethroughStyle, UnderlineStyle, WindowContext, WrapBoundary, WrappedLineLayout,
 };
 use derive_more::{Deref, DerefMut};
 use smallvec::SmallVec;
@@ -130,9 +129,8 @@ fn paint_line(
         let text_system = cx.text_system().clone();
         let mut glyph_origin = origin;
         let mut prev_glyph_position = Point::default();
-        let mut max_glyph_size = size(px(0.), px(0.));
         for (run_ix, run) in layout.runs.iter().enumerate() {
-            max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
+            let max_glyph_size = text_system.bounding_box(run.font_id, layout.font_size).size;
 
             for (glyph_ix, glyph) in run.glyphs.iter().enumerate() {
                 glyph_origin.x += glyph.position.x - prev_glyph_position.x;
@@ -141,9 +139,6 @@ fn paint_line(
                     wraps.next();
                     if let Some((background_origin, background_color)) = current_background.as_mut()
                     {
-                        if glyph_origin.x == background_origin.x {
-                            background_origin.x -= max_glyph_size.width.half()
-                        }
                         cx.paint_quad(fill(
                             Bounds {
                                 origin: *background_origin,
@@ -155,9 +150,6 @@ fn paint_line(
                         background_origin.y += line_height;
                     }
                     if let Some((underline_origin, underline_style)) = current_underline.as_mut() {
-                        if glyph_origin.x == underline_origin.x {
-                            underline_origin.x -= max_glyph_size.width.half();
-                        };
                         cx.paint_underline(
                             *underline_origin,
                             glyph_origin.x - underline_origin.x,
@@ -169,9 +161,6 @@ fn paint_line(
                     if let Some((strikethrough_origin, strikethrough_style)) =
                         current_strikethrough.as_mut()
                     {
-                        if glyph_origin.x == strikethrough_origin.x {
-                            strikethrough_origin.x -= max_glyph_size.width.half();
-                        };
                         cx.paint_strikethrough(
                             *strikethrough_origin,
                             glyph_origin.x - strikethrough_origin.x,
@@ -190,18 +179,7 @@ fn paint_line(
                 let mut finished_underline: Option<(Point<Pixels>, UnderlineStyle)> = None;
                 let mut finished_strikethrough: Option<(Point<Pixels>, StrikethroughStyle)> = None;
                 if glyph.index >= run_end {
-                    let mut style_run = decoration_runs.next();
-
-                    // ignore style runs that apply to a partial glyph
-                    while let Some(run) = style_run {
-                        if glyph.index < run_end + (run.len as usize) {
-                            break;
-                        }
-                        run_end += run.len as usize;
-                        style_run = decoration_runs.next();
-                    }
-
-                    if let Some(style_run) = style_run {
+                    if let Some(style_run) = decoration_runs.next() {
                         if let Some((_, background_color)) = &mut current_background {
                             if style_run.background_color.as_ref() != Some(background_color) {
                                 finished_background = current_background.take();
@@ -262,14 +240,10 @@ fn paint_line(
                 }
 
                 if let Some((background_origin, background_color)) = finished_background {
-                    let mut width = glyph_origin.x - background_origin.x;
-                    if width == px(0.) {
-                        width = px(5.)
-                    };
                     cx.paint_quad(fill(
                         Bounds {
                             origin: background_origin,
-                            size: size(width, line_height),
+                            size: size(glyph_origin.x - background_origin.x, line_height),
                         },
                         background_color,
                     ));
@@ -325,10 +299,7 @@ fn paint_line(
             last_line_end_x -= glyph.position.x;
         }
 
-        if let Some((mut background_origin, background_color)) = current_background.take() {
-            if last_line_end_x == background_origin.x {
-                background_origin.x -= max_glyph_size.width.half()
-            };
+        if let Some((background_origin, background_color)) = current_background.take() {
             cx.paint_quad(fill(
                 Bounds {
                     origin: background_origin,
@@ -338,10 +309,7 @@ fn paint_line(
             ));
         }
 
-        if let Some((mut underline_start, underline_style)) = current_underline.take() {
-            if last_line_end_x == underline_start.x {
-                underline_start.x -= max_glyph_size.width.half()
-            };
+        if let Some((underline_start, underline_style)) = current_underline.take() {
             cx.paint_underline(
                 underline_start,
                 last_line_end_x - underline_start.x,
@@ -349,10 +317,7 @@ fn paint_line(
             );
         }
 
-        if let Some((mut strikethrough_start, strikethrough_style)) = current_strikethrough.take() {
-            if last_line_end_x == strikethrough_start.x {
-                strikethrough_start.x -= max_glyph_size.width.half()
-            };
+        if let Some((strikethrough_start, strikethrough_style)) = current_strikethrough.take() {
             cx.paint_strikethrough(
                 strikethrough_start,
                 last_line_end_x - strikethrough_start.x,

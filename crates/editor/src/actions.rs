@@ -153,6 +153,10 @@ pub struct DeleteToPreviousWordStart {
     pub ignore_newlines: bool,
 }
 
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct FoldAtLevel {
+    pub level: u32,
+}
 impl_actions!(
     editor,
     [
@@ -182,6 +186,7 @@ impl_actions!(
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
+        FoldAtLevel
     ]
 );
 
@@ -193,6 +198,7 @@ gpui::actions!(
         AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
+        ApplyAllDiffHunks,
         ApplyDiffHunk,
         Backspace,
         Cancel,

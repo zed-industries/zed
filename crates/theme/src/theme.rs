@@ -140,7 +140,7 @@ pub struct ThemeFamily {
 impl ThemeFamily {}
 
 /// A theme is the primary mechanism for defining the appearance of the UI.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct Theme {
     /// The unique identifier for the theme.
     pub id: String,

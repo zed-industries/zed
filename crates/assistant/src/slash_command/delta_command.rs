@@ -1,5 +1,5 @@
 use crate::slash_command::file_command::{FileCommandMetadata, FileSlashCommand};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
@@ -38,7 +38,7 @@ impl SlashCommand for DeltaSlashCommand {
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        unimplemented!()
+        Task::ready(Err(anyhow!("this command does not require argument")))
     }
 
     fn run(

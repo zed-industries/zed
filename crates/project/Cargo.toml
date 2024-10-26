@@ -32,7 +32,6 @@ clock.workspace = true
 collections.workspace = true
 dap.workspace = true
 dap_adapters.workspace = true
-dev_server_projects.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true

@@ -26,7 +26,6 @@ members = [
     "crates/dap_adapters",
     "crates/debugger_ui",
     "crates/db",
-    "crates/dev_server_projects",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
@@ -48,7 +47,6 @@ members = [
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
-    "crates/headless",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/image_viewer",
@@ -209,7 +207,6 @@ dap_adapters = { path = "crates/dap_adapters" }
 db = { path = "crates/db" }
 debugger_ui = { path = "crates/debugger_ui" }
 debugger_tools = { path = "crates/debugger_tools" }
-dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
@@ -227,7 +224,6 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
 gpui_macros = { path = "crates/gpui_macros" }
-headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
@@ -476,7 +472,7 @@ tree-sitter-typescript = "0.23"
 tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml", rev = "baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a" }
 unicase = "2.6"
 unindent = "0.1.7"
-unicode-segmentation = "1.11"
+unicode-segmentation = "1.10"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.215"

@@ -2550,7 +2550,6 @@ dependencies = [
  "ctor",
  "dashmap 6.0.1",
  "derive_more",
- "dev_server_projects",
  "editor",
  "env_logger",
  "envy",
@@ -2561,7 +2560,6 @@ dependencies = [
  "git_hosting_providers",
  "google_ai",
  "gpui",
- "headless",
  "hex",
  "http_client",
  "hyper 0.14.30",
@@ -3569,18 +3567,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dev_server_projects"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "gpui",
- "rpc",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
@@ -3818,7 +3804,6 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
- "unicode-segmentation",
  "unindent",
  "url",
  "util",
@@ -5365,28 +5350,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7f66481bfee273957b1f20485a4ff3362987f85b2c236580d81b4eb7a326429"
 dependencies = [
  "http 0.2.12",
-]
-
-[[package]]
-name = "headless"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "extension",
- "fs",
- "futures 0.3.30",
- "gpui",
- "language",
- "log",
- "node_runtime",
- "postage",
- "project",
- "proto",
- "settings",
- "shellexpand 2.1.2",
- "signal-hook",
- "util",
 ]
 
 [[package]]
@@ -8538,7 +8501,6 @@ dependencies = [
  "collections",
  "dap",
  "dap_adapters",
- "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.30",
@@ -9076,9 +9038,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
- "client",
  "dap",
- "dev_server_projects",
  "editor",
  "file_finder",
  "futures 0.3.30",
@@ -9095,14 +9055,12 @@ dependencies = [
  "project",
  "release_channel",
  "remote",
- "rpc",
  "schemars",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "task",
- "terminal_view",
  "theme",
  "ui",
  "util",
@@ -12010,7 +11968,6 @@ dependencies = [
  "client",
  "collections",
  "command_palette",
- "dev_server_projects",
  "editor",
  "extensions_ui",
  "feature_flags",
@@ -14407,7 +14364,6 @@ dependencies = [
  "collections",
  "db",
  "derive_more",
- "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.30",
@@ -14728,7 +14684,6 @@ dependencies = [
  "db",
  "debugger_tools",
  "debugger_ui",
- "dev_server_projects",
  "diagnostics",
  "editor",
  "env_logger",
@@ -14744,7 +14699,6 @@ dependencies = [
  "git_hosting_providers",
  "go_to_line",
  "gpui",
- "headless",
  "http_client",
  "image_viewer",
  "inline_completion_button",
