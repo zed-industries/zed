@@ -13,6 +13,9 @@ use serde_repr::{Deserialize_repr, Serialize_repr};
 
 use crate::{StatusColorsRefinement, ThemeColorsRefinement};
 
+/// The maximum depth of resolution for a `@reference`.
+const MAX_RESOLUTION_DEPTH: usize = 8;
+
 pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
     if let Some(reference) = color.strip_prefix('@') {
         return Err(anyhow::anyhow!("REFERENCE:{}", reference));
@@ -582,220 +585,233 @@ impl ThemeColorsContent {
 
         for (key, value) in [
             ("border", &self.border),
-            ("border_variant", &self.border_variant),
-            ("border_focused", &self.border_focused),
-            ("border_selected", &self.border_selected),
-            ("border_transparent", &self.border_transparent),
-            ("border_disabled", &self.border_disabled),
-            ("elevated_surface_background", &self.elevated_surface_background),
-            ("surface_background", &self.surface_background),
+            ("border.variant", &self.border_variant),
+            ("border.focused", &self.border_focused),
+            ("border.selected", &self.border_selected),
+            ("border.transparent", &self.border_transparent),
+            ("border.disabled", &self.border_disabled),
+            ("elevated_surface.background", &self.elevated_surface_background),
+            ("surface.background", &self.surface_background),
             ("background", &self.background),
-            ("element_background", &self.element_background),
-            ("element_hover", &self.element_hover),
-            ("element_active", &self.element_active),
-            ("element_selected", &self.element_selected),
-            ("element_disabled", &self.element_disabled),
-            ("drop_target_background", &self.drop_target_background),
-            ("ghost_element_background", &self.ghost_element_background),
-            ("ghost_element_hover", &self.ghost_element_hover),
-            ("ghost_element_active", &self.ghost_element_active),
-            ("ghost_element_selected", &self.ghost_element_selected),
-            ("ghost_element_disabled", &self.ghost_element_disabled),
+            ("element.background", &self.element_background),
+            ("element.hover", &self.element_hover),
+            ("element.active", &self.element_active),
+            ("element.selected", &self.element_selected),
+            ("element.disabled", &self.element_disabled),
+            ("drop_target.background", &self.drop_target_background),
+            ("ghost_element.background", &self.ghost_element_background),
+            ("ghost_element.hover", &self.ghost_element_hover),
+            ("ghost_element.active", &self.ghost_element_active),
+            ("ghost_element.selected", &self.ghost_element_selected),
+            ("ghost_element.disabled", &self.ghost_element_disabled),
             ("text", &self.text),
-            ("text_muted", &self.text_muted),
-            ("text_placeholder", &self.text_placeholder),
-            ("text_disabled", &self.text_disabled),
-            ("text_accent", &self.text_accent),
+            ("text.muted", &self.text_muted),
+            ("text.placeholder", &self.text_placeholder),
+            ("text.disabled", &self.text_disabled),
+            ("text.accent", &self.text_accent),
             ("icon", &self.icon),
-            ("icon_muted", &self.icon_muted),
-            ("icon_disabled", &self.icon_disabled),
-            ("icon_placeholder", &self.icon_placeholder),
-            ("icon_accent", &self.icon_accent),
-            ("status_bar_background", &self.status_bar_background),
-            ("title_bar_background", &self.title_bar_background),
-            ("title_bar_inactive_background", &self.title_bar_inactive_background),
-            ("toolbar_background", &self.toolbar_background),
-            ("tab_bar_background", &self.tab_bar_background),
-            ("tab_inactive_background", &self.tab_inactive_background),
-            ("tab_active_background", &self.tab_active_background),
-            ("search_match_background", &self.search_match_background),
-            ("panel_background", &self.panel_background),
-            ("panel_focused_border", &self.panel_focused_border),
-            ("panel_indent_guide", &self.panel_indent_guide),
-            ("panel_indent_guide_hover", &self.panel_indent_guide_hover),
-            ("panel_indent_guide_active", &self.panel_indent_guide_active),
-            ("pane_focused_border", &self.pane_focused_border),
-            ("pane_group_border", &self.pane_group_border),
-            ("scrollbar_thumb_background", &self.scrollbar_thumb_background),
-            ("scrollbar_thumb_hover_background", &self.scrollbar_thumb_hover_background),
-            ("scrollbar_thumb_border", &self.scrollbar_thumb_border),
-            ("scrollbar_track_background", &self.scrollbar_track_background),
-            ("scrollbar_track_border", &self.scrollbar_track_border),
-            ("editor_foreground", &self.editor_foreground),
-            ("editor_background", &self.editor_background),
-            ("editor_gutter_background", &self.editor_gutter_background),
-            ("editor_subheader_background", &self.editor_subheader_background),
-            ("editor_active_line_background", &self.editor_active_line_background),
-            ("editor_highlighted_line_background", &self.editor_highlighted_line_background),
-            ("editor_line_number", &self.editor_line_number),
-            ("editor_active_line_number", &self.editor_active_line_number),
-            ("editor_invisible", &self.editor_invisible),
-            ("editor_wrap_guide", &self.editor_wrap_guide),
-            ("editor_active_wrap_guide", &self.editor_active_wrap_guide),
-            ("editor_indent_guide", &self.editor_indent_guide),
-            ("editor_indent_guide_active", &self.editor_indent_guide_active),
-            ("editor_document_highlight_read_background", &self.editor_document_highlight_read_background),
-            ("editor_document_highlight_write_background", &self.editor_document_highlight_write_background),
-            ("editor_document_highlight_bracket_background", &self.editor_document_highlight_bracket_background),
-            ("terminal_background", &self.terminal_background),
-            ("terminal_ansi_background", &self.terminal_ansi_background),
-            ("terminal_foreground", &self.terminal_foreground),
-            ("terminal_bright_foreground", &self.terminal_bright_foreground),
-            ("terminal_dim_foreground", &self.terminal_dim_foreground),
-            ("terminal_ansi_black", &self.terminal_ansi_black),
-            ("terminal_ansi_bright_black", &self.terminal_ansi_bright_black),
-            ("terminal_ansi_dim_black", &self.terminal_ansi_dim_black),
-            ("terminal_ansi_red", &self.terminal_ansi_red),
-            ("terminal_ansi_bright_red", &self.terminal_ansi_bright_red),
-            ("terminal_ansi_dim_red", &self.terminal_ansi_dim_red),
-            ("terminal_ansi_green", &self.terminal_ansi_green),
-            ("terminal_ansi_bright_green", &self.terminal_ansi_bright_green),
-            ("terminal_ansi_dim_green", &self.terminal_ansi_dim_green),
-            ("terminal_ansi_yellow", &self.terminal_ansi_yellow),
-            ("terminal_ansi_bright_yellow", &self.terminal_ansi_bright_yellow),
-            ("terminal_ansi_dim_yellow", &self.terminal_ansi_dim_yellow),
-            ("terminal_ansi_blue", &self.terminal_ansi_blue),
-            ("terminal_ansi_bright_blue", &self.terminal_ansi_bright_blue),
-            ("terminal_ansi_dim_blue", &self.terminal_ansi_dim_blue),
-            ("terminal_ansi_magenta", &self.terminal_ansi_magenta),
-            ("terminal_ansi_bright_magenta", &self.terminal_ansi_bright_magenta),
-            ("terminal_ansi_dim_magenta", &self.terminal_ansi_dim_magenta),
-            ("terminal_ansi_cyan", &self.terminal_ansi_cyan),
-            ("terminal_ansi_bright_cyan", &self.terminal_ansi_bright_cyan),
-            ("terminal_ansi_dim_cyan", &self.terminal_ansi_dim_cyan),
-            ("terminal_ansi_white", &self.terminal_ansi_white),
-            ("terminal_ansi_bright_white", &self.terminal_ansi_bright_white),
-            ("terminal_ansi_dim_white", &self.terminal_ansi_dim_white),
-            ("link_text_hover", &self.link_text_hover),
+            ("icon.muted", &self.icon_muted),
+            ("icon.disabled", &self.icon_disabled),
+            ("icon.placeholder", &self.icon_placeholder),
+            ("icon.accent", &self.icon_accent),
+            ("status_bar.background", &self.status_bar_background),
+            ("title_bar.background", &self.title_bar_background),
+            ("title_bar.inactive_background", &self.title_bar_inactive_background),
+            ("toolbar.background", &self.toolbar_background),
+            ("tab_bar.background", &self.tab_bar_background),
+            ("tab.inactive_background", &self.tab_inactive_background),
+            ("tab.active_background", &self.tab_active_background),
+            ("search.match_background", &self.search_match_background),
+            ("panel.background", &self.panel_background),
+            ("panel.focused_border", &self.panel_focused_border),
+            ("panel.indent_guide", &self.panel_indent_guide),
+            ("panel.indent_guide_hover", &self.panel_indent_guide_hover),
+            ("panel.indent_guide_active", &self.panel_indent_guide_active),
+            ("pane.focused_border", &self.pane_focused_border),
+            ("pane_group.border", &self.pane_group_border),
+            ("scrollbar.thumb.background", &self.scrollbar_thumb_background),
+            ("scrollbar.thumb.hover_background", &self.scrollbar_thumb_hover_background),
+            ("scrollbar.thumb.border", &self.scrollbar_thumb_border),
+            ("scrollbar.track.background", &self.scrollbar_track_background),
+            ("scrollbar.track.border", &self.scrollbar_track_border),
+            ("editor.foreground", &self.editor_foreground),
+            ("editor.background", &self.editor_background),
+            ("editor.gutter.background", &self.editor_gutter_background),
+            ("editor.subheader.background", &self.editor_subheader_background),
+            ("editor.active_line.background", &self.editor_active_line_background),
+            ("editor.highlighted_line.background", &self.editor_highlighted_line_background),
+            ("editor.line_number", &self.editor_line_number),
+            ("editor.active_line_number", &self.editor_active_line_number),
+            ("editor.invisible", &self.editor_invisible),
+            ("editor.wrap_guide", &self.editor_wrap_guide),
+            ("editor.active_wrap_guide", &self.editor_active_wrap_guide),
+            ("editor.indent_guide", &self.editor_indent_guide),
+            ("editor.indent_guide_active", &self.editor_indent_guide_active),
+            ("editor.document_highlight.read_background", &self.editor_document_highlight_read_background),
+            ("editor.document_highlight.write_background", &self.editor_document_highlight_write_background),
+            ("editor.document_highlight.bracket_background", &self.editor_document_highlight_bracket_background),
+            ("terminal.background", &self.terminal_background),
+            ("terminal.ansi.background", &self.terminal_ansi_background),
+            ("terminal.foreground", &self.terminal_foreground),
+            ("terminal.bright_foreground", &self.terminal_bright_foreground),
+            ("terminal.dim_foreground", &self.terminal_dim_foreground),
+            ("terminal.ansi.black", &self.terminal_ansi_black),
+            ("terminal.ansi.bright_black", &self.terminal_ansi_bright_black),
+            ("terminal.ansi.dim_black", &self.terminal_ansi_dim_black),
+            ("terminal.ansi.red", &self.terminal_ansi_red),
+            ("terminal.ansi.bright_red", &self.terminal_ansi_bright_red),
+            ("terminal.ansi.dim_red", &self.terminal_ansi_dim_red),
+            ("terminal.ansi.green", &self.terminal_ansi_green),
+            ("terminal.ansi.bright_green", &self.terminal_ansi_bright_green),
+            ("terminal.ansi.dim_green", &self.terminal_ansi_dim_green),
+            ("terminal.ansi.yellow", &self.terminal_ansi_yellow),
+            ("terminal.ansi.bright_yellow", &self.terminal_ansi_bright_yellow),
+            ("terminal.ansi.dim_yellow", &self.terminal_ansi_dim_yellow),
+            ("terminal.ansi.blue", &self.terminal_ansi_blue),
+            ("terminal.ansi.bright_blue", &self.terminal_ansi_bright_blue),
+            ("terminal.ansi.dim_blue", &self.terminal_ansi_dim_blue),
+            ("terminal.ansi.magenta", &self.terminal_ansi_magenta),
+            ("terminal.ansi.bright_magenta", &self.terminal_ansi_bright_magenta),
+            ("terminal.ansi.dim_magenta", &self.terminal_ansi_dim_magenta),
+            ("terminal.ansi.cyan", &self.terminal_ansi_cyan),
+            ("terminal.ansi.bright_cyan", &self.terminal_ansi_bright_cyan),
+            ("terminal.ansi.dim_cyan", &self.terminal_ansi_dim_cyan),
+            ("terminal.ansi.white", &self.terminal_ansi_white),
+            ("terminal.ansi.bright_white", &self.terminal_ansi_bright_white),
+            ("terminal.ansi.dim_white", &self.terminal_ansi_dim_white),
+            ("link_text.hover", &self.link_text_hover),
         ] {
             if let Some(color_str) = value {
                 process_color(key, color_str, &mut resolved_colors, &mut unresolved_refs);
             }
         }
 
+        let max_iterations = MAX_RESOLUTION_DEPTH;
+        let mut iterations = 0;
         let mut changed = true;
-        while changed {
+        while changed && iterations < max_iterations {
             changed = false;
             let mut new_resolved = std::collections::HashMap::new();
+            let mut new_unresolved = std::collections::HashMap::new();
 
             for (key, ref_name) in &unresolved_refs {
                 if let Some(&color) = resolved_colors.get(ref_name) {
                     new_resolved.insert(key.clone(), color);
                     changed = true;
+                } else if let Some(next_ref) = unresolved_refs.get(ref_name) {
+                    new_unresolved.insert(key.clone(), next_ref.clone());
+                    changed = true;
+                } else {
+                    new_unresolved.insert(key.clone(), ref_name.clone());
                 }
             }
 
             resolved_colors.extend(new_resolved);
-            unresolved_refs.retain(|key, _| !resolved_colors.contains_key(key));
+            unresolved_refs = new_unresolved;
+            iterations += 1;
+        }
+
+        if iterations == max_iterations {
+            log::warn!("Hit iteration limit of {} while resolving color references. Some colors may not be resolved.", MAX_RESOLUTION_DEPTH);
         }
 
         ThemeColorsRefinement {
             border: resolved_colors.get("border").copied(),
-            border_variant: resolved_colors.get("border_variant").copied(),
-            border_focused: resolved_colors.get("border_focused").copied(),
-            border_selected: resolved_colors.get("border_selected").copied(),
-            border_transparent: resolved_colors.get("border_transparent").copied(),
-            border_disabled: resolved_colors.get("border_disabled").copied(),
-            elevated_surface_background: resolved_colors.get("elevated_surface_background").copied(),
-            surface_background: resolved_colors.get("surface_background").copied(),
+            border_variant: resolved_colors.get("border.variant").copied(),
+            border_focused: resolved_colors.get("border.focused").copied(),
+            border_selected: resolved_colors.get("border.selected").copied(),
+            border_transparent: resolved_colors.get("border.transparent").copied(),
+            border_disabled: resolved_colors.get("border.disabled").copied(),
+            elevated_surface_background: resolved_colors.get("elevated_surface.background").copied(),
+            surface_background: resolved_colors.get("surface.background").copied(),
             background: resolved_colors.get("background").copied(),
-            element_background: resolved_colors.get("element_background").copied(),
-            element_hover: resolved_colors.get("element_hover").copied(),
-            element_active: resolved_colors.get("element_active").copied(),
-            element_selected: resolved_colors.get("element_selected").copied(),
-            element_disabled: resolved_colors.get("element_disabled").copied(),
-            drop_target_background: resolved_colors.get("drop_target_background").copied(),
-            ghost_element_background: resolved_colors.get("ghost_element_background").copied(),
-            ghost_element_hover: resolved_colors.get("ghost_element_hover").copied(),
-            ghost_element_active: resolved_colors.get("ghost_element_active").copied(),
-            ghost_element_selected: resolved_colors.get("ghost_element_selected").copied(),
-            ghost_element_disabled: resolved_colors.get("ghost_element_disabled").copied(),
+            element_background: resolved_colors.get("element.background").copied(),
+            element_hover: resolved_colors.get("element.hover").copied(),
+            element_active: resolved_colors.get("element.active").copied(),
+            element_selected: resolved_colors.get("element.selected").copied(),
+            element_disabled: resolved_colors.get("element.disabled").copied(),
+            drop_target_background: resolved_colors.get("drop_target.background").copied(),
+            ghost_element_background: resolved_colors.get("ghost_element.background").copied(),
+            ghost_element_hover: resolved_colors.get("ghost_element.hover").copied(),
+            ghost_element_active: resolved_colors.get("ghost_element.active").copied(),
+            ghost_element_selected: resolved_colors.get("ghost_element.selected").copied(),
+            ghost_element_disabled: resolved_colors.get("ghost_element.disabled").copied(),
             text: resolved_colors.get("text").copied(),
-            text_muted: resolved_colors.get("text_muted").copied(),
-            text_placeholder: resolved_colors.get("text_placeholder").copied(),
-            text_disabled: resolved_colors.get("text_disabled").copied(),
-            text_accent: resolved_colors.get("text_accent").copied(),
+            text_muted: resolved_colors.get("text.muted").copied(),
+            text_placeholder: resolved_colors.get("text.placeholder").copied(),
+            text_disabled: resolved_colors.get("text.disabled").copied(),
+            text_accent: resolved_colors.get("text.accent").copied(),
             icon: resolved_colors.get("icon").copied(),
-            icon_muted: resolved_colors.get("icon_muted").copied(),
-            icon_disabled: resolved_colors.get("icon_disabled").copied(),
-            icon_placeholder: resolved_colors.get("icon_placeholder").copied(),
-            icon_accent: resolved_colors.get("icon_accent").copied(),
-            status_bar_background: resolved_colors.get("status_bar_background").copied(),
-            title_bar_background: resolved_colors.get("title_bar_background").copied(),
-            title_bar_inactive_background: resolved_colors.get("title_bar_inactive_background").copied(),
-            toolbar_background: resolved_colors.get("toolbar_background").copied(),
-            tab_bar_background: resolved_colors.get("tab_bar_background").copied(),
-            tab_inactive_background: resolved_colors.get("tab_inactive_background").copied(),
-            tab_active_background: resolved_colors.get("tab_active_background").copied(),
-            search_match_background: resolved_colors.get("search_match_background").copied(),
-            panel_background: resolved_colors.get("panel_background").copied(),
-            panel_focused_border: resolved_colors.get("panel_focused_border").copied(),
-            panel_indent_guide: resolved_colors.get("panel_indent_guide").copied(),
-            panel_indent_guide_hover: resolved_colors.get("panel_indent_guide_hover").copied(),
-            panel_indent_guide_active: resolved_colors.get("panel_indent_guide_active").copied(),
-            pane_focused_border: resolved_colors.get("pane_focused_border").copied(),
-            pane_group_border: resolved_colors.get("pane_group_border").copied(),
-            scrollbar_thumb_background: resolved_colors.get("scrollbar_thumb_background").copied(),
-            scrollbar_thumb_hover_background: resolved_colors.get("scrollbar_thumb_hover_background").copied(),
-            scrollbar_thumb_border: resolved_colors.get("scrollbar_thumb_border").copied(),
-            scrollbar_track_background: resolved_colors.get("scrollbar_track_background").copied(),
-            scrollbar_track_border: resolved_colors.get("scrollbar_track_border").copied(),
-            editor_foreground: resolved_colors.get("editor_foreground").copied(),
-            editor_background: resolved_colors.get("editor_background").copied(),
-            editor_gutter_background: resolved_colors.get("editor_gutter_background").copied(),
-            editor_subheader_background: resolved_colors.get("editor_subheader_background").copied(),
-            editor_active_line_background: resolved_colors.get("editor_active_line_background").copied(),
-            editor_highlighted_line_background: resolved_colors.get("editor_highlighted_line_background").copied(),
-            editor_line_number: resolved_colors.get("editor_line_number").copied(),
-            editor_active_line_number: resolved_colors.get("editor_active_line_number").copied(),
-            editor_invisible: resolved_colors.get("editor_invisible").copied(),
-            editor_wrap_guide: resolved_colors.get("editor_wrap_guide").copied(),
-            editor_active_wrap_guide: resolved_colors.get("editor_active_wrap_guide").copied(),
-            editor_indent_guide: resolved_colors.get("editor_indent_guide").copied(),
-            editor_indent_guide_active: resolved_colors.get("editor_indent_guide_active").copied(),
-            editor_document_highlight_read_background: resolved_colors.get("editor_document_highlight_read_background").copied(),
-            editor_document_highlight_write_background: resolved_colors.get("editor_document_highlight_write_background").copied(),
-            editor_document_highlight_bracket_background: resolved_colors.get("editor_document_highlight_bracket_background").copied(),
-            terminal_background: resolved_colors.get("terminal_background").copied(),
-            terminal_ansi_background: resolved_colors.get("terminal_ansi_background").copied(),
-            terminal_foreground: resolved_colors.get("terminal_foreground").copied(),
-            terminal_bright_foreground: resolved_colors.get("terminal_bright_foreground").copied(),
-            terminal_dim_foreground: resolved_colors.get("terminal_dim_foreground").copied(),
-            terminal_ansi_black: resolved_colors.get("terminal_ansi_black").copied(),
-            terminal_ansi_bright_black: resolved_colors.get("terminal_ansi_bright_black").copied(),
-            terminal_ansi_dim_black: resolved_colors.get("terminal_ansi_dim_black").copied(),
-            terminal_ansi_red: resolved_colors.get("terminal_ansi_red").copied(),
-            terminal_ansi_bright_red: resolved_colors.get("terminal_ansi_bright_red").copied(),
-            terminal_ansi_dim_red: resolved_colors.get("terminal_ansi_dim_red").copied(),
-            terminal_ansi_green: resolved_colors.get("terminal_ansi_green").copied(),
-            terminal_ansi_bright_green: resolved_colors.get("terminal_ansi_bright_green").copied(),
-            terminal_ansi_dim_green: resolved_colors.get("terminal_ansi_dim_green").copied(),
-            terminal_ansi_yellow: resolved_colors.get("terminal_ansi_yellow").copied(),
-            terminal_ansi_bright_yellow: resolved_colors.get("terminal_ansi_bright_yellow").copied(),
-            terminal_ansi_dim_yellow: resolved_colors.get("terminal_ansi_dim_yellow").copied(),
-            terminal_ansi_blue: resolved_colors.get("terminal_ansi_blue").copied(),
-            terminal_ansi_bright_blue: resolved_colors.get("terminal_ansi_bright_blue").copied(),
-            terminal_ansi_dim_blue: resolved_colors.get("terminal_ansi_dim_blue").copied(),
-            terminal_ansi_magenta: resolved_colors.get("terminal_ansi_magenta").copied(),
-            terminal_ansi_bright_magenta: resolved_colors.get("terminal_ansi_bright_magenta").copied(),
-            terminal_ansi_dim_magenta: resolved_colors.get("terminal_ansi_dim_magenta").copied(),
-            terminal_ansi_cyan: resolved_colors.get("terminal_ansi_cyan").copied(),
-            terminal_ansi_bright_cyan: resolved_colors.get("terminal_ansi_bright_cyan").copied(),
-            terminal_ansi_dim_cyan: resolved_colors.get("terminal_ansi_dim_cyan").copied(),
-            terminal_ansi_white: resolved_colors.get("terminal_ansi_white").copied(),
-            terminal_ansi_bright_white: resolved_colors.get("terminal_ansi_bright_white").copied(),
-            terminal_ansi_dim_white: resolved_colors.get("terminal_ansi_dim_white").copied(),
-            link_text_hover: resolved_colors.get("link_text_hover").copied(),
+            icon_muted: resolved_colors.get("icon.muted").copied(),
+            icon_disabled: resolved_colors.get("icon.disabled").copied(),
+            icon_placeholder: resolved_colors.get("icon.placeholder").copied(),
+            icon_accent: resolved_colors.get("icon.accent").copied(),
+            status_bar_background: resolved_colors.get("status_bar.background").copied(),
+            title_bar_background: resolved_colors.get("title_bar.background").copied(),
+            title_bar_inactive_background: resolved_colors.get("title_bar.inactive_background").copied(),
+            toolbar_background: resolved_colors.get("toolbar.background").copied(),
+            tab_bar_background: resolved_colors.get("tab_bar.background").copied(),
+            tab_inactive_background: resolved_colors.get("tab.inactive_background").copied(),
+            tab_active_background: resolved_colors.get("tab.active_background").copied(),
+            search_match_background: resolved_colors.get("search.match_background").copied(),
+            panel_background: resolved_colors.get("panel.background").copied(),
+            panel_focused_border: resolved_colors.get("panel.focused_border").copied(),
+            panel_indent_guide: resolved_colors.get("panel.indent_guide").copied(),
+            panel_indent_guide_hover: resolved_colors.get("panel.indent_guide_hover").copied(),
+            panel_indent_guide_active: resolved_colors.get("panel.indent_guide_active").copied(),
+            pane_focused_border: resolved_colors.get("pane.focused_border").copied(),
+            pane_group_border: resolved_colors.get("pane_group.border").copied(),
+            scrollbar_thumb_background: resolved_colors.get("scrollbar.thumb.background").copied(),
+            scrollbar_thumb_hover_background: resolved_colors.get("scrollbar.thumb.hover_background").copied(),
+            scrollbar_thumb_border: resolved_colors.get("scrollbar.thumb.border").copied(),
+            scrollbar_track_background: resolved_colors.get("scrollbar.track.background").copied(),
+            scrollbar_track_border: resolved_colors.get("scrollbar.track.border").copied(),
+            editor_foreground: resolved_colors.get("editor.foreground").copied(),
+            editor_background: resolved_colors.get("editor.background").copied(),
+            editor_gutter_background: resolved_colors.get("editor.gutter.background").copied(),
+            editor_subheader_background: resolved_colors.get("editor.subheader.background").copied(),
+            editor_active_line_background: resolved_colors.get("editor.active_line.background").copied(),
+            editor_highlighted_line_background: resolved_colors.get("editor.highlighted_line.background").copied(),
+            editor_line_number: resolved_colors.get("editor.line_number").copied(),
+            editor_active_line_number: resolved_colors.get("editor.active_line_number").copied(),
+            editor_invisible: resolved_colors.get("editor.invisible").copied(),
+            editor_wrap_guide: resolved_colors.get("editor.wrap_guide").copied(),
+            editor_active_wrap_guide: resolved_colors.get("editor.active_wrap_guide").copied(),
+            editor_indent_guide: resolved_colors.get("editor.indent_guide").copied(),
+            editor_indent_guide_active: resolved_colors.get("editor.indent_guide_active").copied(),
+            editor_document_highlight_read_background: resolved_colors.get("editor.document_highlight.read_background").copied(),
+            editor_document_highlight_write_background: resolved_colors.get("editor.document_highlight.write_background").copied(),
+            editor_document_highlight_bracket_background: resolved_colors.get("editor.document_highlight.bracket_background").copied(),
+            terminal_background: resolved_colors.get("terminal.background").copied(),
+            terminal_ansi_background: resolved_colors.get("terminal.ansi.background").copied(),
+            terminal_foreground: resolved_colors.get("terminal.foreground").copied(),
+            terminal_bright_foreground: resolved_colors.get("terminal.bright_foreground").copied(),
+            terminal_dim_foreground: resolved_colors.get("terminal.dim_foreground").copied(),
+            terminal_ansi_black: resolved_colors.get("terminal.ansi.black").copied(),
+            terminal_ansi_bright_black: resolved_colors.get("terminal.ansi.bright_black").copied(),
+            terminal_ansi_dim_black: resolved_colors.get("terminal.ansi.dim_black").copied(),
+            terminal_ansi_red: resolved_colors.get("terminal.ansi.red").copied(),
+            terminal_ansi_bright_red: resolved_colors.get("terminal.ansi.bright_red").copied(),
+            terminal_ansi_dim_red: resolved_colors.get("terminal.ansi.dim_red").copied(),
+            terminal_ansi_green: resolved_colors.get("terminal.ansi.green").copied(),
+            terminal_ansi_bright_green: resolved_colors.get("terminal.ansi.bright_green").copied(),
+            terminal_ansi_dim_green: resolved_colors.get("terminal.ansi.dim_green").copied(),
+            terminal_ansi_yellow: resolved_colors.get("terminal.ansi.yellow").copied(),
+            terminal_ansi_bright_yellow: resolved_colors.get("terminal.ansi.bright_yellow").copied(),
+            terminal_ansi_dim_yellow: resolved_colors.get("terminal.ansi.dim_yellow").copied(),
+            terminal_ansi_blue: resolved_colors.get("terminal.ansi.blue").copied(),
+            terminal_ansi_bright_blue: resolved_colors.get("terminal.ansi.bright_blue").copied(),
+            terminal_ansi_dim_blue: resolved_colors.get("terminal.ansi.dim_blue").copied(),
+            terminal_ansi_magenta: resolved_colors.get("terminal.ansi.magenta").copied(),
+            terminal_ansi_bright_magenta: resolved_colors.get("terminal.ansi.bright_magenta").copied(),
+            terminal_ansi_dim_magenta: resolved_colors.get("terminal.ansi.dim_magenta").copied(),
+            terminal_ansi_cyan: resolved_colors.get("terminal.ansi.cyan").copied(),
+            terminal_ansi_bright_cyan: resolved_colors.get("terminal.ansi.bright_cyan").copied(),
+            terminal_ansi_dim_cyan: resolved_colors.get("terminal.ansi.dim_cyan").copied(),
+            terminal_ansi_white: resolved_colors.get("terminal.ansi.white").copied(),
+            terminal_ansi_bright_white: resolved_colors.get("terminal.ansi.bright_white").copied(),
+            terminal_ansi_dim_white: resolved_colors.get("terminal.ansi.dim_white").copied(),
+            link_text_hover: resolved_colors.get("link_text.hover").copied(),
         }
     }
 }
@@ -948,175 +964,148 @@ pub struct StatusColorsContent {
 impl StatusColorsContent {
     /// Returns a [`StatusColorsRefinement`] based on the colors in the [`StatusColorsContent`].
     pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
+        let mut resolved_colors = std::collections::HashMap::new();
+        let mut unresolved_refs = std::collections::HashMap::new();
+
+        fn process_color(
+            key: &str,
+            color_str: &str,
+            resolved: &mut std::collections::HashMap<String, Hsla>,
+            unresolved: &mut std::collections::HashMap<String, String>,
+        ) {
+            match try_parse_color(color_str) {
+                Ok(color) => {
+                    resolved.insert(key.to_string(), color);
+                }
+                Err(e) => {
+                    if let Some(ref_str) = e.to_string().strip_prefix("REFERENCE:") {
+                        unresolved.insert(key.to_string(), ref_str.to_string());
+                    }
+                }
+            }
+        }
+
+        for (key, value) in [
+            ("conflict", &self.conflict),
+            ("conflict.background", &self.conflict_background),
+            ("conflict.border", &self.conflict_border),
+            ("created", &self.created),
+            ("created.background", &self.created_background),
+            ("created.border", &self.created_border),
+            ("deleted", &self.deleted),
+            ("deleted.background", &self.deleted_background),
+            ("deleted.border", &self.deleted_border),
+            ("error", &self.error),
+            ("error.background", &self.error_background),
+            ("error.border", &self.error_border),
+            ("hidden", &self.hidden),
+            ("hidden.background", &self.hidden_background),
+            ("hidden.border", &self.hidden_border),
+            ("hint", &self.hint),
+            ("hint.background", &self.hint_background),
+            ("hint.border", &self.hint_border),
+            ("ignored", &self.ignored),
+            ("ignored.background", &self.ignored_background),
+            ("ignored.border", &self.ignored_border),
+            ("info", &self.info),
+            ("info.background", &self.info_background),
+            ("info.border", &self.info_border),
+            ("modified", &self.modified),
+            ("modified.background", &self.modified_background),
+            ("modified.border", &self.modified_border),
+            ("predictive", &self.predictive),
+            ("predictive.background", &self.predictive_background),
+            ("predictive.border", &self.predictive_border),
+            ("renamed", &self.renamed),
+            ("renamed.background", &self.renamed_background),
+            ("renamed.border", &self.renamed_border),
+            ("success", &self.success),
+            ("success.background", &self.success_background),
+            ("success.border", &self.success_border),
+            ("unreachable", &self.unreachable),
+            ("unreachable.background", &self.unreachable_background),
+            ("unreachable.border", &self.unreachable_border),
+            ("warning", &self.warning),
+            ("warning.background", &self.warning_background),
+            ("warning.border", &self.warning_border),
+        ] {
+            if let Some(color_str) = value {
+                process_color(key, color_str, &mut resolved_colors, &mut unresolved_refs);
+            }
+        }
+
+        let max_iterations = MAX_RESOLUTION_DEPTH;
+        let mut iterations = 0;
+        let mut changed = true;
+        while changed && iterations < max_iterations {
+            changed = false;
+            let mut new_resolved = std::collections::HashMap::new();
+            let mut new_unresolved = std::collections::HashMap::new();
+
+            for (key, ref_name) in &unresolved_refs {
+                if let Some(&color) = resolved_colors.get(ref_name) {
+                    new_resolved.insert(key.clone(), color);
+                    changed = true;
+                } else if let Some(next_ref) = unresolved_refs.get(ref_name) {
+                    new_unresolved.insert(key.clone(), next_ref.clone());
+                    changed = true;
+                } else {
+                    new_unresolved.insert(key.clone(), ref_name.clone());
+                }
+            }
+
+            resolved_colors.extend(new_resolved);
+            unresolved_refs = new_unresolved;
+            iterations += 1;
+        }
+
+        if iterations == max_iterations {
+            log::warn!("Hit iteration limit of {} while resolving color references. Some colors may not be resolved.", MAX_RESOLUTION_DEPTH);
+        }
+
         StatusColorsRefinement {
-            conflict: self
-                .conflict
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            conflict_background: self
-                .conflict_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            conflict_border: self
-                .conflict_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            created: self
-                .created
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            created_background: self
-                .created_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            created_border: self
-                .created_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            deleted: self
-                .deleted
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            deleted_background: self
-                .deleted_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            deleted_border: self
-                .deleted_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            error: self
-                .error
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            error_background: self
-                .error_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            error_border: self
-                .error_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            hidden: self
-                .hidden
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            hidden_background: self
-                .hidden_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            hidden_border: self
-                .hidden_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            hint: self
-                .hint
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            hint_background: self
-                .hint_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            hint_border: self
-                .hint_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            ignored: self
-                .ignored
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            ignored_background: self
-                .ignored_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            ignored_border: self
-                .ignored_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            info: self
-                .info
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            info_background: self
-                .info_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            info_border: self
-                .info_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            modified: self
-                .modified
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            modified_background: self
-                .modified_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            modified_border: self
-                .modified_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            predictive: self
-                .predictive
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            predictive_background: self
-                .predictive_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            predictive_border: self
-                .predictive_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            renamed: self
-                .renamed
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            renamed_background: self
-                .renamed_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            renamed_border: self
-                .renamed_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            success: self
-                .success
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            success_background: self
-                .success_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            success_border: self
-                .success_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            unreachable: self
-                .unreachable
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            unreachable_background: self
-                .unreachable_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            unreachable_border: self
-                .unreachable_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            warning: self
-                .warning
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            warning_background: self
-                .warning_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
-            warning_border: self
-                .warning_border
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            conflict: resolved_colors.get("conflict").copied(),
+            conflict_background: resolved_colors.get("conflict.background").copied(),
+            conflict_border: resolved_colors.get("conflict.border").copied(),
+            created: resolved_colors.get("created").copied(),
+            created_background: resolved_colors.get("created.background").copied(),
+            created_border: resolved_colors.get("created.border").copied(),
+            deleted: resolved_colors.get("deleted").copied(),
+            deleted_background: resolved_colors.get("deleted.background").copied(),
+            deleted_border: resolved_colors.get("deleted.border").copied(),
+            error: resolved_colors.get("error").copied(),
+            error_background: resolved_colors.get("error.background").copied(),
+            error_border: resolved_colors.get("error.border").copied(),
+            hidden: resolved_colors.get("hidden").copied(),
+            hidden_background: resolved_colors.get("hidden.background").copied(),
+            hidden_border: resolved_colors.get("hidden.border").copied(),
+            hint: resolved_colors.get("hint").copied(),
+            hint_background: resolved_colors.get("hint.background").copied(),
+            hint_border: resolved_colors.get("hint.border").copied(),
+            ignored: resolved_colors.get("ignored").copied(),
+            ignored_background: resolved_colors.get("ignored.background").copied(),
+            ignored_border: resolved_colors.get("ignored.border").copied(),
+            info: resolved_colors.get("info").copied(),
+            info_background: resolved_colors.get("info.background").copied(),
+            info_border: resolved_colors.get("info.border").copied(),
+            modified: resolved_colors.get("modified").copied(),
+            modified_background: resolved_colors.get("modified.background").copied(),
+            modified_border: resolved_colors.get("modified.border").copied(),
+            predictive: resolved_colors.get("predictive").copied(),
+            predictive_background: resolved_colors.get("predictive.background").copied(),
+            predictive_border: resolved_colors.get("predictive.border").copied(),
+            renamed: resolved_colors.get("renamed").copied(),
+            renamed_background: resolved_colors.get("renamed.background").copied(),
+            renamed_border: resolved_colors.get("renamed.border").copied(),
+            success: resolved_colors.get("success").copied(),
+            success_background: resolved_colors.get("success.background").copied(),
+            success_border: resolved_colors.get("success.border").copied(),
+            unreachable: resolved_colors.get("unreachable").copied(),
+            unreachable_background: resolved_colors.get("unreachable.background").copied(),
+            unreachable_border: resolved_colors.get("unreachable.border").copied(),
+            warning: resolved_colors.get("warning").copied(),
+            warning_background: resolved_colors.get("warning.background").copied(),
+            warning_border: resolved_colors.get("warning.border").copied(),
         }
     }
 }
@@ -1249,18 +1238,85 @@ mod tests {
     #[test]
     fn test_color_references() {
         let colors: ThemeColorsContent = serde_json::from_value(json!({
-            "text": "#ff0000",
+            "text": "#ff0000ff",
             "icon": "@text",
-            "border": "@icon"
+            "scrollbar.thumb.border": "#ff00ffff",
+            "scrollbar.track.border": "@scrollbar.thumb.border"
         }))
         .unwrap();
 
         let refinement = colors.theme_colors_refinement();
 
-        let expected_color = gpui::rgb(0xff0000).into();
-        assert_eq!(refinement.text, Some(expected_color));
-        assert_eq!(refinement.icon, Some(expected_color));
-        assert_eq!(refinement.border, Some(expected_color));
+        let expected_color_1 = gpui::rgba(0xff0000ff);
+        let expected_color_2 = gpui::rgba(0xff00ffff);
+        assert_eq!(refinement.text, Some(expected_color_1.into()));
+        assert_eq!(refinement.icon, Some(expected_color_1.into()));
+        assert_eq!(
+            refinement.scrollbar_thumb_border,
+            Some(expected_color_2.into())
+        );
+        assert_eq!(
+            refinement.scrollbar_track_border,
+            Some(expected_color_2.into())
+        );
+    }
+
+    #[test]
+    fn test_short_reference_chain() {
+        let colors: StatusColorsContent = serde_json::from_value(json!({
+            "conflict": "#ff0000ff",
+            "modified": "@conflict",
+            "warning": "@modified"
+        }))
+        .unwrap();
+
+        let refinement = colors.status_colors_refinement();
+
+        let expected_color = gpui::rgba(0xff0000ff);
+        assert_eq!(refinement.conflict, Some(expected_color.into()));
+        assert_eq!(refinement.modified, Some(expected_color.into()));
+        assert_eq!(refinement.warning, Some(expected_color.into()));
+    }
+
+    #[test]
+    fn test_long_reference_chain() {
+        let color_json = json!({
+            "border": "#ff0000ff",
+            "border_variant": "@border",
+            "border_focused": "@border_variant",
+            "border_selected": "@border_focused",
+            "border_transparent": "@border_selected",
+            "border_disabled": "@border_transparent",
+            "elevated_surface_background": "@border_disabled",
+            "surface_background": "@elevated_surface_background",
+            "background": "@surface_background",
+            "element_background": "@background",
+            "element_hover": "@element_background",
+            "element_active": "@element_hover",
+            "element_selected": "@element_active",
+            "element_disabled": "@element_selected",
+            "drop_target_background": "@element_disabled",
+            "ghost_element_background": "@drop_target_background",
+            "ghost_element_hover": "@ghost_element_background",
+            "ghost_element_active": "@ghost_element_hover",
+            "ghost_element_selected": "@ghost_element_active",
+            "ghost_element_disabled": "@ghost_element_selected",
+            "text": "@ghost_element_disabled",
+            "text_muted": "@text",
+            "text_placeholder": "@text_muted",
+            "text_disabled": "@text_placeholder",
+            "text_accent": "@text_disabled",
+            "link_text_hover": "@text_accent"
+        });
+
+        let colors: ThemeColorsContent = serde_json::from_value(color_json).unwrap();
+        let refinement = colors.theme_colors_refinement();
+
+        let expected_color = gpui::rgba(0xff0000ff);
+
+        // Long reference chains won't be resolved if they are greater than MAX_RESOLUTION_DEPTH
+        assert_eq!(refinement.border, Some(expected_color.into()));
+        assert_eq!(refinement.link_text_hover, None);
     }
 
     #[test]
