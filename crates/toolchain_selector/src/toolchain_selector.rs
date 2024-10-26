@@ -7,7 +7,7 @@ use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
 };
-use language::{LanguageName, ToolchainList};
+use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
 use project::{Project, WorktreeId};
 use std::sync::Arc;
@@ -42,16 +42,38 @@ impl ToolchainSelector {
 
         let language_name = buffer.read(cx).language()?.name();
         let worktree_id = buffer.read(cx).file()?.worktree_id(cx);
+        let workspace_id = workspace.database_id()?;
         let weak = workspace.weak_handle();
-        workspace.toggle_modal(cx, move |cx| {
-            ToolchainSelector::new(weak, project, worktree_id, language_name, cx)
-        });
+        cx.spawn(move |workspace, mut cx| async move {
+            let active_toolchain = workspace::WORKSPACE_DB
+                .toolchain(workspace_id, worktree_id, language_name.clone())
+                .await
+                .ok()
+                .flatten();
+            workspace
+                .update(&mut cx, |this, cx| {
+                    this.toggle_modal(cx, move |cx| {
+                        ToolchainSelector::new(
+                            weak,
+                            project,
+                            active_toolchain,
+                            worktree_id,
+                            language_name,
+                            cx,
+                        )
+                    });
+                })
+                .ok();
+        })
+        .detach();
+
         Some(())
     }
 
     fn new(
         workspace: WeakView<Workspace>,
         project: Model<Project>,
+        active_toolchain: Option<Toolchain>,
         worktree_id: WorktreeId,
         language_name: LanguageName,
         cx: &mut ViewContext<Self>,
@@ -59,6 +81,7 @@ impl ToolchainSelector {
         let view = cx.view().downgrade();
         let picker = cx.new_view(|cx| {
             let delegate = ToolchainSelectorDelegate::new(
+                active_toolchain,
                 view,
                 workspace,
                 worktree_id,
@@ -99,6 +122,7 @@ pub struct ToolchainSelectorDelegate {
 
 impl ToolchainSelectorDelegate {
     fn new(
+        active_toolchain: Option<Toolchain>,
         language_selector: WeakView<ToolchainSelector>,
         workspace: WeakView<Workspace>,
         worktree_id: WorktreeId,
@@ -118,6 +142,17 @@ impl ToolchainSelectorDelegate {
 
                 let _ = this.update(&mut cx, move |this, cx| {
                     this.delegate.candidates = available_toolchains;
+                    if let Some(active_toolchain) = active_toolchain {
+                        if let Some(position) = this
+                            .delegate
+                            .candidates
+                            .toolchains
+                            .iter()
+                            .position(|toolchain| *toolchain == active_toolchain)
+                        {
+                            this.delegate.set_selected_index(position, cx);
+                        }
+                    }
                     this.update_matches(this.query(cx), cx);
                 });
 
