@@ -288,7 +288,14 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            move || Ok((config.clone(), Default::default(), None)),
+            move || {
+                Ok(LoadedLanguage {
+                    config: config.clone(),
+                    queries: Default::default(),
+                    toolchain_provider: None,
+                    context_provider: None,
+                })
+            },
         )
     }
 
