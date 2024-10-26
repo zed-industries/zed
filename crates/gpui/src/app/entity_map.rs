@@ -434,12 +434,10 @@ impl<T> Clone for Model<T> {
 
 impl<T> std::fmt::Debug for Model<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Model {{ entity_id: {:?}, entity_type: {:?} }}",
-            self.any_model.entity_id,
-            type_name::<T>()
-        )
+        f.debug_struct("Model")
+            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_type", &type_name::<T>())
+            .finish()
     }
 }
 
@@ -569,7 +567,10 @@ pub struct WeakModel<T> {
 
 impl<T> std::fmt::Debug for WeakModel<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct(type_name::<WeakModel<T>>()).finish()
+        f.debug_struct(&type_name::<Self>())
+            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_type", &type_name::<T>())
+            .finish()
     }
 }
 

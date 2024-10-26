@@ -434,6 +434,38 @@ mod tests {
     }
 
     #[test]
+    fn compare_paths_case_semi_sensitive() {
+        let mut paths = vec![
+            (Path::new("test_DIRS"), false),
+            (Path::new("test_DIRS/foo_1"), true),
+            (Path::new("test_DIRS/foo_2"), true),
+            (Path::new("test_DIRS/bar"), true),
+            (Path::new("test_DIRS/BAR"), true),
+            (Path::new("test_dirs"), false),
+            (Path::new("test_dirs/foo_1"), true),
+            (Path::new("test_dirs/foo_2"), true),
+            (Path::new("test_dirs/bar"), true),
+            (Path::new("test_dirs/BAR"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/bar"), true),
+                (Path::new("test_dirs/BAR"), true),
+                (Path::new("test_dirs/foo_1"), true),
+                (Path::new("test_dirs/foo_2"), true),
+                (Path::new("test_DIRS"), false),
+                (Path::new("test_DIRS/bar"), true),
+                (Path::new("test_DIRS/BAR"), true),
+                (Path::new("test_DIRS/foo_1"), true),
+                (Path::new("test_DIRS/foo_2"), true),
+            ]
+        );
+    }
+
+    #[test]
     fn path_with_position_parse_posix_path() {
         // Test POSIX filename edge cases
         // Read more at https://en.wikipedia.org/wiki/Filename

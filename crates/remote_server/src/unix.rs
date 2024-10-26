@@ -5,12 +5,14 @@ use client::ProxySettings;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
+use git::GitHostingProviderRegistry;
 use gpui::{AppContext, Context as _, ModelContext, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
+
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -25,6 +27,7 @@ use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::ops::ControlFlow;
 use std::{
     io::Write,
     mem,
@@ -186,7 +189,6 @@ fn start_server(
             log::info!("accepting new connections");
             let result = select! {
                 streams = streams.fuse() => {
-                    log::warn!("stdin {:?}, stdout: {:?}, stderr: {:?}", streams.0, streams.1, streams.2);
                     let (Some(Ok(stdin_stream)), Some(Ok(stdout_stream)), Some(Ok(stderr_stream))) = streams else {
                         break;
                     };
@@ -211,23 +213,29 @@ fn start_server(
                 break;
             };
 
-            log::info!("yep! we got connections");
-
             let mut input_buffer = Vec::new();
             let mut output_buffer = Vec::new();
+
+            let (mut stdin_msg_tx, mut stdin_msg_rx) = mpsc::unbounded::<Envelope>();
+            cx.background_executor().spawn(async move {
+                while let Ok(msg) = read_message(&mut stdin_stream, &mut input_buffer).await {
+                    if let Err(_) = stdin_msg_tx.send(msg).await {
+                        break;
+                    }
+                }
+            }).detach();
+
             loop {
+
                 select_biased! {
                     _ = app_quit_rx.next().fuse() => {
                         return anyhow::Ok(());
                     }
 
-                    stdin_message = read_message(&mut stdin_stream, &mut input_buffer).fuse() => {
-                        let message = match stdin_message {
-                            Ok(message) => message,
-                            Err(error) => {
-                                log::warn!("error reading message on stdin: {}. exiting.", error);
-                                break;
-                            }
+                    stdin_message = stdin_msg_rx.next().fuse() => {
+                        let Some(message) = stdin_message else {
+                            log::warn!("error reading message on stdin. exiting.");
+                            break;
                         };
                         if let Err(error) = incoming_tx.unbounded_send(message) {
                             log::error!("failed to send message to application: {:?}. exiting.", error);
@@ -253,7 +261,6 @@ fn start_server(
                         }
                     }
 
-                    // // TODO: How do we handle backpressure?
                     log_message = log_rx.next().fuse() => {
                         if let Some(log_message) = log_message {
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
@@ -273,7 +280,7 @@ fn start_server(
     })
     .detach();
 
-    ChannelClient::new(incoming_rx, outgoing_tx, cx)
+    ChannelClient::new(incoming_rx, outgoing_tx, cx, "server")
 }
 
 fn init_paths() -> anyhow::Result<()> {
@@ -299,10 +306,15 @@ pub fn execute_run(
     stdout_socket: PathBuf,
     stderr_socket: PathBuf,
 ) -> Result<()> {
-    let log_rx = init_logging_server(log_file)?;
-    init_panic_hook();
     init_paths()?;
 
+    match daemonize()? {
+        ControlFlow::Break(_) => return Ok(()),
+        ControlFlow::Continue(_) => {}
+    }
+
+    init_panic_hook();
+    let log_rx = init_logging_server(log_file)?;
     log::info!(
         "starting up. pid_file: {:?}, stdin_socket: {:?}, stdout_socket: {:?}, stderr_socket: {:?}",
         pid_file,
@@ -316,7 +328,7 @@ pub fn execute_run(
 
     let listeners = ServerListeners::new(stdin_socket, stdout_socket, stderr_socket)?;
 
-    log::debug!("starting gpui app");
+    let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
         HeadlessProject::init(cx);
@@ -325,6 +337,9 @@ pub fn execute_run(
         let session = start_server(listeners, log_rx, cx);
 
         client::init_settings(cx);
+
+        GitHostingProviderRegistry::set_global(git_hosting_provider_registry, cx);
+        git_hosting_providers::init(cx);
 
         let project = cx.new_model(|cx| {
             let fs = Arc::new(RealFs::new(Default::default(), None));
@@ -404,7 +419,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
     init_logging_proxy();
     init_panic_hook();
 
-    log::debug!("starting up. PID: {}", std::process::id());
+    log::info!("starting proxy process. PID: {}", std::process::id());
 
     let server_paths = ServerPaths::new(&identifier)?;
 
@@ -417,7 +432,7 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         }
     } else {
         if let Some(pid) = server_pid {
-            log::debug!("found server already running with PID {}. Killing process and cleaning up files...", pid);
+            log::info!("proxy found server already running with PID {}. Killing process and cleaning up files...", pid);
             kill_running_server(pid, &server_paths)?;
         }
 
@@ -443,7 +458,9 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
         loop {
             match stream.read(&mut stderr_buffer).await {
                 Ok(0) => {
-                    return anyhow::Ok(());
+                    let error =
+                        std::io::Error::new(std::io::ErrorKind::UnexpectedEof, "stderr closed");
+                    Err(anyhow!(error))?;
                 }
                 Ok(n) => {
                     stderr.write_all(&mut stderr_buffer[..n]).await?;
@@ -458,13 +475,13 @@ pub fn execute_proxy(identifier: String, is_reconnecting: bool) -> Result<()> {
 
     if let Err(forwarding_result) = smol::block_on(async move {
         futures::select! {
-            result = stdin_task.fuse() => result,
-            result = stdout_task.fuse() => result,
-            result = stderr_task.fuse() => result,
+            result = stdin_task.fuse() => result.context("stdin_task failed"),
+            result = stdout_task.fuse() => result.context("stdout_task failed"),
+            result = stderr_task.fuse() => result.context("stderr_task failed"),
         }
     }) {
         log::error!(
-            "failed to forward messages: {:?}, terminating...",
+            "encountered error while forwarding messages: {:?}, terminating...",
             forwarding_result
         );
         return Err(forwarding_result);
@@ -504,7 +521,8 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
     }
 
     let binary_name = std::env::current_exe()?;
-    let server_process = smol::process::Command::new(binary_name)
+    let mut server_process = std::process::Command::new(binary_name);
+    server_process
         .arg("run")
         .arg("--log-file")
         .arg(&paths.log_file)
@@ -515,10 +533,15 @@ fn spawn_server(paths: &ServerPaths) -> Result<()> {
         .arg("--stdout-socket")
         .arg(&paths.stdout_socket)
         .arg("--stderr-socket")
-        .arg(&paths.stderr_socket)
-        .spawn()?;
+        .arg(&paths.stderr_socket);
 
-    log::debug!("server started. PID: {:?}", server_process.id());
+    let status = server_process
+        .status()
+        .context("failed to launch server process")?;
+    anyhow::ensure!(
+        status.success(),
+        "failed to launch and detach server process"
+    );
 
     let mut total_time_waited = std::time::Duration::from_secs(0);
     let wait_duration = std::time::Duration::from_millis(20);
@@ -722,4 +745,44 @@ fn read_proxy_settings(cx: &mut ModelContext<'_, HeadlessProject>) -> Option<Uri
         })
         .or_else(read_proxy_from_env);
     proxy_url
+}
+
+fn daemonize() -> Result<ControlFlow<()>> {
+    match fork::fork().map_err(|e| anyhow::anyhow!("failed to call fork with error code {}", e))? {
+        fork::Fork::Parent(_) => {
+            return Ok(ControlFlow::Break(()));
+        }
+        fork::Fork::Child => {}
+    }
+
+    // Once we've detached from the parent, we want to close stdout/stderr/stdin
+    // so that the outer SSH process is not attached to us in any way anymore.
+    unsafe { redirect_standard_streams() }?;
+
+    Ok(ControlFlow::Continue(()))
+}
+
+unsafe fn redirect_standard_streams() -> Result<()> {
+    let devnull_fd = libc::open(b"/dev/null\0" as *const [u8; 10] as _, libc::O_RDWR);
+    anyhow::ensure!(devnull_fd != -1, "failed to open /dev/null");
+
+    let process_stdio = |name, fd| {
+        let reopened_fd = libc::dup2(devnull_fd, fd);
+        anyhow::ensure!(
+            reopened_fd != -1,
+            format!("failed to redirect {} to /dev/null", name)
+        );
+        Ok(())
+    };
+
+    process_stdio("stdin", libc::STDIN_FILENO)?;
+    process_stdio("stdout", libc::STDOUT_FILENO)?;
+    process_stdio("stderr", libc::STDERR_FILENO)?;
+
+    anyhow::ensure!(
+        libc::close(devnull_fd) != -1,
+        "failed to close /dev/null fd after redirecting"
+    );
+
+    Ok(())
 }

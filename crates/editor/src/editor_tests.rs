@@ -3868,8 +3868,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
         editor.insert_blocks(
             [BlockProperties {
                 style: BlockStyle::Fixed,
-                position: snapshot.anchor_after(Point::new(2, 0)),
-                disposition: BlockDisposition::Below,
+                placement: BlockPlacement::Below(snapshot.anchor_after(Point::new(2, 0))),
                 height: 1,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
@@ -7076,7 +7075,12 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffer,
+                cx,
+            )
         })
         .unwrap();
     fake_server
@@ -7112,7 +7116,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     });
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project, FormatTrigger::Manual, cx)
+            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx)
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -10309,7 +10313,12 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffer,
+                cx,
+            )
         })
         .unwrap()
         .await;
@@ -10323,7 +10332,12 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
     });
     let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+        editor.perform_format(
+            project.clone(),
+            FormatTrigger::Manual,
+            FormatTarget::Buffer,
+            cx,
+        )
     });
     format.await.unwrap();
     assert_eq!(

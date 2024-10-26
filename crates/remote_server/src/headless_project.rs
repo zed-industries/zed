@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext};
+use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
@@ -154,6 +154,7 @@ impl HeadlessProject {
         client.add_request_handler(cx.weak_model(), Self::handle_remove_worktree);
 
         client.add_model_request_handler(Self::handle_open_buffer_by_path);
+        client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_request_handler(Self::handle_find_search_candidates);
         client.add_model_request_handler(Self::handle_open_server_settings);
 
@@ -205,7 +206,7 @@ impl HeadlessProject {
         &mut self,
         _lsp_store: Model<LspStore>,
         event: &LspStoreEvent,
-        _cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             LspStoreEvent::LanguageServerUpdate {
@@ -238,6 +239,29 @@ impl HeadlessProject {
                         log_type: Some(log_type.to_proto()),
                     })
                     .log_err();
+            }
+            LspStoreEvent::LanguageServerPrompt(prompt) => {
+                let request = self.session.request(proto::LanguageServerPromptRequest {
+                    project_id: SSH_PROJECT_ID,
+                    actions: prompt
+                        .actions
+                        .iter()
+                        .map(|action| action.title.to_string())
+                        .collect(),
+                    level: Some(prompt_to_proto(&prompt)),
+                    lsp_name: prompt.lsp_name.clone(),
+                    message: prompt.message.clone(),
+                });
+                let prompt = prompt.clone();
+                cx.background_executor()
+                    .spawn(async move {
+                        let response = request.await?;
+                        if let Some(action_response) = response.action_response {
+                            prompt.respond(action_response as usize).await;
+                        }
+                        anyhow::Ok(())
+                    })
+                    .detach();
             }
             _ => {}
         }
@@ -275,7 +299,7 @@ impl HeadlessProject {
         let worktree = this
             .update(&mut cx.clone(), |this, _| {
                 Worktree::local(
-                    Arc::from(canonicalized),
+                    Arc::from(canonicalized.as_path()),
                     message.payload.visible,
                     this.fs.clone(),
                     this.next_entry_id.clone(),
@@ -287,6 +311,7 @@ impl HeadlessProject {
         let response = this.update(&mut cx, |_, cx| {
             worktree.update(cx, |worktree, _| proto::AddWorktreeResponse {
                 worktree_id: worktree.id().to_proto(),
+                canonicalized_path: canonicalized.to_string_lossy().to_string(),
             })
         })?;
 
@@ -346,6 +371,32 @@ impl HeadlessProject {
                     cx,
                 )
             });
+            anyhow::Ok((buffer_store, buffer))
+        })??;
+
+        let buffer = buffer.await?;
+        let buffer_id = buffer.read_with(&cx, |b, _| b.remote_id())?;
+        buffer_store.update(&mut cx, |buffer_store, cx| {
+            buffer_store
+                .create_buffer_for_peer(&buffer, SSH_PEER_ID, cx)
+                .detach_and_log_err(cx);
+        })?;
+
+        Ok(proto::OpenBufferResponse {
+            buffer_id: buffer_id.to_proto(),
+        })
+    }
+
+    pub async fn handle_open_new_buffer(
+        this: Model<Self>,
+        _message: TypedEnvelope<proto::OpenNewBuffer>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::OpenBufferResponse> {
+        let (buffer_store, buffer) = this.update(&mut cx, |this, cx| {
+            let buffer_store = this.buffer_store.clone();
+            let buffer = this
+                .buffer_store
+                .update(cx, |buffer_store, cx| buffer_store.create_buffer(cx));
             anyhow::Ok((buffer_store, buffer))
         })??;
 
@@ -510,5 +561,21 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
+    }
+}
+
+fn prompt_to_proto(
+    prompt: &project::LanguageServerPromptRequest,
+) -> proto::language_server_prompt_request::Level {
+    match prompt.level {
+        PromptLevel::Info => proto::language_server_prompt_request::Level::Info(
+            proto::language_server_prompt_request::Info {},
+        ),
+        PromptLevel::Warning => proto::language_server_prompt_request::Level::Warning(
+            proto::language_server_prompt_request::Warning {},
+        ),
+        PromptLevel::Critical => proto::language_server_prompt_request::Level::Critical(
+            proto::language_server_prompt_request::Critical {},
+        ),
     }
 }

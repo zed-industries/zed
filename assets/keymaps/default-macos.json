@@ -349,7 +349,15 @@
       "alt-cmd-]": "editor::UnfoldLines",
       "cmd-k cmd-l": "editor::ToggleFold",
       "cmd-k cmd-[": "editor::FoldRecursive",
-      "cmd-k cmd-]": "editor::UnfoldRecursive",
+      "cmd-k cmd-1": ["editor::FoldAtLevel", { "level": 1 }],
+      "cmd-k cmd-2": ["editor::FoldAtLevel", { "level": 2 }],
+      "cmd-k cmd-3": ["editor::FoldAtLevel", { "level": 3 }],
+      "cmd-k cmd-4": ["editor::FoldAtLevel", { "level": 4 }],
+      "cmd-k cmd-5": ["editor::FoldAtLevel", { "level": 5 }],
+      "cmd-k cmd-6": ["editor::FoldAtLevel", { "level": 6 }],
+      "cmd-k cmd-7": ["editor::FoldAtLevel", { "level": 7 }],
+      "cmd-k cmd-8": ["editor::FoldAtLevel", { "level": 8 }],
+      "cmd-k cmd-9": ["editor::FoldAtLevel", { "level": 9 }],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
@@ -536,6 +544,13 @@
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "ProposedChangesEditor",
+    "bindings": {
+      "cmd-shift-y": "editor::ApplyDiffHunk",
+      "cmd-shift-a": "editor::ApplyAllDiffHunks"
     }
   },
   {

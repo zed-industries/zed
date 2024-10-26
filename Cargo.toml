@@ -23,7 +23,6 @@ members = [
     "crates/context_servers",
     "crates/copilot",
     "crates/db",
-    "crates/dev_server_projects",
     "crates/diagnostics",
     "crates/docs_preprocessor",
     "crates/editor",
@@ -45,7 +44,6 @@ members = [
     "crates/google_ai",
     "crates/gpui",
     "crates/gpui_macros",
-    "crates/headless",
     "crates/html_to_markdown",
     "crates/http_client",
     "crates/image_viewer",
@@ -158,12 +156,10 @@ members = [
     "extensions/ruff",
     "extensions/slash-commands-example",
     "extensions/snippets",
-    "extensions/svelte",
     "extensions/terraform",
     "extensions/test-extension",
     "extensions/toml",
     "extensions/uiua",
-    "extensions/vue",
     "extensions/zig",
 
     #
@@ -203,7 +199,6 @@ command_palette_hooks = { path = "crates/command_palette_hooks" }
 context_servers = { path = "crates/context_servers" }
 copilot = { path = "crates/copilot" }
 db = { path = "crates/db" }
-dev_server_projects = { path = "crates/dev_server_projects" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
@@ -221,7 +216,6 @@ go_to_line = { path = "crates/go_to_line" }
 google_ai = { path = "crates/google_ai" }
 gpui = { path = "crates/gpui", default-features = false, features = ["http_client"]}
 gpui_macros = { path = "crates/gpui_macros" }
-headless = { path = "crates/headless" }
 html_to_markdown = { path = "crates/html_to_markdown" }
 http_client = { path = "crates/http_client" }
 image_viewer = { path = "crates/image_viewer" }
@@ -349,6 +343,7 @@ ctor = "0.2.6"
 dashmap = "6.0"
 derive_more = "0.99.17"
 dirs = "4.0"
+ec4rs = "1.1"
 emojis = "0.6.1"
 env_logger = "0.11"
 exec = "0.3.1"
@@ -391,7 +386,14 @@ pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
 regex = "1.5"
 repair_json = "0.1.0"
-reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = ["charset", "http2", "macos-system-configuration", "rustls-tls-native-roots", "stream"]}
+reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = [
+    "charset",
+    "http2",
+    "macos-system-configuration",
+    "rustls-tls-native-roots",
+    "socks",
+    "stream",
+] }
 rsa = "0.9.6"
 runtimelib = { version = "0.15", default-features = false, features = [
     "async-dispatcher-runtime",
@@ -453,7 +455,7 @@ tree-sitter-diff = "0.1.0"
 tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.23"
 tree-sitter-json = "0.23"
-tree-sitter-md = { git = "https://github.com/zed-industries/tree-sitter-markdown", rev = "4cfa6aad6b75052a5077c80fd934757d9267d81b" }
+tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
 tree-sitter-python = "0.23"
 tree-sitter-regex = "0.23"
 tree-sitter-ruby = "0.23"

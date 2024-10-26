@@ -9,7 +9,7 @@ use anyhow::Result;
 use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
+    display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
@@ -439,11 +439,10 @@ impl ProjectDiagnosticsEditor {
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
-                                    position: header_position,
+                                    placement: BlockPlacement::Above(header_position),
                                     height: 2,
                                     style: BlockStyle::Sticky,
                                     render: diagnostic_header_renderer(primary),
-                                    disposition: BlockDisposition::Above,
                                     priority: 0,
                                 });
                             }
@@ -459,13 +458,15 @@ impl ProjectDiagnosticsEditor {
                                 if !diagnostic.message.is_empty() {
                                     group_state.block_count += 1;
                                     blocks_to_add.push(BlockProperties {
-                                        position: (excerpt_id, entry.range.start),
+                                        placement: BlockPlacement::Below((
+                                            excerpt_id,
+                                            entry.range.start,
+                                        )),
                                         height: diagnostic.message.matches('\n').count() as u32 + 1,
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(
                                             diagnostic, None, true, true,
                                         ),
-                                        disposition: BlockDisposition::Below,
                                         priority: 0,
                                     });
                                 }
@@ -498,13 +499,24 @@ impl ProjectDiagnosticsEditor {
             editor.remove_blocks(blocks_to_remove, None, cx);
             let block_ids = editor.insert_blocks(
                 blocks_to_add.into_iter().flat_map(|block| {
-                    let (excerpt_id, text_anchor) = block.position;
+                    let placement = match block.placement {
+                        BlockPlacement::Above((excerpt_id, text_anchor)) => BlockPlacement::Above(
+                            excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                        ),
+                        BlockPlacement::Below((excerpt_id, text_anchor)) => BlockPlacement::Below(
+                            excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                        ),
+                        BlockPlacement::Replace(_) => {
+                            unreachable!(
+                                "no Replace block should have been pushed to blocks_to_add"
+                            )
+                        }
+                    };
                     Some(BlockProperties {
-                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                        placement,
                         height: block.height,
                         style: block.style,
                         render: block.render,
-                        disposition: block.disposition,
                         priority: 0,
                     })
                 }),

@@ -20,6 +20,7 @@ use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
 use clock::Lamport;
 pub use clock::ReplicaId;
+use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -36,6 +37,7 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::BTreeMap,
@@ -334,6 +336,8 @@ pub enum BufferEvent {
     FileHandleChanged,
     /// The buffer was reloaded.
     Reloaded,
+    /// The buffer is in need of a reload
+    ReloadNeeded,
     /// The buffer's diff_base changed.
     DiffBaseChanged,
     /// Buffer's excerpts for a certain diff base were recalculated.
@@ -438,7 +442,7 @@ struct AutoindentRequest {
     is_block_mode: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct AutoindentRequestEntry {
     /// A range of the buffer whose indentation should be adjusted.
     range: Range<Anchor>,
@@ -910,10 +914,8 @@ impl Buffer {
         self.apply_ops([operation.clone()], cx);
 
         if let Some(timestamp) = operation_to_undo {
-            let operation = self
-                .text
-                .undo_operations([(timestamp, u32::MAX)].into_iter().collect());
-            self.send_operation(Operation::Buffer(operation), true, cx);
+            let counts = [(timestamp, u32::MAX)].into_iter().collect();
+            self.undo_operations(counts, cx);
         }
 
         self.diff_base_version += 1;
@@ -1077,7 +1079,7 @@ impl Buffer {
                     file_changed = true;
 
                     if !self.is_dirty() {
-                        self.reload(cx).close();
+                        cx.emit(BufferEvent::ReloadNeeded);
                     }
                 }
             }
@@ -1418,24 +1420,17 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                // In block mode, only compute indentation suggestions for the first line
-                // of each insertion. Otherwise, compute suggestions for every inserted line.
-                let new_edited_row_ranges = contiguous_ranges(
-                    row_ranges.iter().flat_map(|(range, _)| {
-                        if request.is_block_mode {
-                            range.start..range.start + 1
-                        } else {
-                            range.clone()
-                        }
-                    }),
-                    max_rows_between_yields,
-                );
-
                 // Compute new suggestions for each line, but only include them in the result
                 // if they differ from the old suggestion for that line.
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
                 let mut language_indent_size = IndentSize::default();
-                for new_edited_row_range in new_edited_row_ranges {
+                for (row_range, original_indent_column) in row_ranges {
+                    let new_edited_row_range = if request.is_block_mode {
+                        row_range.start..row_range.start + 1
+                    } else {
+                        row_range.clone()
+                    };
+
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
                         .into_iter()
@@ -1469,22 +1464,9 @@ impl Buffer {
                             }
                         }
                     }
-                    yield_now().await;
-                }
 
-                // For each block of inserted text, adjust the indentation of the remaining
-                // lines of the block by the same amount as the first line was adjusted.
-                if request.is_block_mode {
-                    for (row_range, original_indent_column) in
-                        row_ranges
-                            .into_iter()
-                            .filter_map(|(range, original_indent_column)| {
-                                if range.len() > 1 {
-                                    Some((range, original_indent_column?))
-                                } else {
-                                    None
-                                }
-                            })
+                    if let (true, Some(original_indent_column)) =
+                        (request.is_block_mode, original_indent_column)
                     {
                         let new_indent = indent_sizes
                             .get(&row_range.start)
@@ -1509,6 +1491,8 @@ impl Buffer {
                             }
                         }
                     }
+
+                    yield_now().await;
                 }
             }
 
@@ -1983,18 +1967,27 @@ impl Buffer {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
+                    let range_len = range.end - range.start;
+                    delta += new_text_length as isize - range_len as isize;
 
+                    // Decide what range of the insertion to auto-indent, and whether
+                    // the first line of the insertion should be considered a newly-inserted line
+                    // or an edit to an existing line.
                     let mut range_of_insertion_to_indent = 0..new_text_length;
-                    let mut first_line_is_new = false;
-                    let mut original_indent_column = None;
+                    let mut first_line_is_new = true;
 
-                    // When inserting an entire line at the beginning of an existing line,
-                    // treat the insertion as new.
-                    if new_text.contains('\n')
-                        && old_start.column <= before_edit.indent_size_for_line(old_start.row).len
+                    let old_line_start = before_edit.indent_size_for_line(old_start.row).len;
+                    let old_line_end = before_edit.line_len(old_start.row);
+
+                    if old_start.column > old_line_start {
+                        first_line_is_new = false;
+                    }
+
+                    if !new_text.contains('\n')
+                        && (old_start.column + (range_len as u32) < old_line_end
+                            || old_line_end == old_line_start)
                     {
-                        first_line_is_new = true;
+                        first_line_is_new = false;
                     }
 
                     // When inserting text starting with a newline, avoid auto-indenting the
@@ -2004,7 +1997,7 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    // Avoid auto-indenting after the insertion.
+                    let mut original_indent_column = None;
                     if let AutoindentMode::Block {
                         original_indent_columns,
                     } = &mode
@@ -2016,6 +2009,8 @@ impl Buffer {
                                 )
                                 .len
                             }));
+
+                        // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
@@ -2331,6 +2326,18 @@ impl Buffer {
         undone
     }
 
+    pub fn undo_operations(
+        &mut self,
+        counts: HashMap<Lamport, u32>,
+        cx: &mut ModelContext<Buffer>,
+    ) {
+        let was_dirty = self.is_dirty();
+        let operation = self.text.undo_operations(counts);
+        let old_version = self.version.clone();
+        self.send_operation(Operation::Buffer(operation), true, cx);
+        self.did_edit(&old_version, was_dirty, cx);
+    }
+
     /// Manually redoes a specific transaction in the buffer's redo history.
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
@@ -2479,7 +2486,11 @@ impl BufferSnapshot {
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
-        let settings = language_settings(self.language_at(position), self.file(), cx);
+        let settings = language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file(),
+            cx,
+        );
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -2812,11 +2823,15 @@ impl BufferSnapshot {
 
     /// Returns the settings for the language at the given location.
     pub fn settings_at<'a, D: ToOffset>(
-        &self,
+        &'a self,
         position: D,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
-        language_settings(self.language_at(position), self.file.as_ref(), cx)
+    ) -> Cow<'a, LanguageSettings> {
+        language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file.as_ref(),
+            cx,
+        )
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
@@ -3518,7 +3533,8 @@ impl BufferSnapshot {
         ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        let language_settings = language_settings(self.language(), self.file.as_ref(), cx);
+        let language_settings =
+            language_settings(self.language().map(|l| l.name()), self.file.as_ref(), cx);
         let settings = language_settings.indent_guides;
         if !ignore_disabled_for_language && !settings.enabled {
             return Vec::new();
@@ -4030,7 +4046,7 @@ impl<'a> BufferChunks<'a> {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack

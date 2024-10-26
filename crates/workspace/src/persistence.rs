@@ -24,9 +24,7 @@ use model::{
     SerializedSshProject, SerializedWorkspace,
 };
 
-use self::model::{
-    DockStructure, LocalPathsOrder, SerializedDevServerProject, SerializedWorkspaceLocation,
-};
+use self::model::{DockStructure, LocalPathsOrder, SerializedWorkspaceLocation};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub(crate) struct SerializedAxis(pub(crate) gpui::Axis);
@@ -380,6 +378,8 @@ impl WorkspaceDb {
         &self,
         worktree_roots: &[P],
     ) -> Option<SerializedWorkspace> {
+        // paths are sorted before db interactions to ensure that the order of the paths
+        // doesn't affect the workspace selection for existing workspaces
         let local_paths = LocalPaths::new(worktree_roots);
 
         // Note that we re-assign the workspace_id here in case it's empty
@@ -441,89 +441,6 @@ impl WorkspaceDb {
                 SerializedWorkspaceLocation::Local(local_paths, order)
             }
         };
-
-        Some(SerializedWorkspace {
-            id: workspace_id,
-            location,
-            center_group: self
-                .get_center_pane_group(workspace_id)
-                .context("Getting center group")
-                .log_err()?,
-            window_bounds,
-            centered_layout: centered_layout.unwrap_or(false),
-            display,
-            docks,
-            session_id: None,
-            window_id,
-        })
-    }
-
-    pub(crate) fn workspace_for_dev_server_project(
-        &self,
-        dev_server_project_id: DevServerProjectId,
-    ) -> Option<SerializedWorkspace> {
-        // Note that we re-assign the workspace_id here in case it's empty
-        // and we've grabbed the most recent workspace
-        let (
-            workspace_id,
-            dev_server_project_id,
-            window_bounds,
-            display,
-            centered_layout,
-            docks,
-            window_id,
-        ): (
-            WorkspaceId,
-            Option<u64>,
-            Option<SerializedWindowBounds>,
-            Option<Uuid>,
-            Option<bool>,
-            DockStructure,
-            Option<u64>,
-        ) = self
-            .select_row_bound(sql! {
-                SELECT
-                    workspace_id,
-                    dev_server_project_id,
-                    window_state,
-                    window_x,
-                    window_y,
-                    window_width,
-                    window_height,
-                    display,
-                    centered_layout,
-                    left_dock_visible,
-                    left_dock_active_panel,
-                    left_dock_zoom,
-                    right_dock_visible,
-                    right_dock_active_panel,
-                    right_dock_zoom,
-                    bottom_dock_visible,
-                    bottom_dock_active_panel,
-                    bottom_dock_zoom,
-                    window_id
-                FROM workspaces
-                WHERE dev_server_project_id = ?
-            })
-            .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id.0))
-            .context("No workspaces found")
-            .warn_on_err()
-            .flatten()?;
-
-        let dev_server_project_id = dev_server_project_id?;
-
-        let dev_server_project: SerializedDevServerProject = self
-            .select_row_bound(sql! {
-                SELECT id, path, dev_server_name
-                FROM dev_server_projects
-                WHERE id = ?
-            })
-            .and_then(|mut prepared_statement| (prepared_statement)(dev_server_project_id))
-            .context("No remote project found")
-            .warn_on_err()
-            .flatten()?;
-
-        let location = SerializedWorkspaceLocation::DevServer(dev_server_project);
 
         Some(SerializedWorkspace {
             id: workspace_id,
@@ -657,61 +574,6 @@ impl WorkspaceDb {
 
                         prepared_query(args).context("Updating workspace")?;
                     }
-                    SerializedWorkspaceLocation::DevServer(dev_server_project) => {
-                        conn.exec_bound(sql!(
-                            DELETE FROM workspaces WHERE dev_server_project_id = ? AND workspace_id != ?
-                        ))?((dev_server_project.id.0, workspace.id))
-                        .context("clearing out old locations")?;
-
-                        conn.exec_bound(sql!(
-                            INSERT INTO dev_server_projects(
-                                id,
-                                path,
-                                dev_server_name
-                            ) VALUES (?1, ?2, ?3)
-                            ON CONFLICT DO
-                            UPDATE SET
-                                path = ?2,
-                                dev_server_name = ?3
-                        ))?(&dev_server_project)?;
-
-                        // Upsert
-                        conn.exec_bound(sql!(
-                            INSERT INTO workspaces(
-                                workspace_id,
-                                dev_server_project_id,
-                                left_dock_visible,
-                                left_dock_active_panel,
-                                left_dock_zoom,
-                                right_dock_visible,
-                                right_dock_active_panel,
-                                right_dock_zoom,
-                                bottom_dock_visible,
-                                bottom_dock_active_panel,
-                                bottom_dock_zoom,
-                                timestamp
-                            )
-                            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, CURRENT_TIMESTAMP)
-                            ON CONFLICT DO
-                            UPDATE SET
-                                dev_server_project_id = ?2,
-                                left_dock_visible = ?3,
-                                left_dock_active_panel = ?4,
-                                left_dock_zoom = ?5,
-                                right_dock_visible = ?6,
-                                right_dock_active_panel = ?7,
-                                right_dock_zoom = ?8,
-                                bottom_dock_visible = ?9,
-                                bottom_dock_active_panel = ?10,
-                                bottom_dock_zoom = ?11,
-                                timestamp = CURRENT_TIMESTAMP
-                        ))?((
-                            workspace.id,
-                            dev_server_project.id.0,
-                            workspace.docks,
-                        ))
-                        .context("Updating workspace")?;
-                    },
                     SerializedWorkspaceLocation::Ssh(ssh_project) => {
                         conn.exec_bound(sql!(
                             DELETE FROM workspaces WHERE ssh_project_id = ? AND workspace_id != ?
@@ -822,29 +684,21 @@ impl WorkspaceDb {
     }
 
     query! {
-        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>, Option<u64>)>> {
-            SELECT workspace_id, local_paths, local_paths_order, dev_server_project_id, ssh_project_id
+        fn recent_workspaces() -> Result<Vec<(WorkspaceId, LocalPaths, LocalPathsOrder, Option<u64>)>> {
+            SELECT workspace_id, local_paths, local_paths_order, ssh_project_id
             FROM workspaces
             WHERE local_paths IS NOT NULL
-                OR dev_server_project_id IS NOT NULL
                 OR ssh_project_id IS NOT NULL
             ORDER BY timestamp DESC
         }
     }
 
     query! {
-        fn session_workspaces(session_id: String) -> Result<Vec<(LocalPaths, Option<u64>, Option<u64>)>> {
-            SELECT local_paths, window_id, ssh_project_id
+        fn session_workspaces(session_id: String) -> Result<Vec<(LocalPaths, LocalPathsOrder, Option<u64>, Option<u64>)>> {
+            SELECT local_paths, local_paths_order, window_id, ssh_project_id
             FROM workspaces
             WHERE session_id = ?1 AND dev_server_project_id IS NULL
             ORDER BY timestamp DESC
-        }
-    }
-
-    query! {
-        fn dev_server_projects() -> Result<Vec<SerializedDevServerProject>> {
-            SELECT id, path, dev_server_name
-            FROM dev_server_projects
         }
     }
 
@@ -911,24 +765,9 @@ impl WorkspaceDb {
     ) -> Result<Vec<(WorkspaceId, SerializedWorkspaceLocation)>> {
         let mut result = Vec::new();
         let mut delete_tasks = Vec::new();
-        let dev_server_projects = self.dev_server_projects()?;
         let ssh_projects = self.ssh_projects()?;
 
-        for (id, location, order, dev_server_project_id, ssh_project_id) in
-            self.recent_workspaces()?
-        {
-            if let Some(dev_server_project_id) = dev_server_project_id.map(DevServerProjectId) {
-                if let Some(dev_server_project) = dev_server_projects
-                    .iter()
-                    .find(|rp| rp.id == dev_server_project_id)
-                {
-                    result.push((id, dev_server_project.clone().into()));
-                } else {
-                    delete_tasks.push(self.delete_workspace_by_id(id));
-                }
-                continue;
-            }
-
+        for (id, location, order, ssh_project_id) in self.recent_workspaces()? {
             if let Some(ssh_project_id) = ssh_project_id.map(SshProjectId) {
                 if let Some(ssh_project) = ssh_projects.iter().find(|rp| rp.id == ssh_project_id) {
                     result.push((id, SerializedWorkspaceLocation::Ssh(ssh_project.clone())));
@@ -971,7 +810,7 @@ impl WorkspaceDb {
     ) -> Result<Vec<SerializedWorkspaceLocation>> {
         let mut workspaces = Vec::new();
 
-        for (location, window_id, ssh_project_id) in
+        for (location, order, window_id, ssh_project_id) in
             self.session_workspaces(last_session_id.to_owned())?
         {
             if let Some(ssh_project_id) = ssh_project_id {
@@ -980,8 +819,7 @@ impl WorkspaceDb {
             } else if location.paths().iter().all(|path| path.exists())
                 && location.paths().iter().any(|path| path.is_dir())
             {
-                let location =
-                    SerializedWorkspaceLocation::from_local_paths(location.paths().iter());
+                let location = SerializedWorkspaceLocation::Local(location, order);
                 workspaces.push((location, window_id.map(WindowId::from)));
             }
         }
@@ -1603,27 +1441,56 @@ mod tests {
             window_id: Some(50),
         };
 
+        let workspace_6 = SerializedWorkspace {
+            id: WorkspaceId(6),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(["/tmp6a", "/tmp6b", "/tmp6c"]),
+                LocalPathsOrder::new([2, 1, 0]),
+            ),
+            center_group: Default::default(),
+            window_bounds: Default::default(),
+            display: Default::default(),
+            docks: Default::default(),
+            centered_layout: false,
+            session_id: Some("session-id-3".to_owned()),
+            window_id: Some(60),
+        };
+
         db.save_workspace(workspace_1.clone()).await;
         db.save_workspace(workspace_2.clone()).await;
         db.save_workspace(workspace_3.clone()).await;
         db.save_workspace(workspace_4.clone()).await;
         db.save_workspace(workspace_5.clone()).await;
+        db.save_workspace(workspace_6.clone()).await;
 
         let locations = db.session_workspaces("session-id-1".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
         assert_eq!(locations[0].0, LocalPaths::new(["/tmp1"]));
-        assert_eq!(locations[0].1, Some(10));
+        assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[0].2, Some(10));
         assert_eq!(locations[1].0, LocalPaths::new(["/tmp2"]));
-        assert_eq!(locations[1].1, Some(20));
+        assert_eq!(locations[1].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[1].2, Some(20));
 
         let locations = db.session_workspaces("session-id-2".to_owned()).unwrap();
         assert_eq!(locations.len(), 2);
         assert_eq!(locations[0].0, LocalPaths::new(["/tmp3"]));
-        assert_eq!(locations[0].1, Some(30));
+        assert_eq!(locations[0].1, LocalPathsOrder::new([0]));
+        assert_eq!(locations[0].2, Some(30));
         let empty_paths: Vec<&str> = Vec::new();
         assert_eq!(locations[1].0, LocalPaths::new(empty_paths.iter()));
-        assert_eq!(locations[1].1, Some(50));
-        assert_eq!(locations[1].2, Some(ssh_project.id.0));
+        assert_eq!(locations[1].1, LocalPathsOrder::new([]));
+        assert_eq!(locations[1].2, Some(50));
+        assert_eq!(locations[1].3, Some(ssh_project.id.0));
+
+        let locations = db.session_workspaces("session-id-3".to_owned()).unwrap();
+        assert_eq!(locations.len(), 1);
+        assert_eq!(
+            locations[0].0,
+            LocalPaths::new(["/tmp6a", "/tmp6b", "/tmp6c"]),
+        );
+        assert_eq!(locations[0].1, LocalPathsOrder::new([2, 1, 0]));
+        assert_eq!(locations[0].2, Some(60));
     }
 
     fn default_workspace<P: AsRef<Path>>(
@@ -1654,15 +1521,30 @@ mod tests {
             WorkspaceDb(open_test_db("test_serializing_workspaces_last_session_workspaces").await);
 
         let workspaces = [
-            (1, dir1.path().to_str().unwrap(), 9),
-            (2, dir2.path().to_str().unwrap(), 5),
-            (3, dir3.path().to_str().unwrap(), 8),
-            (4, dir4.path().to_str().unwrap(), 2),
+            (1, vec![dir1.path()], vec![0], 9),
+            (2, vec![dir2.path()], vec![0], 5),
+            (3, vec![dir3.path()], vec![0], 8),
+            (4, vec![dir4.path()], vec![0], 2),
+            (
+                5,
+                vec![dir1.path(), dir2.path(), dir3.path()],
+                vec![0, 1, 2],
+                3,
+            ),
+            (
+                6,
+                vec![dir2.path(), dir3.path(), dir4.path()],
+                vec![2, 1, 0],
+                4,
+            ),
         ]
         .into_iter()
-        .map(|(id, location, window_id)| SerializedWorkspace {
+        .map(|(id, locations, order, window_id)| SerializedWorkspace {
             id: WorkspaceId(id),
-            location: SerializedWorkspaceLocation::from_local_paths([location]),
+            location: SerializedWorkspaceLocation::Local(
+                LocalPaths::new(locations),
+                LocalPathsOrder::new(order),
+            ),
             center_group: Default::default(),
             window_bounds: Default::default(),
             display: Default::default(),
@@ -1681,28 +1563,44 @@ mod tests {
             WindowId::from(2), // Top
             WindowId::from(8),
             WindowId::from(5),
-            WindowId::from(9), // Bottom
+            WindowId::from(9),
+            WindowId::from(3),
+            WindowId::from(4), // Bottom
         ]));
 
         let have = db
             .last_session_workspace_locations("one-session", stack)
             .unwrap();
-        assert_eq!(have.len(), 4);
+        assert_eq!(have.len(), 6);
         assert_eq!(
             have[0],
-            SerializedWorkspaceLocation::from_local_paths(&[dir4.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths(&[dir4.path()])
         );
         assert_eq!(
             have[1],
-            SerializedWorkspaceLocation::from_local_paths([dir3.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths([dir3.path()])
         );
         assert_eq!(
             have[2],
-            SerializedWorkspaceLocation::from_local_paths([dir2.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths([dir2.path()])
         );
         assert_eq!(
             have[3],
-            SerializedWorkspaceLocation::from_local_paths([dir1.path().to_str().unwrap()])
+            SerializedWorkspaceLocation::from_local_paths([dir1.path()])
+        );
+        assert_eq!(
+            have[4],
+            SerializedWorkspaceLocation::Local(
+                LocalPaths::new([dir1.path(), dir2.path(), dir3.path()]),
+                LocalPathsOrder::new([0, 1, 2]),
+            ),
+        );
+        assert_eq!(
+            have[5],
+            SerializedWorkspaceLocation::Local(
+                LocalPaths::new([dir2.path(), dir3.path(), dir4.path()]),
+                LocalPathsOrder::new([2, 1, 0]),
+            ),
         );
     }
 

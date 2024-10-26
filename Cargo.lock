@@ -261,9 +261,9 @@ checksum = "34cd60c5e3152cef0a592f1b296f1cc93715d89d2551d85315828c3a09575ff4"
 
 [[package]]
 name = "anyhow"
-version = "1.0.89"
+version = "1.0.91"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86fdf8605db99b54d3cd748a44c6d04df638eb5dafb219b135d0149bd0db01f6"
+checksum = "c042108f3ed77fd83760a5fd79b53be043192bb3b9dba91d8c574c0ada7850c8"
 
 [[package]]
 name = "approx"
@@ -412,6 +412,7 @@ dependencies = [
  "parking_lot",
  "paths",
  "picker",
+ "pretty_assertions",
  "project",
  "proto",
  "rand 0.8.5",
@@ -452,9 +453,11 @@ dependencies = [
  "anyhow",
  "collections",
  "derive_more",
+ "futures 0.3.30",
  "gpui",
  "language",
  "parking_lot",
+ "pretty_assertions",
  "serde",
  "serde_json",
  "workspace",
@@ -1008,6 +1011,7 @@ dependencies = [
  "smol",
  "tempfile",
  "util",
+ "which 6.0.3",
  "workspace",
 ]
 
@@ -1576,7 +1580,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "lazy_static",
  "lazycell",
  "proc-macro2",
@@ -2546,7 +2550,6 @@ dependencies = [
  "ctor",
  "dashmap 6.0.1",
  "derive_more",
- "dev_server_projects",
  "editor",
  "env_logger",
  "envy",
@@ -2557,7 +2560,6 @@ dependencies = [
  "git_hosting_providers",
  "google_ai",
  "gpui",
- "headless",
  "hex",
  "http_client",
  "hyper 0.14.30",
@@ -3473,18 +3475,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dev_server_projects"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "gpui",
- "rpc",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "diagnostics"
 version = "0.1.0"
 dependencies = [
@@ -3647,6 +3637,12 @@ name = "dyn-clone"
 version = "1.0.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d6ef0072f8a535281e4876be788938b528e9a1d43900b82c2569af7da799125"
+
+[[package]]
+name = "ec4rs"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "acf65d056c7da9c971c2847ce250fd1f0f9659d5718845c3ec0ad95f5668352c"
 
 [[package]]
 name = "ecdsa"
@@ -5264,28 +5260,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "headless"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "extension",
- "fs",
- "futures 0.3.30",
- "gpui",
- "language",
- "log",
- "node_runtime",
- "postage",
- "project",
- "proto",
- "settings",
- "shellexpand 2.1.2",
- "signal-hook",
- "util",
-]
-
-[[package]]
 name = "heck"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5580,7 +5554,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.5.7",
+ "socket2 0.4.10",
  "tokio",
  "tower-service",
  "tracing",
@@ -6209,6 +6183,7 @@ dependencies = [
  "clock",
  "collections",
  "ctor",
+ "ec4rs",
  "env_logger",
  "futures 0.3.30",
  "fuzzy",
@@ -6222,6 +6197,7 @@ dependencies = [
  "lsp",
  "parking_lot",
  "postage",
+ "pretty_assertions",
  "pulldown-cmark 0.12.1",
  "rand 0.8.5",
  "regex",
@@ -6463,7 +6439,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -8430,7 +8406,6 @@ dependencies = [
  "client",
  "clock",
  "collections",
- "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.30",
@@ -8472,6 +8447,7 @@ dependencies = [
  "terminal",
  "text",
  "unindent",
+ "url",
  "util",
  "which 6.0.3",
  "windows 0.58.0",
@@ -8501,6 +8477,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "smallvec",
  "theme",
  "ui",
  "util",
@@ -8966,15 +8943,15 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "auto_update",
- "client",
- "dev_server_projects",
  "editor",
  "file_finder",
  "futures 0.3.30",
  "fuzzy",
  "gpui",
+ "itertools 0.13.0",
  "language",
  "log",
+ "markdown",
  "menu",
  "ordered-float 2.10.1",
  "paths",
@@ -8982,14 +8959,13 @@ dependencies = [
  "project",
  "release_channel",
  "remote",
- "rpc",
  "schemars",
  "serde",
  "serde_json",
  "settings",
  "smol",
  "task",
- "terminal_view",
+ "theme",
  "ui",
  "util",
  "workspace",
@@ -9116,6 +9092,7 @@ name = "remote"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "collections",
  "fs",
  "futures 0.3.30",
@@ -9126,6 +9103,7 @@ dependencies = [
  "rpc",
  "serde",
  "serde_json",
+ "shlex",
  "smol",
  "tempfile",
  "thiserror",
@@ -9144,12 +9122,16 @@ dependencies = [
  "client",
  "clock",
  "env_logger",
+ "fork",
  "fs",
  "futures 0.3.30",
+ "git",
+ "git_hosting_providers",
  "gpui",
  "http_client",
  "language",
  "languages",
+ "libc",
  "log",
  "lsp",
  "node_runtime",
@@ -9297,6 +9279,7 @@ dependencies = [
  "system-configuration 0.6.1",
  "tokio",
  "tokio-rustls 0.26.0",
+ "tokio-socks",
  "tokio-util",
  "tower-service",
  "url",
@@ -10294,6 +10277,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "ec4rs",
  "fs",
  "futures 0.3.30",
  "gpui",
@@ -11886,7 +11870,6 @@ dependencies = [
  "client",
  "collections",
  "command_palette",
- "dev_server_projects",
  "editor",
  "extensions_ui",
  "feature_flags",
@@ -11995,6 +11978,7 @@ dependencies = [
  "futures-io",
  "futures-util",
  "thiserror",
+ "tokio",
 ]
 
 [[package]]
@@ -12285,9 +12269,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-c"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e795ad541f7ae6a80d22975296340a75a12a29afd3a7089f4368021613728e17"
+checksum = "c8b3fb515e498e258799a31d78e6603767cd6892770d9e2290ec00af5c3ad80b"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -12295,9 +12279,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-cpp"
-version = "0.23.0"
+version = "0.23.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c0a588a816017469b69f2e3544742e34a5a59dddfb4b9457b657a6052e2ea39c"
+checksum = "1d67e862242878d6ee50e1e5814f267ee3eea0168aea2cdbd700ccfb4c74b6d3"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -12325,9 +12309,9 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-elixir"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6174acad8a059851f6f768d7893f4b25eedc80eb6643283d545dd71bbb38222a"
+checksum = "97bf0efa4be41120018f23305b105ad4dfd3be1b7f302dc4071d0e6c2dec3a32"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -12419,7 +12403,7 @@ checksum = "2545046bd1473dac6c626659cc2567c6c0ff302fc8b84a56c4243378276f7f57"
 [[package]]
 name = "tree-sitter-md"
 version = "0.3.2"
-source = "git+https://github.com/zed-industries/tree-sitter-markdown?rev=4cfa6aad6b75052a5077c80fd934757d9267d81b#4cfa6aad6b75052a5077c80fd934757d9267d81b"
+source = "git+https://github.com/tree-sitter-grammars/tree-sitter-markdown?rev=9a23c1a96c0513d8fc6520972beedd419a973539#9a23c1a96c0513d8fc6520972beedd419a973539"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -13403,9 +13387,9 @@ dependencies = [
 
 [[package]]
 name = "wasmtime-wasi"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "545ae8298ffce025604f7480f9c7d6948c985bef7ce9aee249ef79307813e83c"
+checksum = "fda03f5bfd5c4cc09f75c7e44846663f25f2c48a2d688fbfb5c7a33af6cf34f5"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -13658,9 +13642,9 @@ dependencies = [
 
 [[package]]
 name = "wiggle"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cc850ca3c02c5835934d23f28cec4c5a3fb66fe0b4ecd968bbb35609dda5ddc0"
+checksum = "2d3b31bd2b4d2d82a4b747b8dbc45f566214214a4ffdc5690429a73bc221dc8a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -13673,9 +13657,9 @@ dependencies = [
 
 [[package]]
 name = "wiggle-generate"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "634b8804a67200bcb43ea8af5f7c53e862439a086b68b16fd333454bc74d5aab"
+checksum = "e2c6136b195fc12067aa9d4e7a5baf118729394df7bc7cbf8c63119bc9f2a7cd"
 dependencies = [
  "anyhow",
  "heck 0.4.1",
@@ -13688,9 +13672,9 @@ dependencies = [
 
 [[package]]
 name = "wiggle-macro"
-version = "24.0.0"
+version = "24.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "474b7cbdb942c74031e619d66c600bba7f73867c5800fc2c2306cf307649be2f"
+checksum = "8a41eaceee468da976ac43b85c4eb82e482f828d5e8e56f49f90dfac2d9bc3b4"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13720,7 +13704,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -14282,7 +14266,6 @@ dependencies = [
  "collections",
  "db",
  "derive_more",
- "dev_server_projects",
  "env_logger",
  "fs",
  "futures 0.3.30",
@@ -14577,7 +14560,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.158.0"
+version = "0.160.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -14601,7 +14584,6 @@ dependencies = [
  "command_palette_hooks",
  "copilot",
  "db",
- "dev_server_projects",
  "diagnostics",
  "editor",
  "env_logger",
@@ -14617,7 +14599,6 @@ dependencies = [
  "git_hosting_providers",
  "go_to_line",
  "gpui",
- "headless",
  "http_client",
  "image_viewer",
  "inline_completion_button",
@@ -14685,7 +14666,6 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
- "zstd",
 ]
 
 [[package]]
@@ -14698,7 +14678,7 @@ dependencies = [
 
 [[package]]
 name = "zed_astro"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "zed_extension_api 0.1.0",
@@ -14734,7 +14714,7 @@ dependencies = [
 
 [[package]]
 name = "zed_elixir"
-version = "0.0.9"
+version = "0.1.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14796,7 +14776,7 @@ dependencies = [
 
 [[package]]
 name = "zed_html"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14817,7 +14797,7 @@ dependencies = [
 
 [[package]]
 name = "zed_php"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
@@ -14859,13 +14839,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_svelte"
-version = "0.2.0"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_terraform"
 version = "0.1.1"
 dependencies = [
@@ -14894,16 +14867,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_vue"
-version = "0.1.0"
-dependencies = [
- "serde",
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_zig"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
