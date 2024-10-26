@@ -121,9 +121,7 @@ impl Console {
                 console.add_message(&response.result, cx);
 
                 console.variable_list.update(cx, |variable_list, cx| {
-                    variable_list
-                        .refetch_existing_variables(cx)
-                        .detach_and_log_err(cx);
+                    variable_list.invalidate(cx);
                 })
             })
         })

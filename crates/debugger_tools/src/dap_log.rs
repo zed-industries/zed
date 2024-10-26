@@ -136,10 +136,8 @@ impl LogStore {
         io_kind: IoKind,
         message: &str,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    ) {
         self.add_debug_client_message(client_id, io_kind, message.to_string(), cx);
-
-        Some(())
     }
 
     fn on_adapter_log(
@@ -148,10 +146,8 @@ impl LogStore {
         io_kind: IoKind,
         message: &str,
         cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    ) {
         self.add_debug_client_log(client_id, io_kind, message.to_string(), cx);
-
-        Some(())
     }
 
     pub fn add_project(&mut self, project: &Model<Project>, cx: &mut ModelContext<Self>) {

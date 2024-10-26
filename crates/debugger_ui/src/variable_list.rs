@@ -18,7 +18,7 @@ use std::{
 };
 use ui::{prelude::*, ContextMenu, ListItem};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VariableContainer {
     pub container_reference: u64,
     pub variable: Variable,
@@ -33,6 +33,12 @@ pub struct SetVariableState {
     stack_frame_id: u64,
     evaluate_name: Option<String>,
     parent_variables_reference: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum OpenEntry {
+    Scope { name: String },
+    Variable { name: String, depth: usize },
 }
 
 #[derive(Debug, Clone)]
@@ -51,22 +57,64 @@ pub enum VariableListEntry {
     },
 }
 
+#[derive(Debug)]
+struct ScopeVariableIndex {
+    fetched_ids: HashSet<u64>,
+    variables: Vec<VariableContainer>,
+}
+
+impl ScopeVariableIndex {
+    pub fn new() -> Self {
+        Self {
+            variables: Vec::new(),
+            fetched_ids: HashSet::default(),
+        }
+    }
+
+    pub fn fetched(&self, container_reference: &u64) -> bool {
+        self.fetched_ids.contains(container_reference)
+    }
+
+    /// All the variables should have the same depth and the same container reference
+    pub fn add_variables(&mut self, container_reference: u64, variables: Vec<VariableContainer>) {
+        let position = self
+            .variables
+            .iter()
+            .position(|v| v.variable.variables_reference == container_reference);
+
+        self.fetched_ids.insert(container_reference);
+
+        if let Some(position) = position {
+            self.variables.splice(position + 1..=position, variables);
+        } else {
+            self.variables.extend(variables);
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.variables.is_empty()
+    }
+
+    pub fn variables(&self) -> &[VariableContainer] {
+        &self.variables
+    }
+}
+
 pub struct VariableList {
     list: ListState,
-    dap_store: Model<DapStore>,
     focus_handle: FocusHandle,
+    dap_store: Model<DapStore>,
+    open_entries: Vec<OpenEntry>,
     client_id: DebugAdapterClientId,
-    open_entries: Vec<SharedString>,
     scopes: HashMap<u64, Vec<Scope>>,
     set_variable_editor: View<Editor>,
     _subscriptions: Vec<Subscription>,
-    fetched_variable_ids: HashSet<u64>,
     stack_frame_list: View<StackFrameList>,
     set_variable_state: Option<SetVariableState>,
     entries: HashMap<u64, Vec<VariableListEntry>>,
     fetch_variables_task: Option<Task<Result<()>>>,
-    // (stack_frame_id, scope.variables_reference) -> variables
-    variables: BTreeMap<(u64, u64), Vec<VariableContainer>>,
+    // (stack_frame_id, scope_id) -> VariableIndex
+    variables: BTreeMap<(u64, u64), ScopeVariableIndex>,
     open_context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
 }
 
@@ -116,7 +164,6 @@ impl VariableList {
             entries: Default::default(),
             variables: Default::default(),
             open_entries: Default::default(),
-            fetched_variable_ids: Default::default(),
             stack_frame_list: stack_frame_list.clone(),
         }
     }
@@ -142,7 +189,7 @@ impl VariableList {
 
         self.variables
             .range((stack_frame_id, u64::MIN)..(stack_frame_id, u64::MAX))
-            .flat_map(|(_, containers)| containers.iter().cloned())
+            .flat_map(|(_, containers)| containers.variables.iter().cloned())
             .collect()
     }
 
@@ -163,10 +210,9 @@ impl VariableList {
                 scope,
                 variable,
                 has_children,
-                container_reference: parent_variables_reference,
+                container_reference,
             } => self.render_variable(
-                ix,
-                *parent_variables_reference,
+                *container_reference,
                 variable,
                 scope,
                 *depth,
@@ -176,7 +222,7 @@ impl VariableList {
         }
     }
 
-    fn toggle_entry_collapsed(&mut self, entry_id: &SharedString, cx: &mut ViewContext<Self>) {
+    fn toggle_entry(&mut self, entry_id: &OpenEntry, cx: &mut ViewContext<Self>) {
         match self.open_entries.binary_search(&entry_id) {
             Ok(ix) => {
                 self.open_entries.remove(ix);
@@ -207,25 +253,35 @@ impl VariableList {
 
         let mut entries: Vec<VariableListEntry> = Vec::default();
         for scope in scopes {
-            let Some(variables) = self
+            let Some(index) = self
                 .variables
                 .get(&(stack_frame_id, scope.variables_reference))
             else {
                 continue;
             };
 
-            if variables.is_empty() {
+            if index.is_empty() {
                 continue;
             }
 
-            if open_first_scope && entries.is_empty() {
-                self.open_entries.push(scope_entry_id(scope));
+            let scope_open_entry_id = OpenEntry::Scope {
+                name: scope.name.clone(),
+            };
+
+            if open_first_scope
+                && entries.is_empty()
+                && self
+                    .open_entries
+                    .binary_search(&scope_open_entry_id)
+                    .is_err()
+            {
+                self.open_entries.push(scope_open_entry_id.clone());
             }
             entries.push(VariableListEntry::Scope(scope.clone()));
 
             if self
                 .open_entries
-                .binary_search(&scope_entry_id(scope))
+                .binary_search(&scope_open_entry_id)
                 .is_err()
             {
                 continue;
@@ -233,7 +289,7 @@ impl VariableList {
 
             let mut depth_check: Option<usize> = None;
 
-            for variable_container in variables {
+            for variable_container in index.variables().iter() {
                 let depth = variable_container.depth;
                 let variable = &variable_container.variable;
                 let container_reference = variable_container.container_reference;
@@ -248,7 +304,10 @@ impl VariableList {
 
                 if self
                     .open_entries
-                    .binary_search(&variable_entry_id(scope, variable, depth))
+                    .binary_search(&OpenEntry::Variable {
+                        name: variable.name.clone(),
+                        depth,
+                    })
                     .is_err()
                 {
                     if depth_check.is_none() || depth_check.is_some_and(|d| d > depth) {
@@ -285,79 +344,134 @@ impl VariableList {
         cx.notify();
     }
 
+    fn fetch_nested_variables(
+        &self,
+        variables_reference: u64,
+        depth: usize,
+        open_entries: &Vec<OpenEntry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<Vec<VariableContainer>>> {
+        cx.spawn({
+            let open_entries = open_entries.clone();
+            |this, mut cx| async move {
+                let variables_task = this.update(&mut cx, |this, cx| {
+                    this.dap_store.update(cx, |store, cx| {
+                        store.variables(&this.client_id, variables_reference, cx)
+                    })
+                })?;
+
+                let mut variables = Vec::new();
+
+                for variable in variables_task.await? {
+                    variables.push(VariableContainer {
+                        variable: variable.clone(),
+                        container_reference: variables_reference,
+                        depth,
+                    });
+
+                    if open_entries
+                        .binary_search(&&OpenEntry::Variable {
+                            name: variable.name.clone(),
+                            depth,
+                        })
+                        .is_ok()
+                    {
+                        let task = this.update(&mut cx, |this, cx| {
+                            this.fetch_nested_variables(
+                                variable.variables_reference,
+                                depth + 1,
+                                &open_entries,
+                                cx,
+                            )
+                        })?;
+
+                        variables.extend(task.await?);
+                    }
+                }
+
+                anyhow::Ok(variables)
+            }
+        })
+    }
+
+    fn fetch_variables_for_stack_frame(
+        &self,
+        stack_frame_id: u64,
+        open_entries: &Vec<OpenEntry>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<(Vec<Scope>, HashMap<u64, Vec<VariableContainer>>)>> {
+        let scopes_task = self.dap_store.update(cx, |store, cx| {
+            store.scopes(&self.client_id, stack_frame_id, cx)
+        });
+
+        cx.spawn({
+            let open_entries = open_entries.clone();
+            |this, mut cx| async move {
+                let mut variables = HashMap::new();
+
+                let scopes = scopes_task.await?;
+
+                for scope in scopes.iter() {
+                    let variables_task = this.update(&mut cx, |this, cx| {
+                        this.fetch_nested_variables(scope.variables_reference, 1, &open_entries, cx)
+                    })?;
+
+                    variables.insert(scope.variables_reference, variables_task.await?);
+                }
+
+                Ok((scopes, variables))
+            }
+        })
+    }
+
     fn fetch_variables(&mut self, cx: &mut ViewContext<Self>) {
         let stack_frames = self.stack_frame_list.read(cx).stack_frames().clone();
 
         self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
-            let mut scope_tasks = Vec::with_capacity(stack_frames.len());
+            let mut tasks = Vec::with_capacity(stack_frames.len());
+
+            let open_entries = this.update(&mut cx, |this, _| {
+                this.open_entries
+                    .iter()
+                    .filter(|e| matches!(e, OpenEntry::Variable { .. }))
+                    .cloned()
+                    .collect::<Vec<_>>()
+            })?;
+
             for stack_frame in stack_frames.clone().into_iter() {
-                let stack_frame_scopes_task = this.update(&mut cx, |this, cx| {
-                    this.dap_store.update(cx, |store, cx| {
-                        store.scopes(&this.client_id, stack_frame.id, cx)
-                    })
+                let task = this.update(&mut cx, |this, cx| {
+                    this.fetch_variables_for_stack_frame(stack_frame.id, &open_entries, cx)
                 });
 
-                scope_tasks.push(async move {
-                    anyhow::Ok((stack_frame.id, stack_frame_scopes_task?.await?))
-                });
+                tasks.push(
+                    cx.background_executor()
+                        .spawn(async move { anyhow::Ok((stack_frame.id, task?.await?)) }),
+                );
             }
 
-            let mut stack_frame_tasks = Vec::with_capacity(scope_tasks.len());
-            for (stack_frame_id, scopes) in try_join_all(scope_tasks).await? {
-                let variable_tasks = this.update(&mut cx, |this, cx| {
-                    this.dap_store.update(cx, |store, cx| {
-                        let mut tasks = Vec::with_capacity(scopes.len());
-
-                        for scope in scopes {
-                            let variables_task =
-                                store.variables(&this.client_id, scope.variables_reference, cx);
-                            tasks.push(async move { anyhow::Ok((scope, variables_task.await?)) });
-                        }
-
-                        tasks
-                    })
-                })?;
-
-                stack_frame_tasks.push(async move {
-                    anyhow::Ok((stack_frame_id, try_join_all(variable_tasks).await?))
-                });
-            }
-
-            let result = try_join_all(stack_frame_tasks).await?;
+            let result = try_join_all(tasks).await?;
 
             this.update(&mut cx, |this, cx| {
-                this.variables.clear();
-                this.scopes.clear();
-                this.fetched_variable_ids.clear();
+                let mut new_variables = BTreeMap::new();
+                let mut new_scopes = HashMap::new();
 
-                for (stack_frame_id, scopes) in result {
-                    for (scope, variables) in scopes {
-                        this.scopes
-                            .entry(stack_frame_id)
-                            .or_default()
-                            .push(scope.clone());
+                for (stack_frame_id, (scopes, variables)) in result {
+                    new_scopes.insert(stack_frame_id, scopes);
 
-                        this.fetched_variable_ids.insert(scope.variables_reference);
+                    for (scope_id, variables) in variables.into_iter() {
+                        let mut variable_index = ScopeVariableIndex::new();
+                        variable_index.add_variables(scope_id, variables);
 
-                        this.variables.insert(
-                            (stack_frame_id, scope.variables_reference),
-                            variables
-                                .into_iter()
-                                .map(|v| VariableContainer {
-                                    container_reference: scope.variables_reference,
-                                    variable: v,
-                                    depth: 1,
-                                })
-                                .collect::<Vec<VariableContainer>>(),
-                        );
+                        new_variables.insert((stack_frame_id, scope_id), variable_index);
                     }
                 }
 
-                this.build_entries(true, false, cx);
+                std::mem::swap(&mut this.variables, &mut new_variables);
+                std::mem::swap(&mut this.scopes, &mut new_scopes);
+
+                this.build_entries(true, true, cx);
 
                 this.fetch_variables_task.take();
-
-                cx.notify();
             })
         }));
     }
@@ -476,7 +590,7 @@ impl VariableList {
         });
 
         let Some(state) = self.set_variable_state.take() else {
-            return cx.notify();
+            return;
         };
 
         if new_variable_value == state.value
@@ -508,67 +622,18 @@ impl VariableList {
 
             set_value_task?.await?;
 
-            this.update(&mut cx, |this, cx| this.refetch_existing_variables(cx))?
-                .await?;
-
             this.update(&mut cx, |this, cx| {
                 this.build_entries(false, true, cx);
+                this.invalidate(cx);
             })
         })
         .detach_and_log_err(cx);
     }
 
-    pub fn refetch_existing_variables(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
-        let mut scope_tasks = Vec::with_capacity(self.variables.len());
-
-        for ((stack_frame_id, scope_id), variable_containers) in self.variables.clone().into_iter()
-        {
-            let mut variable_tasks = Vec::with_capacity(variable_containers.len());
-
-            for variable_container in variable_containers {
-                let fetch_variables_task = self.dap_store.update(cx, |store, cx| {
-                    store.variables(&self.client_id, variable_container.container_reference, cx)
-                });
-
-                variable_tasks.push(async move {
-                    let depth = variable_container.depth;
-                    let container_reference = variable_container.container_reference;
-
-                    anyhow::Ok(
-                        fetch_variables_task
-                            .await?
-                            .into_iter()
-                            .map(move |variable| VariableContainer {
-                                container_reference,
-                                variable,
-                                depth,
-                            })
-                            .collect::<Vec<_>>(),
-                    )
-                });
-            }
-
-            scope_tasks.push(async move {
-                anyhow::Ok((
-                    (stack_frame_id, scope_id),
-                    try_join_all(variable_tasks).await?,
-                ))
-            });
-        }
-
-        cx.spawn(|this, mut cx| async move {
-            let updated_variables = try_join_all(scope_tasks).await?;
-
-            this.update(&mut cx, |this, cx| {
-                for (entry_id, variable_containers) in updated_variables {
-                    for variables in variable_containers {
-                        this.variables.insert(entry_id, variables);
-                    }
-                }
-
-                this.build_entries(false, true, cx);
-            })
-        })
+    pub fn invalidate(&mut self, cx: &mut ViewContext<Self>) {
+        self.stack_frame_list.update(cx, |stack_frame_list, cx| {
+            stack_frame_list.invalidate(cx);
+        });
     }
 
     fn render_set_variable_editor(
@@ -590,11 +655,13 @@ impl VariableList {
             .into_any_element()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn on_toggle_variable(
         &mut self,
-        ix: usize,
-        variable_id: &SharedString,
+        scope_id: u64,
+        entry_id: &OpenEntry,
         variable_reference: u64,
+        depth: usize,
         has_children: bool,
         disclosed: Option<bool>,
         cx: &mut ViewContext<Self>,
@@ -603,73 +670,52 @@ impl VariableList {
             return;
         }
 
-        // if we already opened the variable/we already fetched it
-        // we can just toggle it because we already have the nested variable
-        if disclosed.unwrap_or(true) || self.fetched_variable_ids.contains(&variable_reference) {
-            return self.toggle_entry_collapsed(&variable_id, cx);
-        }
-
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
 
-        let Some(entries) = self.entries.get(&stack_frame_id) else {
+        let Some(index) = self.variables.get(&(stack_frame_id, scope_id)) else {
             return;
         };
 
-        let Some(entry) = entries.get(ix) else {
-            return;
-        };
-
-        if let VariableListEntry::Variable { scope, depth, .. } = entry {
-            let variable_id = variable_id.clone();
-            let scope = scope.clone();
-            let depth = *depth;
-
-            let fetch_variables_task = self.dap_store.update(cx, |store, cx| {
-                store.variables(&self.client_id, variable_reference, cx)
-            });
-
-            cx.spawn(|this, mut cx| async move {
-                let new_variables = fetch_variables_task.await?;
-
-                this.update(&mut cx, |this, cx| {
-                    let Some(variables) = this
-                        .variables
-                        .get_mut(&(stack_frame_id, scope.variables_reference))
-                    else {
-                        return;
-                    };
-
-                    let position = variables.iter().position(|v| {
-                        variable_entry_id(&scope, &v.variable, v.depth) == variable_id
-                    });
-
-                    if let Some(position) = position {
-                        variables.splice(
-                            position + 1..position + 1,
-                            new_variables
-                                .clone()
-                                .into_iter()
-                                .map(|variable| VariableContainer {
-                                    container_reference: variable_reference,
-                                    variable,
-                                    depth: depth + 1,
-                                }),
-                        );
-
-                        this.fetched_variable_ids.insert(variable_reference);
-                    }
-
-                    this.toggle_entry_collapsed(&variable_id, cx);
-                })
-            })
-            .detach_and_log_err(cx);
+        // if we already opened the variable/we already fetched it
+        // we can just toggle it because we already have the nested variable
+        if disclosed.unwrap_or(true) || index.fetched(&variable_reference) {
+            return self.toggle_entry(&entry_id, cx);
         }
+
+        let fetch_variables_task = self.dap_store.update(cx, |store, cx| {
+            store.variables(&self.client_id, variable_reference, cx)
+        });
+
+        let entry_id = entry_id.clone();
+        cx.spawn(|this, mut cx| async move {
+            let new_variables = fetch_variables_task.await?;
+
+            this.update(&mut cx, |this, cx| {
+                let Some(index) = this.variables.get_mut(&(stack_frame_id, scope_id)) else {
+                    return;
+                };
+
+                index.add_variables(
+                    variable_reference,
+                    new_variables
+                        .into_iter()
+                        .map(|variable| VariableContainer {
+                            container_reference: variable_reference,
+                            variable,
+                            depth: depth + 1,
+                        })
+                        .collect::<Vec<_>>(),
+                );
+
+                this.toggle_entry(&entry_id, cx);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
-        ix: usize,
         parent_variables_reference: u64,
         variable: &Variable,
         scope: &Scope,
@@ -677,61 +723,68 @@ impl VariableList {
         has_children: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement {
+        let scope_id = scope.variables_reference;
         let variable_reference = variable.variables_reference;
-        let variable_id = variable_entry_id(scope, variable, depth);
 
-        let disclosed = has_children.then(|| {
-            self.open_entries
-                .binary_search(&variable_entry_id(scope, variable, depth))
-                .is_ok()
-        });
+        let entry_id = OpenEntry::Variable {
+            name: variable.name.clone(),
+            depth,
+        };
+        let disclosed = has_children.then(|| self.open_entries.binary_search(&entry_id).is_ok());
 
         div()
-            .id(variable_id.clone())
+            .id(SharedString::from(format!(
+                "variable-{}-{}-{}",
+                scope.variables_reference, variable.name, depth
+            )))
             .group("")
             .h_4()
             .size_full()
             .child(
-                ListItem::new(variable_id.clone())
-                    .indent_level(depth + 1)
-                    .indent_step_size(px(20.))
-                    .always_show_disclosure_icon(true)
-                    .toggle(disclosed)
-                    .on_toggle(cx.listener(move |this, _, cx| {
-                        this.on_toggle_variable(
-                            ix,
-                            &variable_id,
-                            variable_reference,
-                            has_children,
-                            disclosed,
+                ListItem::new(SharedString::from(format!(
+                    "variable-item-{}-{}-{}",
+                    scope.variables_reference, variable.name, depth
+                )))
+                .indent_level(depth + 1)
+                .indent_step_size(px(20.))
+                .always_show_disclosure_icon(true)
+                .toggle(disclosed)
+                .on_toggle(cx.listener(move |this, _, cx| {
+                    this.on_toggle_variable(
+                        scope_id,
+                        &entry_id,
+                        variable_reference,
+                        depth,
+                        has_children,
+                        disclosed,
+                        cx,
+                    )
+                }))
+                .on_secondary_mouse_down(cx.listener({
+                    let scope = scope.clone();
+                    let variable = variable.clone();
+                    move |this, event: &MouseDownEvent, cx| {
+                        this.deploy_variable_context_menu(
+                            parent_variables_reference,
+                            &scope,
+                            &variable,
+                            event.position,
                             cx,
                         )
-                    }))
-                    .on_secondary_mouse_down(cx.listener({
-                        let scope = scope.clone();
-                        let variable = variable.clone();
-                        move |this, event: &MouseDownEvent, cx| {
-                            this.deploy_variable_context_menu(
-                                parent_variables_reference,
-                                &scope,
-                                &variable,
-                                event.position,
-                                cx,
-                            )
-                        }
-                    }))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .text_ui_sm(cx)
-                            .child(variable.name.clone())
-                            .child(
-                                div()
-                                    .text_ui_xs(cx)
-                                    .text_color(cx.theme().colors().text_muted)
-                                    .child(variable.value.replace("\n", " ").clone()),
-                            ),
-                    ),
+                    }
+                }))
+                .child(
+                    h_flex()
+                        .gap_1()
+                        .text_ui_sm(cx)
+                        .child(variable.name.clone())
+                        .child(
+                            div()
+                                .text_ui_xs(cx)
+                                .text_color(cx.theme().colors().text_muted)
+                                .child(variable.value.replace("\n", " ").clone()),
+                        ),
+                ),
             )
             .into_any()
     }
@@ -739,8 +792,10 @@ impl VariableList {
     fn render_scope(&self, scope: &Scope, cx: &mut ViewContext<Self>) -> AnyElement {
         let element_id = scope.variables_reference;
 
-        let scope_id = scope_entry_id(scope);
-        let disclosed = self.open_entries.binary_search(&scope_id).is_ok();
+        let entry_id = OpenEntry::Scope {
+            name: scope.name.clone(),
+        };
+        let disclosed = self.open_entries.binary_search(&entry_id).is_ok();
 
         div()
             .id(element_id as usize)
@@ -749,15 +804,16 @@ impl VariableList {
             .w_full()
             .h_full()
             .child(
-                ListItem::new(scope_id.clone())
-                    .indent_level(1)
-                    .indent_step_size(px(20.))
-                    .always_show_disclosure_icon(true)
-                    .toggle(disclosed)
-                    .on_toggle(
-                        cx.listener(move |this, _, cx| this.toggle_entry_collapsed(&scope_id, cx)),
-                    )
-                    .child(div().text_ui(cx).w_full().child(scope.name.clone())),
+                ListItem::new(SharedString::from(format!(
+                    "scope-{}",
+                    scope.variables_reference
+                )))
+                .indent_level(1)
+                .indent_step_size(px(20.))
+                .always_show_disclosure_icon(true)
+                .toggle(disclosed)
+                .on_toggle(cx.listener(move |this, _, cx| this.toggle_entry(&entry_id, cx)))
+                .child(div().text_ui(cx).w_full().child(scope.name.clone())),
             )
             .into_any()
     }
@@ -789,13 +845,184 @@ impl Render for VariableList {
     }
 }
 
-pub fn variable_entry_id(scope: &Scope, variable: &Variable, depth: usize) -> SharedString {
-    SharedString::from(format!(
-        "variable-{}-{}-{}",
-        scope.variables_reference, variable.name, depth
-    ))
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn scope_entry_id(scope: &Scope) -> SharedString {
-    SharedString::from(format!("scope-{}", scope.variables_reference))
+    #[test]
+    fn test_add_initial_variables_to_index() {
+        let mut index = ScopeVariableIndex::new();
+
+        assert_eq!(index.variables(), &[]);
+
+        let variable1 = VariableContainer {
+            variable: Variable {
+                name: "First variable".into(),
+                value: "First variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        let variable2 = VariableContainer {
+            variable: Variable {
+                name: "Second variable with child".into(),
+                value: "Second variable with child".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 2,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        let variable3 = VariableContainer {
+            variable: Variable {
+                name: "Third variable".into(),
+                value: "Third variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        index.add_variables(
+            1,
+            vec![variable1.clone(), variable2.clone(), variable3.clone()],
+        );
+
+        assert_eq!(
+            index.variables(),
+            &[variable1.clone(), variable2.clone(), variable3.clone()]
+        );
+    }
+
+    /// This covers when you click on a variable that has a nested variable
+    /// We correctly insert the variables right after the variable you clicked on
+    #[test]
+    fn test_add_sub_variables_to_index() {
+        let mut index = ScopeVariableIndex::new();
+
+        assert_eq!(index.variables(), &[]);
+
+        let variable1 = VariableContainer {
+            variable: Variable {
+                name: "First variable".into(),
+                value: "First variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        let variable2 = VariableContainer {
+            variable: Variable {
+                name: "Second variable with child".into(),
+                value: "Second variable with child".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 2,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        let variable3 = VariableContainer {
+            variable: Variable {
+                name: "Third variable".into(),
+                value: "Third variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        index.add_variables(
+            1,
+            vec![variable1.clone(), variable2.clone(), variable3.clone()],
+        );
+
+        assert_eq!(
+            index.variables(),
+            &[variable1.clone(), variable2.clone(), variable3.clone()]
+        );
+
+        let variable4 = VariableContainer {
+            variable: Variable {
+                name: "Fourth variable".into(),
+                value: "Fourth variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        let variable5 = VariableContainer {
+            variable: Variable {
+                name: "Five variable".into(),
+                value: "Five variable".into(),
+                type_: None,
+                presentation_hint: None,
+                evaluate_name: None,
+                variables_reference: 0,
+                named_variables: None,
+                indexed_variables: None,
+                memory_reference: None,
+            },
+            depth: 1,
+            container_reference: 1,
+        };
+
+        index.add_variables(2, vec![variable4.clone(), variable5.clone()]);
+
+        assert_eq!(
+            index.variables(),
+            &[
+                variable1.clone(),
+                variable2.clone(),
+                variable4.clone(),
+                variable5.clone(),
+                variable3.clone(),
+            ]
+        );
+    }
 }

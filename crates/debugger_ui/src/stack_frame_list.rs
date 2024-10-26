@@ -33,6 +33,7 @@ pub struct StackFrameList {
     workspace: WeakView<Workspace>,
     client_id: DebugAdapterClientId,
     _subscriptions: Vec<Subscription>,
+    fetch_stack_frames_task: Option<Task<Result<()>>>,
 }
 
 impl StackFrameList {
@@ -65,6 +66,7 @@ impl StackFrameList {
             client_id: *client_id,
             workspace: workspace.clone(),
             dap_store: dap_store.clone(),
+            fetch_stack_frames_task: None,
             stack_frames: Default::default(),
             current_stack_frame_id: Default::default(),
         }
@@ -86,31 +88,34 @@ impl StackFrameList {
     ) {
         match event {
             Stopped { go_to_stack_frame } => {
-                self.fetch_stack_frames(*go_to_stack_frame, cx)
-                    .detach_and_log_err(cx);
+                self.fetch_stack_frames(*go_to_stack_frame, cx);
             }
             _ => {}
         }
     }
 
-    fn fetch_stack_frames(
-        &self,
-        go_to_stack_frame: bool,
-        cx: &mut ViewContext<Self>,
-    ) -> Task<Result<()>> {
+    pub fn invalidate(&mut self, cx: &mut ViewContext<Self>) {
+        self.fetch_stack_frames(true, cx);
+    }
+
+    fn fetch_stack_frames(&mut self, go_to_stack_frame: bool, cx: &mut ViewContext<Self>) {
         let task = self.dap_store.update(cx, |store, cx| {
             store.stack_frames(&self.client_id, self.thread_id, cx)
         });
 
-        cx.spawn(|this, mut cx| async move {
+        self.fetch_stack_frames_task = Some(cx.spawn(|this, mut cx| async move {
             let mut stack_frames = task.await?;
 
             let task = this.update(&mut cx, |this, cx| {
                 std::mem::swap(&mut this.stack_frames, &mut stack_frames);
 
+                let previous_stack_frame_id = this.current_stack_frame_id;
                 if let Some(stack_frame) = this.stack_frames.first() {
                     this.current_stack_frame_id = stack_frame.id;
-                    cx.emit(StackFrameListEvent::SelectedStackFrameChanged);
+
+                    if previous_stack_frame_id != this.current_stack_frame_id {
+                        cx.emit(StackFrameListEvent::SelectedStackFrameChanged);
+                    }
                 }
 
                 this.list.reset(this.stack_frames.len());
@@ -129,8 +134,10 @@ impl StackFrameList {
                 task.await?;
             }
 
-            Ok(())
-        })
+            this.update(&mut cx, |this, _| {
+                this.fetch_stack_frames_task.take();
+            })
+        }));
     }
 
     pub fn go_to_stack_frame(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
@@ -151,18 +158,20 @@ impl StackFrameList {
             return Task::ready(Err(anyhow!("Project path not found")));
         };
 
-        self.dap_store.update(cx, |store, cx| {
-            store.set_active_debug_line(&project_path, row, column, cx);
-        });
-
         cx.spawn({
             let workspace = self.workspace.clone();
-            move |_, mut cx| async move {
+            move |this, mut cx| async move {
                 let task = workspace.update(&mut cx, |workspace, cx| {
-                    workspace.open_path_preview(project_path, None, false, true, cx)
+                    workspace.open_path_preview(project_path.clone(), None, false, true, cx)
                 })?;
 
                 let editor = task.await?.downcast::<Editor>().unwrap();
+
+                this.update(&mut cx, |this, cx| {
+                    this.dap_store.update(cx, |store, cx| {
+                        store.set_active_debug_line(&project_path, row, column, cx);
+                    })
+                })?;
 
                 workspace.update(&mut cx, |_, cx| {
                     editor.update(cx, |editor, cx| editor.go_to_active_debug_line(cx))
