@@ -91,6 +91,7 @@ jobs:
   macos_tests:
     timeout-minutes: 60
     name: (macOS) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
       - test
@@ -126,6 +127,7 @@ jobs:
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -158,6 +160,7 @@ jobs:
   build_remote_server:
     timeout-minutes: 60
     name: (Linux) Build Remote Server
+    if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
     steps:
@@ -185,6 +188,7 @@ jobs:
   windows_tests:
     timeout-minutes: 60
     name: (Windows) Run Clippy and tests
+    if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
     steps:
       - name: Checkout repo
