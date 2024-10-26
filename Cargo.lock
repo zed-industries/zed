@@ -3384,13 +3384,9 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dap",
- "fs",
- "futures 0.3.30",
- "http_client",
  "paths",
  "serde",
  "serde_json",
- "smol",
  "task",
  "util",
 ]
