@@ -642,6 +642,9 @@ pub struct LanguageConfig {
     /// languages, but should not appear to the user as a distinct language.
     #[serde(default)]
     pub hidden: bool,
+    /// Insert trailing commas within blocks, like { } in JSON/JSONC
+    #[serde(default)]
+    pub insert_trailing_commas: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Default, JsonSchema)]
@@ -729,6 +732,7 @@ impl Default for LanguageConfig {
             soft_wrap: None,
             prettier_parser_name: None,
             hidden: false,
+            insert_trailing_commas: false,
         }
     }
 }
@@ -1524,6 +1528,10 @@ impl LanguageScope {
         let grammar = self.language.grammar.as_ref()?;
         let override_config = grammar.override_config.as_ref()?;
         override_config.values.get(&id).map(|e| &e.1)
+    }
+
+    pub fn insert_trailing_commas(&self) -> bool {
+        self.language.config.insert_trailing_commas
     }
 }
 

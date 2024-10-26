@@ -374,9 +374,37 @@ impl Vim {
                             .collect::<String>();
 
                         let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
-                        (end_of_line..end_of_line, "\n".to_string() + &indent)
+                        let last_char_point = Point::new(
+                            row,
+                            snapshot.line_len(MultiBufferRow(row)).saturating_sub(1),
+                        );
+                        let inside_brackets = snapshot
+                            .enclosing_bracket_ranges(end_of_line..end_of_line)
+                            .into_iter()
+                            .flatten()
+                            .next()
+                            .is_some();
+                        let last_char = snapshot
+                            .text_for_range(last_char_point..end_of_line)
+                            .next()
+                            .unwrap_or_default();
+                        let mut edit = String::with_capacity(indent.len() + 2);
+
+                        let insert_trailing_commas = snapshot
+                            .language_scope_at(Point::new(row, 0))
+                            .map(|s| s.insert_trailing_commas())
+                            .unwrap_or_default();
+                        dbg!(insert_trailing_commas);
+                        let should_insert_trailing = !["{", ",", " ", "", "["].contains(&last_char);
+                        if should_insert_trailing && inside_brackets && insert_trailing_commas {
+                            edit.push(',');
+                        }
+                        edit.push('\n');
+                        edit.push_str(&indent);
+                        (end_of_line..end_of_line, edit)
                     })
                     .collect::<Vec<_>>();
+
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
                         Motion::CurrentLine.move_point(
