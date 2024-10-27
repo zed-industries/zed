@@ -80,6 +80,7 @@ pub struct LanguageRegistry {
     language_server_download_dir: Option<Arc<Path>>,
     executor: BackgroundExecutor,
     lsp_binary_status_tx: LspBinaryStatusSender,
+    dap_binary_status_tx: DapBinaryStatusSender,
 }
 
 struct LanguageRegistryState {
@@ -222,6 +223,7 @@ impl LanguageRegistry {
             }),
             language_server_download_dir: None,
             lsp_binary_status_tx: Default::default(),
+            dap_binary_status_tx: Default::default(),
             executor,
         };
         this.add(PLAIN_TEXT.clone());
@@ -875,6 +877,14 @@ impl LanguageRegistry {
         self.lsp_binary_status_tx.send(server_name, status);
     }
 
+    pub fn update_dap_status(
+        &self,
+        server_name: LanguageServerName,
+        status: LanguageServerBinaryStatus,
+    ) {
+        self.dap_binary_status_tx.send(server_name, status);
+    }
+
     pub fn next_language_server_id(&self) -> LanguageServerId {
         self.state.write().next_language_server_id()
     }
@@ -928,6 +938,12 @@ impl LanguageRegistry {
         &self,
     ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
         self.lsp_binary_status_tx.subscribe()
+    }
+
+    pub fn dap_server_binary_statuses(
+        &self,
+    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
+        self.dap_binary_status_tx.subscribe()
     }
 
     pub async fn delete_server_container(&self, name: LanguageServerName) {
@@ -1036,6 +1052,26 @@ impl LanguageRegistryState {
                 break;
             }
         }
+    }
+}
+
+#[derive(Clone, Default)]
+struct DapBinaryStatusSender {
+    txs: Arc<Mutex<Vec<mpsc::UnboundedSender<(LanguageServerName, LanguageServerBinaryStatus)>>>>,
+}
+
+impl DapBinaryStatusSender {
+    fn subscribe(
+        &self,
+    ) -> mpsc::UnboundedReceiver<(LanguageServerName, LanguageServerBinaryStatus)> {
+        let (tx, rx) = mpsc::unbounded();
+        self.txs.lock().push(tx);
+        rx
+    }
+
+    fn send(&self, name: LanguageServerName, status: LanguageServerBinaryStatus) {
+        let mut txs = self.txs.lock();
+        txs.retain(|tx| tx.unbounded_send((name.clone(), status.clone())).is_ok());
     }
 }
 

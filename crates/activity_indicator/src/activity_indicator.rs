@@ -20,19 +20,19 @@ actions!(activity_indicator, [ShowErrorMessage]);
 
 pub enum Event {
     ShowError {
-        lsp_name: LanguageServerName,
+        server_name: LanguageServerName,
         error: String,
     },
 }
 
 pub struct ActivityIndicator {
-    statuses: Vec<LspStatus>,
+    statuses: Vec<ServerStatus>,
     project: Model<Project>,
     auto_updater: Option<Model<AutoUpdater>>,
     context_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
-struct LspStatus {
+struct ServerStatus {
     name: LanguageServerName,
     status: LanguageServerBinaryStatus,
 }
@@ -63,13 +63,27 @@ impl ActivityIndicator {
                 while let Some((name, status)) = status_events.next().await {
                     this.update(&mut cx, |this, cx| {
                         this.statuses.retain(|s| s.name != name);
-                        this.statuses.push(LspStatus { name, status });
+                        this.statuses.push(ServerStatus { name, status });
                         cx.notify();
                     })?;
                 }
                 anyhow::Ok(())
             })
             .detach();
+
+            let mut status_events = languages.dap_server_binary_statuses();
+            cx.spawn(|this, mut cx| async move {
+                while let Some((name, status)) = status_events.next().await {
+                    this.update(&mut cx, |this, cx| {
+                        this.statuses.retain(|s| s.name != name);
+                        this.statuses.push(ServerStatus { name, status });
+                        cx.notify();
+                    })?;
+                }
+                anyhow::Ok(())
+            })
+            .detach();
+
             cx.observe(&project, |_, _, cx| cx.notify()).detach();
 
             if let Some(auto_updater) = auto_updater.as_ref() {
@@ -85,7 +99,10 @@ impl ActivityIndicator {
         });
 
         cx.subscribe(&this, move |_, _, event, cx| match event {
-            Event::ShowError { lsp_name, error } => {
+            Event::ShowError {
+                server_name: lsp_name,
+                error,
+            } => {
                 let create_buffer = project.update(cx, |project, cx| project.create_buffer(cx));
                 let project = project.clone();
                 let error = error.clone();
@@ -127,7 +144,7 @@ impl ActivityIndicator {
         self.statuses.retain(|status| {
             if let LanguageServerBinaryStatus::Failed { error } = &status.status {
                 cx.emit(Event::ShowError {
-                    lsp_name: status.name.clone(),
+                    server_name: status.name.clone(),
                     error: error.clone(),
                 });
                 false

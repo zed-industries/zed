@@ -16,11 +16,20 @@ use std::{
 };
 use task::DebugAdapterConfig;
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DapStatus {
+    None,
+    CheckingForUpdate,
+    Downloading,
+    Failed { error: String },
+}
+
 pub trait DapDelegate {
     fn http_client(&self) -> Option<Arc<dyn HttpClient>>;
     fn node_runtime(&self) -> Option<NodeRuntime>;
     fn fs(&self) -> Arc<dyn Fs>;
     fn cached_binaries(&self) -> Arc<Mutex<HashMap<DebugAdapterName, DebugAdapterBinary>>>;
+    fn update_status(&self, dap_name: DebugAdapterName, status: DapStatus);
 }
 
 #[derive(PartialEq, Eq, Hash, Debug)]
@@ -189,6 +198,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
         }
 
         log::info!("Getting latest version of debug adapter {}", self.name());
+        delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
         let version = self.fetch_latest_adapter_version(delegate).await.ok();
 
         let mut binary = self.get_installed_binary(delegate, config).await;
@@ -209,6 +219,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
                 return Ok(binary);
             }
 
+            delegate.update_status(self.name(), DapStatus::Downloading);
             self.install_binary(version, delegate).await?;
             binary = self.get_installed_binary(delegate, config).await;
         }
