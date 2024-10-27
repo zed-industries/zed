@@ -1,6 +1,7 @@
 use crate::debugger_panel_item::DebugPanelItem;
 use anyhow::Result;
 use collections::{BTreeMap, HashMap};
+use command_palette_hooks::CommandPaletteFilter;
 use dap::client::{DebugAdapterClientId, ThreadStatus};
 use dap::debugger_settings::DebuggerSettings;
 use dap::messages::{Events, Message};
@@ -18,6 +19,7 @@ use project::dap_store::DapStore;
 use project::terminals::TerminalKind;
 use serde_json::Value;
 use settings::Settings;
+use std::any::TypeId;
 use std::path::PathBuf;
 use std::u64;
 use terminal_view::terminal_panel::TerminalPanel;
@@ -26,7 +28,9 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-use workspace::{pane, Pane, Start};
+use workspace::{
+    pane, Continue, Disconnect, Pane, Pause, Restart, Start, StepInto, StepOut, StepOver, Stop,
+};
 
 pub enum DebugPanelEvent {
     Exited(DebugAdapterClientId),
@@ -148,7 +152,36 @@ impl DebugPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
-            workspace.update(&mut cx, |workspace, cx| DebugPanel::new(workspace, cx))
+            workspace.update(&mut cx, |workspace, cx| {
+                let debug_panel = DebugPanel::new(workspace, cx);
+
+                cx.observe(&debug_panel, |_, debug_panel, cx| {
+                    let has_active_session = debug_panel
+                        .update(cx, |this, cx| this.active_debug_panel_item(cx).is_some());
+
+                    let filter = CommandPaletteFilter::global_mut(cx);
+                    let debugger_action_types = [
+                        TypeId::of::<Continue>(),
+                        TypeId::of::<StepOver>(),
+                        TypeId::of::<StepInto>(),
+                        TypeId::of::<StepOut>(),
+                        TypeId::of::<Stop>(),
+                        TypeId::of::<Disconnect>(),
+                        TypeId::of::<Pause>(),
+                        TypeId::of::<Restart>(),
+                    ];
+
+                    if has_active_session {
+                        filter.show_action_types(debugger_action_types.iter());
+                    } else {
+                        // show only the `debug: start`
+                        filter.hide_action_types(&debugger_action_types);
+                    }
+                })
+                .detach();
+
+                debug_panel
+            })
         })
     }
 

@@ -2296,10 +2296,11 @@ impl Project {
     ) {
         match event {
             DapStoreEvent::DebugClientStarted(client_id) => {
-                self.dap_store.update(cx, |store, cx| {
-                    store.initialize(client_id, cx).detach_and_log_err(cx)
-                });
                 cx.emit(Event::DebugClientStarted(*client_id));
+
+                self.dap_store.update(cx, |store, cx| {
+                    store.initialize(client_id, cx).detach_and_log_err(cx);
+                });
             }
             DapStoreEvent::DebugClientStopped(client_id) => {
                 cx.emit(Event::DebugClientStopped(*client_id));

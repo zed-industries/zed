@@ -3483,6 +3483,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "collections",
+ "command_palette_hooks",
  "dap",
  "editor",
  "futures 0.3.30",
