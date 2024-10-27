@@ -130,6 +130,7 @@ pub struct ToolchainSelectorDelegate {
 }
 
 impl ToolchainSelectorDelegate {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         active_toolchain: Option<Toolchain>,
         language_selector: WeakView<ToolchainSelector>,
