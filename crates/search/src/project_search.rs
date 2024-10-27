@@ -9,7 +9,7 @@ use editor::{
     items::active_match_index,
     scroll::{Autoscroll, Axis},
     Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
-    SearchSettings, MAX_TAB_TITLE_LEN,
+    MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
 use gpui::{
@@ -21,12 +21,11 @@ use gpui::{
 use language::Buffer;
 use menu::Confirm;
 use project::{
-    project_settings::ProjectSettings,
     search::{SearchInputKind, SearchQuery},
     search_history::SearchHistoryCursor,
     Project, ProjectPath,
 };
-use settings::{Settings, SettingsLocation};
+use settings::Settings;
 use std::{
     any::{Any, TypeId},
     mem,
@@ -634,46 +633,6 @@ impl ProjectSearchView {
             model.match_ranges = match_ranges;
         });
     }
-    fn load_searchsettings(
-        model: &Model<ProjectSearch>,
-        cx: &mut ViewContext<Self>,
-    ) -> (SearchOptions, Option<String>, Option<String>, bool) {
-        let model = model.read(cx);
-        let project = model.project.clone();
-
-        if let Some(worktree) = project.read(cx).worktrees(cx).next() {
-            let project_settings = ProjectSettings::get(
-                Some(SettingsLocation {
-                    worktree_id: worktree.read(cx).id(),
-                    path: worktree.read(cx).abs_path().as_ref(),
-                }),
-                cx,
-            );
-            if let Some(project_search_setting) = &project_settings.search {
-                let settings = SearchSettings {
-                    whole_word: project_search_setting.whole_word,
-                    case_sensitive: project_search_setting.case_sensitive,
-                    include_ignored: project_search_setting.include_ignored,
-                    regex: project_search_setting.regex,
-                    include: project_search_setting.include.clone(),
-                    exclude: project_search_setting.exclude.clone(),
-                };
-                return (
-                    (SearchOptions::from_settings(&settings)),
-                    settings.include.clone(),
-                    settings.exclude.clone(),
-                    settings.include.is_some() || settings.exclude.is_some(),
-                );
-            }
-        }
-        (
-            (SearchOptions::from_settings(&EditorSettings::get_global(cx).search)),
-            EditorSettings::get_global(cx).search.include.clone(),
-            EditorSettings::get_global(cx).search.exclude.clone(),
-            EditorSettings::get_global(cx).search.include.is_some()
-                || EditorSettings::get_global(cx).search.exclude.is_some(),
-        )
-    }
 
     pub fn new(
         workspace: WeakView<Workspace>,
@@ -686,15 +645,16 @@ impl ProjectSearchView {
         let mut replacement_text = None;
         let mut query_text = String::new();
         let mut subscriptions = Vec::new();
-        // Read in settings from setting.json (project and global)
-        let (mut options, mut include_filters, mut exclude_filters, mut filters_enabled) =
-            Self::load_searchsettings(&model, cx);
-        // Read in settings from history
-        if let Some(settings) = settings {
-            options = settings.search_options;
-            filters_enabled = settings.filters_enabled;
-        }
-        // Read in settings from active query
+
+        // Read in settings if available
+        let (mut options, filters_enabled) = if let Some(settings) = settings {
+            (settings.search_options, settings.filters_enabled)
+        } else {
+            let search_options =
+                SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+            (search_options, false)
+        };
+
         {
             let model = model.read(cx);
             project = model.project.clone();
@@ -703,24 +663,7 @@ impl ProjectSearchView {
                 query_text = active_query.as_str().to_string();
                 replacement_text = active_query.replacement().map(ToOwned::to_owned);
                 options = SearchOptions::from_query(active_query);
-                include_filters = Some(
-                    active_query
-                        .as_inner()
-                        .files_to_include()
-                        .sources()
-                        .join(","),
-                );
-                exclude_filters = Some(
-                    active_query
-                        .as_inner()
-                        .files_to_exclude()
-                        .sources()
-                        .join(","),
-                );
             }
-        }
-        if include_filters.is_some() || exclude_filters.is_some() {
-            filters_enabled = true;
         }
         subscriptions.push(cx.observe(&model, |this, _, cx| this.model_changed(cx)));
 
@@ -775,9 +718,7 @@ impl ProjectSearchView {
         let included_files_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Include: crates/**/*.toml", cx);
-            if let Some(include_filters) = include_filters {
-                editor.set_text(include_filters, cx)
-            }
+
             editor
         });
         // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
@@ -790,9 +731,7 @@ impl ProjectSearchView {
         let excluded_files_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
             editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
-            if let Some(exclude_filters) = exclude_filters {
-                editor.set_text(exclude_filters, cx)
-            }
+
             editor
         });
         // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes

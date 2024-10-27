@@ -2410,8 +2410,6 @@ mod tests {
                 case_sensitive: false,
                 include_ignored: false,
                 regex: false,
-                include: None,
-                exclude: None,
             },
             cx,
         );
@@ -2477,8 +2475,6 @@ mod tests {
                 case_sensitive: true,
                 include_ignored: false,
                 regex: false,
-                include: None,
-                exclude: None,
             },
             cx,
         );

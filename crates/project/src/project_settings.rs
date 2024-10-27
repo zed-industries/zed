@@ -56,23 +56,6 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
-
-    pub search: Option<SearchSettings>,
-}
-
-/// Default options for buffer and project search items.
-#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct SearchSettings {
-    #[serde(default)]
-    pub whole_word: bool,
-    #[serde(default)]
-    pub case_sensitive: bool,
-    #[serde(default)]
-    pub include_ignored: bool,
-    #[serde(default)]
-    pub regex: bool,
-    pub include: Option<String>,
-    pub exclude: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
