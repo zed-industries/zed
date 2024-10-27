@@ -855,11 +855,11 @@ mod tests {
 
     #[gpui::test]
     async fn test_text_with_inline_html() {
-        let parsed = parse("This is some text with a <sometag>tag</sometag> inside.").await;
+        let parsed = parse("This is a paragraph with an inline HTML <sometag>tag</sometag>.").await;
 
         assert_eq!(
             parsed.children,
-            vec![p("This is some text with a tag inside.", 0..55),],
+            vec![p("This is a paragraph with an inline HTML tag.", 0..63),],
         );
     }
 
@@ -1110,7 +1110,7 @@ Some other content
     async fn test_list_item_with_inline_html() {
         let parsed = parse(
             "\
-*   This is a list item with a <sometag>tag</sometag> inside.
+*   This is a list item with an inline HTML <sometag>tag</sometag>.
 ",
         )
         .await;
@@ -1118,10 +1118,10 @@ Some other content
         assert_eq!(
             parsed.children,
             vec![list_item(
-                0..61,
+                0..67,
                 1,
                 Unordered,
-                vec![p("This is a list item with a tag inside.", 4..31),],
+                vec![p("This is a list item with an inline HTML tag.", 4..44),],
             ),],
         );
     }
