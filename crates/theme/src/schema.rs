@@ -71,7 +71,7 @@ pub struct ThemeContent {
 }
 
 /// The content of a serialized theme.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ThemeStyleContent {
     #[serde(default, rename = "background.appearance")]
@@ -133,7 +133,7 @@ impl ThemeStyleContent {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ThemeColorsContent {
     /// Border color. Used for most borders, is usually a high contrast color.
@@ -952,7 +952,7 @@ impl ThemeColorsContent {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct StatusColorsContent {
     /// Indicates some kind of conflict, like a file changed on disk while it was open, or
@@ -1273,17 +1273,17 @@ impl StatusColorsContent {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct AccentContent(pub Option<String>);
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PlayerColorContent {
     pub cursor: Option<String>,
     pub background: Option<String>,
     pub selection: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyleContent {
     Normal,
@@ -1301,7 +1301,7 @@ impl From<FontStyleContent> for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq)]
 #[repr(u16)]
 pub enum FontWeightContent {
     Thin = 100,
@@ -1359,7 +1359,7 @@ impl From<FontWeightContent> for FontWeight {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct HighlightStyleContent {
     pub color: Option<String>,

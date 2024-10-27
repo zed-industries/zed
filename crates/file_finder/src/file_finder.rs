@@ -5,6 +5,7 @@ mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 
+use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
@@ -59,7 +60,7 @@ impl FileFinder {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, action: &workspace::ToggleFileFinder, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, action.separate_history, cx);
+                Self::open(workspace, action.separate_history, cx).detach();
                 return;
             };
 
@@ -72,8 +73,13 @@ impl FileFinder {
         });
     }
 
-    fn open(workspace: &mut Workspace, separate_history: bool, cx: &mut ViewContext<Workspace>) {
+    fn open(
+        workspace: &mut Workspace,
+        separate_history: bool,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<()> {
         let project = workspace.project().read(cx);
+        let fs = project.fs();
 
         let currently_opened_path = workspace
             .active_item(cx)
@@ -88,28 +94,51 @@ impl FileFinder {
         let history_items = workspace
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
-            .filter(|(_, history_abs_path)| match history_abs_path {
-                Some(abs_path) => history_file_exists(abs_path),
-                None => true,
+            .filter_map(|(project_path, abs_path)| {
+                if project.entry_for_path(&project_path, cx).is_some() {
+                    return Some(Task::ready(Some(FoundPath::new(project_path, abs_path))));
+                }
+                let abs_path = abs_path?;
+                if project.is_local() {
+                    let fs = fs.clone();
+                    Some(cx.background_executor().spawn(async move {
+                        if fs.is_file(&abs_path).await {
+                            Some(FoundPath::new(project_path, Some(abs_path)))
+                        } else {
+                            None
+                        }
+                    }))
+                } else {
+                    Some(Task::ready(Some(FoundPath::new(
+                        project_path,
+                        Some(abs_path),
+                    ))))
+                }
             })
-            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path))
             .collect::<Vec<_>>();
+        cx.spawn(move |workspace, mut cx| async move {
+            let history_items = join_all(history_items).await.into_iter().flatten();
 
-        let project = workspace.project().clone();
-        let weak_workspace = cx.view().downgrade();
-        workspace.toggle_modal(cx, |cx| {
-            let delegate = FileFinderDelegate::new(
-                cx.view().downgrade(),
-                weak_workspace,
-                project,
-                currently_opened_path,
-                history_items,
-                separate_history,
-                cx,
-            );
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    let weak_workspace = cx.view().downgrade();
+                    workspace.toggle_modal(cx, |cx| {
+                        let delegate = FileFinderDelegate::new(
+                            cx.view().downgrade(),
+                            weak_workspace,
+                            project,
+                            currently_opened_path,
+                            history_items.collect(),
+                            separate_history,
+                            cx,
+                        );
 
-            FileFinder::new(delegate, cx)
-        });
+                        FileFinder::new(delegate, cx)
+                    });
+                })
+                .ok();
+        })
     }
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
@@ -455,16 +484,6 @@ impl FoundPath {
 }
 
 const MAX_RECENT_SELECTIONS: usize = 20;
-
-#[cfg(not(test))]
-fn history_file_exists(abs_path: &PathBuf) -> bool {
-    abs_path.exists()
-}
-
-#[cfg(test)]
-fn history_file_exists(abs_path: &Path) -> bool {
-    !abs_path.ends_with("nonexistent.rs")
-}
 
 pub enum Event {
     Selected(ProjectPath),

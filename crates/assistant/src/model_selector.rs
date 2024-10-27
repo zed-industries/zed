@@ -158,39 +158,34 @@ impl PickerDelegate for ModelPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .start_slot(
-                    div().pr_1().child(
+                    div().pr_0p5().child(
                         Icon::new(model_info.icon)
                             .color(Color::Muted)
                             .size(IconSize::Medium),
                     ),
                 )
                 .child(
-                    h_flex()
-                        .w_full()
-                        .justify_between()
-                        .font_buffer(cx)
-                        .min_w(px(240.))
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(Label::new(model_info.model.name().0.clone()))
-                                .child(
-                                    Label::new(provider_name)
-                                        .size(LabelSize::XSmall)
-                                        .color(Color::Muted),
-                                )
-                                .children(match model_info.availability {
-                                    LanguageModelAvailability::Public => None,
-                                    LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
-                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => {
-                                        show_badges.then(|| {
-                                            Label::new("Pro")
-                                                .size(LabelSize::XSmall)
-                                                .color(Color::Muted)
-                                        })
-                                    }
-                                }),
-                        ),
+                    h_flex().w_full().justify_between().min_w(px(200.)).child(
+                        h_flex()
+                            .gap_1p5()
+                            .child(Label::new(model_info.model.name().0.clone()))
+                            .child(
+                                Label::new(provider_name)
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            )
+                            .children(match model_info.availability {
+                                LanguageModelAvailability::Public => None,
+                                LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
+                                LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => {
+                                    show_badges.then(|| {
+                                        Label::new("Pro")
+                                            .size(LabelSize::XSmall)
+                                            .color(Color::Muted)
+                                    })
+                                }
+                            }),
+                    ),
                 )
                 .end_slot(div().when(model_info.is_selected, |this| {
                     this.child(
@@ -212,7 +207,7 @@ impl PickerDelegate for ModelPickerDelegate {
             h_flex()
                 .w_full()
                 .border_t_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(cx.theme().colors().border_variant)
                 .p_1()
                 .gap_4()
                 .justify_between()

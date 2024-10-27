@@ -865,14 +865,20 @@ impl FakeFsState {
         let mut entry_stack = Vec::new();
         'outer: loop {
             let mut path_components = path.components().peekable();
+            let mut prefix = None;
             while let Some(component) = path_components.next() {
                 match component {
-                    Component::Prefix(_) => panic!("prefix paths aren't supported"),
+                    Component::Prefix(prefix_component) => prefix = Some(prefix_component),
                     Component::RootDir => {
                         entry_stack.clear();
                         entry_stack.push(self.root.clone());
                         canonical_path.clear();
-                        canonical_path.push("/");
+                        match prefix {
+                            Some(prefix_component) => {
+                                canonical_path.push(prefix_component.as_os_str());
+                            }
+                            None => canonical_path.push("/"),
+                        }
                     }
                     Component::CurDir => {}
                     Component::ParentDir => {
@@ -1384,11 +1390,12 @@ impl Fs for FakeFs {
         let mut created_dirs = Vec::new();
         let mut cur_path = PathBuf::new();
         for component in path.components() {
-            let mut state = self.state.lock();
+            let should_skip = matches!(component, Component::Prefix(..) | Component::RootDir);
             cur_path.push(component);
-            if cur_path == Path::new("/") {
+            if should_skip {
                 continue;
             }
+            let mut state = self.state.lock();
 
             let inode = state.next_inode;
             let mtime = state.next_mtime;
