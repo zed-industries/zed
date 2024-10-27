@@ -20,11 +20,7 @@ use util::ResultExt;
 use uuid::Uuid;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, ProjectItem, SerializableItem, Workspace};
 
-use super::{
-    deserialize_cells,
-    static_sample::{complex_example, no_cells_example, simple_example},
-    Cell, CellId, DeserializedCell, RenderableCell,
-};
+use super::{deserialize_cells, Cell, CellId, DeserializedCell, RenderableCell};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -210,38 +206,6 @@ impl NotebookEditor {
             cell_map,
         }
     }
-
-    // pub fn load(workspace: View<Workspace>, cx: &mut WindowContext) -> Task<Result<View<Self>>> {
-    //     let weak_workspace = workspace.downgrade();
-    //     let workspace = workspace.read(cx);
-    //     let project = workspace.project().to_owned();
-
-    //     cx.spawn(|mut cx| async move {
-    //         let notebook = deserialize_notebook(simple_example())?;
-
-    //         cx.new_view(|cx| Self::new(weak_workspace.clone(), project, notebook, cx))
-    //     })
-    // }
-
-    // pub fn open(
-    //     workspace_view: View<Workspace>,
-    //     cx: &mut WindowContext,
-    // ) -> Task<Result<View<Self>>> {
-    //     let weak_workspace = workspace_view.downgrade();
-    //     let workspace = workspace_view.read(cx);
-    //     let project = workspace.project().to_owned();
-    //     let pane = workspace.active_pane().clone();
-    //     let notebook = Self::load(workspace_view, cx);
-
-    //     cx.spawn(|mut cx| async move {
-    //         let notebook = notebook.await?;
-    //         pane.update(&mut cx, |pane, cx| {
-    //             pane.add_item(Box::new(notebook.clone()), true, true, None, cx);
-    //         })?;
-
-    //         anyhow::Ok(notebook)
-    //     })
-    // }
 
     fn cells(&self) -> impl Iterator<Item = &Cell> {
         self.cell_order
