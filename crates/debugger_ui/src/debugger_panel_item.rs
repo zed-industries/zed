@@ -496,8 +496,9 @@ impl Item for DebugPanelItem {
         _: &WindowContext,
     ) -> AnyElement {
         Label::new(format!(
-            "{:?} - Thread {}",
-            self.client_kind, self.thread_id
+            "{} - Thread {}",
+            self.client_kind.diplay_name(),
+            self.thread_id
         ))
         .color(if params.selected {
             Color::Default
@@ -509,8 +510,8 @@ impl Item for DebugPanelItem {
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
         Some(SharedString::from(format!(
-            "{:?} Thread {} - {:?}",
-            self.client_kind,
+            "{} Thread {} - {:?}",
+            self.client_kind.diplay_name(),
             self.thread_id,
             self.thread_state.read(cx).status,
         )))

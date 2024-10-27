@@ -2,7 +2,6 @@ use dap::transport::{StdioTransport, Transport};
 
 use crate::*;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) struct PythonDebugAdapter {}
 
 impl PythonDebugAdapter {

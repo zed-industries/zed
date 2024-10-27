@@ -5,7 +5,6 @@ use task::DebugAdapterConfig;
 
 use crate::*;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) struct LldbDebugAdapter {}
 
 impl LldbDebugAdapter {

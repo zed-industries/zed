@@ -28,7 +28,7 @@ pub trait DapDelegate {
     fn http_client(&self) -> Option<Arc<dyn HttpClient>>;
     fn node_runtime(&self) -> Option<NodeRuntime>;
     fn fs(&self) -> Arc<dyn Fs>;
-    fn cached_binaries(&self) -> Arc<Mutex<HashMap<DebugAdapterName, DebugAdapterBinary>>>;
+    fn updated_adapters(&self) -> Arc<Mutex<HashSet<DebugAdapterName>>>;
     fn update_status(&self, dap_name: DebugAdapterName, status: DapStatus);
 }
 
@@ -192,9 +192,15 @@ pub trait DebugAdapter: 'static + Send + Sync {
         delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
     ) -> Result<DebugAdapterBinary> {
-        if let Some(binary) = delegate.cached_binaries().lock().await.get(&self.name()) {
+        if delegate
+            .updated_adapters()
+            .lock()
+            .await
+            .contains(&self.name())
+        {
             log::info!("Using cached debug adapter binary {}", self.name());
-            return Ok(binary.clone());
+
+            return self.get_installed_binary(delegate, config).await;
         }
 
         log::info!("Getting latest version of debug adapter {}", self.name());
@@ -208,29 +214,40 @@ pub trait DebugAdapter: 'static + Send + Sync {
                 .as_ref()
                 .is_ok_and(|binary| binary.version == version.tag_name)
             {
-                let binary = binary?;
-
                 delegate
-                    .cached_binaries()
+                    .updated_adapters()
                     .lock_arc()
                     .await
-                    .insert(self.name(), binary.clone());
+                    .insert(self.name());
 
-                return Ok(binary);
+                return Ok(binary?);
             }
 
             delegate.update_status(self.name(), DapStatus::Downloading);
             self.install_binary(version, delegate).await?;
             binary = self.get_installed_binary(delegate, config).await;
+        } else {
+            log::error!(
+                "Failed getting latest version of debug adapter {}",
+                self.name()
+            );
         }
 
+        if binary.is_err() {
+            delegate.update_status(
+                self.name(),
+                DapStatus::Failed {
+                    error: format!("Failed to download {}", self.name()),
+                },
+            );
+        }
         let binary = binary?;
 
         delegate
-            .cached_binaries()
+            .updated_adapters()
             .lock_arc()
             .await
-            .insert(self.name(), binary.clone());
+            .insert(self.name());
 
         Ok(binary)
     }

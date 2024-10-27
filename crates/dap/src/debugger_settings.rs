@@ -19,6 +19,10 @@ pub struct DebuggerSettings {
     ///
     /// Default: true
     pub button: bool,
+    /// Time in milliseconds until timeout error when connecting to a TCP debug adapter
+    ///
+    /// Default: 2000ms
+    pub timeout: u64,
 }
 
 impl Default for DebuggerSettings {
@@ -27,6 +31,7 @@ impl Default for DebuggerSettings {
             button: true,
             save_breakpoints: true,
             stepping_granularity: SteppingGranularity::Line,
+            timeout: 2000,
         }
     }
 }

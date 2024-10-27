@@ -1,16 +1,25 @@
+use std::net::Ipv4Addr;
+
 use dap::transport::{TcpTransport, Transport};
 
 use crate::*;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub(crate) struct JsDebugAdapter {}
+pub(crate) struct JsDebugAdapter {
+    port: u16,
+    host: Ipv4Addr,
+    timeout: Option<u64>,
+}
 
 impl JsDebugAdapter {
     const ADAPTER_NAME: &'static str = "vscode-js-debug";
     const ADAPTER_PATH: &'static str = "src/dapDebugServer.js";
 
-    pub(crate) fn new() -> Self {
-        JsDebugAdapter {}
+    pub(crate) async fn new(host: TCPHost) -> Result<Self> {
+        Ok(JsDebugAdapter {
+            host: host.host(),
+            timeout: host.timeout,
+            port: TcpTransport::port(&host).await?,
+        })
     }
 }
 
@@ -21,11 +30,7 @@ impl DebugAdapter for JsDebugAdapter {
     }
 
     fn transport(&self) -> Box<dyn Transport> {
-        Box::new(TcpTransport::new(TCPHost {
-            port: Some(8133),
-            host: None,
-            timeout: None,
-        }))
+        Box::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn fetch_latest_adapter_version(
@@ -73,7 +78,7 @@ impl DebugAdapter for JsDebugAdapter {
                 .into_owned(),
             arguments: Some(vec![
                 adapter_path.join(Self::ADAPTER_PATH).into(),
-                "8133".into(),
+                self.port.to_string().into(),
             ]),
             envs: None,
             version,

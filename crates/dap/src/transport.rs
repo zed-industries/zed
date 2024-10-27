@@ -6,6 +6,7 @@ use dap_types::{
 };
 use futures::{select, AsyncBufRead, AsyncReadExt as _, AsyncWrite, FutureExt as _};
 use gpui::AsyncAppContext;
+use settings::Settings as _;
 use smallvec::SmallVec;
 use smol::{
     channel::{unbounded, Receiver, Sender},
@@ -23,7 +24,7 @@ use std::{
 };
 use task::TCPHost;
 
-use crate::adapters::DebugAdapterBinary;
+use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
 pub type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -361,27 +362,36 @@ pub trait Transport: 'static + Send + Sync {
     ) -> Result<TransportParams>;
 
     fn has_adapter_logs(&self) -> bool;
+
+    fn clone_box(&self) -> Box<dyn Transport>;
 }
 
+#[derive(Clone)]
 pub struct TcpTransport {
-    config: TCPHost,
+    port: u16,
+    host: Ipv4Addr,
+    timeout: Option<u64>,
 }
 
 impl TcpTransport {
-    pub fn new(config: TCPHost) -> Self {
-        Self { config }
+    pub fn new(host: Ipv4Addr, port: u16, timeout: Option<u64>) -> Self {
+        Self {
+            port,
+            host,
+            timeout,
+        }
     }
 
     /// Get an open port to use with the tcp client when not supplied by debug config
-    async fn get_open_port(host: Ipv4Addr) -> Option<u16> {
-        Some(
-            TcpListener::bind(SocketAddrV4::new(host, 0))
-                .await
-                .ok()?
-                .local_addr()
-                .ok()?
-                .port(),
-        )
+    pub async fn port(host: &TCPHost) -> Result<u16> {
+        if let Some(port) = host.port {
+            Ok(port)
+        } else {
+            Ok(TcpListener::bind(SocketAddrV4::new(host.host(), 0))
+                .await?
+                .local_addr()?
+                .port())
+        }
     }
 }
 
@@ -392,16 +402,6 @@ impl Transport for TcpTransport {
         binary: &DebugAdapterBinary,
         cx: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
-        let host_address = self
-            .config
-            .host
-            .unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1));
-
-        let mut port = self.config.port;
-        if port.is_none() {
-            port = Self::get_open_port(host_address).await;
-        }
-
         let mut command = process::Command::new(&binary.command);
 
         if let Some(args) = &binary.arguments {
@@ -422,16 +422,16 @@ impl Transport for TcpTransport {
             .spawn()
             .with_context(|| "failed to start debug adapter.")?;
 
-        let address = SocketAddrV4::new(
-            host_address,
-            port.ok_or(anyhow!("Port is required to connect to TCP server"))?,
-        );
+        let address = SocketAddrV4::new(self.host, self.port);
 
-        let timeout = self.config.timeout.unwrap_or(2000);
+        let timeout = self.timeout.unwrap_or_else(|| {
+            cx.update(|cx| DebuggerSettings::get_global(cx).timeout)
+                .unwrap_or(2000u64)
+        });
 
         let (rx, tx) = select! {
             _ = cx.background_executor().timer(Duration::from_millis(timeout)).fuse() => {
-                return Err(anyhow!("Connection to tcp DAP timeout"))
+                return Err(anyhow!(format!("Connection to TCP DAP timeout {}:{}", self.host, self.port)))
             },
             result = cx.spawn(|cx| async move {
                 loop {
@@ -444,7 +444,11 @@ impl Transport for TcpTransport {
                 }
             }).fuse() => result
         };
-        log::info!("Debug adapter has connected to tcp server");
+        log::info!(
+            "Debug adapter has connected to TCP server {}:{}",
+            self.host,
+            self.port
+        );
 
         Ok(TransportParams::new(
             Box::new(tx),
@@ -456,8 +460,13 @@ impl Transport for TcpTransport {
     fn has_adapter_logs(&self) -> bool {
         true
     }
+
+    fn clone_box(&self) -> Box<dyn Transport> {
+        Box::new(self.clone())
+    }
 }
 
+#[derive(Clone)]
 pub struct StdioTransport {}
 
 impl StdioTransport {
@@ -513,5 +522,9 @@ impl Transport for StdioTransport {
 
     fn has_adapter_logs(&self) -> bool {
         false
+    }
+
+    fn clone_box(&self) -> Box<dyn Transport> {
+        Box::new(self.clone())
     }
 }

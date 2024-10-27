@@ -16,11 +16,24 @@ impl Default for DebugConnectionType {
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 pub struct TCPHost {
     /// The port that the debug adapter is listening on
+    ///
+    /// Default: We will try to find an open port
     pub port: Option<u16>,
     /// The host that the debug adapter is listening too
+    ///
+    /// Default: 127.0.0.1
     pub host: Option<Ipv4Addr>,
-    /// The max amount of time to connect to a tcp DAP before returning an error
+    /// The max amount of time in milliseconds to connect to a tcp DAP before returning an error
+    ///
+    /// Default: 2000ms
     pub timeout: Option<u64>,
+}
+
+impl TCPHost {
+    /// Get the host or fallback to the default host
+    pub fn host(&self) -> Ipv4Addr {
+        self.host.unwrap_or_else(|| Ipv4Addr::new(127, 0, 0, 1))
+    }
 }
 
 /// Represents the type that will determine which request to call on the debug adapter
@@ -44,22 +57,23 @@ pub enum DebugAdapterKind {
     /// Use debugpy
     Python,
     /// Use vscode-php-debug
-    PHP,
+    PHP(TCPHost),
     /// Use vscode-js-debug
-    Javascript,
+    Javascript(TCPHost),
     /// Use lldb
     Lldb,
 }
 
-impl std::fmt::Display for DebugAdapterKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(match self {
+impl DebugAdapterKind {
+    /// Returns the display name for the adapter kind
+    pub fn diplay_name(&self) -> &str {
+        match self {
             Self::Custom(_) => "Custom",
             Self::Python => "Python",
-            Self::PHP => "PHP",
-            Self::Javascript => "JavaScript",
+            Self::PHP(_) => "PHP",
+            Self::Javascript(_) => "JavaScript",
             Self::Lldb => "LLDB",
-        })
+        }
     }
 }
 

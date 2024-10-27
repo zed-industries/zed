@@ -6,16 +6,26 @@ use task::DebugAdapterConfig;
 
 use crate::*;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
 pub(crate) struct CustomDebugAdapter {
     custom_args: CustomArgs,
+    transport: Box<dyn Transport>,
 }
 
 impl CustomDebugAdapter {
     const ADAPTER_NAME: &'static str = "custom_dap";
 
-    pub(crate) fn new(custom_args: CustomArgs) -> Self {
-        CustomDebugAdapter { custom_args }
+    pub(crate) async fn new(custom_args: CustomArgs) -> Result<Self> {
+        Ok(CustomDebugAdapter {
+            transport: match &custom_args.connection {
+                DebugConnectionType::TCP(host) => Box::new(TcpTransport::new(
+                    host.host(),
+                    TcpTransport::port(&host).await?,
+                    host.timeout,
+                )),
+                DebugConnectionType::STDIO => Box::new(StdioTransport::new()),
+            },
+            custom_args,
+        })
     }
 }
 
@@ -26,10 +36,7 @@ impl DebugAdapter for CustomDebugAdapter {
     }
 
     fn transport(&self) -> Box<dyn Transport> {
-        match &self.custom_args.connection {
-            DebugConnectionType::STDIO => Box::new(StdioTransport::new()),
-            DebugConnectionType::TCP(tcp_host) => Box::new(TcpTransport::new(tcp_host.clone())),
-        }
+        self.transport.clone_box()
     }
 
     async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {

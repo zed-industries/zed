@@ -1,16 +1,24 @@
 use dap::transport::{TcpTransport, Transport};
+use std::net::Ipv4Addr;
 
 use crate::*;
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub(crate) struct PhpDebugAdapter {}
+pub(crate) struct PhpDebugAdapter {
+    port: u16,
+    host: Ipv4Addr,
+    timeout: Option<u64>,
+}
 
 impl PhpDebugAdapter {
     const ADAPTER_NAME: &'static str = "vscode-php-debug";
     const ADAPTER_PATH: &'static str = "out/phpDebug.js";
 
-    pub(crate) fn new() -> Self {
-        PhpDebugAdapter {}
+    pub(crate) async fn new(host: TCPHost) -> Result<Self> {
+        Ok(PhpDebugAdapter {
+            port: TcpTransport::port(&host).await?,
+            host: host.host(),
+            timeout: host.timeout,
+        })
     }
 }
 
@@ -21,11 +29,7 @@ impl DebugAdapter for PhpDebugAdapter {
     }
 
     fn transport(&self) -> Box<dyn Transport> {
-        Box::new(TcpTransport::new(TCPHost {
-            port: Some(8132),
-            host: None,
-            timeout: None,
-        }))
+        Box::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn fetch_latest_adapter_version(
@@ -34,7 +38,7 @@ impl DebugAdapter for PhpDebugAdapter {
     ) -> Result<AdapterVersion> {
         let github_repo = GithubRepo {
             repo_name: Self::ADAPTER_NAME.into(),
-            repo_owner: "xdebug".to_string(),
+            repo_owner: "xdebug".into(),
         };
 
         adapters::fetch_latest_adapter_version_from_github(github_repo, delegate).await
@@ -62,7 +66,7 @@ impl DebugAdapter for PhpDebugAdapter {
             .file_name()
             .and_then(|file_name| file_name.to_str())
             .and_then(|file_name| file_name.strip_prefix(&file_name_prefix))
-            .ok_or_else(|| anyhow!("Php debug adapter has invalid file name"))?
+            .ok_or_else(|| anyhow!("PHP debug adapter has invalid file name"))?
             .to_string();
 
         Ok(DebugAdapterBinary {
@@ -73,7 +77,7 @@ impl DebugAdapter for PhpDebugAdapter {
                 .into_owned(),
             arguments: Some(vec![
                 adapter_path.join(Self::ADAPTER_PATH).into(),
-                "--server=8132".into(),
+                format!("--server={}", self.port).into(),
             ]),
             envs: None,
             version,
