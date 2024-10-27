@@ -224,15 +224,15 @@ impl LspAdapter for PythonLspAdapter {
                     user_settings = Value::Object(serde_json::Map::default());
                 }
                 let object = user_settings.as_object_mut().unwrap();
-                object
+                if let Some(python) = object
                     .entry("python")
                     .or_insert(Value::Object(serde_json::Map::default()))
                     .as_object_mut()
-                    .map(|python| {
-                        python
-                            .entry("pythonPath")
-                            .or_insert(Value::String(toolchain.path.into()));
-                    });
+                {
+                    python
+                        .entry("pythonPath")
+                        .or_insert(Value::String(toolchain.path.into()));
+                }
             }
             user_settings
         })
