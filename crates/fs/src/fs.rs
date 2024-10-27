@@ -875,9 +875,11 @@ impl FakeFsState {
                         canonical_path.clear();
                         match prefix {
                             Some(prefix_component) => {
-                                canonical_path.push(prefix_component.as_os_str());
+                                canonical_path = PathBuf::from(prefix_component.as_os_str());
+                                // Prefixes like `C:\\` are represented without their trailing slash, so we have to re-add it.
+                                canonical_path.push(std::path::MAIN_SEPARATOR_STR);
                             }
-                            None => canonical_path.push("/"),
+                            None => canonical_path = PathBuf::from(std::path::MAIN_SEPARATOR_STR),
                         }
                     }
                     Component::CurDir => {}
@@ -900,7 +902,7 @@ impl FakeFsState {
                                 }
                             }
                             entry_stack.push(entry.clone());
-                            canonical_path.push(name);
+                            canonical_path = canonical_path.join(name);
                         } else {
                             return None;
                         }
@@ -962,6 +964,10 @@ pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
+    /// We need to use something large enough for Windows and Unix to consider this a new file.
+    /// https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html#platform-specific-behavior
+    const SYSTEMTIME_INTERVAL: u64 = 100;
+
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
         Arc::new(Self {
             executor,
@@ -995,7 +1001,7 @@ impl FakeFs {
         let new_mtime = state.next_mtime;
         let new_inode = state.next_inode;
         state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         state
             .write_path(path, move |entry| {
                 match entry {
@@ -1048,7 +1054,7 @@ impl FakeFs {
         let inode = state.next_inode;
         let mtime = state.next_mtime;
         state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
@@ -1399,7 +1405,7 @@ impl Fs for FakeFs {
 
             let inode = state.next_inode;
             let mtime = state.next_mtime;
-            state.next_mtime += Duration::from_nanos(1);
+            state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
             state.next_inode += 1;
             state.write_path(&cur_path, |entry| {
                 entry.or_insert_with(|| {
@@ -1425,7 +1431,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let inode = state.next_inode;
         let mtime = state.next_mtime;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         state.next_inode += 1;
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
@@ -1560,7 +1566,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let mtime = state.next_mtime;
         let inode = util::post_inc(&mut state.next_inode);
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         let source_entry = state.read_path(&source)?;
         let content = source_entry.lock().file_content(&source)?.clone();
         let mut kind = Some(PathEventKind::Created);
