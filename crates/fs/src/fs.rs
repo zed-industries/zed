@@ -874,8 +874,14 @@ impl FakeFsState {
                         entry_stack.push(self.root.clone());
                         canonical_path.clear();
                         match prefix {
-                            Some(prefix_component) => {
-                                canonical_path.push(prefix_component.as_os_str());
+                            Some(_prefix_component) => {
+                                #[cfg(windows)]
+                                {
+                                    let root = PathBuf::from("c:\\");
+                                    canonical_path.push(&root);
+                                }
+                                #[cfg(not(windows))]
+                                canonical_path.push(_prefix_component.as_os_str());
                             }
                             None => canonical_path.push("/"),
                         }
@@ -995,7 +1001,7 @@ impl FakeFs {
         let new_mtime = state.next_mtime;
         let new_inode = state.next_inode;
         state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(100);
         state
             .write_path(path, move |entry| {
                 match entry {
@@ -1048,7 +1054,7 @@ impl FakeFs {
         let inode = state.next_inode;
         let mtime = state.next_mtime;
         state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(100);
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
@@ -1399,7 +1405,7 @@ impl Fs for FakeFs {
 
             let inode = state.next_inode;
             let mtime = state.next_mtime;
-            state.next_mtime += Duration::from_nanos(1);
+            state.next_mtime += Duration::from_nanos(100);
             state.next_inode += 1;
             state.write_path(&cur_path, |entry| {
                 entry.or_insert_with(|| {
@@ -1425,7 +1431,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let inode = state.next_inode;
         let mtime = state.next_mtime;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(100);
         state.next_inode += 1;
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
@@ -1560,7 +1566,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let mtime = state.next_mtime;
         let inode = util::post_inc(&mut state.next_inode);
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(100);
         let source_entry = state.read_path(&source)?;
         let content = source_entry.lock().file_content(&source)?.clone();
         let mut kind = Some(PathEventKind::Created);
