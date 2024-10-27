@@ -160,7 +160,7 @@ pub enum ScrollBeyondLastLine {
 }
 
 /// Default options for buffer and project search items.
-#[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct SearchSettings {
     #[serde(default)]
     pub whole_word: bool,
@@ -170,6 +170,8 @@ pub struct SearchSettings {
     pub include_ignored: bool,
     #[serde(default)]
     pub regex: bool,
+    pub include: Option<String>,
+    pub exclude: Option<String>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
