@@ -13,6 +13,8 @@ path = "src/git_panel.rs"
 doctest = false
 
 [dependencies]
+git.workspace = true
+git2.workspace = true
 anyhow.workspace = true
 collections.workspace = true
 db.workspace = true

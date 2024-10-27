@@ -202,6 +202,7 @@ pub enum IconName {
     GenericMaximize,
     GenericMinimize,
     GenericRestore,
+    Git,
     Github,
     Hash,
     HistoryRerun,

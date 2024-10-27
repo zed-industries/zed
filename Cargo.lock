@@ -4907,6 +4907,8 @@ dependencies = [
  "editor",
  "file_icons",
  "fuzzy",
+ "git",
+ "git2",
  "gpui",
  "itertools 0.13.0",
  "language",
