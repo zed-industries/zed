@@ -17,6 +17,7 @@ use project::{FakeFs, Project};
 use std::{
     any::TypeId,
     ops::{Deref, DerefMut, Range},
+    path::Path,
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -42,17 +43,21 @@ impl EditorTestContext {
     pub async fn new(cx: &mut gpui::TestAppContext) -> EditorTestContext {
         let fs = FakeFs::new(cx.executor());
         // fs.insert_file("/file", "".to_owned()).await;
+        #[cfg(windows)]
+        let root = Path::new("c:\\root");
+        #[cfg(not(windows))]
+        let root = Path::new("/root");
         fs.insert_tree(
-            "/root",
+            root,
             serde_json::json!({
                 "file": "",
             }),
         )
         .await;
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let project = Project::test(fs, [root.as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/root/file", cx)
+                project.open_local_buffer(root.join("file"), cx)
             })
             .await
             .unwrap();
