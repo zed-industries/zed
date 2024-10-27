@@ -5,7 +5,7 @@ pub use archive::extract_zip;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
-use http_client::{HttpClient, Uri};
+use http_client::HttpClient;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;
@@ -27,11 +27,18 @@ use smol::process::windows::CommandExt;
 pub struct NodeBinaryOptions {
     pub allow_path_lookup: bool,
     pub allow_binary_download: bool,
+    pub allow_user_npmrc: bool,
     pub use_paths: Option<(PathBuf, PathBuf)>,
 }
 
 #[derive(Clone)]
 pub struct NodeRuntime(Arc<Mutex<NodeRuntimeState>>);
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct NpmOptions {
+    pub allow_user_npmrc: bool,
+    pub proxy: Option<String>,
+}
 
 struct NodeRuntimeState {
     http: Arc<dyn HttpClient>,
@@ -62,6 +69,41 @@ impl NodeRuntime {
         })))
     }
 
+    async fn npm_options(&self) -> Result<NpmOptions> {
+        let mut state = self.0.lock().await;
+
+        while state.options.borrow().is_none() {
+            state.options.changed().await?;
+        }
+        let options = state.options.borrow().clone().unwrap();
+
+        let mut npm_options = NpmOptions {
+            allow_user_npmrc: false,
+            proxy: None,
+        };
+
+        if options.allow_user_npmrc {
+            npm_options.allow_user_npmrc = true;
+        }
+
+        let http = state.http.clone();
+
+        if let Some(ref proxy) = http.proxy() {
+            // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
+            // NodeRuntime without environment information can not parse `localhost`
+            // correctly.
+            // TODO: map to `[::1]` if we are using ipv6
+            npm_options.proxy = Some(
+                proxy
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .replace("localhost", "127.0.0.1"),
+            );
+        }
+
+        Ok(npm_options)
+    }
+
     async fn instance(&self) -> Result<Box<dyn NodeRuntimeTrait>> {
         let mut state = self.0.lock().await;
 
@@ -90,7 +132,7 @@ impl NodeRuntime {
         }
 
         let instance = if options.allow_binary_download {
-            ManagedNodeRuntime::install_if_needed(&state.http).await?
+            ManagedNodeRuntime::install_if_needed(&state.http, options.allow_user_npmrc).await?
         } else {
             Box::new(UnavailableNodeRuntime)
         };
@@ -109,10 +151,11 @@ impl NodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
-        let http = self.0.lock().await.http.clone();
+        let npm_options = self.npm_options().await?;
+
         self.instance()
             .await?
-            .run_npm_subcommand(Some(directory), http.proxy(), subcommand, args)
+            .run_npm_subcommand(Some(directory), Some(npm_options), subcommand, args)
             .await
     }
 
@@ -128,13 +171,13 @@ impl NodeRuntime {
     }
 
     pub async fn npm_package_latest_version(&self, name: &str) -> Result<String> {
-        let http = self.0.lock().await.http.clone();
+        let npm_options = self.npm_options().await?;
         let output = self
             .instance()
             .await?
             .run_npm_subcommand(
                 None,
-                http.proxy(),
+                Some(npm_options),
                 "info",
                 &[
                     name,
@@ -247,7 +290,7 @@ trait NodeRuntimeTrait: Send + Sync {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        npm_options: Option<NpmOptions>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output>;
@@ -292,7 +335,10 @@ impl ManagedNodeRuntime {
         std::env::join_paths(env_path).context("failed to create PATH env variable")
     }
 
-    async fn install_if_needed(http: &Arc<dyn HttpClient>) -> Result<Box<dyn NodeRuntimeTrait>> {
+    async fn install_if_needed(
+        http: &Arc<dyn HttpClient>,
+        allow_user_npmrc: bool,
+    ) -> Result<Box<dyn NodeRuntimeTrait>> {
         log::info!("Node runtime install_if_needed");
 
         let os = match consts::OS {
@@ -324,9 +370,12 @@ impl ManagedNodeRuntime {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .args(["--cache".into(), node_dir.join("cache")])
-            .args(["--userconfig".into(), node_dir.join("blank_user_npmrc")])
-            .args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
+            .args(["--cache".into(), node_dir.join("cache")]);
+
+        command.args(["--globalconfig".into(), node_dir.join("blank_global_npmrc")]);
+        if !allow_user_npmrc {
+            command.args(["--userconfig".into(), node_dir.join("blank_user_npmrc")]);
+        }
 
         #[cfg(windows)]
         command.creation_flags(windows::Win32::System::Threading::CREATE_NO_WINDOW.0);
@@ -395,11 +444,16 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        npm_options: Option<NpmOptions>,
         subcommand: &str,
         args: &[&str],
     ) -> Result<Output> {
-        let attempt = || async move {
+        let attempt = |npm_options: Option<NpmOptions>| async move {
+            let (proxy, allow_user_npmrc) = if let Some(npm_options) = npm_options {
+                (npm_options.proxy.clone(), npm_options.allow_user_npmrc)
+            } else {
+                (None, false)
+            };
             let node_binary = self.installation_path.join(Self::NODE_PATH);
             let npm_file = self.installation_path.join(Self::NPM_PATH);
             let env_path = self.node_environment_path().await?;
@@ -417,10 +471,12 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
             command.args(["--cache".into(), self.installation_path.join("cache")]);
-            command.args([
-                "--userconfig".into(),
-                self.installation_path.join("blank_user_npmrc"),
-            ]);
+            if !allow_user_npmrc {
+                command.args([
+                    "--userconfig".into(),
+                    self.installation_path.join("blank_user_npmrc"),
+                ]);
+            }
             command.args([
                 "--globalconfig".into(),
                 self.installation_path.join("blank_global_npmrc"),
@@ -430,9 +486,9 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
             command.output().await.map_err(|e| anyhow!("{e}"))
         };
 
-        let mut output = attempt().await;
+        let mut output = attempt(npm_options.clone()).await;
         if output.is_err() {
-            output = attempt().await;
+            output = attempt(npm_options.clone()).await;
             if output.is_err() {
                 return Err(anyhow!(
                     "failed to launch npm subcommand {subcommand} subcommand\nerr: {:?}",
@@ -539,25 +595,34 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         directory: Option<&Path>,
-        proxy: Option<&Uri>,
+        npm_options: Option<NpmOptions>,
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
+        let (proxy, allow_user_npmrc) = if let Some(npm_options) = npm_options {
+            (npm_options.proxy.clone(), npm_options.allow_user_npmrc)
+        } else {
+            (None, false)
+        };
         let mut command = Command::new(self.npm.clone());
         command
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())
             .arg(subcommand)
-            .args(["--cache".into(), self.scratch_dir.join("cache")])
-            .args([
+            .args(["--cache".into(), self.scratch_dir.join("cache")]);
+
+        if !allow_user_npmrc {
+            command.args([
                 "--userconfig".into(),
                 self.scratch_dir.join("blank_user_npmrc"),
-            ])
-            .args([
-                "--globalconfig".into(),
-                self.scratch_dir.join("blank_global_npmrc"),
-            ])
-            .args(args);
+            ]);
+        }
+        command.args([
+            "--globalconfig".into(),
+            self.scratch_dir.join("blank_global_npmrc"),
+        ]);
+
+        command.args(args);
         configure_npm_command(&mut command, directory, proxy);
         let output = command.output().await?;
         if !output.status.success() {
@@ -623,7 +688,7 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     async fn run_npm_subcommand(
         &self,
         _: Option<&Path>,
-        _: Option<&Uri>,
+        _: Option<NpmOptions>,
         _: &str,
         _: &[&str],
     ) -> anyhow::Result<Output> {
@@ -639,22 +704,12 @@ impl NodeRuntimeTrait for UnavailableNodeRuntime {
     }
 }
 
-fn configure_npm_command(command: &mut Command, directory: Option<&Path>, proxy: Option<&Uri>) {
+fn configure_npm_command(command: &mut Command, directory: Option<&Path>, proxy: Option<String>) {
     if let Some(directory) = directory {
         command.current_dir(directory);
         command.args(["--prefix".into(), directory.to_path_buf()]);
     }
-
     if let Some(proxy) = proxy {
-        // Map proxy settings from `http://localhost:10809` to `http://127.0.0.1:10809`
-        // NodeRuntime without environment information can not parse `localhost`
-        // correctly.
-        // TODO: map to `[::1]` if we are using ipv6
-        let proxy = proxy
-            .to_string()
-            .to_ascii_lowercase()
-            .replace("localhost", "127.0.0.1");
-
         command.args(["--proxy", &proxy]);
     }
 

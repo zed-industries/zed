@@ -298,6 +298,7 @@ fn main() {
                 allow_path_lookup: !settings.ignore_system_version.unwrap_or_default(),
                 // TODO: Expose this setting
                 allow_binary_download: true,
+                allow_user_npmrc: settings.allow_user_npmrc.unwrap_or_else(|| false),
                 use_paths: settings.path.as_ref().map(|node_path| {
                     let node_path = PathBuf::from(shellexpand::tilde(node_path).as_ref());
                     let npm_path = settings

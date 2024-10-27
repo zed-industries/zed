@@ -67,6 +67,10 @@ pub struct NodeBinarySettings {
     /// If disabled, zed will download its own copy of node.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
+    /// Allow using user's npmrc
+    ///
+    /// default: false
+    pub allow_user_npmrc: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
