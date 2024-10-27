@@ -1,6 +1,6 @@
 use crate::ProjectPath;
 use anyhow::{anyhow, Context as _, Result};
-use dap::adapters::{DapStatus, DebugAdapterName};
+use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
 use dap::client::{DebugAdapterClient, DebugAdapterClientId};
 use dap::messages::{Message, Response};
 use dap::requests::{
@@ -67,15 +67,11 @@ pub struct DebugPosition {
 
 pub struct DapStore {
     next_client_id: AtomicUsize,
-    clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
-    updated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
+    delegate: Arc<DapAdapterDelegate>,
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
-    capabilities: HashMap<DebugAdapterClientId, Capabilities>,
     active_debug_line: Option<(ProjectPath, DebugPosition)>,
-    http_client: Option<Arc<dyn HttpClient>>,
-    node_runtime: Option<NodeRuntime>,
-    languages: Arc<LanguageRegistry>,
-    fs: Arc<dyn Fs>,
+    capabilities: HashMap<DebugAdapterClientId, Capabilities>,
+    clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
 }
 
 impl EventEmitter<DapStoreEvent> for DapStore {}
@@ -85,7 +81,7 @@ impl DapStore {
         http_client: Option<Arc<dyn HttpClient>>,
         node_runtime: Option<NodeRuntime>,
         fs: Arc<dyn Fs>,
-        _languages: Arc<LanguageRegistry>,
+        languages: Arc<LanguageRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.on_app_quit(Self::shutdown_clients).detach();
@@ -93,14 +89,15 @@ impl DapStore {
         Self {
             active_debug_line: None,
             clients: Default::default(),
-            updated_adapters: Default::default(),
             breakpoints: Default::default(),
             capabilities: HashMap::default(),
             next_client_id: Default::default(),
-            http_client,
-            node_runtime,
-            languages: _languages,
-            fs,
+            delegate: Arc::new(DapAdapterDelegate::new(
+                http_client.clone(),
+                node_runtime.clone(),
+                fs.clone(),
+                languages.clone(),
+            )),
         }
     }
 
@@ -247,13 +244,7 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) {
         let client_id = self.next_client_id();
-        let adapter_delegate = DapAdapterDelegate::new(
-            self.http_client.clone(),
-            self.node_runtime.clone(),
-            self.fs.clone(),
-            self.updated_adapters.clone(),
-            self.languages.clone(),
-        );
+        let adapter_delegate = self.delegate.clone();
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
             let client = maybe!(async {
@@ -263,7 +254,23 @@ impl DapStore {
                         .context("Creating debug adapter")?,
                 );
 
-                let binary = adapter.get_binary(&adapter_delegate, &config).await?;
+                let binary = match adapter.get_binary(adapter_delegate.as_ref(), &config).await {
+                    Err(error) => {
+                        adapter_delegate.update_status(
+                            adapter.name(),
+                            DapStatus::Failed {
+                                error: error.to_string(),
+                            },
+                        );
+
+                        return Err(error);
+                    }
+                    Ok(binary) => {
+                        adapter_delegate.update_status(adapter.name(), DapStatus::None);
+
+                        binary
+                    }
+                };
 
                 let mut request_args = json!({});
                 if let Some(config_args) = config.initialize_args.clone() {
@@ -1245,6 +1252,7 @@ impl SerializedBreakpoint {
     }
 }
 
+#[derive(Clone)]
 pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Option<Arc<dyn HttpClient>>,
@@ -1258,15 +1266,14 @@ impl DapAdapterDelegate {
         http_client: Option<Arc<dyn HttpClient>>,
         node_runtime: Option<NodeRuntime>,
         fs: Arc<dyn Fs>,
-        updated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
         languages: Arc<LanguageRegistry>,
     ) -> Self {
         Self {
             fs,
+            languages,
             http_client,
             node_runtime,
-            updated_adapters,
-            languages,
+            updated_adapters: Default::default(),
         }
     }
 }

@@ -233,14 +233,6 @@ pub trait DebugAdapter: 'static + Send + Sync {
             );
         }
 
-        if binary.is_err() {
-            delegate.update_status(
-                self.name(),
-                DapStatus::Failed {
-                    error: format!("Failed to download {}", self.name()),
-                },
-            );
-        }
         let binary = binary?;
 
         delegate
