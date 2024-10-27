@@ -75,7 +75,7 @@ pub enum TaskType {
 
 #[cfg(test)]
 mod deserialization_tests {
-    use crate::DebugAdapterKind;
+    use crate::{DebugAdapterKind, TCPHost};
 
     use super::*;
     use serde_json::json;
@@ -92,17 +92,16 @@ mod deserialization_tests {
     #[test]
     fn deserialize_task_type_debug() {
         let adapter_config = DebugAdapterConfig {
-            kind: DebugAdapterKind::Python,
+            kind: DebugAdapterKind::Python(TCPHost::default()),
             request: crate::DebugRequestType::Launch,
             program: Some("main".to_string()),
             initialize_args: None,
         };
         let json = json!({
-                "type": "debug",
-                "kind": "python",
-                "request": "launch",
-                "program": "main"
-
+            "type": "debug",
+            "kind": "python",
+            "request": "launch",
+            "program": "main"
         });
 
         let task_type: TaskType =

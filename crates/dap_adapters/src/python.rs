@@ -1,15 +1,24 @@
-use dap::transport::{StdioTransport, Transport};
+use dap::transport::{TcpTransport, Transport};
+use std::net::Ipv4Addr;
 
 use crate::*;
 
-pub(crate) struct PythonDebugAdapter {}
+pub(crate) struct PythonDebugAdapter {
+    port: u16,
+    host: Ipv4Addr,
+    timeout: Option<u64>,
+}
 
 impl PythonDebugAdapter {
     const ADAPTER_NAME: &'static str = "debugpy";
     const ADAPTER_PATH: &'static str = "src/debugpy/adapter";
 
-    pub(crate) fn new() -> Self {
-        PythonDebugAdapter {}
+    pub(crate) async fn new(host: &TCPHost) -> Result<Self> {
+        Ok(PythonDebugAdapter {
+            port: TcpTransport::port(host).await?,
+            host: host.host(),
+            timeout: host.timeout,
+        })
     }
 }
 
@@ -20,7 +29,7 @@ impl DebugAdapter for PythonDebugAdapter {
     }
 
     fn transport(&self) -> Box<dyn Transport> {
-        Box::new(StdioTransport::new())
+        Box::new(TcpTransport::new(self.host, self.port, self.timeout))
     }
 
     async fn fetch_latest_adapter_version(
@@ -67,7 +76,11 @@ impl DebugAdapter for PythonDebugAdapter {
 
         Ok(DebugAdapterBinary {
             command: "python3".to_string(),
-            arguments: Some(vec![debugpy_dir.join(Self::ADAPTER_PATH).into()]),
+            arguments: Some(vec![
+                debugpy_dir.join(Self::ADAPTER_PATH).into(),
+                format!("--port={}", self.port).into(),
+                format!("--host={}", self.host).into(),
+            ]),
             envs: None,
             version,
         })

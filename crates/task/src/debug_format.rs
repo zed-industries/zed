@@ -55,7 +55,7 @@ pub enum DebugAdapterKind {
     /// The argument within is used to start the DAP
     Custom(CustomArgs),
     /// Use debugpy
-    Python,
+    Python(TCPHost),
     /// Use vscode-php-debug
     PHP(TCPHost),
     /// Use vscode-js-debug
@@ -69,7 +69,7 @@ impl DebugAdapterKind {
     pub fn display_name(&self) -> &str {
         match self {
             Self::Custom(_) => "Custom",
-            Self::Python => "Python",
+            Self::Python(_) => "Python",
             Self::PHP(_) => "PHP",
             Self::Javascript(_) => "JavaScript",
             Self::Lldb => "LLDB",

@@ -23,7 +23,7 @@ pub async fn build_adapter(adapter_config: &DebugAdapterConfig) -> Result<Box<dy
         DebugAdapterKind::Custom(start_args) => {
             Ok(Box::new(CustomDebugAdapter::new(start_args.clone()).await?))
         }
-        DebugAdapterKind::Python => Ok(Box::new(PythonDebugAdapter::new())),
+        DebugAdapterKind::Python(host) => Ok(Box::new(PythonDebugAdapter::new(host).await?)),
         DebugAdapterKind::PHP(host) => Ok(Box::new(PhpDebugAdapter::new(host.clone()).await?)),
         DebugAdapterKind::Javascript(host) => {
             Ok(Box::new(JsDebugAdapter::new(host.clone()).await?))
