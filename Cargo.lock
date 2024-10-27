@@ -12843,6 +12843,7 @@ dependencies = [
  "git",
  "gpui",
  "picker",
+ "project",
  "ui",
  "util",
  "workspace",

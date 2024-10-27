@@ -281,7 +281,12 @@ message Envelope {
         FlushBufferedMessages flush_buffered_messages = 267;
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
-        LanguageServerPromptResponse language_server_prompt_response = 269; // current max
+        LanguageServerPromptResponse language_server_prompt_response = 269;
+
+        GitBranches git_branches = 270;
+        GitBranchesResponse git_branches_response = 271;
+
+        UpdateGitBranch update_git_branch = 272; // current max
     }
 
 
@@ -2431,4 +2436,25 @@ message LanguageServerPromptRequest {
 
 message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
+}
+
+message Branch {
+    bool is_head = 1;
+    string name = 2;
+    optional uint64 unix_timestamp = 3;
+}
+
+message GitBranches {
+    uint64 project_id = 1;
+    ProjectPath repository = 2;
+}
+
+message GitBranchesResponse {
+    repeated Branch branches = 1;
+}
+
+message UpdateGitBranch {
+    uint64 project_id = 1;
+    string branch_name = 2;
+    ProjectPath repository = 3;
 }

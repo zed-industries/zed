@@ -357,6 +357,9 @@ messages!(
     (FlushBufferedMessages, Foreground),
     (LanguageServerPromptRequest, Foreground),
     (LanguageServerPromptResponse, Foreground),
+    (GitBranches, Background),
+    (GitBranchesResponse, Background),
+    (UpdateGitBranch, Background)
 );
 
 request_messages!(
@@ -473,6 +476,8 @@ request_messages!(
     (GetPermalinkToLine, GetPermalinkToLineResponse),
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
+    (GitBranches, GitBranchesResponse),
+    (UpdateGitBranch, Ack)
 );
 
 entity_messages!(
@@ -550,7 +555,9 @@ entity_messages!(
     HideToast,
     OpenServerSettings,
     GetPermalinkToLine,
-    LanguageServerPromptRequest
+    LanguageServerPromptRequest,
+    GitBranches,
+    UpdateGitBranch
 );
 
 entity_messages!(
