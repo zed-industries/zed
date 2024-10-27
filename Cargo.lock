@@ -6312,7 +6312,6 @@ dependencies = [
  "language",
  "picker",
  "project",
- "settings",
  "ui",
  "util",
  "workspace",
@@ -12505,15 +12504,12 @@ dependencies = [
 name = "toolchain_selector"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "editor",
  "fuzzy",
  "gpui",
- "itertools 0.13.0",
  "language",
  "picker",
  "project",
- "settings",
  "ui",
  "util",
  "workspace",
