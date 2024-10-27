@@ -43,10 +43,7 @@ impl EditorTestContext {
     pub async fn new(cx: &mut gpui::TestAppContext) -> EditorTestContext {
         let fs = FakeFs::new(cx.executor());
         // fs.insert_file("/file", "".to_owned()).await;
-        #[cfg(windows)]
-        let root = Path::new("c:\\root");
-        #[cfg(not(windows))]
-        let root = Path::new("/root");
+        let root = Self::root_path();
         fs.insert_tree(
             root,
             serde_json::json!({
@@ -74,6 +71,16 @@ impl EditorTestContext {
             editor: editor_view,
             assertion_cx: AssertionContextManager::new(),
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    fn root_path() -> &'static Path {
+        Path::new("C:\\root")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn root_path() -> &'static Path {
+        Path::new("/root")
     }
 
     pub async fn for_editor(editor: WindowHandle<Editor>, cx: &mut gpui::TestAppContext) -> Self {
