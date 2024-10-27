@@ -18,7 +18,7 @@ actions!(branches, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, action, cx| BranchList::open(workspace, action, cx));
+        workspace.register_action(BranchList::open);
     })
     .detach();
 }
