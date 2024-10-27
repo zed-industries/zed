@@ -293,3 +293,6 @@ pub fn local_tasks_file_relative_path() -> &'static Path {
 pub fn local_vscode_tasks_file_relative_path() -> &'static Path {
     Path::new(".vscode/tasks.json")
 }
+
+/// A default editorconfig file name to use when resolving project settings.
+pub const EDITORCONFIG_NAME: &str = ".editorconfig";

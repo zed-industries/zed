@@ -26,8 +26,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease,
-        CreaseMetadata, CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
+        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
+        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
@@ -356,8 +356,10 @@ impl AssistantPanel {
             let project = workspace.project().clone();
             pane.set_custom_drop_handle(cx, move |_, dropped_item, cx| {
                 let action = maybe!({
-                    if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
-                        return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                    if project.read(cx).is_local() {
+                        if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
+                            return Some(InsertDraggedFiles::ExternalFiles(paths.paths().to_vec()));
+                        }
                     }
 
                     let project_paths = if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>()
@@ -961,7 +963,7 @@ impl AssistantPanel {
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
         let project = self.project.read(cx);
-        if project.is_via_collab() && project.dev_server_project_id().is_none() {
+        if project.is_via_collab() {
             let task = self
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));
@@ -2007,13 +2009,12 @@ impl ContextEditor {
                             })
                             .map(|(command, error_message)| BlockProperties {
                                 style: BlockStyle::Fixed,
-                                position: Anchor {
+                                height: 1,
+                                placement: BlockPlacement::Below(Anchor {
                                     buffer_id: Some(buffer_id),
                                     excerpt_id,
                                     text_anchor: command.source_range.start,
-                                },
-                                height: 1,
-                                disposition: BlockDisposition::Below,
+                                }),
                                 render: slash_command_error_block_renderer(error_message),
                                 priority: 0,
                             }),
@@ -2219,6 +2220,7 @@ impl ContextEditor {
                     merge_adjacent: false,
                 };
 
+                let should_refold;
                 if let Some(state) = self.patches.get_mut(&range) {
                     replaced_blocks.insert(state.footer_block_id, render_block);
                     if let Some(editor_state) = &state.editor {
@@ -2233,14 +2235,16 @@ impl ContextEditor {
                             });
                         }
                     }
+
+                    should_refold =
+                        snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
                     let block_ids = editor.insert_blocks(
                         [BlockProperties {
-                            position: patch_start,
                             height: path_count as u32 + 1,
                             style: BlockStyle::Flex,
                             render: render_block,
-                            disposition: BlockDisposition::Below,
+                            placement: BlockPlacement::Below(patch_start),
                             priority: 0,
                         }],
                         None,
@@ -2266,10 +2270,14 @@ impl ContextEditor {
                             update_task: None,
                         },
                     );
+
+                    should_refold = true;
                 }
 
-                editor.unfold_ranges([patch_start..patch_end], true, false, cx);
-                editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
+                if should_refold {
+                    editor.unfold_ranges([patch_start..patch_end], true, false, cx);
+                    editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
+                }
             }
 
             editor.remove_creases(removed_crease_ids, cx);
@@ -2721,12 +2729,13 @@ impl ContextEditor {
                 })
             };
             let create_block_properties = |message: &Message| BlockProperties {
-                position: buffer
-                    .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
-                    .unwrap(),
                 height: 2,
                 style: BlockStyle::Sticky,
-                disposition: BlockDisposition::Above,
+                placement: BlockPlacement::Above(
+                    buffer
+                        .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
+                        .unwrap(),
+                ),
                 priority: usize::MAX,
                 render: render_block(MessageMetadata::from(message)),
             };
@@ -3362,7 +3371,7 @@ impl ContextEditor {
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
                     let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
-                        position: anchor,
+                        placement: BlockPlacement::Above(anchor),
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
                         render: Box::new(move |cx| {
@@ -3383,8 +3392,6 @@ impl ContextEditor {
                                 )
                                 .into_any_element()
                         }),
-
-                        disposition: BlockDisposition::Above,
                         priority: 0,
                     })
                 })
@@ -3939,7 +3946,7 @@ impl Render for ContextEditor {
                         .bg(cx.theme().colors().editor_background)
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(render_inject_context_menu(cx.view().downgrade(), cx))
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
@@ -4239,11 +4246,11 @@ fn render_inject_context_menu(
     slash_command_picker::SlashCommandSelector::new(
         commands.clone(),
         active_context_editor,
-        IconButton::new("trigger", IconName::SlashSquare)
+        Button::new("trigger", "Add Context")
+            .icon(IconName::Plus)
             .icon_size(IconSize::Small)
-            .tooltip(|cx| {
-                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-            }),
+            .icon_position(IconPosition::Start)
+            .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
     )
 }
 

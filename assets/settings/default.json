@@ -346,6 +346,8 @@
     "git_status": true,
     // Amount of indentation for nested items.
     "indent_size": 20,
+    // Whether to show indent guides in the project panel.
+    "indent_guides": true,
     // Whether to reveal it in the project panel automatically,
     // when a corresponding project entry becomes active.
     // Gitignored entries are never auto revealed.
@@ -803,7 +805,7 @@
   /// You can override this to use a version of node that is not in $PATH with:
   /// {
   ///   "node": {
-  ///     "node_path": "/path/to/node"
+  ///     "path": "/path/to/node"
   ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
   ///   }
   /// }
@@ -1099,13 +1101,13 @@
   // }
   "command_aliases": {},
   // ssh_connections is an array of ssh connections.
-  // By default this setting is null, which disables the direct ssh connection support.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
   // Examples:
   // [
   //   {
   //     "host": "example-box",
+  //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"]
   //     "projects": [
   //       {
   //         "paths": ["/home/user/code/zed"]
@@ -1113,7 +1115,7 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null,
+  "ssh_connections": [],
   // Configures the Context Server Protocol binaries
   //
   // Examples:

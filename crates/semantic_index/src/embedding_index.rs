@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::stream::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
@@ -15,6 +16,7 @@ use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
+use smol::future::FutureExt;
 use std::{
     cmp::Ordering,
     future::Future,
@@ -65,6 +67,10 @@ impl EmbeddingIndex {
         &self,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        if !cx.is_staff() {
+            return async move { Ok(()) }.boxed();
+        }
+
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
@@ -75,6 +81,7 @@ impl EmbeddingIndex {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
             Ok(())
         }
+        .boxed()
     }
 
     pub fn index_updated_entries(
@@ -82,6 +89,10 @@ impl EmbeddingIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        if !cx.is_staff() {
+            return async move { Ok(()) }.boxed();
+        }
+
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
@@ -92,6 +103,7 @@ impl EmbeddingIndex {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
             Ok(())
         }
+        .boxed()
     }
 
     fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {

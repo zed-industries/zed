@@ -1,11 +1,16 @@
-use super::{diagnostics_command::collect_buffer_diagnostics, SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{AfterCompletion, ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
+    SlashCommandOutput, SlashCommandOutputSection, SlashCommandResult,
+};
+use futures::channel::mpsc;
+use futures::Stream;
 use fuzzy::PathMatch;
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
+use smol::stream::StreamExt;
 use std::{
     fmt::Write,
     ops::{Range, RangeInclusive},
@@ -15,6 +20,8 @@ use std::{
 use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
+
+use crate::slash_command::diagnostics_command::collect_buffer_diagnostics;
 
 pub(crate) struct FileSlashCommand;
 
@@ -181,7 +188,7 @@ impl SlashCommand for FileSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
@@ -190,7 +197,12 @@ impl SlashCommand for FileSlashCommand {
             return Task::ready(Err(anyhow!("missing path")));
         };
 
-        collect_files(workspace.read(cx).project().clone(), arguments, cx)
+        Task::ready(Ok(collect_files(
+            workspace.read(cx).project().clone(),
+            arguments,
+            cx,
+        )
+        .boxed()))
     }
 }
 
@@ -198,7 +210,7 @@ fn collect_files(
     project: Model<Project>,
     glob_inputs: &[String],
     cx: &mut AppContext,
-) -> Task<Result<SlashCommandOutput>> {
+) -> impl Stream<Item = Result<SlashCommandEvent>> {
     let Ok(matchers) = glob_inputs
         .into_iter()
         .map(|glob_input| {
@@ -207,7 +219,7 @@ fn collect_files(
         })
         .collect::<anyhow::Result<Vec<custom_path_matcher::PathMatcher>>>()
     else {
-        return Task::ready(Err(anyhow!("invalid path")));
+        return futures::stream::once(async { Err(anyhow!("invalid path")) }).boxed();
     };
 
     let project_handle = project.downgrade();
@@ -217,11 +229,11 @@ fn collect_files(
         .map(|worktree| worktree.read(cx).snapshot())
         .collect::<Vec<_>>();
 
+    let (events_tx, events_rx) = mpsc::unbounded();
     cx.spawn(|mut cx| async move {
-        let mut output = SlashCommandOutput::default();
         for snapshot in snapshots {
             let worktree_id = snapshot.id();
-            let mut directory_stack: Vec<(Arc<Path>, String, usize)> = Vec::new();
+            let mut directory_stack: Vec<Arc<Path>> = Vec::new();
             let mut folded_directory_names_stack = Vec::new();
             let mut is_top_level_directory = true;
 
@@ -237,17 +249,19 @@ fn collect_files(
                     continue;
                 }
 
-                while let Some((dir, _, _)) = directory_stack.last() {
+                while let Some(dir) = directory_stack.last() {
                     if entry.path.starts_with(dir) {
                         break;
                     }
-                    let (_, entry_name, start) = directory_stack.pop().unwrap();
-                    output.sections.push(build_entry_output_section(
-                        start..output.text.len().saturating_sub(1),
-                        Some(&PathBuf::from(entry_name)),
-                        true,
-                        None,
-                    ));
+                    directory_stack.pop().unwrap();
+                    events_tx
+                        .unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                    events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                        SlashCommandContent::Text {
+                            text: "\n".into(),
+                            run_commands_in_text: false,
+                        },
+                    )))?;
                 }
 
                 let filename = entry
@@ -279,23 +293,46 @@ fn collect_files(
                         continue;
                     }
                     let prefix_paths = folded_directory_names_stack.drain(..).as_slice().join("/");
-                    let entry_start = output.text.len();
                     if prefix_paths.is_empty() {
-                        if is_top_level_directory {
-                            output
-                                .text
-                                .push_str(&path_including_worktree_name.to_string_lossy());
+                        let label = if is_top_level_directory {
                             is_top_level_directory = false;
+                            path_including_worktree_name.to_string_lossy().to_string()
                         } else {
-                            output.text.push_str(&filename);
-                        }
-                        directory_stack.push((entry.path.clone(), filename, entry_start));
+                            filename
+                        };
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                            icon: IconName::Folder,
+                            label: label.clone().into(),
+                            metadata: None,
+                        }))?;
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                            SlashCommandContent::Text {
+                                text: label,
+                                run_commands_in_text: false,
+                            },
+                        )))?;
+                        directory_stack.push(entry.path.clone());
                     } else {
                         let entry_name = format!("{}/{}", prefix_paths, &filename);
-                        output.text.push_str(&entry_name);
-                        directory_stack.push((entry.path.clone(), entry_name, entry_start));
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::StartSection {
+                            icon: IconName::Folder,
+                            label: entry_name.clone().into(),
+                            metadata: None,
+                        }))?;
+                        events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                            SlashCommandContent::Text {
+                                text: entry_name,
+                                run_commands_in_text: false,
+                            },
+                        )))?;
+                        directory_stack.push(entry.path.clone());
                     }
-                    output.text.push('\n');
+                    events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
+                        SlashCommandContent::Text {
+                            text: "\n".into(),
+                            run_commands_in_text: false,
+                        },
+                    )))?;
                 } else if entry.is_file() {
                     let Some(open_buffer_task) = project_handle
                         .update(&mut cx, |project, cx| {
@@ -306,6 +343,7 @@ fn collect_files(
                         continue;
                     };
                     if let Some(buffer) = open_buffer_task.await.log_err() {
+                        let mut output = SlashCommandOutput::default();
                         let snapshot = buffer.read_with(&cx, |buffer, _| buffer.snapshot())?;
                         append_buffer_to_output(
                             &snapshot,
@@ -313,33 +351,24 @@ fn collect_files(
                             &mut output,
                         )
                         .log_err();
+                        let mut buffer_events = output.to_event_stream();
+                        while let Some(event) = buffer_events.next().await {
+                            events_tx.unbounded_send(event)?;
+                        }
                     }
                 }
             }
 
-            while let Some((dir, entry, start)) = directory_stack.pop() {
-                if directory_stack.is_empty() {
-                    let mut root_path = PathBuf::new();
-                    root_path.push(snapshot.root_name());
-                    root_path.push(&dir);
-                    output.sections.push(build_entry_output_section(
-                        start..output.text.len(),
-                        Some(&root_path),
-                        true,
-                        None,
-                    ));
-                } else {
-                    output.sections.push(build_entry_output_section(
-                        start..output.text.len(),
-                        Some(&PathBuf::from(entry.as_str())),
-                        true,
-                        None,
-                    ));
-                }
+            while let Some(_) = directory_stack.pop() {
+                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
             }
         }
-        Ok(output)
+
+        anyhow::Ok(())
     })
+    .detach_and_log_err(cx);
+
+    events_rx.boxed()
 }
 
 pub fn codeblock_fence_for_path(
@@ -524,11 +553,14 @@ pub fn append_buffer_to_output(
 
 #[cfg(test)]
 mod test {
+    use assistant_slash_command::SlashCommandOutput;
     use fs::FakeFs;
     use gpui::TestAppContext;
+    use pretty_assertions::assert_eq;
     use project::Project;
     use serde_json::json;
     use settings::SettingsStore;
+    use smol::stream::StreamExt;
 
     use crate::slash_command::file_command::collect_files;
 
@@ -569,8 +601,9 @@ mod test {
 
         let project = Project::test(fs, ["/root".as_ref()], cx).await;
 
-        let result_1 = cx
-            .update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx))
+        let result_1 =
+            cx.update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx));
+        let result_1 = SlashCommandOutput::from_event_stream(result_1.boxed())
             .await
             .unwrap();
 
@@ -578,17 +611,17 @@ mod test {
         // 4 files + 2 directories
         assert_eq!(result_1.sections.len(), 6);
 
-        let result_2 = cx
-            .update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx))
+        let result_2 =
+            cx.update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx));
+        let result_2 = SlashCommandOutput::from_event_stream(result_2.boxed())
             .await
             .unwrap();
 
         assert_eq!(result_1, result_2);
 
-        let result = cx
-            .update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx))
-            .await
-            .unwrap();
+        let result =
+            cx.update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx).boxed());
+        let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
         assert!(result.text.starts_with("root/dir"));
         // 5 files + 2 directories
@@ -631,8 +664,9 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        let result = cx
-            .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
+        let result =
+            cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
+        let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
@@ -692,8 +726,9 @@ mod test {
 
         let project = Project::test(fs, ["/zed".as_ref()], cx).await;
 
-        let result = cx
-            .update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx))
+        let result =
+            cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
+        let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
 
@@ -715,6 +750,8 @@ mod test {
         assert_eq!(result.sections[5].label, "subdir");
         assert_eq!(result.sections[6].label, "summercamp");
         assert_eq!(result.sections[7].label, "zed/assets/themes");
+
+        assert_eq!(result.text, "zed/assets/themes\n```zed/assets/themes/LICENSE\n1\n```\n\nsummercamp\n```zed/assets/themes/summercamp/LICENSE\n1\n```\n\nsubdir\n```zed/assets/themes/summercamp/subdir/LICENSE\n1\n```\n\nsubsubdir\n```zed/assets/themes/summercamp/subdir/subsubdir/LICENSE\n3\n```\n\n");
 
         // Ensure that the project lasts until after the last await
         drop(project);

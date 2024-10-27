@@ -24,7 +24,7 @@ To use a binary in a custom location, add the following to your `settings.json`:
 }
 ```
 
-If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system-version` to `true`:
+If you want to disable Zed looking for a `clangd` binary, you can set `ignore_system_version` to `true`:
 
 ```json
 {
