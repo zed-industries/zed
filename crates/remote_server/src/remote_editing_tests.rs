@@ -865,7 +865,7 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
     )
     .await;
 
-    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+    let (project, headless_project) = init_test(&fs, cx, server_cx).await;
     let branches = ["main", "dev", "feature-1"];
     fs.insert_branches(Path::new("/code/project1/.git"), &branches);
 
@@ -877,14 +877,16 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .unwrap();
 
     let worktree_id = cx.update(|cx| worktree.read(cx).id());
-
+    let root_path = ProjectPath::root_path(worktree_id);
     // Give the worktree a bit of time to index the file system
     cx.run_until_parked();
 
     let remote_branches = project
-        .update(cx, |project, cx| project.root_branches(worktree_id, cx))
+        .update(cx, |project, cx| project.branches(root_path.clone(), cx))
         .await
         .unwrap();
+
+    let new_branch = branches[2];
 
     let remote_branches = remote_branches
         .into_iter()
@@ -892,6 +894,53 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
         .collect::<Vec<_>>();
 
     assert_eq!(&remote_branches, &branches);
+
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    let server_branch = server_cx.update(|cx| {
+        headless_project.update(cx, |headless_project, cx| {
+            headless_project
+                .worktree_store
+                .update(cx, |worktree_store, cx| {
+                    worktree_store
+                        .current_branch(root_path.clone(), cx)
+                        .unwrap()
+                })
+        })
+    });
+
+    assert_eq!(server_branch.as_ref(), branches[2]);
+
+    // Also try creating a new branch
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    let server_branch = server_cx.update(|cx| {
+        headless_project.update(cx, |headless_project, cx| {
+            headless_project
+                .worktree_store
+                .update(cx, |worktree_store, cx| {
+                    worktree_store.current_branch(root_path, cx).unwrap()
+                })
+        })
+    });
+
+    assert_eq!(server_branch.as_ref(), "totally-new-branch");
 }
 
 pub async fn init_test(

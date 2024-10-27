@@ -7,11 +7,12 @@ use gpui::{
     SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
+use project::ProjectPath;
 use std::{ops::Not, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::notifications::{DetachAndPromptErr, NotificationId};
-use workspace::{ModalView, Toast, Workspace};
+use workspace::notifications::DetachAndPromptErr;
+use workspace::{ModalView, Workspace};
 
 actions!(branches, [OpenRecent]);
 
@@ -113,8 +114,8 @@ impl BranchListDelegate {
                 .visible_worktrees(cx)
                 .next()
                 .context("No worktrees found")?;
-
-            anyhow::Ok(project.root_branches(first_worktree.read(cx).id(), cx))
+            let project_path = ProjectPath::root_path(first_worktree.read(cx).id());
+            anyhow::Ok(project.branches(project_path, cx))
         })??;
 
         let all_branches = all_branches_request.await?;
@@ -127,15 +128,6 @@ impl BranchListDelegate {
             last_query: Default::default(),
             branch_name_trailoff_after,
         })
-    }
-
-    fn display_error_toast(&self, message: String, cx: &mut WindowContext<'_>) {
-        self.workspace.update(cx, |model, ctx| {
-            struct GitCheckoutFailure;
-            let id = NotificationId::unique::<GitCheckoutFailure>();
-
-            model.show_toast(Toast::new(id, message), ctx)
-        });
     }
 }
 
@@ -242,40 +234,32 @@ impl PickerDelegate for BranchListDelegate {
         cx.spawn({
             let branch = branch.clone();
             |picker, mut cx| async move {
-                picker
-                    .update(&mut cx, |this, cx| {
-                        let project = this.delegate.workspace.read(cx).project().read(cx);
-                        let repo = project
-                            .get_first_worktree_root_repo(cx)
-                            .context("failed to get root repository for first worktree")?;
+                let branch_change_task = picker.update(&mut cx, |this, cx| {
+                    let project = this.delegate.workspace.read(cx).project().read(cx);
 
-                        let branch_to_checkout = match branch {
-                            BranchEntry::Branch(branch) => branch.string,
-                            BranchEntry::NewBranch { name: branch_name } => {
-                                let status = repo.create_branch(&branch_name);
-                                if status.is_err() {
-                                    this.delegate.display_error_toast(format!("Failed to create branch '{branch_name}', check for conflicts or unstashed files"), cx);
-                                    status?;
-                                }
+                    let branch_to_checkout = match branch {
+                        BranchEntry::Branch(branch) => branch.string,
+                        BranchEntry::NewBranch { name: branch_name } => branch_name,
+                    };
+                    let worktree = project
+                        .worktrees(cx)
+                        .next()
+                        .context("worktree disappeared")?;
+                    let repository = ProjectPath::root_path(worktree.read(cx).id());
 
-                                branch_name
-                            }
-                        };
+                    anyhow::Ok(project.update_or_create_branch(repository, branch_to_checkout, cx))
+                })??;
 
-                        let status = repo.change_branch(&branch_to_checkout);
-                        if status.is_err() {
-                            this.delegate.display_error_toast(format!("Failed to checkout branch '{branch_to_checkout}', check for conflicts or unstashed files"), cx);
-                            status?;
-                        }
+                branch_change_task.await?;
 
-                        cx.emit(DismissEvent);
+                picker.update(&mut cx, |_, cx| {
+                    cx.emit(DismissEvent);
 
-                        Ok::<(), anyhow::Error>(())
-                    })
-                    .log_err();
+                    Ok::<(), anyhow::Error>(())
+                })
             }
         })
-        .detach();
+        .detach_and_prompt_err("Failed to change branch", cx, |_, _| None);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {

@@ -284,7 +284,9 @@ message Envelope {
         LanguageServerPromptResponse language_server_prompt_response = 269;
 
         GitBranches git_branches = 270;
-        GitBranchesResponse git_branches_response = 271; // current max
+        GitBranchesResponse git_branches_response = 271;
+
+        UpdateGitBranch update_git_branch = 272; // current max
     }
 
 
@@ -2444,9 +2446,15 @@ message Branch {
 
 message GitBranches {
     uint64 project_id = 1;
-    ProjectPath project_path = 2;
+    ProjectPath repository = 2;
 }
 
 message GitBranchesResponse {
     repeated Branch branches = 1;
+}
+
+message UpdateGitBranch {
+    uint64 project_id = 1;
+    string branch_name = 2;
+    ProjectPath repository = 3;
 }

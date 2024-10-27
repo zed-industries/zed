@@ -288,6 +288,13 @@ impl ProjectPath {
             path: self.path.to_string_lossy().to_string(),
         }
     }
+
+    pub fn root_path(worktree_id: WorktreeId) -> Self {
+        Self {
+            worktree_id,
+            path: Path::new("").into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3370,69 +3377,23 @@ impl Project {
         worktree.get_local_repo(&root_entry)?.repo().clone().into()
     }
 
-    pub fn root_branches(
+    pub fn branches(
         &self,
-        worktree_id: WorktreeId,
+        project_path: ProjectPath,
         cx: &AppContext,
     ) -> Task<Result<Vec<git::repository::Branch>>> {
-        let Some(worktree) = self.worktree_for_id(worktree_id, cx) else {
-            return Task::ready(Err(anyhow!("No worktree found for ProjectPath")));
-        };
+        self.worktree_store().read(cx).branches(project_path, cx)
+    }
 
-        match worktree.read(cx) {
-            Worktree::Local(local_worktree) => {
-                let branches = util::maybe!({
-                    let worktree_error = |error| {
-                        format!(
-                            "{} for worktree {}",
-                            error,
-                            local_worktree.abs_path().to_string_lossy()
-                        )
-                    };
-
-                    let root_entry = local_worktree
-                        .root_git_entry()
-                        .with_context(|| worktree_error("No root git entry found"))?;
-
-                    let repo = local_worktree
-                        .get_local_repo(&root_entry)
-                        .with_context(|| worktree_error("No repository found"))?
-                        .repo()
-                        .clone();
-
-                    repo.branches()
-                });
-
-                Task::ready(branches)
-            }
-            Worktree::Remote(remote_worktree) => {
-                let request = remote_worktree.client().request(proto::GitBranches {
-                    project_id: remote_worktree.project_id(),
-                    project_path: Some(proto::ProjectPath {
-                        worktree_id: worktree_id.to_proto(),
-                        path: "".to_string(), // Root path
-                    }),
-                });
-
-                cx.background_executor().spawn(async move {
-                    let response = request.await?;
-
-                    let branches = response
-                        .branches
-                        .into_iter()
-                        .map(|proto_branch| git::repository::Branch {
-                            is_head: proto_branch.is_head,
-                            name: proto_branch.name.into(),
-                            unix_timestamp: proto_branch
-                                .unix_timestamp
-                                .map(|timestamp| timestamp as i64),
-                        })
-                        .collect();
-
-                    Ok(branches)
-                })
-            }
-        }
+    pub fn update_or_create_branch(
+        &self,
+        repository: ProjectPath,
+        new_branch: String,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        self.worktree_store()
+            .read(cx)
+            .update_or_create_branch(repository, new_branch, cx)
     }
 
     pub fn blame_buffer(

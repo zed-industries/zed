@@ -42,6 +42,7 @@ pub trait GitRepository: Send + Sync {
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
+    fn branch_exits(&self, _: &str) -> Result<bool>;
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
 }
@@ -133,6 +134,18 @@ impl GitRepository for RealGitRepository {
         GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
     }
 
+    fn branch_exits(&self, name: &str) -> Result<bool> {
+        let repo = self.repository.lock();
+        let branch = repo.find_branch(name, BranchType::Local);
+        match branch {
+            Ok(_) => Ok(true),
+            Err(e) => match e.code() {
+                git2::ErrorCode::NotFound => Ok(false),
+                _ => Err(anyhow::anyhow!(e)),
+            },
+        }
+    }
+
     fn branches(&self) -> Result<Vec<Branch>> {
         let repo = self.repository.lock();
         let local_branches = repo.branches(Some(BranchType::Local))?;
@@ -206,13 +219,15 @@ impl GitRepository for RealGitRepository {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FakeGitRepository {
     state: Arc<Mutex<FakeGitRepositoryState>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
+    pub path: PathBuf,
+    pub event_emitter: smol::channel::Sender<PathBuf>,
     pub index_contents: HashMap<PathBuf, String>,
     pub blames: HashMap<PathBuf, Blame>,
     pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
@@ -223,6 +238,20 @@ pub struct FakeGitRepositoryState {
 impl FakeGitRepository {
     pub fn open(state: Arc<Mutex<FakeGitRepositoryState>>) -> Arc<dyn GitRepository> {
         Arc::new(FakeGitRepository { state })
+    }
+}
+
+impl FakeGitRepositoryState {
+    pub fn new(path: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+        FakeGitRepositoryState {
+            path,
+            event_emitter,
+            index_contents: Default::default(),
+            blames: Default::default(),
+            worktree_statuses: Default::default(),
+            current_branch_name: Default::default(),
+            branches: Default::default(),
+        }
     }
 }
 
@@ -283,15 +312,28 @@ impl GitRepository for FakeGitRepository {
             .collect())
     }
 
+    fn branch_exits(&self, name: &str) -> Result<bool> {
+        let state = self.state.lock();
+        Ok(state.branches.contains(name))
+    }
+
     fn change_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
         state.current_branch_name = Some(name.to_owned());
+        state
+            .event_emitter
+            .try_send(state.path.clone())
+            .expect("Dropped repo change event");
         Ok(())
     }
 
     fn create_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
-        state.current_branch_name = Some(name.to_owned());
+        state.branches.insert(name.to_owned());
+        state
+            .event_emitter
+            .try_send(state.path.clone())
+            .expect("Dropped repo change event");
         Ok(())
     }
 
