@@ -875,10 +875,11 @@ impl FakeFsState {
                         canonical_path.clear();
                         match prefix {
                             Some(prefix_component) => {
-                                canonical_path.push(prefix_component.as_os_str());
-                                canonical_path.push("/");
+                                canonical_path = PathBuf::from(prefix_component.as_os_str());
+                                // Prefixes like `C:\\` are represented without their trailing slash, so we have to re-add it.
+                                canonical_path.push(std::path::MAIN_SEPARATOR_STR);
                             }
-                            None => canonical_path.push("/"),
+                            None => canonical_path = PathBuf::from(std::path::MAIN_SEPARATOR_STR),
                         }
                     }
                     Component::CurDir => {}
@@ -901,7 +902,7 @@ impl FakeFsState {
                                 }
                             }
                             entry_stack.push(entry.clone());
-                            canonical_path.push(name);
+                            canonical_path = canonical_path.join(name);
                         } else {
                             return None;
                         }
@@ -963,7 +964,7 @@ pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
-    /// We need to use something large enoug for Windows and Unix to consider this a new file.
+    /// We need to use something large enough for Windows and Unix to consider this a new file.
     /// https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html#platform-specific-behavior
     const SYSTEMTIME_INTERVAL: u64 = 100;
 
