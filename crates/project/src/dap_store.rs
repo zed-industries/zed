@@ -42,7 +42,7 @@ use std::{
 };
 use task::{DebugAdapterConfig, DebugRequestType};
 use text::Point;
-use util::{merge_json_value_into, ResultExt};
+use util::{maybe, merge_json_value_into, ResultExt};
 
 pub enum DapStoreEvent {
     DebugClientStarted(DebugAdapterClientId),
@@ -256,47 +256,57 @@ impl DapStore {
         );
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
-            let adapter = Arc::new(
-                build_adapter(&config)
-                    .await
-                    .context("Creating debug adapter")
-                    .log_err()?,
-            );
+            let client = maybe!(async {
+                let adapter = Arc::new(
+                    build_adapter(&config)
+                        .await
+                        .context("Creating debug adapter")?,
+                );
 
-            let binary = adapter
-                .get_binary(&adapter_delegate, &config)
-                .await
-                .log_err()?;
+                let binary = adapter.get_binary(&adapter_delegate, &config).await?;
 
-            let mut request_args = json!({});
-            if let Some(config_args) = config.initialize_args.clone() {
-                merge_json_value_into(config_args, &mut request_args);
-            }
+                let mut request_args = json!({});
+                if let Some(config_args) = config.initialize_args.clone() {
+                    merge_json_value_into(config_args, &mut request_args);
+                }
 
-            merge_json_value_into(adapter.request_args(&config), &mut request_args);
+                merge_json_value_into(adapter.request_args(&config), &mut request_args);
 
-            if let Some(args) = args {
-                merge_json_value_into(args.configuration, &mut request_args);
-            }
+                if let Some(args) = args {
+                    merge_json_value_into(args.configuration, &mut request_args);
+                }
 
-            let mut client = DebugAdapterClient::new(client_id, request_args, config, adapter);
+                let mut client = DebugAdapterClient::new(client_id, request_args, config, adapter);
 
-            client
-                .start(
-                    &binary,
-                    move |message, cx| {
-                        dap_store
-                            .update(cx, |_, cx| {
-                                cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
-                            })
-                            .log_err();
-                    },
-                    &mut cx,
-                )
-                .await
-                .log_err()?;
+                client
+                    .start(
+                        &binary,
+                        move |message, cx| {
+                            dap_store
+                                .update(cx, |_, cx| {
+                                    cx.emit(DapStoreEvent::DebugClientEvent { client_id, message })
+                                })
+                                .log_err();
+                        },
+                        &mut cx,
+                    )
+                    .await?;
 
-            let client = Arc::new(client);
+                anyhow::Ok(client)
+            })
+            .await;
+
+            let client = match client {
+                Err(error) => {
+                    this.update(&mut cx, |_, cx| {
+                        cx.emit(DapStoreEvent::Notification(error.to_string()));
+                    })
+                    .log_err()?;
+
+                    return None;
+                }
+                Ok(client) => Arc::new(client),
+            };
 
             this.update(&mut cx, |store, cx| {
                 let handle = store
@@ -1239,7 +1249,7 @@ pub struct DapAdapterDelegate {
     fs: Arc<dyn Fs>,
     http_client: Option<Arc<dyn HttpClient>>,
     node_runtime: Option<NodeRuntime>,
-    udpated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
+    updated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
     languages: Arc<LanguageRegistry>,
 }
 
@@ -1248,14 +1258,14 @@ impl DapAdapterDelegate {
         http_client: Option<Arc<dyn HttpClient>>,
         node_runtime: Option<NodeRuntime>,
         fs: Arc<dyn Fs>,
-        udpated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
+        updated_adapters: Arc<Mutex<HashSet<DebugAdapterName>>>,
         languages: Arc<LanguageRegistry>,
     ) -> Self {
         Self {
             fs,
             http_client,
             node_runtime,
-            udpated_adapters,
+            updated_adapters,
             languages,
         }
     }
@@ -1275,7 +1285,7 @@ impl dap::adapters::DapDelegate for DapAdapterDelegate {
     }
 
     fn updated_adapters(&self) -> Arc<Mutex<HashSet<DebugAdapterName>>> {
-        self.udpated_adapters.clone()
+        self.updated_adapters.clone()
     }
 
     fn update_status(&self, dap_name: DebugAdapterName, status: dap::adapters::DapStatus) {

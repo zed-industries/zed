@@ -66,7 +66,7 @@ pub enum DebugAdapterKind {
 
 impl DebugAdapterKind {
     /// Returns the display name for the adapter kind
-    pub fn diplay_name(&self) -> &str {
+    pub fn display_name(&self) -> &str {
         match self {
             Self::Custom(_) => "Custom",
             Self::Python => "Python",

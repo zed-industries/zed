@@ -220,7 +220,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
                     .await
                     .insert(self.name());
 
-                return Ok(binary?);
+                return binary;
             }
 
             delegate.update_status(self.name(), DapStatus::Downloading);

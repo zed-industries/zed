@@ -520,7 +520,7 @@ impl DapLogView {
             .debug_clients(cx)
             .map(|client| DapMenuItem {
                 client_id: client.id(),
-                client_name: client.config().kind.diplay_name().into(),
+                client_name: client.config().kind.display_name().into(),
                 selected_entry: self.current_view.map_or(LogKind::Adapter, |(_, kind)| kind),
                 has_adapter_logs: client.has_adapter_logs(),
             })
