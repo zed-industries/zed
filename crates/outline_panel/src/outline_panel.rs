@@ -3144,18 +3144,23 @@ impl OutlinePanel {
                 return Vec::new();
             };
 
-            outline_panel
+            let Some(ids_to_remove) = outline_panel
                 .update(&mut cx, |outline_panel, _| {
                     if matches!(outline_panel.mode, ItemsDisplayMode::Search(_)) {
-                        cleanup_fs_entries_without_search_children(
+                        fs_entries_without_search_children(
                             &outline_panel.collapsed_entries,
                             &mut entries,
                             &mut match_candidates,
                             &mut added_contexts,
-                        );
+                        )
+                    } else {
+                        BTreeSet::new()
                     }
                 })
-                .ok();
+                .ok()
+            else {
+                return Vec::new();
+            };
 
             let Some(query) = query else {
                 return entries;
@@ -3175,12 +3180,16 @@ impl OutlinePanel {
 
             let mut id = 0;
             entries.retain_mut(|cached_entry| {
-                let retain = match matched_ids.remove(&id) {
-                    Some(string_match) => {
-                        cached_entry.string_match = Some(string_match);
-                        true
+                let retain = if ids_to_remove.contains(&id) {
+                    false
+                } else {
+                    match matched_ids.remove(&id) {
+                        Some(string_match) => {
+                            cached_entry.string_match = Some(string_match);
+                            true
+                        }
+                        None => false,
                     }
-                    None => false,
                 };
                 id += 1;
                 retain
@@ -3244,6 +3253,7 @@ impl OutlinePanel {
                 }
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Outline(_, _, outline) => {
+                        // TODO kb this is wrong, as there could be outline entries with the same text, but under different parent entries
                         if added_contexts.insert(outline.text.clone()) {
                             match_candidates.push(StringMatchCandidate {
                                 id,
@@ -3618,12 +3628,12 @@ impl OutlinePanel {
     }
 }
 
-fn cleanup_fs_entries_without_search_children(
+fn fs_entries_without_search_children(
     collapsed_entries: &HashSet<CollapsedEntry>,
     entries: &mut Vec<CachedEntry>,
     string_match_candidates: &mut Vec<StringMatchCandidate>,
     added_contexts: &mut HashSet<String>,
-) {
+) -> BTreeSet<usize> {
     let mut match_ids_to_remove = BTreeSet::new();
     let mut previous_entry = None::<&PanelEntry>;
     for (id, entry) in entries.iter().enumerate().rev() {
@@ -3728,7 +3738,7 @@ fn cleanup_fs_entries_without_search_children(
     }
 
     if match_ids_to_remove.is_empty() {
-        return;
+        return match_ids_to_remove;
     }
 
     string_match_candidates.retain(|candidate| {
@@ -3738,9 +3748,7 @@ fn cleanup_fs_entries_without_search_children(
         }
         retain
     });
-    match_ids_to_remove.into_iter().rev().for_each(|id| {
-        entries.remove(id);
-    });
+    match_ids_to_remove
 }
 
 fn workspace_active_editor(
@@ -4370,6 +4378,102 @@ mod tests {
                     outline_panel.selected_entry()
                 ),
                 select_first_in_all_matches("ide/src/")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_item_filtering(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
+        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(rust_lang()))
+        });
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update(cx, |outline_panel, cx| outline_panel.set_active(true, cx));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::default(), cx)
+            })
+            .unwrap();
+        let search_view = workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectSearchView>())
+                    .expect("Project search view expected to appear after new search event trigger")
+            })
+            .unwrap();
+
+        let query = "param_names_for_lifetime_elision_hints";
+        perform_project_search(&search_view, query, cx);
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .results_editor()
+                .update(cx, |results_editor, cx| {
+                    assert_eq!(
+                        results_editor.display_text(cx).match_indices(query).count(),
+                        9
+                    );
+                });
+        });
+        let all_matches = r#"/
+  crates/
+    ide/src/
+      inlay_hints/
+        fn_lifetime_fn.rs
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+      inlay_hints.rs
+        search: pub param_names_for_lifetime_elision_hints: bool,
+        search: param_names_for_lifetime_elision_hints: self
+      static_index.rs
+        search: param_names_for_lifetime_elision_hints: false,
+    rust-analyzer/src/
+      cli/
+        analysis_stats.rs
+          search: param_names_for_lifetime_elision_hints: true,
+      config.rs
+        search: param_names_for_lifetime_elision_hints: self"#;
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(&outline_panel.cached_entries, None,),
+                all_matches,
+            );
+        });
+
+        let filter_text = "a";
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.filter_editor.update(cx, |filter_editor, cx| {
+                filter_editor.set_text(filter_text, cx);
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(&outline_panel.cached_entries, None),
+                all_matches
+                    .lines()
+                    .filter(|item| item.contains(filter_text))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
             );
         });
     }
