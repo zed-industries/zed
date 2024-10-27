@@ -54,7 +54,7 @@ impl EditorTestContext {
             }),
         )
         .await;
-        let project = Project::test(fs, [root.as_ref()], cx).await;
+        let project = Project::test(fs, [root], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
                 project.open_local_buffer(root.join("file"), cx)
