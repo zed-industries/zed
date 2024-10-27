@@ -874,14 +874,9 @@ impl FakeFsState {
                         entry_stack.push(self.root.clone());
                         canonical_path.clear();
                         match prefix {
-                            Some(_prefix_component) => {
-                                #[cfg(windows)]
-                                {
-                                    let root = PathBuf::from("c:\\");
-                                    canonical_path.push(&root);
-                                }
-                                #[cfg(not(windows))]
-                                canonical_path.push(_prefix_component.as_os_str());
+                            Some(prefix_component) => {
+                                canonical_path.push(prefix_component.as_os_str());
+                                canonical_path.push("/");
                             }
                             None => canonical_path.push("/"),
                         }
