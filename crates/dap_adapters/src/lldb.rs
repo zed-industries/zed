@@ -25,19 +25,7 @@ impl DebugAdapter for LldbDebugAdapter {
         Box::new(StdioTransport::new())
     }
 
-    async fn install_binary(
-        &self,
-        _version: AdapterVersion,
-        _delegate: &dyn DapDelegate,
-    ) -> Result<()> {
-        bail!("Install binary is not support for install_binary (yet)")
-    }
-
-    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
-        bail!("Fetch latest adapter version not implemented for lldb (yet)")
-    }
-
-    async fn get_installed_binary(
+    async fn get_binary(
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
@@ -62,6 +50,26 @@ impl DebugAdapter for LldbDebugAdapter {
                 "LLDB-DAP is only supported on macOS (Right now)"
             ))
         }
+    }
+
+    async fn install_binary(
+        &self,
+        _version: AdapterVersion,
+        _delegate: &dyn DapDelegate,
+    ) -> Result<()> {
+        bail!("LLDB debug adapter cannot be installed")
+    }
+
+    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
+        bail!("Fetch latest adapter version not implemented for lldb (yet)")
+    }
+
+    async fn get_installed_binary(
+        &self,
+        _: &dyn DapDelegate,
+        _: &DebugAdapterConfig,
+    ) -> Result<DebugAdapterBinary> {
+        bail!("LLDB debug adapter cannot be installed")
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {

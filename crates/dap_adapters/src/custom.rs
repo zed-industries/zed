@@ -39,15 +39,7 @@ impl DebugAdapter for CustomDebugAdapter {
         self.transport.clone_box()
     }
 
-    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
-        bail!("Custom debug adapters don't have latest versions")
-    }
-
-    async fn install_binary(&self, _: AdapterVersion, _: &dyn DapDelegate) -> Result<()> {
-        Ok(())
-    }
-
-    async fn get_installed_binary(
+    async fn get_binary(
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
@@ -60,8 +52,24 @@ impl DebugAdapter for CustomDebugAdapter {
                 .clone()
                 .map(|args| args.iter().map(OsString::from).collect()),
             envs: self.custom_args.envs.clone(),
-            version: "Custom daps".to_string(),
+            version: "Custom Debug Adapter".to_string(),
         })
+    }
+
+    async fn fetch_latest_adapter_version(&self, _: &dyn DapDelegate) -> Result<AdapterVersion> {
+        bail!("Custom debug adapters don't have latest versions")
+    }
+
+    async fn install_binary(&self, _: AdapterVersion, _: &dyn DapDelegate) -> Result<()> {
+        bail!("Custom debug adapters cannot be installed")
+    }
+
+    async fn get_installed_binary(
+        &self,
+        _: &dyn DapDelegate,
+        _: &DebugAdapterConfig,
+    ) -> Result<DebugAdapterBinary> {
+        bail!("Custom debug adapters cannot be installed")
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
