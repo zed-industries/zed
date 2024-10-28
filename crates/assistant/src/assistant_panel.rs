@@ -3654,7 +3654,13 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Chat"))
+            .child(Label::new(
+                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
+                    "Chat"
+                } else {
+                    "Send"
+                },
+            ))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
@@ -4035,11 +4041,21 @@ impl Render for ContextEditor {
                         .child(
                             h_flex()
                                 .w_full()
-                                .items_center()
                                 .justify_end()
-                                .gap_1p5()
-                                .child(self.render_edit_button(cx))
-                                .child(Label::new("or").size(LabelSize::Small).color(Color::Muted))
+                                .when(
+                                    AssistantSettings::get_global(cx).are_live_diffs_enabled(cx),
+                                    |buttons| {
+                                        buttons
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(self.render_edit_button(cx))
+                                            .child(
+                                                Label::new("or")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                    },
+                                )
                                 .child(self.render_send_button(cx)),
                         ),
                 ),
