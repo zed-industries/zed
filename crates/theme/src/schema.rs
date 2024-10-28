@@ -38,12 +38,19 @@ pub(crate) fn try_parse_color(color: &str) -> Result<Hsla> {
 
 fn resolve_color_references(
     initial_colors: &HashMap<String, String>,
+    theme_variables: &HashMap<String, String>,
     max_iterations: usize,
 ) -> HashMap<String, Hsla> {
     let mut resolved_colors: HashMap<String, Hsla> = HashMap::default();
     let mut unresolved_refs: HashMap<String, String> = HashMap::default();
 
-    for (key, color_str) in initial_colors {
+    let all_variables: HashMap<String, String> = initial_colors
+        .iter()
+        .chain(theme_variables.iter())
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+
+    for (key, color_str) in &all_variables {
         match try_parse_color(color_str) {
             Ok(color) => {
                 resolved_colors.insert(key.clone(), color);
@@ -126,6 +133,24 @@ pub struct ThemeContent {
     pub name: String,
     pub appearance: AppearanceContent,
     pub style: ThemeStyleContent,
+    #[serde(default)]
+    pub variables: HashMap<String, String>,
+}
+
+impl ThemeContent {
+    pub fn theme_variables(&self) -> HashMap<String, String> {
+        self.variables.clone()
+    }
+
+    pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
+        let theme_variables = self.theme_variables();
+        self.style.theme_colors_refinement(&theme_variables)
+    }
+
+    pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
+        let theme_variables = self.theme_variables();
+        self.style.status_colors_refinement(&theme_variables)
+    }
 }
 
 /// The content of a serialized theme.
@@ -155,14 +180,20 @@ pub struct ThemeStyleContent {
 impl ThemeStyleContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeContent`].
     #[inline(always)]
-    pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
-        self.colors.theme_colors_refinement()
+    pub fn theme_colors_refinement(
+        &self,
+        theme_variables: &HashMap<String, String>,
+    ) -> ThemeColorsRefinement {
+        self.colors.theme_colors_refinement(theme_variables)
     }
 
     /// Returns a [`StatusColorsRefinement`] based on the colors in the [`ThemeContent`].
     #[inline(always)]
-    pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
-        self.status.status_colors_refinement()
+    pub fn status_colors_refinement(
+        &self,
+        theme_variables: &HashMap<String, String>,
+    ) -> StatusColorsRefinement {
+        self.status.status_colors_refinement(theme_variables)
     }
 
     /// Returns the syntax style overrides in the [`ThemeContent`].
@@ -610,7 +641,10 @@ pub struct ThemeColorsContent {
 
 impl ThemeColorsContent {
     /// Returns a [`ThemeColorsRefinement`] based on the colors in the [`ThemeColorsContent`].
-    pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
+    pub fn theme_colors_refinement(
+        &self,
+        theme_variables: &HashMap<String, String>,
+    ) -> ThemeColorsRefinement {
         let initial_colors: HashMap<String, String> = [
             ("border", &self.border),
             ("border.variant", &self.border_variant),
@@ -767,7 +801,8 @@ impl ThemeColorsContent {
         .filter_map(|(key, value)| value.as_ref().map(|v| (key.to_string(), v.clone())))
         .collect();
 
-        let resolved_colors = resolve_color_references(&initial_colors, MAX_RESOLUTION_DEPTH);
+        let resolved_colors =
+            resolve_color_references(&initial_colors, theme_variables, MAX_RESOLUTION_DEPTH);
 
         ThemeColorsRefinement {
             border: resolved_colors.get("border").copied(),
@@ -1039,7 +1074,10 @@ pub struct StatusColorsContent {
 
 impl StatusColorsContent {
     /// Returns a [`StatusColorsRefinement`] based on the colors in the [`StatusColorsContent`].
-    pub fn status_colors_refinement(&self) -> StatusColorsRefinement {
+    pub fn status_colors_refinement(
+        &self,
+        theme_variables: &HashMap<String, String>,
+    ) -> StatusColorsRefinement {
         let initial_colors = [
             ("conflict", &self.conflict),
             ("conflict.background", &self.conflict_background),
@@ -1088,7 +1126,8 @@ impl StatusColorsContent {
         .filter_map(|(key, value)| value.as_ref().map(|v| (key.to_string(), v.clone())))
         .collect();
 
-        let resolved_colors = resolve_color_references(&initial_colors, MAX_RESOLUTION_DEPTH);
+        let resolved_colors =
+            resolve_color_references(&initial_colors, theme_variables, MAX_RESOLUTION_DEPTH);
 
         StatusColorsRefinement {
             conflict: resolved_colors.get("conflict").copied(),
@@ -1262,8 +1301,17 @@ mod tests {
 
     use super::*;
 
+    fn create_theme_variables() -> HashMap<String, String> {
+        let mut variables = HashMap::default();
+        variables.insert("red".to_string(), "#ff0000".to_string());
+        variables.insert("green".to_string(), "#00ff00".to_string());
+        variables
+    }
+
     #[test]
     fn test_color_references() {
+        let variables = create_theme_variables();
+
         let colors: ThemeColorsContent = serde_json::from_value(json!({
             "text": "#ff0000ff",
             "icon": "@text",
@@ -1272,7 +1320,7 @@ mod tests {
         }))
         .unwrap();
 
-        let refinement = colors.theme_colors_refinement();
+        let refinement = colors.theme_colors_refinement(&variables);
 
         let expected_color_1 = gpui::rgba(0xff0000ff);
         let expected_color_2 = gpui::rgba(0xff00ffff);
@@ -1290,6 +1338,8 @@ mod tests {
 
     #[test]
     fn test_short_reference_chain() {
+        let variables = create_theme_variables();
+
         let colors: StatusColorsContent = serde_json::from_value(json!({
             "conflict": "#ff0000ff",
             "modified": "@conflict",
@@ -1297,7 +1347,7 @@ mod tests {
         }))
         .unwrap();
 
-        let refinement = colors.status_colors_refinement();
+        let refinement = colors.status_colors_refinement(&variables);
 
         let expected_color = gpui::rgba(0xff0000ff);
         assert_eq!(refinement.conflict, Some(expected_color.into()));
@@ -1307,6 +1357,8 @@ mod tests {
 
     #[test]
     fn test_long_reference_chain() {
+        let variables = create_theme_variables();
+
         let color_json = json!({
             "border": "#ff0000ff",
             "border_variant": "@border",
@@ -1337,7 +1389,7 @@ mod tests {
         });
 
         let colors: ThemeColorsContent = serde_json::from_value(color_json).unwrap();
-        let refinement = colors.theme_colors_refinement();
+        let refinement = colors.theme_colors_refinement(&variables);
 
         let expected_color = gpui::rgba(0xff0000ff);
 
@@ -1348,13 +1400,15 @@ mod tests {
 
     #[test]
     fn test_circular_references() {
+        let variables = create_theme_variables();
+
         let colors: ThemeColorsContent = serde_json::from_value(json!({
             "text": "@icon",
             "icon": "@text"
         }))
         .unwrap();
 
-        let refinement = colors.theme_colors_refinement();
+        let refinement = colors.theme_colors_refinement(&variables);
 
         // Circular references should be left unresolved
         assert_eq!(refinement.text, None);

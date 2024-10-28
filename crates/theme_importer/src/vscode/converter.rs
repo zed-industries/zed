@@ -63,6 +63,7 @@ impl VsCodeThemeConverter {
                 players: Vec::new(),
                 syntax: syntax_theme,
             },
+            variables: collections::HashMap::default(),
         })
     }
 

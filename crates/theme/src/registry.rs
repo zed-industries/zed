@@ -108,13 +108,13 @@ impl ThemeRegistry {
                 AppearanceContent::Light => ThemeColors::light(),
                 AppearanceContent::Dark => ThemeColors::dark(),
             };
-            theme_colors.refine(&user_theme.style.theme_colors_refinement());
+            theme_colors.refine(&user_theme.theme_colors_refinement());
 
             let mut status_colors = match user_theme.appearance {
                 AppearanceContent::Light => StatusColors::light(),
                 AppearanceContent::Dark => StatusColors::dark(),
             };
-            status_colors.refine(&user_theme.style.status_colors_refinement());
+            status_colors.refine(&user_theme.status_colors_refinement());
 
             let mut player_colors = match user_theme.appearance {
                 AppearanceContent::Light => PlayerColors::light(),

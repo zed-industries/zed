@@ -1,6 +1,7 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
 use anyhow::Result;
+use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
@@ -465,6 +466,9 @@ impl ThemeSettings {
         if let Some(theme_overrides) = &self.theme_overrides {
             let mut base_theme = (*self.active_theme).clone();
 
+            // TODO: Theme overrides currently can not use variables
+            let base_theme_variables: HashMap<String, String> = HashMap::default();
+
             if let Some(window_background_appearance) = theme_overrides.window_background_appearance
             {
                 base_theme.styles.window_background_appearance =
@@ -474,11 +478,11 @@ impl ThemeSettings {
             base_theme
                 .styles
                 .colors
-                .refine(&theme_overrides.theme_colors_refinement());
+                .refine(&theme_overrides.theme_colors_refinement(&base_theme_variables));
             base_theme
                 .styles
                 .status
-                .refine(&theme_overrides.status_colors_refinement());
+                .refine(&theme_overrides.status_colors_refinement(&base_theme_variables));
             base_theme.styles.player.merge(&theme_overrides.players);
             base_theme.styles.accents.merge(&theme_overrides.accents);
             base_theme.styles.syntax =
