@@ -259,9 +259,6 @@ message Envelope {
         CloseBuffer close_buffer = 245;
         UpdateUserSettings update_user_settings = 246;
 
-        CheckFileExists check_file_exists = 255;
-        CheckFileExistsResponse check_file_exists_response = 256;
-
         ShutdownRemoteServer shutdown_remote_server = 257;
 
         RemoveWorktree remove_worktree = 258;
@@ -284,13 +281,16 @@ message Envelope {
         GitBranchesResponse git_branches_response = 271;
 
         UpdateGitBranch update_git_branch = 272;
+
         ListToolchains list_toolchains = 273;
         ListToolchainsResponse list_toolchains_response = 274;
         ActivateToolchain activate_toolchain = 275;
         ActiveToolchain active_toolchain = 276;
-        ActiveToolchainResponse active_toolchain_response = 277; // current max
-    }
+        ActiveToolchainResponse active_toolchain_response = 277;
 
+        GetPathMetadata get_path_metadata = 278;
+        GetPathMetadataResponse get_path_metadata_response = 279; // current max
+    }
 
     reserved 87 to 88;
     reserved 158 to 161;
@@ -305,6 +305,7 @@ message Envelope {
     reserved 221;
     reserved 224 to 229;
     reserved 247 to 254;
+    reserved 255 to 256;
 }
 
 // Messages
@@ -2357,14 +2358,15 @@ message UpdateUserSettings {
     }
 }
 
-message CheckFileExists {
+message GetPathMetadata {
     uint64 project_id = 1;
     string path = 2;
 }
 
-message CheckFileExistsResponse {
+message GetPathMetadataResponse {
     bool exists = 1;
     string path = 2;
+    bool is_dir = 3;
 }
 
 message ShutdownRemoteServer {}
