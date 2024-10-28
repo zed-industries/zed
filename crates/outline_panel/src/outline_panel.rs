@@ -2825,7 +2825,6 @@ impl OutlinePanel {
         cx.spawn(|outline_panel, mut cx| async move {
             let mut entries = Vec::new();
             let mut match_candidates = Vec::new();
-            let mut added_contexts = HashSet::default();
 
             let Ok(()) = outline_panel.update(&mut cx, |outline_panel, cx| {
                 let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
@@ -2947,7 +2946,6 @@ impl OutlinePanel {
                                             outline_panel.push_entry(
                                                 &mut entries,
                                                 &mut match_candidates,
-                                                &mut added_contexts,
                                                 track_matches,
                                                 new_folded_dirs,
                                                 folded_depth,
@@ -2986,7 +2984,6 @@ impl OutlinePanel {
                                     outline_panel.push_entry(
                                         &mut entries,
                                         &mut match_candidates,
-                                        &mut added_contexts,
                                         track_matches,
                                         PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                                         folded_depth,
@@ -3012,7 +3009,6 @@ impl OutlinePanel {
                                     outline_panel.push_entry(
                                         &mut entries,
                                         &mut match_candidates,
-                                        &mut added_contexts,
                                         track_matches,
                                         PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                                         folded_depth,
@@ -3049,7 +3045,6 @@ impl OutlinePanel {
                         outline_panel.push_entry(
                             &mut entries,
                             &mut match_candidates,
-                            &mut added_contexts,
                             track_matches,
                             PanelEntry::Fs(entry.clone()),
                             depth,
@@ -3063,7 +3058,6 @@ impl OutlinePanel {
                                 outline_panel.add_search_entries(
                                     &mut entries,
                                     &mut match_candidates,
-                                    &mut added_contexts,
                                     entry.clone(),
                                     depth,
                                     query.clone(),
@@ -3097,7 +3091,6 @@ impl OutlinePanel {
                                     query.as_deref(),
                                     &mut entries,
                                     &mut match_candidates,
-                                    &mut added_contexts,
                                     cx,
                                 );
                             }
@@ -3113,7 +3106,6 @@ impl OutlinePanel {
                         outline_panel.push_entry(
                             &mut entries,
                             &mut match_candidates,
-                            &mut added_contexts,
                             track_matches,
                             PanelEntry::Fs(entry.clone()),
                             0,
@@ -3132,7 +3124,6 @@ impl OutlinePanel {
                         outline_panel.push_entry(
                             &mut entries,
                             &mut match_candidates,
-                            &mut added_contexts,
                             track_matches,
                             PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                             folded_depth,
@@ -3144,22 +3135,10 @@ impl OutlinePanel {
                 return Vec::new();
             };
 
-            outline_panel
-                .update(&mut cx, |outline_panel, _| {
-                    if matches!(outline_panel.mode, ItemsDisplayMode::Search(_)) {
-                        cleanup_fs_entries_without_search_children(
-                            &outline_panel.collapsed_entries,
-                            &mut entries,
-                            &mut match_candidates,
-                            &mut added_contexts,
-                        );
-                    }
-                })
-                .ok();
-
             let Some(query) = query else {
                 return entries;
             };
+
             let mut matched_ids = match_strings(
                 &match_candidates,
                 &query,
@@ -3195,7 +3174,6 @@ impl OutlinePanel {
         &self,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
-        added_contexts: &mut HashSet<String>,
         track_matches: bool,
         entry: PanelEntry,
         depth: usize,
@@ -3221,47 +3199,39 @@ impl OutlinePanel {
                     if let Some(file_name) =
                         self.relative_path(fs_entry, cx).as_deref().map(file_name)
                     {
-                        if added_contexts.insert(file_name.clone()) {
-                            match_candidates.push(StringMatchCandidate {
-                                id,
-                                string: file_name.to_string(),
-                                char_bag: file_name.chars().collect(),
-                            });
-                        }
+                        match_candidates.push(StringMatchCandidate {
+                            id,
+                            string: file_name.to_string(),
+                            char_bag: file_name.chars().collect(),
+                        });
                     }
                 }
                 PanelEntry::FoldedDirs(worktree_id, entries) => {
                     let dir_names = self.dir_names_string(entries, *worktree_id, cx);
                     {
-                        if added_contexts.insert(dir_names.clone()) {
-                            match_candidates.push(StringMatchCandidate {
-                                id,
-                                string: dir_names.clone(),
-                                char_bag: dir_names.chars().collect(),
-                            });
-                        }
+                        match_candidates.push(StringMatchCandidate {
+                            id,
+                            string: dir_names.clone(),
+                            char_bag: dir_names.chars().collect(),
+                        });
                     }
                 }
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Outline(_, _, outline) => {
-                        if added_contexts.insert(outline.text.clone()) {
-                            match_candidates.push(StringMatchCandidate {
-                                id,
-                                string: outline.text.clone(),
-                                char_bag: outline.text.chars().collect(),
-                            });
-                        }
+                        match_candidates.push(StringMatchCandidate {
+                            id,
+                            string: outline.text.clone(),
+                            char_bag: outline.text.chars().collect(),
+                        });
                     }
                     OutlineEntry::Excerpt(..) => {}
                 },
                 PanelEntry::Search(new_search_entry) => {
-                    if added_contexts.insert(new_search_entry.render_data.context_text.clone()) {
-                        match_candidates.push(StringMatchCandidate {
-                            id,
-                            char_bag: new_search_entry.render_data.context_text.chars().collect(),
-                            string: new_search_entry.render_data.context_text.clone(),
-                        });
-                    }
+                    match_candidates.push(StringMatchCandidate {
+                        id,
+                        char_bag: new_search_entry.render_data.context_text.chars().collect(),
+                        string: new_search_entry.render_data.context_text.clone(),
+                    });
                 }
             }
         }
@@ -3408,7 +3378,6 @@ impl OutlinePanel {
         query: Option<&str>,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
-        added_contexts: &mut HashSet<String>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(excerpts) = self.excerpts.get(&buffer_id) {
@@ -3420,7 +3389,6 @@ impl OutlinePanel {
                 self.push_entry(
                     entries,
                     match_candidates,
-                    added_contexts,
                     track_matches,
                     PanelEntry::Outline(OutlineEntry::Excerpt(
                         buffer_id,
@@ -3448,7 +3416,6 @@ impl OutlinePanel {
                     self.push_entry(
                         entries,
                         match_candidates,
-                        added_contexts,
                         track_matches,
                         PanelEntry::Outline(OutlineEntry::Outline(
                             buffer_id,
@@ -3468,7 +3435,6 @@ impl OutlinePanel {
         &mut self,
         entries: &mut Vec<CachedEntry>,
         match_candidates: &mut Vec<StringMatchCandidate>,
-        added_contexts: &mut HashSet<String>,
         parent_entry: FsEntry,
         parent_depth: usize,
         filter_query: Option<String>,
@@ -3556,7 +3522,6 @@ impl OutlinePanel {
             self.push_entry(
                 entries,
                 match_candidates,
-                added_contexts,
                 filter_query.is_some(),
                 PanelEntry::Search(new_search_entry),
                 depth,
@@ -3616,131 +3581,6 @@ impl OutlinePanel {
         self.autoscroll(cx);
         cx.notify();
     }
-}
-
-fn cleanup_fs_entries_without_search_children(
-    collapsed_entries: &HashSet<CollapsedEntry>,
-    entries: &mut Vec<CachedEntry>,
-    string_match_candidates: &mut Vec<StringMatchCandidate>,
-    added_contexts: &mut HashSet<String>,
-) {
-    let mut match_ids_to_remove = BTreeSet::new();
-    let mut previous_entry = None::<&PanelEntry>;
-    for (id, entry) in entries.iter().enumerate().rev() {
-        let has_search_items = match (previous_entry, &entry.entry) {
-            (Some(PanelEntry::Outline(_)), _) => unreachable!(),
-            (_, PanelEntry::Outline(_)) => false,
-            (_, PanelEntry::Search(_)) => true,
-            (None, PanelEntry::FoldedDirs(_, _) | PanelEntry::Fs(_)) => false,
-            (
-                Some(PanelEntry::Search(_)),
-                PanelEntry::FoldedDirs(_, _) | PanelEntry::Fs(FsEntry::Directory(..)),
-            ) => false,
-            (Some(PanelEntry::FoldedDirs(..)), PanelEntry::FoldedDirs(..)) => true,
-            (
-                Some(PanelEntry::Search(_)),
-                PanelEntry::Fs(FsEntry::File(..) | FsEntry::ExternalFile(..)),
-            ) => true,
-            (
-                Some(PanelEntry::Fs(previous_fs)),
-                PanelEntry::FoldedDirs(folded_worktree, folded_dirs),
-            ) => {
-                let expected_parent = folded_dirs.last().map(|dir_entry| dir_entry.path.as_ref());
-                match previous_fs {
-                    FsEntry::ExternalFile(..) => false,
-                    FsEntry::File(file_worktree, file_entry, ..) => {
-                        file_worktree == folded_worktree
-                            && file_entry.path.parent() == expected_parent
-                    }
-                    FsEntry::Directory(directory_wortree, directory_entry) => {
-                        directory_wortree == folded_worktree
-                            && directory_entry.path.parent() == expected_parent
-                    }
-                }
-            }
-            (
-                Some(PanelEntry::FoldedDirs(folded_worktree, folded_dirs)),
-                PanelEntry::Fs(fs_entry),
-            ) => match fs_entry {
-                FsEntry::File(..) | FsEntry::ExternalFile(..) => false,
-                FsEntry::Directory(directory_wortree, maybe_parent_directory) => {
-                    directory_wortree == folded_worktree
-                        && Some(maybe_parent_directory.path.as_ref())
-                            == folded_dirs
-                                .first()
-                                .and_then(|dir_entry| dir_entry.path.parent())
-                }
-            },
-            (Some(PanelEntry::Fs(previous_entry)), PanelEntry::Fs(maybe_parent_entry)) => {
-                match (previous_entry, maybe_parent_entry) {
-                    (FsEntry::ExternalFile(..), _) | (_, FsEntry::ExternalFile(..)) => false,
-                    (FsEntry::Directory(..) | FsEntry::File(..), FsEntry::File(..)) => false,
-                    (
-                        FsEntry::Directory(previous_worktree, previous_directory),
-                        FsEntry::Directory(new_worktree, maybe_parent_directory),
-                    ) => {
-                        previous_worktree == new_worktree
-                            && previous_directory.path.parent()
-                                == Some(maybe_parent_directory.path.as_ref())
-                    }
-                    (
-                        FsEntry::File(previous_worktree, previous_file, ..),
-                        FsEntry::Directory(new_worktree, maybe_parent_directory),
-                    ) => {
-                        previous_worktree == new_worktree
-                            && previous_file.path.parent()
-                                == Some(maybe_parent_directory.path.as_ref())
-                    }
-                }
-            }
-        };
-
-        if has_search_items {
-            previous_entry = Some(&entry.entry);
-        } else {
-            let collapsed_entries_to_check = match &entry.entry {
-                PanelEntry::FoldedDirs(worktree_id, entries) => entries
-                    .iter()
-                    .map(|entry| CollapsedEntry::Dir(*worktree_id, entry.id))
-                    .collect(),
-                PanelEntry::Fs(FsEntry::Directory(worktree_id, entry)) => {
-                    vec![CollapsedEntry::Dir(*worktree_id, entry.id)]
-                }
-                PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
-                    vec![CollapsedEntry::ExternalFile(*buffer_id)]
-                }
-                PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
-                    vec![CollapsedEntry::File(*worktree_id, *buffer_id)]
-                }
-                PanelEntry::Search(_) | PanelEntry::Outline(_) => Vec::new(),
-            };
-            if !collapsed_entries_to_check.is_empty()
-                && collapsed_entries_to_check
-                    .iter()
-                    .any(|collapsed_entry| collapsed_entries.contains(collapsed_entry))
-            {
-                previous_entry = Some(&entry.entry);
-                continue;
-            }
-            match_ids_to_remove.insert(id);
-            previous_entry = None;
-        }
-    }
-
-    if match_ids_to_remove.is_empty() {
-        return;
-    }
-
-    string_match_candidates.retain(|candidate| {
-        let retain = !match_ids_to_remove.contains(&candidate.id);
-        if !retain {
-            added_contexts.remove(&candidate.string);
-        }
-        retain
-    });
-    match_ids_to_remove.into_iter().rev().for_each(|id| {
-        entries.remove(id);
-    });
 }
 
 fn workspace_active_editor(
@@ -4370,6 +4210,117 @@ mod tests {
                     outline_panel.selected_entry()
                 ),
                 select_first_in_all_matches("ide/src/")
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_item_filtering(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        populate_with_test_ra_project(&fs, "/rust-analyzer").await;
+        let project = Project::test(fs.clone(), ["/rust-analyzer".as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(rust_lang()))
+        });
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update(cx, |outline_panel, cx| outline_panel.set_active(true, cx));
+
+        workspace
+            .update(cx, |workspace, cx| {
+                ProjectSearchView::deploy_search(workspace, &workspace::DeploySearch::default(), cx)
+            })
+            .unwrap();
+        let search_view = workspace
+            .update(cx, |workspace, cx| {
+                workspace
+                    .active_pane()
+                    .read(cx)
+                    .items()
+                    .find_map(|item| item.downcast::<ProjectSearchView>())
+                    .expect("Project search view expected to appear after new search event trigger")
+            })
+            .unwrap();
+
+        let query = "param_names_for_lifetime_elision_hints";
+        perform_project_search(&search_view, query, cx);
+        search_view.update(cx, |search_view, cx| {
+            search_view
+                .results_editor()
+                .update(cx, |results_editor, cx| {
+                    assert_eq!(
+                        results_editor.display_text(cx).match_indices(query).count(),
+                        9
+                    );
+                });
+        });
+        let all_matches = r#"/
+  crates/
+    ide/src/
+      inlay_hints/
+        fn_lifetime_fn.rs
+          search: match config.param_names_for_lifetime_elision_hints {
+          search: allocated_lifetimes.push(if config.param_names_for_lifetime_elision_hints {
+          search: Some(it) if config.param_names_for_lifetime_elision_hints => {
+          search: InlayHintsConfig { param_names_for_lifetime_elision_hints: true, ..TEST_CONFIG },
+      inlay_hints.rs
+        search: pub param_names_for_lifetime_elision_hints: bool,
+        search: param_names_for_lifetime_elision_hints: self
+      static_index.rs
+        search: param_names_for_lifetime_elision_hints: false,
+    rust-analyzer/src/
+      cli/
+        analysis_stats.rs
+          search: param_names_for_lifetime_elision_hints: true,
+      config.rs
+        search: param_names_for_lifetime_elision_hints: self"#;
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(&outline_panel.cached_entries, None,),
+                all_matches,
+            );
+        });
+
+        let filter_text = "a";
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.filter_editor.update(cx, |filter_editor, cx| {
+                filter_editor.set_text(filter_text, cx);
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(&outline_panel.cached_entries, None),
+                all_matches
+                    .lines()
+                    .filter(|item| item.contains(filter_text))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.filter_editor.update(cx, |filter_editor, cx| {
+                filter_editor.set_text("", cx);
+            });
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, _| {
+            assert_eq!(
+                display_entries(&outline_panel.cached_entries, None,),
+                all_matches,
             );
         });
     }
