@@ -2448,9 +2448,15 @@ message Toolchain {
     string path = 2;
 }
 
+message ToolchainGroup {
+    uint64 start_index = 1;
+    string name = 2;
+}
+
 message ListToolchainsResponse {
     repeated Toolchain toolchains = 1;
     bool has_values = 2;
+    repeated ToolchainGroup groups = 3;
 }
 
 message ActivateToolchain {

@@ -11,6 +11,7 @@ use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
@@ -352,6 +353,31 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
 #[derive(Default)]
 pub(crate) struct PythonToolchainProvider {}
 
+static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
+    // Prioritize non-Conda environments.
+    PythonEnvironmentKind::Poetry,
+    PythonEnvironmentKind::Pipenv,
+    PythonEnvironmentKind::VirtualEnvWrapper,
+    PythonEnvironmentKind::Venv,
+    PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::Conda,
+    PythonEnvironmentKind::Pyenv,
+    PythonEnvironmentKind::GlobalPaths,
+    PythonEnvironmentKind::Homebrew,
+];
+
+fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
+    if let Some(kind) = kind {
+        ENV_PRIORITY_LIST
+            .iter()
+            .position(|blessed_env| blessed_env == &kind)
+            .unwrap_or(ENV_PRIORITY_LIST.len())
+    } else {
+        // Unknown toolchains are less useful than non-blessed ones.
+        ENV_PRIORITY_LIST.len() + 1
+    }
+}
+
 #[async_trait(?Send)]
 impl ToolchainLister for PythonToolchainProvider {
     async fn list(&self, worktree_root: PathBuf) -> ToolchainList {
@@ -372,8 +398,8 @@ impl ToolchainLister for PythonToolchainProvider {
             .ok()
             .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
         toolchains.sort_by(|lhs, rhs| {
-            lhs.kind
-                .cmp(&rhs.kind)
+            env_priority(lhs.kind)
+                .cmp(&env_priority(rhs.kind))
                 .then_with(|| lhs.executable.cmp(&rhs.executable))
         });
         let mut toolchains: Vec<_> = toolchains
@@ -396,6 +422,7 @@ impl ToolchainLister for PythonToolchainProvider {
         ToolchainList {
             toolchains,
             default: None,
+            groups: Default::default(),
         }
     }
 }

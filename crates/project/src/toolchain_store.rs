@@ -159,6 +159,20 @@ impl ToolchainStore {
             })?
             .await;
         let has_values = toolchains.is_some();
+        let groups = if let Some(toolchains) = &toolchains {
+            toolchains
+                .groups
+                .iter()
+                .filter_map(|group| {
+                    Some(proto::ToolchainGroup {
+                        start_index: u64::try_from(group.0).ok()?,
+                        name: String::from(group.1.as_ref()),
+                    })
+                })
+                .collect()
+        } else {
+            vec![]
+        };
         let toolchains = if let Some(toolchains) = toolchains {
             toolchains
                 .toolchains
@@ -171,9 +185,11 @@ impl ToolchainStore {
         } else {
             vec![]
         };
+
         Ok(proto::ListToolchainsResponse {
             has_values,
             toolchains,
+            groups,
         })
     }
     pub(crate) fn as_language_toolchain_store(&self) -> Arc<dyn LanguageToolchainStore> {
@@ -358,9 +374,17 @@ impl RemoteToolchainStore {
                     path: toolchain.path.into(),
                 })
                 .collect();
+            let groups = response
+                .groups
+                .into_iter()
+                .filter_map(|group| {
+                    Some((usize::try_from(group.start_index).ok()?, group.name.into()))
+                })
+                .collect();
             Some(ToolchainList {
                 toolchains,
                 default: None,
+                groups,
             })
         })
     }
