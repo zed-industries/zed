@@ -8,7 +8,7 @@ use crate::{
     AccentColors, PlayerColors, StatusColors, StatusColorsRefinement, SyntaxTheme, SystemColors,
 };
 
-#[derive(Refineable, Clone, Debug)]
+#[derive(Refineable, Clone, Debug, PartialEq)]
 #[refineable(Debug, serde::Deserialize)]
 pub struct ThemeColors {
     /// Border color. Used for most borders, is usually a high contrast color.
@@ -123,6 +123,9 @@ pub struct ThemeColors {
     pub search_match_background: Hsla,
     pub panel_background: Hsla,
     pub panel_focused_border: Hsla,
+    pub panel_indent_guide: Hsla,
+    pub panel_indent_guide_hover: Hsla,
+    pub panel_indent_guide_active: Hsla,
     pub pane_focused_border: Hsla,
     pub pane_group_border: Hsla,
     /// The color of the scrollbar thumb.
@@ -246,7 +249,7 @@ pub struct ThemeColors {
     pub link_text_hover: Hsla,
 }
 
-#[derive(Refineable, Clone)]
+#[derive(Refineable, Clone, PartialEq)]
 pub struct ThemeStyles {
     /// The background appearance of the window.
     pub window_background_appearance: WindowBackgroundAppearance,

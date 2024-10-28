@@ -536,6 +536,15 @@ impl AnyWeakModel {
     }
 }
 
+impl std::fmt::Debug for AnyWeakModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(type_name::<Self>())
+            .field("entity_id", &self.entity_id)
+            .field("entity_type", &self.entity_type)
+            .finish()
+    }
+}
+
 impl<T> From<WeakModel<T>> for AnyWeakModel {
     fn from(model: WeakModel<T>) -> Self {
         model.any_model

@@ -1589,8 +1589,9 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
         .await;
     let (workspace_b, cx_b) = client_b.join_workspace(channel_id, cx_b).await;
 
-    cx_a.simulate_keystrokes("cmd-p 2 enter");
+    cx_a.simulate_keystrokes("cmd-p");
     cx_a.run_until_parked();
+    cx_a.simulate_keystrokes("2 enter");
 
     let editor_a = workspace_a.update(cx_a, |workspace, cx| {
         workspace.active_item_as::<Editor>(cx).unwrap()
@@ -2041,7 +2042,9 @@ async fn test_following_to_channel_notes_other_workspace(
     share_workspace(&workspace_a, cx_a).await.unwrap();
 
     // a opens 1.txt
-    cx_a.simulate_keystrokes("cmd-p 1 enter");
+    cx_a.simulate_keystrokes("cmd-p");
+    cx_a.run_until_parked();
+    cx_a.simulate_keystrokes("1 enter");
     cx_a.run_until_parked();
     workspace_a.update(cx_a, |workspace, cx| {
         let editor = workspace.active_item(cx).unwrap();
@@ -2098,7 +2101,9 @@ async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut 
     share_workspace(&workspace_a, cx_a).await.unwrap();
 
     // a opens 1.txt
-    cx_a.simulate_keystrokes("cmd-p 1 enter");
+    cx_a.simulate_keystrokes("cmd-p");
+    cx_a.run_until_parked();
+    cx_a.simulate_keystrokes("1 enter");
     cx_a.run_until_parked();
     workspace_a.update(cx_a, |workspace, cx| {
         let editor = workspace.active_item(cx).unwrap();
@@ -2118,7 +2123,9 @@ async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut 
     cx_b.simulate_keystrokes("down");
 
     // a opens a different file while not followed
-    cx_a.simulate_keystrokes("cmd-p 2 enter");
+    cx_a.simulate_keystrokes("cmd-p");
+    cx_a.run_until_parked();
+    cx_a.simulate_keystrokes("2 enter");
 
     workspace_b.update(cx_b, |workspace, cx| {
         let editor = workspace.active_item_as::<Editor>(cx).unwrap();
@@ -2128,7 +2135,9 @@ async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut 
     // a opens a file in a new window
     let (_, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
     cx_a2.update(|cx| cx.activate_window());
-    cx_a2.simulate_keystrokes("cmd-p 3 enter");
+    cx_a2.simulate_keystrokes("cmd-p");
+    cx_a2.run_until_parked();
+    cx_a2.simulate_keystrokes("3 enter");
     cx_a2.run_until_parked();
 
     // b starts following a again

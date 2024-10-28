@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context, Model, ModelContext, PromptLevel};
+use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, PromptLevel};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
@@ -241,7 +241,6 @@ impl HeadlessProject {
                     .log_err();
             }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
-                let prompt = prompt.clone();
                 let request = self.session.request(proto::LanguageServerPromptRequest {
                     project_id: SSH_PROJECT_ID,
                     actions: prompt
@@ -250,9 +249,10 @@ impl HeadlessProject {
                         .map(|action| action.title.to_string())
                         .collect(),
                     level: Some(prompt_to_proto(&prompt)),
-                    lsp_name: Default::default(),
-                    message: Default::default(),
+                    lsp_name: prompt.lsp_name.clone(),
+                    message: prompt.message.clone(),
                 });
+                let prompt = prompt.clone();
                 cx.background_executor()
                     .spawn(async move {
                         let response = request.await?;

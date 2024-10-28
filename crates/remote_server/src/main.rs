@@ -72,7 +72,7 @@ fn main() {
             }
         },
         Some(Commands::Version) => {
-            eprintln!("{}", env!("ZED_PKG_VERSION"));
+            println!("{}", env!("ZED_PKG_VERSION"));
             std::process::exit(0);
         }
         None => {

@@ -14,6 +14,7 @@ fuzzy.workspace = true
 git.workspace = true
 gpui.workspace = true
 picker.workspace = true
+project.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true

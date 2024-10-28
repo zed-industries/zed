@@ -39,6 +39,40 @@ Extensions that provide language servers may also provide default settings for t
 
 `float` values
 
+## Auto Install extensions
+
+- Description: Define extensions to be autoinstalled or never be installed.
+- Setting: `auto_install_extension`
+- Default: `{"html": true}`
+
+**Options**
+
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+
+On MacOS:
+
+```sh
+ls ~/Library/Application\ Support/Zed/extensions/installed/
+```
+
+On Linux:
+
+```sh
+ls ~/.local/share/zed/extensions/installed
+```
+
+Define extensions which should be installed (`true`) or never installed (`false`).
+
+```json
+{
+  "auto_install_extensions": {
+    "html": true,
+    "dockerfile": true,
+    "docker-compose": false
+  }
+}
+```
+
 ## Autosave
 
 - Description: When to automatically save edited buffers.
@@ -2008,6 +2042,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
+    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
@@ -2129,6 +2164,12 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `indent_size`
 - Default: `20`
 
+### Indent Guides
+
+- Description: Whether to show indent guides in the project panel.
+- Setting: `indent_guides`
+- Default: `true`
+
 ### Scrollbar
 
 - Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
@@ -2196,6 +2237,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "folder_icons": true,
   "git_status": true,
   "indent_size": 20,
+  "indent_guides": true,
   "auto_reveal_entries": true,
   "auto_fold_dirs": true,
 }

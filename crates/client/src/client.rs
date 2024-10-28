@@ -30,7 +30,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use socks::connect_socks_proxy_stream;
-use std::fmt;
 use std::pin::Pin;
 use std::{
     any::TypeId,
@@ -53,15 +52,6 @@ use util::{ResultExt, TryFutureExt};
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DevServerToken(pub String);
-
-impl fmt::Display for DevServerToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 static ZED_SERVER_URL: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
@@ -304,20 +294,14 @@ struct ClientState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Credentials {
-    DevServer { token: DevServerToken },
-    User { user_id: u64, access_token: String },
+pub struct Credentials {
+    pub user_id: u64,
+    pub access_token: String,
 }
 
 impl Credentials {
     pub fn authorization_header(&self) -> String {
-        match self {
-            Credentials::DevServer { token } => format!("dev-server-token {}", token),
-            Credentials::User {
-                user_id,
-                access_token,
-            } => format!("{} {}", user_id, access_token),
-        }
+        format!("{} {}", self.user_id, self.access_token)
     }
 }
 
@@ -600,11 +584,11 @@ impl Client {
     }
 
     pub fn user_id(&self) -> Option<u64> {
-        if let Some(Credentials::User { user_id, .. }) = self.state.read().credentials.as_ref() {
-            Some(*user_id)
-        } else {
-            None
-        }
+        self.state
+            .read()
+            .credentials
+            .as_ref()
+            .map(|credentials| credentials.user_id)
     }
 
     pub fn peer_id(&self) -> Option<PeerId> {
@@ -793,11 +777,6 @@ impl Client {
             .is_some()
     }
 
-    pub fn set_dev_server_token(&self, token: DevServerToken) -> &Self {
-        self.state.write().credentials = Some(Credentials::DevServer { token });
-        self
-    }
-
     #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
@@ -848,9 +827,7 @@ impl Client {
             }
         }
         let credentials = credentials.unwrap();
-        if let Credentials::User { user_id, .. } = &credentials {
-            self.set_id(*user_id);
-        }
+        self.set_id(credentials.user_id);
 
         if was_disconnected {
             self.set_status(Status::Connecting, cx);
@@ -866,9 +843,8 @@ impl Client {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
                         if !read_from_provider && IMPERSONATE_LOGIN.is_none() {
-                            if let Credentials::User{user_id, access_token} = credentials {
-                                self.credentials_provider.write_credentials(user_id, access_token, cx).await.log_err();
-                            }
+                                self.credentials_provider.write_credentials(credentials.user_id, credentials.access_token, cx).await.log_err();
+
                         }
 
                         futures::select_biased! {
@@ -1301,7 +1277,7 @@ impl Client {
                         .decrypt_string(&access_token)
                         .context("failed to decrypt access token")?;
 
-                    Ok(Credentials::User {
+                    Ok(Credentials {
                         user_id: user_id.parse()?,
                         access_token,
                     })
@@ -1422,7 +1398,7 @@ impl Client {
 
         // Use the admin API token to authenticate as the impersonated user.
         api_token.insert_str(0, "ADMIN_TOKEN:");
-        Ok(Credentials::User {
+        Ok(Credentials {
             user_id: response.user.id,
             access_token: api_token,
         })
@@ -1667,7 +1643,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
 
             let credentials: DevelopmentCredentials = serde_json::from_slice(&json).log_err()?;
 
-            Some(Credentials::User {
+            Some(Credentials {
                 user_id: credentials.user_id,
                 access_token: credentials.access_token,
             })
@@ -1721,7 +1697,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
                 .await
                 .log_err()??;
 
-            Some(Credentials::User {
+            Some(Credentials {
                 user_id: user_id.parse().ok()?,
                 access_token: String::from_utf8(access_token).ok()?,
             })
@@ -1855,7 +1831,7 @@ mod tests {
         // Time out when client tries to connect.
         client.override_authenticate(move |cx| {
             cx.background_executor().spawn(async move {
-                Ok(Credentials::User {
+                Ok(Credentials {
                     user_id,
                     access_token: "token".into(),
                 })

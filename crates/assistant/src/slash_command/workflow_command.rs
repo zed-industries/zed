@@ -1,17 +1,17 @@
-use crate::prompts::PromptBuilder;
-use std::sync::Arc;
-
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
-
 use workspace::Workspace;
+
+use crate::prompts::PromptBuilder;
 
 pub(crate) struct WorkflowSlashCommand {
     prompt_builder: Arc<PromptBuilder>,
@@ -60,7 +60,7 @@ impl SlashCommand for WorkflowSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let prompt_builder = self.prompt_builder.clone();
         cx.spawn(|_cx| async move {
             let text = prompt_builder.generate_workflow_prompt()?;
@@ -75,7 +75,8 @@ impl SlashCommand for WorkflowSlashCommand {
                     metadata: None,
                 }],
                 run_commands_in_text: false,
-            })
+            }
+            .to_event_stream())
         })
     }
 }
