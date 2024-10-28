@@ -1,5 +1,6 @@
 use derive_more::{Deref, DerefMut};
 
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::{borrow::Borrow, sync::Arc};
 use util::arc_cow::ArcCow;
@@ -10,9 +11,19 @@ use util::arc_cow::ArcCow;
 pub struct SharedString(ArcCow<'static, str>);
 
 impl SharedString {
-    /// creates a static SharedString
-    pub const fn new_static(s: &'static str) -> Self {
-        Self(ArcCow::Borrowed(s))
+    /// Creates a static [`SharedString`] from a `&'static str`.
+    pub const fn new_static(str: &'static str) -> Self {
+        Self(ArcCow::Borrowed(str))
+    }
+}
+
+impl JsonSchema for SharedString {
+    fn schema_name() -> String {
+        String::schema_name()
+    }
+
+    fn json_schema(gen: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
+        String::json_schema(gen)
     }
 }
 

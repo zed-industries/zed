@@ -34,7 +34,7 @@ struct InternalDiffHunk {
 impl sum_tree::Item for InternalDiffHunk {
     type Summary = DiffHunkSummary;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &text::BufferSnapshot) -> Self::Summary {
         DiffHunkSummary {
             buffer_range: self.buffer_range.clone(),
         }

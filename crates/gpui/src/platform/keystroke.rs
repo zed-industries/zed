@@ -146,7 +146,7 @@ impl Keystroke {
                 "space" => Some(" ".into()),
                 "tab" => Some("\t".into()),
                 "enter" => Some("\n".into()),
-                key if !is_printable_key(key) => None,
+                key if !is_printable_key(key) || key.is_empty() => None,
                 key => {
                     if self.modifiers.shift {
                         Some(key.to_uppercase())

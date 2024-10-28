@@ -1241,7 +1241,6 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             Some(AutoindentMode::EachLine),
             cx,
         );
-
         assert_eq!(
             buffer.text(),
             "
@@ -1256,6 +1255,74 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             "
             .unindent()
         );
+
+        // Insert a newline after the open brace. It is auto-indented
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {«
+            »
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+                ˇ
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+            .replace("ˇ", "")
+        );
+
+        // Manually outdent the line. It stays outdented.
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+            «»
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+        );
+
         buffer
     });
 
@@ -1651,6 +1718,69 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
                 }
             }
             "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.new_model(|cx| {
+        let (text, ranges_to_replace) = marked_text_ranges(
+            &"
+            mod numbers {
+                «fn one() {
+                    1
+                }
+            »
+                «fn two() {
+                    2
+                }
+            »
+                «fn three() {
+                    3
+                }
+            »}
+            "
+            .unindent(),
+            false,
+        );
+
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        buffer.edit(
+            [
+                (ranges_to_replace[0].clone(), "fn one() {\n    101\n}\n"),
+                (ranges_to_replace[1].clone(), "fn two() {\n    102\n}\n"),
+                (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
+            ],
+            Some(AutoindentMode::Block {
+                original_indent_columns: vec![0, 0, 0],
+            }),
+            cx,
+        );
+
+        pretty_assertions::assert_eq!(
+            buffer.text(),
+            "
+            mod numbers {
+                fn one() {
+                    101
+                }
+
+                fn two() {
+                    102
+                }
+
+                fn three() {
+                    103
+                }
+            }
+            "
             .unindent()
         );
 
@@ -2381,20 +2511,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
 fn test_branch_and_merge(cx: &mut TestAppContext) {
     cx.update(|cx| init_settings(cx, |_| {}));
 
-    let base_buffer = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+    let base = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
 
     // Create a remote replica of the base buffer.
-    let base_buffer_replica = cx.new_model(|cx| {
-        Buffer::from_proto(
-            1,
-            Capability::ReadWrite,
-            base_buffer.read(cx).to_proto(cx),
-            None,
-        )
-        .unwrap()
+    let base_replica = cx.new_model(|cx| {
+        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
     });
-    base_buffer.update(cx, |_buffer, cx| {
-        cx.subscribe(&base_buffer_replica, |this, _, event, cx| {
+    base.update(cx, |_buffer, cx| {
+        cx.subscribe(&base_replica, |this, _, event, cx| {
             if let BufferEvent::Operation {
                 operation,
                 is_local: true,
@@ -2407,86 +2531,184 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Create a branch, which initially has the same state as the base buffer.
-    let branch_buffer = base_buffer.update(cx, |buffer, cx| buffer.branch(cx));
-    branch_buffer.read_with(cx, |buffer, _| {
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+    branch.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "one\ntwo\nthree\n");
     });
 
     // Edits to the branch are not applied to the base.
-    branch_buffer.update(cx, |buffer, cx| {
+    branch.update(cx, |buffer, cx| {
         buffer.edit(
-            [(Point::new(1, 0)..Point::new(1, 0), "ONE_POINT_FIVE\n")],
+            [
+                (Point::new(1, 0)..Point::new(1, 0), "1.5\n"),
+                (Point::new(2, 0)..Point::new(2, 5), "THREE"),
+            ],
             None,
             cx,
         )
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "one\ntwo\nthree\n");
-        assert_eq!(branch_buffer.text(), "one\nONE_POINT_FIVE\ntwo\nthree\n");
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "one\ntwo\nthree\n");
+        assert_eq!(buffer.text(), "one\n1.5\ntwo\nTHREE\n");
     });
+
+    // Convert from branch buffer ranges to the corresoponing ranges in the
+    // base buffer.
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(
+            buffer.range_to_version(4..7, &base.read(cx).version()),
+            4..4
+        );
+        assert_eq!(
+            buffer.range_to_version(2..9, &base.read(cx).version()),
+            2..5
+        );
+    });
+
+    // The branch buffer maintains a diff with respect to its base buffer.
+    start_recalculating_diff(&branch, cx);
+    cx.run_until_parked();
+    assert_diff_hunks(
+        &branch,
+        cx,
+        &[(1..2, "", "1.5\n"), (3..4, "three\n", "THREE\n")],
+    );
 
     // Edits to the base are applied to the branch.
-    base_buffer.update(cx, |buffer, cx| {
+    base.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\nthree\n");
-        assert_eq!(
-            branch_buffer.text(),
-            "ZERO\none\nONE_POINT_FIVE\ntwo\nthree\n"
-        );
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\nthree\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\nTHREE\n");
     });
 
-    assert_diff_hunks(&branch_buffer, cx, &[(2..3, "", "ONE_POINT_FIVE\n")]);
+    // Until the git diff recalculation is complete, the git diff references
+    // the previous content of the base buffer, so that it stays in sync.
+    start_recalculating_diff(&branch, cx);
+    assert_diff_hunks(
+        &branch,
+        cx,
+        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
+    );
+    cx.run_until_parked();
+    assert_diff_hunks(
+        &branch,
+        cx,
+        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
+    );
 
     // Edits to any replica of the base are applied to the branch.
-    base_buffer_replica.update(cx, |buffer, cx| {
-        buffer.edit(
-            [(Point::new(2, 0)..Point::new(2, 0), "TWO_POINT_FIVE\n")],
-            None,
-            cx,
-        )
+    base_replica.update(cx, |buffer, cx| {
+        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "2.5\n")], None, cx)
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(
-            base_buffer.read(cx).text(),
-            "ZERO\none\ntwo\nTWO_POINT_FIVE\nthree\n"
-        );
-        assert_eq!(
-            branch_buffer.text(),
-            "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
-        );
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\n2.5\nthree\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 
     // Merging the branch applies all of its changes to the base.
-    base_buffer.update(cx, |base_buffer, cx| {
-        base_buffer.merge(&branch_buffer, cx);
-        assert_eq!(
-            base_buffer.text(),
-            "ZERO\none\nONE_POINT_FIVE\ntwo\nTWO_POINT_FIVE\nthree\n"
-        );
+    branch.update(cx, |buffer, cx| {
+        buffer.merge_into_base(Vec::new(), cx);
+    });
+
+    branch.update(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 }
 
+#[gpui::test]
+fn test_merge_into_base(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let base = cx.new_model(|cx| Buffer::local("abcdefghijk", cx));
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+
+    // Make 3 edits, merge one into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(0..3, "ABC"), (7..9, "HI"), (11..11, "LMN")], None, cx);
+        branch.merge_into_base(vec![5..8], cx);
+    });
+
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjkLMN"));
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
+
+    // Undo the one already-merged edit. Merge that into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(7..9, "hi")], None, cx);
+        branch.merge_into_base(vec![5..8], cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
+
+    // Merge an insertion into the base.
+    branch.update(cx, |branch, cx| {
+        branch.merge_into_base(vec![11..11], cx);
+    });
+
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefghijkLMN"));
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijkLMN"));
+
+    // Deleted the inserted text and merge that into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(11..14, "")], None, cx);
+        branch.merge_into_base(vec![10..11], cx);
+    });
+
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
+}
+
+#[gpui::test]
+fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let base = cx.new_model(|cx| Buffer::local("abcdefghijk", cx));
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+
+    // Make 2 edits, merge one into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(0..3, "ABC"), (7..9, "HI")], None, cx);
+        branch.merge_into_base(vec![7..7], cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
+
+    // Undo the merge in the base buffer.
+    base.update(cx, |base, cx| {
+        base.undo(cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
+
+    // Merge that operation into the base again.
+    branch.update(cx, |branch, cx| {
+        branch.merge_into_base(vec![7..7], cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
+}
+
+fn start_recalculating_diff(buffer: &Model<Buffer>, cx: &mut TestAppContext) {
+    buffer
+        .update(cx, |buffer, cx| buffer.recalculate_diff(cx).unwrap())
+        .detach();
+}
+
+#[track_caller]
 fn assert_diff_hunks(
     buffer: &Model<Buffer>,
     cx: &mut TestAppContext,
     expected_hunks: &[(Range<u32>, &str, &str)],
 ) {
-    buffer
-        .update(cx, |buffer, cx| buffer.recalculate_diff(cx).unwrap())
-        .detach();
-    cx.executor().run_until_parked();
-
-    buffer.read_with(cx, |buffer, _| {
-        let snapshot = buffer.snapshot();
-        assert_hunks(
-            snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
-            &snapshot,
-            &buffer.diff_base().unwrap().to_string(),
-            expected_hunks,
-        );
+    let (snapshot, diff_base) = buffer.read_with(cx, |buffer, _| {
+        (buffer.snapshot(), buffer.diff_base().unwrap().to_string())
     });
+    assert_hunks(
+        snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
+        &snapshot,
+        &diff_base,
+        expected_hunks,
+    );
 }
 
 #[gpui::test(iterations = 100)]

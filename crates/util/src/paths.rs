@@ -221,11 +221,7 @@ impl PathWithPosition {
     pub fn parse_str(s: &str) -> Self {
         let trimmed = s.trim();
         let path = Path::new(trimmed);
-        let maybe_file_name_with_row_col = path
-            .file_name()
-            .unwrap_or_default()
-            .to_str()
-            .unwrap_or_default();
+        let maybe_file_name_with_row_col = path.file_name().unwrap_or_default().to_string_lossy();
         if maybe_file_name_with_row_col.is_empty() {
             return Self {
                 path: Path::new(s).to_path_buf(),
@@ -240,7 +236,7 @@ impl PathWithPosition {
         static SUFFIX_RE: LazyLock<Regex> =
             LazyLock::new(|| Regex::new(ROW_COL_CAPTURE_REGEX).unwrap());
         match SUFFIX_RE
-            .captures(maybe_file_name_with_row_col)
+            .captures(&maybe_file_name_with_row_col)
             .map(|caps| caps.extract())
         {
             Some((_, [file_name, maybe_row, maybe_column])) => {
@@ -361,26 +357,26 @@ pub fn compare_paths(
                 let b_is_file = components_b.peek().is_none() && b_is_file;
                 let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
                     let path_a = Path::new(component_a.as_os_str());
-                    let num_and_remainder_a = NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                        if a_is_file {
-                            path_a.file_stem()
-                        } else {
-                            path_a.file_name()
-                        }
-                        .and_then(|s| s.to_str())
-                        .unwrap_or_default(),
-                    );
+                    let path_string_a = if a_is_file {
+                        path_a.file_stem()
+                    } else {
+                        path_a.file_name()
+                    }
+                    .map(|s| s.to_string_lossy());
+                    let num_and_remainder_a = path_string_a
+                        .as_deref()
+                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
 
                     let path_b = Path::new(component_b.as_os_str());
-                    let num_and_remainder_b = NumericPrefixWithSuffix::from_numeric_prefixed_str(
-                        if b_is_file {
-                            path_b.file_stem()
-                        } else {
-                            path_b.file_name()
-                        }
-                        .and_then(|s| s.to_str())
-                        .unwrap_or_default(),
-                    );
+                    let path_string_b = if b_is_file {
+                        path_b.file_stem()
+                    } else {
+                        path_b.file_name()
+                    }
+                    .map(|s| s.to_string_lossy());
+                    let num_and_remainder_b = path_string_b
+                        .as_deref()
+                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
 
                     num_and_remainder_a.cmp(&num_and_remainder_b)
                 });
@@ -433,6 +429,38 @@ mod tests {
             vec![
                 (Path::new("root1/one.txt"), true),
                 (Path::new("root1/one.two.txt"), true),
+            ]
+        );
+    }
+
+    #[test]
+    fn compare_paths_case_semi_sensitive() {
+        let mut paths = vec![
+            (Path::new("test_DIRS"), false),
+            (Path::new("test_DIRS/foo_1"), true),
+            (Path::new("test_DIRS/foo_2"), true),
+            (Path::new("test_DIRS/bar"), true),
+            (Path::new("test_DIRS/BAR"), true),
+            (Path::new("test_dirs"), false),
+            (Path::new("test_dirs/foo_1"), true),
+            (Path::new("test_dirs/foo_2"), true),
+            (Path::new("test_dirs/bar"), true),
+            (Path::new("test_dirs/BAR"), true),
+        ];
+        paths.sort_by(|&a, &b| compare_paths(a, b));
+        assert_eq!(
+            paths,
+            vec![
+                (Path::new("test_dirs"), false),
+                (Path::new("test_dirs/bar"), true),
+                (Path::new("test_dirs/BAR"), true),
+                (Path::new("test_dirs/foo_1"), true),
+                (Path::new("test_dirs/foo_2"), true),
+                (Path::new("test_DIRS"), false),
+                (Path::new("test_DIRS/bar"), true),
+                (Path::new("test_DIRS/BAR"), true),
+                (Path::new("test_DIRS/foo_1"), true),
+                (Path::new("test_DIRS/foo_2"), true),
             ]
         );
     }

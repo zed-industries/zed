@@ -196,7 +196,7 @@
     }
   },
   {
-    "context": "BufferSearchBar && in_replace",
+    "context": "BufferSearchBar && in_replace > Editor",
     "bindings": {
       "enter": "search::ReplaceNext",
       "ctrl-enter": "search::ReplaceAll"
@@ -310,6 +310,20 @@
       "ctrl-shift-\\": "editor::MoveToEnclosingBracket",
       "ctrl-shift-[": "editor::Fold",
       "ctrl-shift-]": "editor::UnfoldLines",
+      "ctrl-k ctrl-l": "editor::ToggleFold",
+      "ctrl-k ctrl-[": "editor::FoldRecursive",
+      "ctrl-k ctrl-]": "editor::UnfoldRecursive",
+      "ctrl-k ctrl-1": ["editor::FoldAtLevel", { "level": 1 }],
+      "ctrl-k ctrl-2": ["editor::FoldAtLevel", { "level": 2 }],
+      "ctrl-k ctrl-3": ["editor::FoldAtLevel", { "level": 3 }],
+      "ctrl-k ctrl-4": ["editor::FoldAtLevel", { "level": 4 }],
+      "ctrl-k ctrl-5": ["editor::FoldAtLevel", { "level": 5 }],
+      "ctrl-k ctrl-6": ["editor::FoldAtLevel", { "level": 6 }],
+      "ctrl-k ctrl-7": ["editor::FoldAtLevel", { "level": 7 }],
+      "ctrl-k ctrl-8": ["editor::FoldAtLevel", { "level": 8 }],
+      "ctrl-k ctrl-9": ["editor::FoldAtLevel", { "level": 9 }],
+      "ctrl-k ctrl-0": "editor::FoldAll",
+      "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
       "alt-ctrl-r": "editor::RevealInFileManager",
@@ -501,6 +515,13 @@
     }
   },
   {
+    "context": "ProposedChangesEditor",
+    "bindings": {
+      "ctrl-shift-y": "editor::ApplyDiffHunk",
+      "ctrl-alt-a": "editor::ApplyAllDiffHunks"
+    }
+  },
+  {
     "context": "Editor && jupyter && !ContextEditor",
     "bindings": {
       "ctrl-shift-enter": "repl::Run",
@@ -659,7 +680,8 @@
       "shift-up": "terminal::ScrollLineUp",
       "shift-down": "terminal::ScrollLineDown",
       "shift-home": "terminal::ScrollToTop",
-      "shift-end": "terminal::ScrollToBottom"
+      "shift-end": "terminal::ScrollToBottom",
+      "ctrl-shift-space": "terminal::ToggleViMode"
     }
   },
   {

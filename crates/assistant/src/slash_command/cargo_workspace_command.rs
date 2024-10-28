@@ -1,6 +1,8 @@
-use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use fs::Fs;
 use gpui::{AppContext, Model, Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
@@ -123,7 +125,7 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let project = workspace.project().clone();
             let fs = workspace.project().read(cx).fs().clone();
@@ -145,7 +147,8 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
                         metadata: None,
                     }],
                     run_commands_in_text: false,
-                })
+                }
+                .to_event_stream())
             })
         });
         output.unwrap_or_else(|error| Task::ready(Err(error)))

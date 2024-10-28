@@ -19,6 +19,9 @@
 (
     TestDecl (
         "test" @context
-        (STRINGLITERALSINGLE)? @name
+        [
+         (STRINGLITERALSINGLE)
+         (IDENTIFIER)
+        ]? @name
     )
 ) @item

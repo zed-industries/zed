@@ -1,5 +1,4 @@
-use std::ops::Range;
-
+use crate::actions::FormatSelections;
 use crate::{
     actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
     DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
@@ -8,6 +7,8 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
+use std::ops::Range;
+use text::PointUtf16;
 use workspace::OpenInTerminal;
 
 #[derive(Debug)]
@@ -158,6 +159,18 @@ pub fn deploy_context_menu(
         }
 
         let focus = cx.focused();
+        let has_reveal_target = editor.target_file(cx).is_some();
+        let reveal_in_finder_label = if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else {
+            "Reveal in File Manager"
+        };
+        let has_selections = editor
+            .selections
+            .all::<PointUtf16>(cx)
+            .into_iter()
+            .any(|s| !s.is_empty());
+
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
@@ -169,6 +182,9 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
+                .when(has_selections, |cx| {
+                    cx.action("Format Selections", Box::new(FormatSelections))
+                })
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {
@@ -180,11 +196,13 @@ pub fn deploy_context_menu(
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .when(cfg!(target_os = "macos"), |builder| {
-                    builder.action("Reveal in Finder", Box::new(RevealInFileManager))
-                })
-                .when(cfg!(not(target_os = "macos")), |builder| {
-                    builder.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                .map(|builder| {
+                    if has_reveal_target {
+                        builder.action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    } else {
+                        builder
+                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    }
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine));

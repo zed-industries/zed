@@ -1,3 +1,4 @@
+use editor::ShowScrollbar;
 use gpui::Pixels;
 use schemars::JsonSchema;
 use serde_derive::{Deserialize, Serialize};
@@ -19,38 +20,26 @@ pub struct ProjectPanelSettings {
     pub folder_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
+    pub indent_guides: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
-}
-
-/// When to show the scrollbar in the project panel.
-///
-/// Default: always
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum ShowScrollbar {
-    #[default]
-    /// Always show the scrollbar.
-    Always,
-    /// Never show the scrollbar.
-    Never,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettings {
     /// When to show the scrollbar in the project panel.
     ///
-    /// Default: always
-    pub show: ShowScrollbar,
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct ScrollbarSettingsContent {
     /// When to show the scrollbar in the project panel.
     ///
-    /// Default: always
-    pub show: Option<ShowScrollbar>,
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<Option<ShowScrollbar>>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -83,6 +72,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: 20
     pub indent_size: Option<f32>,
+    /// Whether to show indent guides in the project panel.
+    ///
+    /// Default: true
+    pub indent_guides: Option<bool>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.

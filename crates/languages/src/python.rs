@@ -3,9 +3,16 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
+use language::LanguageName;
+use language::LanguageToolchainStore;
+use language::Toolchain;
+use language::ToolchainList;
+use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use pet_core::python_environment::PythonEnvironmentKind;
+use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
 
@@ -20,19 +27,20 @@ use task::{TaskTemplate, TaskTemplates, VariableName};
 use util::ResultExt;
 
 const SERVER_PATH: &str = "node_modules/pyright/langserver.index.js";
+const NODE_MODULE_RELATIVE_SERVER_PATH: &str = "pyright/langserver.index.js";
 
 fn server_binary_arguments(server_path: &Path) -> Vec<OsString> {
     vec![server_path.into(), "--stdio".into()]
 }
 
 pub struct PythonLspAdapter {
-    node: Arc<dyn NodeRuntime>,
+    node: NodeRuntime,
 }
 
 impl PythonLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pyright");
 
-    pub fn new(node: Arc<dyn NodeRuntime>) -> Self {
+    pub fn new(node: NodeRuntime) -> Self {
         PythonLspAdapter { node }
     }
 }
@@ -41,6 +49,26 @@ impl PythonLspAdapter {
 impl LspAdapter for PythonLspAdapter {
     fn name(&self) -> LanguageServerName {
         Self::SERVER_NAME.clone()
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        delegate: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        let node = delegate.which("node".as_ref()).await?;
+        let (node_modules_path, _) = delegate
+            .npm_package_installed_version(Self::SERVER_NAME.as_ref())
+            .await
+            .log_err()??;
+
+        let path = node_modules_path.join(NODE_MODULE_RELATIVE_SERVER_PATH);
+
+        Some(LanguageServerBinary {
+            path: node,
+            env: None,
+            arguments: server_binary_arguments(&path),
+        })
     }
 
     async fn fetch_latest_server_version(
@@ -94,14 +122,7 @@ impl LspAdapter for PythonLspAdapter {
         container_dir: PathBuf,
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir, &*self.node).await
+        get_cached_server_binary(container_dir, &self.node).await
     }
 
     async fn process_completions(&self, items: &mut [lsp::CompletionItem]) {
@@ -186,19 +207,42 @@ impl LspAdapter for PythonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        cx.update(|cx| {
-            language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
+        let toolchain = toolchains
+            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .await;
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+                if let Some(python) = object
+                    .entry("python")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                {
+                    python
+                        .entry("pythonPath")
+                        .or_insert(Value::String(toolchain.path.into()));
+                }
+            }
+            user_settings
         })
     }
 }
 
 async fn get_cached_server_binary(
     container_dir: PathBuf,
-    node: &dyn NodeRuntime,
+    node: &NodeRuntime,
 ) -> Option<LanguageServerBinary> {
     let server_path = container_dir.join(SERVER_PATH);
     if server_path.exists() {
@@ -304,6 +348,83 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .strip_suffix(".py")
         .unwrap_or(&path_with_dots)
         .to_string()
+}
+
+#[derive(Default)]
+pub(crate) struct PythonToolchainProvider {}
+
+static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
+    // Prioritize non-Conda environments.
+    PythonEnvironmentKind::Poetry,
+    PythonEnvironmentKind::Pipenv,
+    PythonEnvironmentKind::VirtualEnvWrapper,
+    PythonEnvironmentKind::Venv,
+    PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::Conda,
+    PythonEnvironmentKind::Pyenv,
+    PythonEnvironmentKind::GlobalPaths,
+    PythonEnvironmentKind::Homebrew,
+];
+
+fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
+    if let Some(kind) = kind {
+        ENV_PRIORITY_LIST
+            .iter()
+            .position(|blessed_env| blessed_env == &kind)
+            .unwrap_or(ENV_PRIORITY_LIST.len())
+    } else {
+        // Unknown toolchains are less useful than non-blessed ones.
+        ENV_PRIORITY_LIST.len() + 1
+    }
+}
+
+#[async_trait(?Send)]
+impl ToolchainLister for PythonToolchainProvider {
+    async fn list(&self, worktree_root: PathBuf) -> ToolchainList {
+        let environment = pet_core::os_environment::EnvironmentApi::new();
+        let locators = pet::locators::create_locators(
+            Arc::new(pet_conda::Conda::from(&environment)),
+            Arc::new(pet_poetry::Poetry::from(&environment)),
+            &environment,
+        );
+        let mut config = Configuration::default();
+        config.workspace_directories = Some(vec![worktree_root]);
+        let reporter = pet_reporter::collect::create_reporter();
+        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
+
+        let mut toolchains = reporter
+            .environments
+            .lock()
+            .ok()
+            .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
+        toolchains.sort_by(|lhs, rhs| {
+            env_priority(lhs.kind)
+                .cmp(&env_priority(rhs.kind))
+                .then_with(|| lhs.executable.cmp(&rhs.executable))
+        });
+        let mut toolchains: Vec<_> = toolchains
+            .into_iter()
+            .filter_map(|toolchain| {
+                let name = if let Some(version) = &toolchain.version {
+                    format!("Python {version} ({:?})", toolchain.kind?)
+                } else {
+                    format!("{:?}", toolchain.kind?)
+                }
+                .into();
+                Some(Toolchain {
+                    name,
+                    path: toolchain.executable?.to_str()?.to_owned().into(),
+                    language_name: LanguageName::new("Python"),
+                })
+            })
+            .collect();
+        toolchains.dedup();
+        ToolchainList {
+            toolchains,
+            default: None,
+            groups: Default::default(),
+        }
+    }
 }
 
 #[cfg(test)]

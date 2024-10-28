@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::sync::Arc;
 
 use gpui::{px, AnyElement, AnyView, ClickEvent, MouseButton, MouseDownEvent, Pixels};
@@ -36,6 +38,7 @@ pub struct ListItem {
     on_secondary_mouse_down: Option<Box<dyn Fn(&MouseDownEvent, &mut WindowContext) + 'static>>,
     children: SmallVec<[AnyElement; 2]>,
     selectable: bool,
+    overflow_x: bool,
 }
 
 impl ListItem {
@@ -58,6 +61,7 @@ impl ListItem {
             tooltip: None,
             children: SmallVec::new(),
             selectable: true,
+            overflow_x: false,
         }
     }
 
@@ -131,6 +135,11 @@ impl ListItem {
         self.end_hover_slot = end_hover_slot.into().map(IntoElement::into_any_element);
         self
     }
+
+    pub fn overflow_x(mut self) -> Self {
+        self.overflow_x = true;
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -184,6 +193,7 @@ impl RenderOnce for ListItem {
                     .id("inner_list_item")
                     .w_full()
                     .relative()
+                    .items_center()
                     .gap_1()
                     .px(Spacing::Medium.rems(cx))
                     .map(|this| match self.spacing {
@@ -238,8 +248,14 @@ impl RenderOnce for ListItem {
                             .flex_grow()
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
-                            .gap(Spacing::Small.rems(cx))
-                            .overflow_hidden()
+                            .gap(Spacing::Medium.rems(cx))
+                            .map(|list_content| {
+                                if self.overflow_x {
+                                    list_content
+                                } else {
+                                    list_content.overflow_hidden()
+                                }
+                            })
                             .children(self.start_slot)
                             .children(self.children),
                     )

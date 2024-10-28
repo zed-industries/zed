@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use anyhow::Result;
 use gpui::{FontStyle, FontWeight, HighlightStyle, Hsla, WindowBackgroundAppearance};
 use indexmap::IndexMap;
@@ -69,7 +71,7 @@ pub struct ThemeContent {
 }
 
 /// The content of a serialized theme.
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ThemeStyleContent {
     #[serde(default, rename = "background.appearance")]
@@ -131,7 +133,7 @@ impl ThemeStyleContent {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct ThemeColorsContent {
     /// Border color. Used for most borders, is usually a high contrast color.
@@ -320,6 +322,15 @@ pub struct ThemeColorsContent {
     #[serde(rename = "panel.focused_border")]
     pub panel_focused_border: Option<String>,
 
+    #[serde(rename = "panel.indent_guide")]
+    pub panel_indent_guide: Option<String>,
+
+    #[serde(rename = "panel.indent_guide_hover")]
+    pub panel_indent_guide_hover: Option<String>,
+
+    #[serde(rename = "panel.indent_guide_active")]
+    pub panel_indent_guide_active: Option<String>,
+
     #[serde(rename = "pane.focused_border")]
     pub pane_focused_border: Option<String>,
 
@@ -412,6 +423,12 @@ pub struct ThemeColorsContent {
     /// the background color of its range.
     #[serde(rename = "editor.document_highlight.write_background")]
     pub editor_document_highlight_write_background: Option<String>,
+
+    /// Highlighted brackets background color.
+    ///
+    /// Matching brackets in the cursor scope are highlighted with this background color.
+    #[serde(rename = "editor.document_highlight.bracket_background")]
+    pub editor_document_highlight_bracket_background: Option<String>,
 
     /// Terminal background color.
     #[serde(rename = "terminal.background")]
@@ -538,6 +555,10 @@ impl ThemeColorsContent {
     pub fn theme_colors_refinement(&self) -> ThemeColorsRefinement {
         let border = self
             .border
+            .as_ref()
+            .and_then(|color| try_parse_color(color).ok());
+        let editor_document_highlight_read_background = self
+            .editor_document_highlight_read_background
             .as_ref()
             .and_then(|color| try_parse_color(color).ok());
         ThemeColorsRefinement {
@@ -698,6 +719,18 @@ impl ThemeColorsContent {
                 .panel_focused_border
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            panel_indent_guide: self
+                .panel_indent_guide
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            panel_indent_guide_hover: self
+                .panel_indent_guide_hover
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            panel_indent_guide_active: self
+                .panel_indent_guide_active
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
             pane_focused_border: self
                 .pane_focused_border
                 .as_ref()
@@ -784,14 +817,17 @@ impl ThemeColorsContent {
                 .editor_indent_guide_active
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
-            editor_document_highlight_read_background: self
-                .editor_document_highlight_read_background
-                .as_ref()
-                .and_then(|color| try_parse_color(color).ok()),
+            editor_document_highlight_read_background,
             editor_document_highlight_write_background: self
                 .editor_document_highlight_write_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            editor_document_highlight_bracket_background: self
+                .editor_document_highlight_bracket_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok())
+                // Fall back to `editor.document_highlight.read_background`, for backwards compatibility.
+                .or(editor_document_highlight_read_background),
             terminal_background: self
                 .terminal_background
                 .as_ref()
@@ -916,7 +952,7 @@ impl ThemeColorsContent {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct StatusColorsContent {
     /// Indicates some kind of conflict, like a file changed on disk while it was open, or
@@ -1237,17 +1273,17 @@ impl StatusColorsContent {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct AccentContent(pub Option<String>);
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq)]
 pub struct PlayerColorContent {
     pub cursor: Option<String>,
     pub background: Option<String>,
     pub selection: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FontStyleContent {
     Normal,
@@ -1265,7 +1301,7 @@ impl From<FontStyleContent> for FontStyle {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Clone, Copy, Serialize_repr, Deserialize_repr, PartialEq)]
 #[repr(u16)]
 pub enum FontWeightContent {
     Thin = 100,
@@ -1323,7 +1359,7 @@ impl From<FontWeightContent> for FontWeight {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq)]
 #[serde(default)]
 pub struct HighlightStyleContent {
     pub color: Option<String>,

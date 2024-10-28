@@ -37,7 +37,7 @@ use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageRegistry,
-    QUERY_FILENAME_PREFIXES,
+    LoadedLanguage, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -177,7 +177,7 @@ actions!(zed, [ReloadExtensions]);
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    node_runtime: Arc<dyn NodeRuntime>,
+    node_runtime: NodeRuntime,
     language_registry: Arc<LanguageRegistry>,
     theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
@@ -228,7 +228,7 @@ impl ExtensionStore {
         http_client: Arc<HttpClientWithUrl>,
         builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
-        node_runtime: Arc<dyn NodeRuntime>,
+        node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
         theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
@@ -664,7 +664,7 @@ impl ExtensionStore {
 
             let content_length = response
                 .headers()
-                .get(isahc::http::header::CONTENT_LENGTH)
+                .get(http_client::http::header::CONTENT_LENGTH)
                 .and_then(|value| value.to_str().ok()?.parse::<usize>().ok());
 
             let mut body = BufReader::new(response.body_mut());
@@ -1102,14 +1102,21 @@ impl ExtensionStore {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
-                    let tasks = std::fs::read_to_string(language_path.join("tasks.json"))
-                        .ok()
-                        .and_then(|contents| {
-                            let definitions = serde_json_lenient::from_str(&contents).log_err()?;
-                            Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
-                        });
+                    let context_provider =
+                        std::fs::read_to_string(language_path.join("tasks.json"))
+                            .ok()
+                            .and_then(|contents| {
+                                let definitions =
+                                    serde_json_lenient::from_str(&contents).log_err()?;
+                                Some(Arc::new(ContextProviderWithTasks::new(definitions)) as Arc<_>)
+                            });
 
-                    Ok((config, queries, tasks))
+                    Ok(LoadedLanguage {
+                        config,
+                        queries,
+                        context_provider,
+                        toolchain_provider: None,
+                    })
                 },
             );
         }

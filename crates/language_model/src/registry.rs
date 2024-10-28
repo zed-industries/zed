@@ -1,3 +1,4 @@
+use crate::provider::cloud::RefreshLlmTokenListener;
 use crate::{
     provider::{
         anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
@@ -29,6 +30,8 @@ fn register_language_model_providers(
     cx: &mut ModelContext<LanguageModelRegistry>,
 ) {
     use feature_flags::FeatureFlagAppExt;
+
+    RefreshLlmTokenListener::register(client.clone(), cx);
 
     registry.register_provider(
         AnthropicLanguageModelProvider::new(client.http_client(), cx),

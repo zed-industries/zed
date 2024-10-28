@@ -6,8 +6,7 @@ use futures::{
     stream::{self, BoxStream},
     AsyncBufReadExt, AsyncReadExt, Stream, StreamExt,
 };
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -318,7 +317,7 @@ pub async fn complete(
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", api_key));
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     };
 
     let mut request_body = request;
@@ -413,7 +412,7 @@ pub async fn stream_completion(
         .header("Authorization", format!("Bearer {}", api_key));
 
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     };
 
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;

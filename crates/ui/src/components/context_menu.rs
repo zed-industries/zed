@@ -1,6 +1,7 @@
+#![allow(missing_docs)]
 use crate::{
-    h_flex, prelude::*, v_flex, Icon, IconName, KeyBinding, Label, List, ListItem, ListSeparator,
-    ListSubHeader, WithRemSize,
+    h_flex, prelude::*, utils::WithRemSize, v_flex, Icon, IconName, KeyBinding, Label, List,
+    ListItem, ListSeparator, ListSubHeader,
 };
 use gpui::{
     px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -347,7 +348,7 @@ impl Render for ContextMenu {
                     .min_w(px(200.))
                     .max_h(vh(0.75, cx))
                     .overflow_y_scroll()
-                    .track_focus(&self.focus_handle)
+                    .track_focus(&self.focus_handle(cx))
                     .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
                     .key_context("menu")
                     .on_action(cx.listener(ContextMenu::select_first))

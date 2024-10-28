@@ -1,0 +1,14 @@
+{
+  "core_labels": [
+    "defect",
+    "design",
+    "documentation",
+    "duplicate",
+    "enhancement",
+    "panic / crash",
+    "support"
+  ],
+  "additional_labels": ["ai", "linux", "vim", "windows"],
+  "ignored_label": "ignore top-ranking issues",
+  "new_issue_labels": ["triage", "admin read"]
+}

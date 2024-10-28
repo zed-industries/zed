@@ -20,6 +20,7 @@
     "bashrc": "terminal",
     "bmp": "image",
     "c": "c",
+    "c++": "cpp",
     "cc": "cpp",
     "cjs": "javascript",
     "coffee": "coffeescript",
@@ -27,6 +28,7 @@
     "cpp": "cpp",
     "css": "css",
     "csv": "storage",
+    "cxx": "cpp",
     "cts": "typescript",
     "dart": "dart",
     "dat": "storage",
@@ -63,14 +65,17 @@
     "h": "c",
     "handlebars": "code",
     "hbs": "template",
+    "hcl": "hcl",
     "heex": "elixir",
     "heic": "image",
     "heif": "image",
+    "hh": "cpp",
     "hpp": "cpp",
     "hrl": "erlang",
     "hs": "haskell",
     "htm": "template",
     "html": "template",
+    "hxx": "cpp",
     "ib": "storage",
     "ico": "image",
     "ini": "settings",
@@ -85,6 +90,7 @@
     "json": "storage",
     "jsonc": "storage",
     "jsx": "react",
+    "julia": "julia",
     "jxl": "image",
     "kt": "kotlin",
     "ldf": "storage",
@@ -112,6 +118,7 @@
     "myd": "storage",
     "myi": "storage",
     "nim": "nim",
+    "nix": "nix",
     "nu": "terminal",
     "odp": "document",
     "ods": "document",
@@ -124,6 +131,7 @@
     "php": "php",
     "plist": "template",
     "png": "image",
+    "postcss": "css",
     "ppt": "document",
     "pptx": "document",
     "prettierignore": "prettier",
@@ -138,12 +146,15 @@
     "rb": "ruby",
     "rebar.config": "erlang",
     "rkt": "code",
+    "roc": "roc",
     "rs": "rust",
     "rtf": "document",
+    "sass": "sass",
     "sav": "storage",
     "sc": "scala",
     "scala": "scala",
     "scm": "code",
+    "scss": "sass",
     "sdf": "storage",
     "sh": "terminal",
     "sql": "storage",
@@ -177,6 +188,7 @@
     "yaml": "settings",
     "yml": "settings",
     "yrl": "erlang",
+    "zig": "zig",
     "zlogin": "terminal",
     "zsh": "terminal",
     "zsh_aliases": "terminal",
@@ -261,6 +273,9 @@
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
     },
+    "hcl": {
+      "icon": "icons/file_icons/hcl.svg"
+    },
     "heroku": {
       "icon": "icons/file_icons/heroku.svg"
     },
@@ -272,6 +287,9 @@
     },
     "javascript": {
       "icon": "icons/file_icons/javascript.svg"
+    },
+    "julia": {
+      "icon": "icons/file_icons/julia.svg"
     },
     "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
@@ -287,6 +305,9 @@
     },
     "nim": {
       "icon": "icons/file_icons/nim.svg"
+    },
+    "nix": {
+      "icon": "icons/file_icons/nix.svg"
     },
     "ocaml": {
       "icon": "icons/file_icons/ocaml.svg"
@@ -312,11 +333,17 @@
     "react": {
       "icon": "icons/file_icons/react.svg"
     },
+    "roc": {
+      "icon": "icons/file_icons/roc.svg"
+    },
     "ruby": {
       "icon": "icons/file_icons/ruby.svg"
     },
     "rust": {
       "icon": "icons/file_icons/rust.svg"
+    },
+    "sass": {
+      "icon": "icons/file_icons/sass.svg"
     },
     "scala": {
       "icon": "icons/file_icons/scala.svg"
@@ -356,6 +383,9 @@
     },
     "vue": {
       "icon": "icons/file_icons/vue.svg"
+    },
+    "zig": {
+      "icon": "icons/file_icons/zig.svg"
     }
   }
 }

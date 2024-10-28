@@ -70,9 +70,7 @@ mod tests {
 
         unsafe {
             let image: id = msg_send![class!(NSImage), alloc];
-            image.initWithContentsOfFile_(
-                NSString::alloc(nil).init_str("/Users/rtfeldman/Downloads/test.jpeg"),
-            );
+            image.initWithContentsOfFile_(NSString::alloc(nil).init_str("test.jpeg"));
             let _size = image.size();
 
             let string = NSString::alloc(nil).init_str("Test String");
