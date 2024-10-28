@@ -1,6 +1,6 @@
 use crate::{
     humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
-    ModelSelector, DEFAULT_CONTEXT_LINES,
+    ModelSelector, RequestType, DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -251,7 +251,7 @@ impl TerminalInlineAssistant {
                         .read(cx)
                         .active_context(cx)?
                         .read(cx)
-                        .to_completion_request(cx),
+                        .to_completion_request(RequestType::Chat, cx),
                 )
             })
         } else {
