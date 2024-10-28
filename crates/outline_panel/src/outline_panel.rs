@@ -255,14 +255,14 @@ impl SearchState {
 #[derive(Debug)]
 enum SelectedEntry {
     Invalidated(Option<PanelEntry>),
-    Valid(PanelEntry),
+    Valid(PanelEntry, usize),
     None,
 }
 
 impl SelectedEntry {
     fn invalidate(&mut self) {
         match std::mem::replace(self, SelectedEntry::None) {
-            Self::Valid(entry) => *self = Self::Invalidated(Some(entry)),
+            Self::Valid(entry, _) => *self = Self::Invalidated(Some(entry)),
             Self::None => *self = Self::Invalidated(None),
             other => *self = other,
         }
@@ -3569,7 +3569,7 @@ impl OutlinePanel {
     fn selected_entry(&self) -> Option<&PanelEntry> {
         match &self.selected_entry {
             SelectedEntry::Invalidated(entry) => entry.as_ref(),
-            SelectedEntry::Valid(entry) => Some(entry),
+            SelectedEntry::Valid(entry, _) => Some(entry),
             SelectedEntry::None => None,
         }
     }
@@ -3578,7 +3578,16 @@ impl OutlinePanel {
         if focus {
             self.focus_handle.focus(cx);
         }
-        self.selected_entry = SelectedEntry::Valid(entry);
+        let ix = self
+            .cached_entries
+            .iter()
+            .enumerate()
+            .find(|(_, cached_entry)| &cached_entry.entry == &entry)
+            .map(|(i, _)| i)
+            .unwrap_or_default();
+
+        self.selected_entry = SelectedEntry::Valid(entry, ix);
+
         self.autoscroll(cx);
         cx.notify();
     }
@@ -3927,14 +3936,10 @@ impl Render for OutlinePanel {
 
                                     let indent_size = params.indent_size;
                                     let item_height = params.item_height;
-                                    let active_indent_guide_ix =
-                                        outline_panel.selected_entry().and_then(|selected_entry| {
-                                            find_active_indent_guide_ix(
-                                                outline_panel,
-                                                selected_entry,
-                                                &params.indent_guides,
-                                            )
-                                        });
+                                    let active_indent_guide_ix = find_active_indent_guide_ix(
+                                        outline_panel,
+                                        &params.indent_guides,
+                                    );
 
                                     params
                                         .indent_guides
@@ -4010,15 +4015,15 @@ impl Render for OutlinePanel {
 
 fn find_active_indent_guide_ix(
     outline_panel: &OutlinePanel,
-    selected_entry: &PanelEntry,
     candidates: &[IndentGuideLayout],
 ) -> Option<usize> {
-    let (target_ix, target_depth) = outline_panel
+    let SelectedEntry::Valid(_, target_ix) = &outline_panel.selected_entry else {
+        return None;
+    };
+    let target_depth = outline_panel
         .cached_entries
-        .iter()
-        .enumerate()
-        .find(|(_, cached_entry)| &cached_entry.entry == selected_entry)
-        .map(|(i, entry)| (i, entry.depth))?;
+        .get(*target_ix)
+        .map(|cached_entry| cached_entry.depth)?;
 
     let (target_ix, target_depth) = if let Some(target_depth) = outline_panel
         .cached_entries
@@ -4028,7 +4033,7 @@ fn find_active_indent_guide_ix(
     {
         (target_ix + 1, target_depth.saturating_sub(1))
     } else {
-        (target_ix, target_depth.saturating_sub(1))
+        (*target_ix, target_depth.saturating_sub(1))
     };
 
     candidates
