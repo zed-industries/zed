@@ -10,8 +10,8 @@ use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::{future::Shared, FutureExt};
 use gpui::{
-    actions, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, Model, Task, View,
-    WeakView,
+    actions, list, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, ListState,
+    Model, Task, View, WeakView,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -122,6 +122,7 @@ pub struct NotebookEditor {
     focus_handle: FocusHandle,
     project: Model<Project>,
     remote_id: Option<ViewId>,
+    cell_list: ListState,
 
     metadata: DeserializedMetadata,
     nbformat: i32,
@@ -193,18 +194,87 @@ impl NotebookEditor {
             );
         }
 
+        let view = cx.view().downgrade();
+        let cell_count = cell_order.len().clone();
+        let cell_order_for_list = cell_order.clone();
+        let cell_map_for_list = cell_map.clone();
+
+        let cell_list = ListState::new(
+            cell_count,
+            gpui::ListAlignment::Top,
+            px(1000.),
+            move |ix, cx| {
+                let cell_order_for_list = cell_order_for_list.clone();
+                let cell_map = cell_map_for_list.clone();
+                let cell_id = cell_order_for_list[ix].clone();
+                if let Some(view) = view.upgrade() {
+                    let cell_id = cell_id.clone();
+                    if let Some(cell) = cell_map_for_list.clone().get(&cell_id) {
+                        view.update(cx, |view, cx| {
+                            view.render_cell(ix, cell, cx).into_any_element()
+                        })
+                    } else {
+                        div().into_any()
+                    }
+                } else {
+                    div().into_any()
+                }
+            },
+        );
+
         Self {
             languages: languages.clone(),
             focus_handle,
             project,
             remote_id: None,
+            cell_list,
             selected_cell_index: 0,
             metadata,
             nbformat,
             nbformat_minor,
-            cell_order,
-            cell_map,
+            cell_order: cell_order.clone(),
+            cell_map: cell_map.clone(),
         }
+    }
+
+    fn build_list_state(&mut self, cx: &mut ViewContext<Self>) -> ListState {
+        let cell_count = self.cell_order.len();
+        let selected_cell_index = self.selected_cell_index.clone();
+        let cell_order = self.cell_order.clone();
+        let cell_map = self.cell_map.clone();
+
+        ListState::new(
+            cell_count,
+            gpui::ListAlignment::Top,
+            px(1000.),
+            move |ix, cx| {
+                if let Some(cell) = cell_map.get(&cell_order[ix]) {
+                    let is_selected = ix == selected_cell_index;
+                    match cell {
+                        Cell::Code(cell) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.set_selected(is_selected);
+                            });
+                            cell.clone().into_any_element()
+                        }
+                        Cell::Markdown(cell) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.set_selected(is_selected);
+                            });
+                            cell.clone().into_any_element()
+                        }
+                        Cell::Raw(cell) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.set_selected(is_selected);
+                            });
+                            cell.clone().into_any_element()
+                        }
+                    }
+                } else {
+                    div().into_any_element()
+                }
+            },
+        )
     }
 
     fn cells(&self) -> impl Iterator<Item = &Cell> {
@@ -465,29 +535,36 @@ impl NotebookEditor {
             .flex_1()
             .size_full()
             .overflow_y_scroll()
-            .children(self.cells().enumerate().map(|(index, cell)| {
-                let is_selected = index == self.selected_cell_index;
-                match cell {
-                    Cell::Code(cell) => {
-                        cell.update(cx, |cell, cx| {
-                            cell.set_selected(is_selected);
-                        });
-                        cell.clone().into_any_element()
-                    }
-                    Cell::Markdown(cell) => {
-                        cell.update(cx, |cell, cx| {
-                            cell.set_selected(is_selected);
-                        });
-                        cell.clone().into_any_element()
-                    }
-                    Cell::Raw(cell) => {
-                        cell.update(cx, |cell, cx| {
-                            cell.set_selected(is_selected);
-                        });
-                        cell.clone().into_any_element()
-                    }
-                }
-            }))
+            .child(list(self.cell_list.clone()).size_full())
+    }
+
+    fn render_cell(
+        &self,
+        index: usize,
+        cell: &Cell,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let is_selected = index == self.selected_cell_index;
+        match cell {
+            Cell::Code(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_selected(is_selected);
+                });
+                cell.clone().into_any_element()
+            }
+            Cell::Markdown(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_selected(is_selected);
+                });
+                cell.clone().into_any_element()
+            }
+            Cell::Raw(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_selected(is_selected);
+                });
+                cell.clone().into_any_element()
+            }
+        }
     }
 }
 
@@ -512,10 +589,7 @@ impl Render for NotebookEditor {
             .on_action(cx.listener(Self::select_last))
             .flex()
             .items_start()
-            // .size_full()
-            // todo: figure out the flex height issue
-            .h(px(800.))
-            .w(px(1000.))
+            .size_full()
             .overflow_hidden()
             .p(large_gap)
             .gap(large_gap)
