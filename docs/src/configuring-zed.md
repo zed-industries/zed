@@ -2042,6 +2042,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
+    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
@@ -2163,6 +2164,12 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `indent_size`
 - Default: `20`
 
+### Indent Guides
+
+- Description: Whether to show indent guides in the project panel.
+- Setting: `indent_guides`
+- Default: `true`
+
 ### Scrollbar
 
 - Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
@@ -2230,6 +2237,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "folder_icons": true,
   "git_status": true,
   "indent_size": 20,
+  "indent_guides": true,
   "auto_reveal_entries": true,
   "auto_fold_dirs": true,
 }

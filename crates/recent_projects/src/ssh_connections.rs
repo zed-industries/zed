@@ -631,7 +631,7 @@ impl SshClientDelegate {
 
             self.update_status(
                 Some(&format!(
-                    "Building remote server binary from source for {}",
+                    "Building remote server binary from source for {} with Docker",
                     &triple
                 )),
                 cx,

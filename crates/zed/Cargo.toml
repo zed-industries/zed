@@ -104,6 +104,7 @@ terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 time.workspace = true
+toolchain_selector.workspace = true
 ui.workspace = true
 reqwest_client.workspace = true
 url.workspace = true

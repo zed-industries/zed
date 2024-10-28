@@ -7,7 +7,9 @@ use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
-use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{
+    LanguageRegistry, LanguageServerName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -198,6 +200,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {

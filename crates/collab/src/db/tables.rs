@@ -18,7 +18,6 @@ pub mod extension;
 pub mod extension_version;
 pub mod feature_flag;
 pub mod follower;
-pub mod hosted_project;
 pub mod language_server;
 pub mod notification;
 pub mod notification_kind;

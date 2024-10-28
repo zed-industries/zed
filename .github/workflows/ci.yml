@@ -25,6 +25,7 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
+  RUSTFLAGS: "-D warnings"
 
 jobs:
   migration_checks:
@@ -116,13 +117,13 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build collab
-        run: RUSTFLAGS="-D warnings" cargo build -p collab
+        run: cargo build -p collab
 
       - name: Build other binaries and features
         run: |
-          RUSTFLAGS="-D warnings" cargo build --workspace --bins --all-features
+          cargo build --workspace --bins --all-features
           cargo check -p gpui --features "macos-blade"
-          RUSTFLAGS="-D warnings" cargo build -p remote_server
+          cargo build -p remote_server
 
   linux_tests:
     timeout-minutes: 60
@@ -155,7 +156,7 @@ jobs:
         uses: ./.github/actions/run_tests
 
       - name: Build Zed
-        run: RUSTFLAGS="-D warnings" cargo build -p zed
+        run: cargo build -p zed
 
   build_remote_server:
     timeout-minutes: 60
@@ -182,7 +183,7 @@ jobs:
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
       - name: Build Remote Server
-        run: RUSTFLAGS="-D warnings" cargo build -p remote_server
+        run: cargo build -p remote_server
 
   # todo(windows): Actually run the tests
   windows_tests:
@@ -191,6 +192,9 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
     steps:
+      # more info here:- https://github.com/rust-lang/cargo/issues/13020
+      - name: Enable longer pathnames for git
+        run: git config --system core.longpaths true
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
@@ -207,7 +211,7 @@ jobs:
         run: cargo xtask clippy
 
       - name: Build Zed
-        run: $env:RUSTFLAGS="-D warnings"; cargo build
+        run: cargo build
 
   bundle-mac:
     timeout-minutes: 60

@@ -2,24 +2,23 @@ use anyhow::{Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
-    actions, rems, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, IntoElement, ParentElement, Render, SharedString, Styled, Subscription,
-    Task, View, ViewContext, VisualContext, WindowContext,
+    actions, rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, ParentElement, Render,
+    SharedString, Styled, Subscription, Task, View, ViewContext, VisualContext, WindowContext,
 };
 use picker::{Picker, PickerDelegate};
+use project::ProjectPath;
 use std::{ops::Not, sync::Arc};
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
-use workspace::notifications::NotificationId;
-use workspace::{ModalView, Toast, Workspace};
+use workspace::notifications::DetachAndPromptErr;
+use workspace::{ModalView, Workspace};
 
 actions!(branches, [OpenRecent]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
-        workspace.register_action(|workspace, action, cx| {
-            BranchList::open(workspace, action, cx).log_err();
-        });
+        workspace.register_action(BranchList::open);
     })
     .detach();
 }
@@ -31,6 +30,21 @@ pub struct BranchList {
 }
 
 impl BranchList {
+    pub fn open(_: &mut Workspace, _: &OpenRecent, cx: &mut ViewContext<Workspace>) {
+        let this = cx.view().clone();
+        cx.spawn(|_, mut cx| async move {
+            // Modal branch picker has a longer trailoff than a popover one.
+            let delegate = BranchListDelegate::new(this.clone(), 70, &cx).await?;
+
+            this.update(&mut cx, |workspace, cx| {
+                workspace.toggle_modal(cx, |cx| BranchList::new(delegate, 34., cx))
+            })?;
+
+            Ok(())
+        })
+        .detach_and_prompt_err("Failed to read branches", cx, |_, _| None)
+    }
+
     fn new(delegate: BranchListDelegate, rem_width: f32, cx: &mut ViewContext<Self>) -> Self {
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
         let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
@@ -39,17 +53,6 @@ impl BranchList {
             rem_width,
             _subscription,
         }
-    }
-    pub fn open(
-        workspace: &mut Workspace,
-        _: &OpenRecent,
-        cx: &mut ViewContext<Workspace>,
-    ) -> Result<()> {
-        // Modal branch picker has a longer trailoff than a popover one.
-        let delegate = BranchListDelegate::new(workspace, cx.view().clone(), 70, cx)?;
-        workspace.toggle_modal(cx, |cx| BranchList::new(delegate, 34., cx));
-
-        Ok(())
     }
 }
 impl ModalView for BranchList {}
@@ -100,35 +103,31 @@ pub struct BranchListDelegate {
 }
 
 impl BranchListDelegate {
-    fn new(
-        workspace: &Workspace,
-        handle: View<Workspace>,
+    async fn new(
+        workspace: View<Workspace>,
         branch_name_trailoff_after: usize,
-        cx: &AppContext,
+        cx: &AsyncAppContext,
     ) -> Result<Self> {
-        let project = workspace.project().read(cx);
-        let repo = project
-            .get_first_worktree_root_repo(cx)
-            .context("failed to get root repository for first worktree")?;
+        let all_branches_request = cx.update(|cx| {
+            let project = workspace.read(cx).project().read(cx);
+            let first_worktree = project
+                .visible_worktrees(cx)
+                .next()
+                .context("No worktrees found")?;
+            let project_path = ProjectPath::root_path(first_worktree.read(cx).id());
+            anyhow::Ok(project.branches(project_path, cx))
+        })??;
 
-        let all_branches = repo.branches()?;
+        let all_branches = all_branches_request.await?;
+
         Ok(Self {
             matches: vec![],
-            workspace: handle,
+            workspace,
             all_branches,
             selected_index: 0,
             last_query: Default::default(),
             branch_name_trailoff_after,
         })
-    }
-
-    fn display_error_toast(&self, message: String, cx: &mut WindowContext<'_>) {
-        self.workspace.update(cx, |model, ctx| {
-            struct GitCheckoutFailure;
-            let id = NotificationId::unique::<GitCheckoutFailure>();
-
-            model.show_toast(Toast::new(id, message), ctx)
-        });
     }
 }
 
@@ -235,40 +234,32 @@ impl PickerDelegate for BranchListDelegate {
         cx.spawn({
             let branch = branch.clone();
             |picker, mut cx| async move {
-                picker
-                    .update(&mut cx, |this, cx| {
-                        let project = this.delegate.workspace.read(cx).project().read(cx);
-                        let repo = project
-                            .get_first_worktree_root_repo(cx)
-                            .context("failed to get root repository for first worktree")?;
+                let branch_change_task = picker.update(&mut cx, |this, cx| {
+                    let project = this.delegate.workspace.read(cx).project().read(cx);
 
-                        let branch_to_checkout = match branch {
-                            BranchEntry::Branch(branch) => branch.string,
-                            BranchEntry::NewBranch { name: branch_name } => {
-                                let status = repo.create_branch(&branch_name);
-                                if status.is_err() {
-                                    this.delegate.display_error_toast(format!("Failed to create branch '{branch_name}', check for conflicts or unstashed files"), cx);
-                                    status?;
-                                }
+                    let branch_to_checkout = match branch {
+                        BranchEntry::Branch(branch) => branch.string,
+                        BranchEntry::NewBranch { name: branch_name } => branch_name,
+                    };
+                    let worktree = project
+                        .worktrees(cx)
+                        .next()
+                        .context("worktree disappeared")?;
+                    let repository = ProjectPath::root_path(worktree.read(cx).id());
 
-                                branch_name
-                            }
-                        };
+                    anyhow::Ok(project.update_or_create_branch(repository, branch_to_checkout, cx))
+                })??;
 
-                        let status = repo.change_branch(&branch_to_checkout);
-                        if status.is_err() {
-                            this.delegate.display_error_toast(format!("Failed to checkout branch '{branch_to_checkout}', check for conflicts or unstashed files"), cx);
-                            status?;
-                        }
+                branch_change_task.await?;
 
-                        cx.emit(DismissEvent);
+                picker.update(&mut cx, |_, cx| {
+                    cx.emit(DismissEvent);
 
-                        Ok::<(), anyhow::Error>(())
-                    })
-                    .log_err();
+                    Ok::<(), anyhow::Error>(())
+                })
             }
         })
-        .detach();
+        .detach_and_prompt_err("Failed to change branch", cx, |_, _| None);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
