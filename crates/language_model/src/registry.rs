@@ -13,6 +13,7 @@ use collections::BTreeMap;
 use gpui::{AppContext, EventEmitter, Global, Model, ModelContext};
 use std::sync::Arc;
 use ui::Context;
+use crate::provider::bedrock::BedrockLanguageModelProvider;
 
 pub fn init(user_store: Model<UserStore>, client: Arc<Client>, cx: &mut AppContext) {
     let registry = cx.new_model(|cx| {
@@ -32,6 +33,11 @@ fn register_language_model_providers(
     use feature_flags::FeatureFlagAppExt;
 
     RefreshLlmTokenListener::register(client.clone(), cx);
+
+    registry.register_provider(
+        BedrockLanguageModelProvider::new(cx),
+        cx
+    );
 
     registry.register_provider(
         AnthropicLanguageModelProvider::new(client.http_client(), cx),

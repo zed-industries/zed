@@ -6,3 +6,4 @@ pub mod fake;
 pub mod google;
 pub mod ollama;
 pub mod open_ai;
+pub mod bedrock;
