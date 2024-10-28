@@ -3136,7 +3136,7 @@ impl Render for ProjectPanel {
                         }
                     }),
                 )
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .child(
                     uniform_list(cx.view().clone(), "entries", item_count, {
                         |this, range, cx| {
@@ -3268,7 +3268,7 @@ impl Render for ProjectPanel {
                 .id("empty-project_panel")
                 .size_full()
                 .p_4()
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()

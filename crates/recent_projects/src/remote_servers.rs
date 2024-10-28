@@ -1266,7 +1266,7 @@ impl Render for RemoteServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.selectable_items.reset();
         div()
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .elevation_3(cx)
             .w(rems(34.))
             .key_context("RemoteServerModal")
