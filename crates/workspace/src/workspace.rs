@@ -1153,6 +1153,14 @@ impl Workspace {
                 DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
 
+            let toolchains = DB.toolchains(workspace_id).await?;
+            for (toolchain, worktree_id) in toolchains {
+                project_handle
+                    .update(&mut cx, |this, cx| {
+                        this.activate_toolchain(worktree_id, toolchain, cx)
+                    })?
+                    .await;
+            }
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |_, cx| {
                     cx.replace_root_view(|cx| {

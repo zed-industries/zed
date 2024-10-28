@@ -1,9 +1,9 @@
 use editor::Editor;
 use gpui::{
-    div, AsyncWindowContext, IntoElement, ParentElement, Render, Subscription, Task, View,
-    ViewContext, WeakModel, WeakView,
+    div, AsyncWindowContext, EventEmitter, IntoElement, ParentElement, Render, Subscription, Task,
+    View, ViewContext, WeakModel, WeakView,
 };
-use language::{Buffer, LanguageName, Toolchain};
+use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::WorktreeId;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
@@ -13,11 +13,14 @@ use crate::ToolchainSelector;
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,
     workspace: WeakView<Workspace>,
-    active_buffer: Option<(WorktreeId, WeakModel<Buffer>)>,
-    _observe_active_editor: Option<Subscription>,
+    active_buffer: Option<(WorktreeId, WeakModel<Buffer>, Subscription)>,
     _observe_language_changes: Subscription,
     _update_toolchain_task: Task<Option<()>>,
 }
+
+struct LanguageChanged;
+
+impl EventEmitter<LanguageChanged> for ActiveToolchain {}
 
 impl ActiveToolchain {
     pub fn new(workspace: &Workspace, cx: &mut ViewContext<Self>) -> Self {
@@ -26,8 +29,7 @@ impl ActiveToolchain {
             active_toolchain: None,
             active_buffer: None,
             workspace: workspace.weak_handle(),
-            _observe_active_editor: None,
-            _observe_language_changes: cx.observe(&view, |this, _, cx| {
+            _observe_language_changes: cx.subscribe(&view, |this, _, _: &LanguageChanged, cx| {
                 this._update_toolchain_task = Self::spawn_tracker_task(cx);
             }),
             _update_toolchain_task: Self::spawn_tracker_task(cx),
@@ -36,7 +38,11 @@ impl ActiveToolchain {
     fn spawn_tracker_task(cx: &mut ViewContext<Self>) -> Task<Option<()>> {
         cx.spawn(|this, mut cx| async move {
             let active_file = this
-                .update(&mut cx, |this, _| this.active_buffer.clone())
+                .update(&mut cx, |this, _| {
+                    this.active_buffer
+                        .as_ref()
+                        .map(|(_, buffer, _)| buffer.clone())
+                })
                 .ok()
                 .flatten()?;
             let workspace = this
@@ -44,13 +50,11 @@ impl ActiveToolchain {
                 .ok()?;
 
             let language_name = active_file
-                .1
                 .update(&mut cx, |this, _| Some(this.language()?.name()))
                 .ok()
                 .flatten()?;
 
             let worktree_id = active_file
-                .1
                 .update(&mut cx, |this, cx| Some(this.file()?.worktree_id(cx)))
                 .ok()
                 .flatten()?;
@@ -69,7 +73,13 @@ impl ActiveToolchain {
         let editor = editor.read(cx);
         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
             if let Some(worktree_id) = buffer.read(cx).file().map(|file| file.worktree_id(cx)) {
-                self.active_buffer = Some((worktree_id, buffer.downgrade()));
+                let subscription = cx.subscribe(&buffer, |_, _, event: &BufferEvent, cx| {
+                    if let BufferEvent::LanguageChanged = event {
+                        cx.emit(LanguageChanged)
+                    }
+                });
+                self.active_buffer = Some((worktree_id, buffer.downgrade(), subscription));
+                cx.emit(LanguageChanged);
             }
         }
 
@@ -87,12 +97,14 @@ impl ActiveToolchain {
                 .update(&mut cx, |this, _| this.database_id())
                 .ok()
                 .flatten()?;
-            let selected_toolchain = workspace::WORKSPACE_DB
-                .toolchain(workspace_id, worktree_id, language_name.clone())
-                .await
-                .ok()
-                .flatten();
-
+            let selected_toolchain = workspace
+                .update(&mut cx, |this, cx| {
+                    this.project()
+                        .read(cx)
+                        .active_toolchain(worktree_id, language_name.clone(), cx)
+                })
+                .ok()?
+                .await;
             if let Some(toolchain) = selected_toolchain {
                 Some(toolchain)
             } else {
@@ -112,6 +124,12 @@ impl ActiveToolchain {
                         .set_toolchain(workspace_id, worktree_id, toolchain.clone())
                         .await
                         .ok()?;
+                    project
+                        .update(&mut cx, |this, cx| {
+                            this.activate_toolchain(worktree_id, toolchain.clone(), cx)
+                        })
+                        .ok()?
+                        .await;
                 }
 
                 toolchains.toolchains.first().cloned()
@@ -147,12 +165,8 @@ impl StatusItemView for ActiveToolchain {
     ) {
         if let Some(editor) = active_pane_item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.active_toolchain.take();
-            self._observe_active_editor = Some(cx.observe(&editor, Self::update_lister));
             self.update_lister(editor, cx);
-        } else {
-            self._observe_active_editor = None;
         }
-
         cx.notify();
     }
 }

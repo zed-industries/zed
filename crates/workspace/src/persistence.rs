@@ -1096,6 +1096,28 @@ impl WorkspaceDb {
         .await
     }
 
+    pub(crate) async fn toolchains(
+        &self,
+        workspace_id: WorkspaceId,
+    ) -> Result<Vec<(Toolchain, WorktreeId)>> {
+        self.write(move |this| {
+            let mut select = this
+                .select_bound(sql!(
+                    SELECT name, path, worktree_id, language_name FROM toolchains WHERE workspace_id = ?
+                ))
+                .context("Preparing insertion")?;
+
+            let toolchain: Vec<(String, String, u64, String)> =
+                select(workspace_id)?;
+
+            Ok(toolchain.into_iter().map(|(name, path, worktree_id, language_name)| (Toolchain {
+                name: name.into(),
+                path: path.into(),
+                language_name: LanguageName::new(&language_name),
+            }, WorktreeId::from_proto(worktree_id))).collect())
+        })
+        .await
+    }
     pub async fn set_toolchain(
         &self,
         workspace_id: WorkspaceId,
@@ -1108,8 +1130,9 @@ impl WorkspaceDb {
                     INSERT INTO toolchains(workspace_id, worktree_id, language_name, name, path) VALUES (?, ?, ?, ?,  ?)
                     ON CONFLICT DO
                     UPDATE SET
-                        path = ?4,
-                        name = ?3
+                        name = ?4,
+                        path = ?5
+
                 ))
                 .context("Preparing insertion")?;
 
