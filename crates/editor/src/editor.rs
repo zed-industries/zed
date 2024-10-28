@@ -10756,12 +10756,10 @@ impl Editor {
                         let nested_start_row = foldable_range.0.start.row + 1;
                         let nested_end_row = foldable_range.0.end.row;
 
-                        if current_level == fold_at_level {
-                            fold_ranges.push(foldable_range);
-                        }
-
-                        if current_level <= fold_at_level {
+                        if current_level < fold_at_level {
                             stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        } else if current_level == fold_at_level {
+                            fold_ranges.push(foldable_range);
                         }
 
                         start_row = nested_end_row + 1;
