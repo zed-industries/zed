@@ -26,7 +26,29 @@ use std::{
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _headless, fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+            "project2": {
+                "README.md": "# project 2",
+            },
+        }),
+    )
+    .await;
+    fs.set_index_for_repo(
+        Path::new("/code/project1/.git"),
+        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
+    );
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
@@ -128,7 +150,22 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 
 #[gpui::test]
 async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, headless, _) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     project
         .update(cx, |project, cx| {
@@ -193,7 +230,22 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
 #[gpui::test]
 async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, headless, fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     cx.update_global(|settings_store: &mut SettingsStore, cx| {
         settings_store.set_user_settings(
@@ -304,7 +356,22 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 
 #[gpui::test]
 async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, headless, fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
         "/code/project1/.zed",
@@ -463,7 +530,22 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
 #[gpui::test]
 async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _headless, fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
@@ -523,7 +605,22 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 
 #[gpui::test]
 async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
@@ -566,7 +663,22 @@ async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut 
 
 #[gpui::test(iterations = 10)]
 async fn test_canceling_buffer_opening(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
@@ -597,7 +709,25 @@ async fn test_adding_then_removing_then_adding_worktrees(
     cx: &mut TestAppContext,
     server_cx: &mut TestAppContext,
 ) {
-    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+            "project2": {
+                "README.md": "# project 2",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (_worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/code/project1", true, cx)
@@ -636,9 +766,25 @@ async fn test_adding_then_removing_then_adding_worktrees(
 
 #[gpui::test]
 async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _headless, _fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let buffer = project.update(cx, |project, cx| project.open_server_settings(cx));
     cx.executor().run_until_parked();
+
     let buffer = buffer.await.unwrap();
 
     cx.update(|cx| {
@@ -651,7 +797,22 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
 
 #[gpui::test(iterations = 20)]
 async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
-    let (project, _headless, fs) = init_test(cx, server_cx).await;
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
@@ -690,19 +851,8 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
     );
 }
 
-fn init_logger() {
-    if std::env::var("RUST_LOG").is_ok() {
-        env_logger::try_init().ok();
-    }
-}
-
-async fn init_test(
-    cx: &mut TestAppContext,
-    server_cx: &mut TestAppContext,
-) -> (Model<Project>, Model<HeadlessProject>, Arc<FakeFs>) {
-    init_logger();
-
-    let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
+#[gpui::test]
+async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
         "/code",
@@ -710,32 +860,109 @@ async fn init_test(
             "project1": {
                 ".git": {},
                 "README.md": "# project 1",
-                "src": {
-                    "lib.rs": "fn one() -> usize { 1 }"
-                }
-            },
-            "project2": {
-                "README.md": "# project 2",
             },
         }),
     )
     .await;
-    fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
-        &[(Path::new("src/lib.rs"), "fn one() -> usize { 0 }".into())],
-    );
 
-    server_cx.update(HeadlessProject::init);
+    let (project, headless_project) = init_test(&fs, cx, server_cx).await;
+    let branches = ["main", "dev", "feature-1"];
+    fs.insert_branches(Path::new("/code/project1/.git"), &branches);
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    let worktree_id = cx.update(|cx| worktree.read(cx).id());
+    let root_path = ProjectPath::root_path(worktree_id);
+    // Give the worktree a bit of time to index the file system
+    cx.run_until_parked();
+
+    let remote_branches = project
+        .update(cx, |project, cx| project.branches(root_path.clone(), cx))
+        .await
+        .unwrap();
+
+    let new_branch = branches[2];
+
+    let remote_branches = remote_branches
+        .into_iter()
+        .map(|branch| branch.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(&remote_branches, &branches);
+
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    let server_branch = server_cx.update(|cx| {
+        headless_project.update(cx, |headless_project, cx| {
+            headless_project
+                .worktree_store
+                .update(cx, |worktree_store, cx| {
+                    worktree_store
+                        .current_branch(root_path.clone(), cx)
+                        .unwrap()
+                })
+        })
+    });
+
+    assert_eq!(server_branch.as_ref(), branches[2]);
+
+    // Also try creating a new branch
+    cx.update(|cx| {
+        project.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+
+    let server_branch = server_cx.update(|cx| {
+        headless_project.update(cx, |headless_project, cx| {
+            headless_project
+                .worktree_store
+                .update(cx, |worktree_store, cx| {
+                    worktree_store.current_branch(root_path, cx).unwrap()
+                })
+        })
+    });
+
+    assert_eq!(server_branch.as_ref(), "totally-new-branch");
+}
+
+pub async fn init_test(
+    server_fs: &Arc<FakeFs>,
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) -> (Model<Project>, Model<HeadlessProject>) {
+    let server_fs = server_fs.clone();
+    init_logger();
+
+    let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
     let http_client = Arc::new(BlockedHttpClient);
     let node_runtime = NodeRuntime::unavailable();
     let languages = Arc::new(LanguageRegistry::new(cx.executor()));
+    server_cx.update(HeadlessProject::init);
     let headless = server_cx.new_model(|cx| {
         client::init_settings(cx);
 
         HeadlessProject::new(
             crate::HeadlessAppState {
                 session: ssh_server_client,
-                fs: fs.clone(),
+                fs: server_fs.clone(),
                 http_client,
                 node_runtime,
                 languages,
@@ -752,13 +979,21 @@ async fn init_test(
             |_, cx| cx.on_release(|_, _| drop(headless))
         })
         .detach();
-    (project, headless, fs)
+    (project, headless)
+}
+
+fn init_logger() {
+    if std::env::var("RUST_LOG").is_ok() {
+        env_logger::try_init().ok();
+    }
 }
 
 fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<Project> {
     cx.update(|cx| {
-        let settings_store = SettingsStore::test(cx);
-        cx.set_global(settings_store);
+        if !cx.has_global::<SettingsStore>() {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+        }
     });
 
     let client = cx.update(|cx| {
@@ -773,6 +1008,7 @@ fn build_project(ssh: Model<SshRemoteClient>, cx: &mut TestAppContext) -> Model<
     let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
     let languages = Arc::new(LanguageRegistry::test(cx.executor()));
     let fs = FakeFs::new(cx.executor());
+
     cx.update(|cx| {
         Project::init(&client, cx);
         language::init(cx);
