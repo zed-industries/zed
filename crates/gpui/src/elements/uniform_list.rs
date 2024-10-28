@@ -340,6 +340,7 @@ impl Element for UniformList {
                                 visible_range.clone(),
                                 bounds,
                                 item_height,
+                                self.item_count,
                                 cx,
                             );
                             let available_space = size(
@@ -396,6 +397,7 @@ pub trait UniformListDecoration {
         visible_range: Range<usize>,
         bounds: Bounds<Pixels>,
         item_height: Pixels,
+        item_count: usize,
         cx: &mut WindowContext,
     ) -> AnyElement;
 }

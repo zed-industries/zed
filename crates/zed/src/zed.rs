@@ -208,6 +208,8 @@ pub fn initialize_workspace(
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
             cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+        let active_toolchain_language =
+            cx.new_view(|cx| toolchain_selector::ActiveToolchain::new(workspace, cx));
         let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
@@ -216,6 +218,7 @@ pub fn initialize_workspace(
             status_bar.add_left_item(activity_indicator, cx);
             status_bar.add_right_item(inline_completion_button, cx);
             status_bar.add_right_item(active_buffer_language, cx);
+                        status_bar.add_right_item(active_toolchain_language, cx);
             status_bar.add_right_item(vim_mode_indicator, cx);
             status_bar.add_right_item(cursor_position, cx);
         });
@@ -881,12 +884,6 @@ pub fn open_new_ssh_project_from_project(
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();
-    let nickname = recent_projects::SshSettings::get_global(cx).nickname_for(
-        &connection_options.host,
-        connection_options.port,
-        &connection_options.username,
-    );
-
     cx.spawn(|_, mut cx| async move {
         open_ssh_project(
             connection_options,
@@ -897,7 +894,6 @@ pub fn open_new_ssh_project_from_project(
                 replace_window: None,
                 env: None,
             },
-            nickname,
             &mut cx,
         )
         .await

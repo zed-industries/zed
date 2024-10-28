@@ -636,7 +636,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             kind: AssistantEditKind::InsertAfter {
                 old_text: "fn one".into(),
                 new_text: "fn two() {}".into(),
-                description: "add a `two` function".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -690,7 +690,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             kind: AssistantEditKind::InsertAfter {
                 old_text: "fn zero".into(),
                 new_text: "fn two() {}".into(),
-                description: "add a `two` function".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -754,7 +754,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             kind: AssistantEditKind::InsertAfter {
                 old_text: "fn zero".into(),
                 new_text: "fn two() {}".into(),
-                description: "add a `two` function".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -798,7 +798,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             kind: AssistantEditKind::InsertAfter {
                 old_text: "fn zero".into(),
                 new_text: "fn two() {}".into(),
-                description: "add a `two` function".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,

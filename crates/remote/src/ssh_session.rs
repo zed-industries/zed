@@ -64,6 +64,9 @@ pub struct SshConnectionOptions {
     pub port: Option<u16>,
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
+
+    pub nickname: Option<String>,
+    pub upload_binary_over_ssh: bool,
 }
 
 impl SshConnectionOptions {
@@ -141,8 +144,10 @@ impl SshConnectionOptions {
             host: hostname.to_string(),
             username: username.clone(),
             port,
-            password: None,
             args: Some(args),
+            password: None,
+            nickname: None,
+            upload_binary_over_ssh: false,
         })
     }
 
@@ -236,6 +241,7 @@ pub trait SshClientDelegate: Send + Sync {
     fn get_server_binary(
         &self,
         platform: SshPlatform,
+        upload_binary_over_ssh: bool,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
@@ -1705,23 +1711,37 @@ impl SshRemoteConnection {
             return Ok(());
         }
 
-        let (binary, version) = delegate.get_server_binary(platform, cx).await??;
+        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
+        let (binary, version) = delegate
+            .get_server_binary(platform, upload_binary_over_ssh, cx)
+            .await??;
 
-        let mut server_binary_exists = false;
-        if !server_binary_exists && cfg!(not(debug_assertions)) {
+        let mut remote_version = None;
+        if cfg!(not(debug_assertions)) {
             if let Ok(installed_version) =
                 run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
             {
-                if installed_version.trim() == version.to_string() {
-                    server_binary_exists = true;
+                if let Ok(version) = installed_version.trim().parse::<SemanticVersion>() {
+                    remote_version = Some(version);
+                } else {
+                    log::warn!("failed to parse version of remote server: {installed_version:?}",);
                 }
-                log::info!("checked remote server binary for version. latest version: {}. remote server version: {}", version.to_string(), installed_version.trim());
             }
-        }
 
-        if server_binary_exists {
-            log::info!("remote development server already present",);
-            return Ok(());
+            if let Some(remote_version) = remote_version {
+                if remote_version == version {
+                    log::info!("remote development server present and matching client version");
+                    return Ok(());
+                } else if remote_version > version {
+                    let error = anyhow!("The version of the remote server ({}) is newer than the Zed version ({}). Please update Zed.", remote_version, version);
+                    return Err(error);
+                } else {
+                    log::info!(
+                        "remote development server has older version: {}. updating...",
+                        remote_version
+                    );
+                }
+            }
         }
 
         match binary {
@@ -2325,6 +2345,7 @@ mod fake {
         fn get_server_binary(
             &self,
             _: SshPlatform,
+            _: bool,
             _: &mut AsyncAppContext,
         ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
             unreachable!()
