@@ -1,0 +1,21 @@
+{
+  "git+https://github.com/zed-industries/async-pipe-rs?rev=82d00a04211cf4e1236029aa03e6b6ce2a74c553#82d00a04211cf4e1236029aa03e6b6ce2a74c553": "sha256-g120X88HGT8P6GNCrzpS5SutALx5H+45Sf4iSSxzctE=",
+  "git+https://github.com/zed-industries/async-stripe?rev=3672dd4efb7181aa597bf580bf5a2f5d23db6735#3672dd4efb7181aa597bf580bf5a2f5d23db6735": "sha256-kVdYCmlM8DilSrcOGxI1tvSiUjSrXdnmKqBA9WUJgMw=",
+  "git+https://github.com/kvark/blade?rev=091a8401033847bb9b6ace3fcf70448d069621c5#091a8401033847bb9b6ace3fcf70448d069621c5": "sha256-8ibdoZ5uVRFbxDWZMGhhNerKZ/fwIwzzemM7GVbCeDs=",
+  "git+https://github.com/pop-os/cosmic-text?rev=542b20c#542b20ca4376a3b5de5fa629db1a4ace44e18e0c": "sha256-0y8z6FuCFCexaLhcZWR4sRIA8FE4eaDv5uJW4lYDHbg=",
+  "git+https://github.com/zed-industries/cpal?rev=fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50#fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50": "sha256-t+jY+0gygP+4ZHbWc40o2i+A4tLXjwKYEwS6cPvujes=",
+  "git+https://github.com/zed-industries/font-kit?rev=40391b7#40391b7c0041d8a8572af2afa3de32ae088f0120": "sha256-qUKvmi+RDoyhMrZ7T6SoVAyMc/aasQ9Y/okzre4SzXo=",
+  "git+https://github.com/jcdickinson/fontdb?branch=0-18-backport#2171b2bef788fe02cf6e69acd74f38974490c499": "sha256-arVnFRyZPOEk0TAW8udTJlGlfvJP/9e/cE9WjqFPE5o=",
+  "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e": "sha256-kwyJiSJoPoiZaOZ9ZAKvoO6jBY8Zrcfqc0pnxBGo5zg=",
+  "git+https://github.com/zed-industries/lsp-types?rev=72357d6f6d212bdffba3b5ef4b31d8ca856058e7#72357d6f6d212bdffba3b5ef4b31d8ca856058e7": "sha256-N4MKoU9j1p/Xeowki/+XiNQPwIcTm9DgmfM/Eieq4js=",
+  "git+https://github.com/KillTheMule/nvim-rs?branch=master#69500bae73b8b3f02a05b7bee621a0d0e633da6c": "sha256-VA8zIynflul1YKBlSxGCXCwa2Hz0pT3mH6OPsfS7Izo=",
+  "git+https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f28c46633abd5448a52b1f396c322e0d6c": "sha256-RxwisvRC5I3TCMAOT+kPasijuf66F+VFok1O9Ep8tGE=",
+  "git+https://github.com/zed-industries/reqwest.git?rev=fd110f6998da16bbca97b6dddda9be7827c50e29#fd110f6998da16bbca97b6dddda9be7827c50e29": "sha256-mjO6SPYOMiw1H0ZEbd4BlPivPtaLVNftpsCu+M2i3Qw=",
+  "git+https://github.com/zed-industries/tree-sitter-go-mod?rev=a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca#a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca": "sha256-FCb8ndKSFiLY7/nTX7tWF8c4KcSvoBU1QB5R4rdOgT0=",
+  "git+https://github.com/zed-industries/tree-sitter-go-work?rev=acb0617bf7f4fda02c6217676cc64acb89536dc7#acb0617bf7f4fda02c6217676cc64acb89536dc7": "sha256-WRMgGjOlJ+bT/YnSBeSLRTLlltA5WwTvV0Ow/949+BE=",
+  "git+https://github.com/zed-industries/tree-sitter-heex?rev=1dd45142fbb05562e35b2040c6129c9bca346592#1dd45142fbb05562e35b2040c6129c9bca346592": "sha256-SnjhL0WVsHOKuUp3dkTETnCgC/Z7WN0XmpQdJPBeBhw=",
+  "git+https://github.com/tree-sitter-grammars/tree-sitter-markdown?rev=9a23c1a96c0513d8fc6520972beedd419a973539#9a23c1a96c0513d8fc6520972beedd419a973539": "sha256-q2/aJx+385B8HiU0soZ1vtRvjkE21ABGzIyR1qwKFOU=",
+  "git+https://github.com/zed-industries/tree-sitter-yaml?rev=baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a#baff0b51c64ef6a1fb1f8390f3ad6015b83ec13a": "sha256-95u/bq74SiUHW8lVp3RpanmYS/lyVPW0Inn8gR7N3IQ=",
+  "git+https://github.com/XDeme1/xim-rs?rev=d50d461764c2213655cd9cf65a0ea94c70d3c4fd#d50d461764c2213655cd9cf65a0ea94c70d3c4fd": "sha256-BXyaIBoqMNbzaSJqMadmofdjtlEVSoU6iogF66YP6a4=",
+  "git+https://github.com/ConradIrwin/xkbcommon-rs?rev=fcbb4612185cc129ceeff51d22f7fb51810a03b2#fcbb4612185cc129ceeff51d22f7fb51810a03b2": "sha256-2RjZWiAaz8apYTrZ82qqH4Gv20WyCtPT+ldOzm0GWMo="
+}

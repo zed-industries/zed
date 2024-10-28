@@ -20,6 +20,7 @@ jobs:
     name: Run randomized tests
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
+    if: github.repository_owner == 'zed-industries'
     steps:
       - name: Install Node
         uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4

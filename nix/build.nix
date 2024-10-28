@@ -34,6 +34,13 @@
   makeWrapper,
   nodejs_22,
   nix-gitignore,
+  livekit-libwebrtc,
+  mold,
+  libGL,
+  libX11,
+  libXext,
+
+  bzip2,
 
   withGLES ? false,
 }:
@@ -41,6 +48,9 @@
 assert withGLES -> stdenv.hostPlatform.isLinux;
 
 let
+  pname = "zed-editor";
+  version = "nightly";
+
   includeFilter =
     path: type:
     let
@@ -52,17 +62,90 @@ let
       inRootDir
       && (baseName == "docs" || baseName == ".github" || baseName == ".git" || baseName == "target")
     );
+
   craneLib = crane.overrideToolchain rustToolchain;
-  commonSrc = lib.cleanSourceWith {
-    src = nix-gitignore.gitignoreSource [ ] ../.;
-    filter = includeFilter;
-    name = "source";
+
+  # The livekit patch changes cargo values enough to break fingerprints.
+  commonSrc = stdenv.mkDerivation {
+    inherit version;
+    pname = "${pname}-source-patched";
+
+    src = lib.cleanSourceWith {
+      src = nix-gitignore.gitignoreSource [ ] ../.;
+      filter = includeFilter;
+      name = "${pname}-source-cleaned";
+    };
+
+    patches = [
+      # Zed uses cargo-install to install cargo-about during the script execution.
+      # We provide cargo-about ourselves and can skip this step.
+      # Until https://github.com/zed-industries/zed/issues/19971 is fixed,
+      # we also skip any crate for which the license cannot be determined.
+      (fetchpatch {
+        url = "https://raw.githubusercontent.com/NixOS/nixpkgs/1fd02d90c6c097f91349df35da62d36c19359ba7/pkgs/by-name/ze/zed-editor/0001-generate-licenses.patch";
+        hash = "sha256-cLgqLDXW1JtQ2OQFLd5UolAjfy7bMoTw40lEx2jA2pk=";
+      })
+      "script/patches/use-cross-platform-livekit.patch"
+    ];
+
+    phases = [
+      "unpackPhase"
+      "patchPhase"
+      "installPhase"
+    ];
+
+    installPhase = ''
+      cp -adr "$(pwd)" "$out"
+    '';
+  };
+
+  crateOverrides =
+    p: drv:
+    let
+      switch = case: on: if case ? ${on} then case.${on} else case.default;
+      filterMap = f: l: builtins.filter (v: v != null) (builtins.map f l);
+      lookup =
+        n:
+        switch {
+          webrtc-sys = drv.overrideAttrs {
+            postPatch =
+              lib.optionalString stdenv.hostPlatform.isLinux ''
+                # Dynamically link WebRTC instead of static
+                substituteInPlace webrtc-sys/build.rs \
+                  --replace-fail "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=dylib=webrtc"
+              ''
+              + lib.optionalString stdenv.hostPlatform.isDarwin ''
+                # On Darwin, linking against the dylib results in Rust linker errors, while
+                # linking against the framework works fine.
+                substituteInPlace webrtc-sys/build.rs \
+                  --replace-fail "cargo:rustc-link-lib=static=webrtc" "cargo:rustc-link-lib=framework=webrtc" \
+                  --replace-fail 'println!("cargo:rustc-link-search=native={}", webrtc_lib.to_str().unwrap());' \
+                                 'println!("cargo:rustc-link-search=framework={}/Library/Frameworks", webrtc_dir.to_str().unwrap());'
+              '';
+          };
+          default = null;
+        } n.name;
+      # crane will provide a list for deps that share the same git repo. make everything a list to keep it consistent.
+      list = lib.lists.toList p;
+      mapped = filterMap lookup list ++ [ drv ];
+    in
+    builtins.head mapped;
+  cargoVendorDir = crane.vendorCargoDeps {
+    src = commonSrc;
+    outputHashes = builtins.fromJSON (builtins.readFile ./pins.json);
+    overrideVendorCargoPackage = crateOverrides;
+    overrideVendorGitCheckout = crateOverrides;
   };
   commonArgs = rec {
-    pname = "zed-editor";
-    version = "nightly";
+    inherit cargoVendorDir pname version;
 
     src = commonSrc;
+
+    dontUseCmakeConfigure = true;
+
+    cargoExtraArgs =
+      "--locked --package=zed --package=cli"
+      + lib.optionalString stdenv.hostPlatform.isDarwin " --features=gpui/runtime_shaders";
 
     nativeBuildInputs =
       [
@@ -74,6 +157,11 @@ let
         pkg-config
         protobuf
         cargo-about
+        mold
+
+        # livekit:
+        zstd
+        bzip2
       ]
       ++ lib.optionals stdenv.hostPlatform.isLinux [ makeWrapper ]
       ++ lib.optionals stdenv.hostPlatform.isDarwin [ cargo-bundle ];
@@ -94,6 +182,10 @@ let
         libxkbcommon
         wayland
         xorg.libxcb
+        # required by livekit:
+        libGL
+        libX11
+        libXext
       ]
       ++ lib.optionals stdenv.hostPlatform.isDarwin [
         apple-sdk_15
@@ -101,6 +193,7 @@ let
       ];
 
     env = {
+      RUSTFLAGS = if withGLES then "--cfg gles" else "";
       ZSTD_SYS_USE_PKG_CONFIG = true;
       FONTCONFIG_FILE = makeFontsConf {
         fontDirectories = [
@@ -110,41 +203,30 @@ let
       };
       ZED_UPDATE_EXPLANATION = "Zed has been installed using Nix. Auto-updates have thus been disabled.";
       RELEASE_VERSION = version;
+      LK_CUSTOM_WEBRTC = livekit-libwebrtc;
+      LD_LIBRARY_PATH = "${lib.makeLibraryPath nativeBuildInputs}";
     };
   };
-  cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+  cargoArtifacts = craneLib.buildDepsOnly (
+    commonArgs
+    // {
+      # Can't get deps caching to work.
+      # crane expects target/release to exist.
+      buildPhaseCargoCommand = ''
+        mkdir -p target/release
+        touch target/release/.keep
+      '';
+      checkPhaseCargoCommand = ''
+        mkdir -p target/release
+        touch target/release/.keep
+      '';
+    }
+  );
 in
 craneLib.buildPackage (
   commonArgs
   // rec {
     inherit cargoArtifacts;
-
-    patches =
-      [
-        # Zed uses cargo-install to install cargo-about during the script execution.
-        # We provide cargo-about ourselves and can skip this step.
-        # Until https://github.com/zed-industries/zed/issues/19971 is fixed,
-        # we also skip any crate for which the license cannot be determined.
-        (fetchpatch {
-          url = "https://raw.githubusercontent.com/NixOS/nixpkgs/1fd02d90c6c097f91349df35da62d36c19359ba7/pkgs/by-name/ze/zed-editor/0001-generate-licenses.patch";
-          hash = "sha256-cLgqLDXW1JtQ2OQFLd5UolAjfy7bMoTw40lEx2jA2pk=";
-        })
-      ]
-      ++ lib.optionals stdenv.hostPlatform.isDarwin [
-        # Livekit requires Swift 6
-        # We need this until livekit-rust sdk is used
-        (fetchpatch {
-          url = "https://raw.githubusercontent.com/NixOS/nixpkgs/1fd02d90c6c097f91349df35da62d36c19359ba7/pkgs/by-name/ze/zed-editor/0002-disable-livekit-darwin.patch";
-          hash = "sha256-whZ7RaXv8hrVzWAveU3qiBnZSrvGNEHTuyNhxgMIo5w=";
-        })
-      ];
-
-    cargoExtraArgs = "--package=zed --package=cli --features=gpui/runtime_shaders";
-
-    dontUseCmakeConfigure = true;
-    preBuild = ''
-      bash script/generate-licenses
-    '';
 
     postFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
       patchelf --add-rpath ${gpu-lib}/lib $out/libexec/*
@@ -152,9 +234,11 @@ craneLib.buildPackage (
       wrapProgram $out/libexec/zed-editor --suffix PATH : ${lib.makeBinPath [ nodejs_22 ]}
     '';
 
-    RUSTFLAGS = if withGLES then "--cfg gles" else "";
     gpu-lib = if withGLES then libglvnd else vulkan-loader;
 
+    preBuild = ''
+      bash script/generate-licenses
+    '';
     preCheck = ''
       export HOME=$(mktemp -d);
     '';

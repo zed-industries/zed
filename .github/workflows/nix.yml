@@ -1,0 +1,27 @@
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref_name }}
+  cancel-in-progress: true
+
+name: "Publish to Cachix"
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-cache:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v25
+        with:
+          nix_path: nixpkgs=channel:nixos-unstable
+      - uses: cachix/cachix-action@v14
+        with:
+          name: "${{ vars.CACHIX_OWNER || github.repository_owner }}"
+          skipPush: "${{ github.event_name == 'pull_request' }}"
+          authToken: "${{ secrets.CACHIX_TOKEN }}"
+      - run: nix build --no-update-lock-file --no-link -L .#zed-editor
+      - run: nix shell .#zed-editor nixpkgs#bash --command echo Ok

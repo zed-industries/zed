@@ -4687,8 +4687,7 @@ dependencies = [
 [[package]]
 name = "fontdb"
 version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e32eac81c1135c1df01d4e6d4233c47ba11f6a6d07f33e0bba09d18797077770"
+source = "git+https://github.com/jcdickinson/fontdb?branch=0-18-backport#2171b2bef788fe02cf6e69acd74f38974490c499"
 dependencies = [
  "fontconfig-parser",
  "log",

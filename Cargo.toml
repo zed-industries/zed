@@ -580,10 +580,6 @@ features = [
     "Win32_UI_WindowsAndMessaging",
 ]
 
-# TODO livekit https://github.com/RustAudio/cpal/pull/891
-[patch.crates-io]
-cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
-
 [profile.dev]
 split-debuginfo = "unpacked"
 debug = "limited"
@@ -646,6 +642,9 @@ codegen-units = 1
 [profile.release.package]
 zed = { codegen-units = 16 }
 
+[profile.release.build-override]
+opt-level = 3
+
 [profile.release-fast]
 inherits = "release"
 debug = "full"
@@ -690,3 +689,9 @@ let_underscore_future = "allow"
 
 [workspace.metadata.cargo-machete]
 ignored = ["bindgen", "cbindgen", "prost_build", "serde"]
+
+[patch.crates-io]
+fontdb = { git = "https://github.com/jcdickinson/fontdb", branch = "0-18-backport" }
+# TODO livekit https://github.com/RustAudio/cpal/pull/891
+cpal = { git = "https://github.com/zed-industries/cpal", rev = "fd8bc2fd39f1f5fdee5a0690656caff9a26d9d50" }
+
