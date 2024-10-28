@@ -10,8 +10,8 @@ use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::{future::Shared, FutureExt};
 use gpui::{
-    actions, list, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, ListState,
-    Model, Task, View, WeakView,
+    actions, list, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView,
+    ListScrollEvent, ListState, Model, Task, View, WeakView,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -202,7 +202,7 @@ impl NotebookEditor {
         let cell_list = ListState::new(
             cell_count,
             gpui::ListAlignment::Top,
-            px(1000.),
+            px(3000.),
             move |ix, cx| {
                 let cell_order_for_list = cell_order_for_list.clone();
                 let cell_map = cell_map_for_list.clone();
@@ -221,6 +221,16 @@ impl NotebookEditor {
                 }
             },
         );
+
+        cell_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, cx| {
+            // TODO: Do we need to do anythign with the scroll handler?
+
+            // Example from chat panel:
+            // if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
+            //     this.load_more_messages(cx);
+            // }
+            // this.is_scrolled_to_bottom = !event.is_scrolled;
+        }));
 
         Self {
             languages: languages.clone(),
@@ -393,8 +403,7 @@ impl NotebookEditor {
     }
 
     fn jump_to_cell(&mut self, index: usize, cx: &mut ViewContext<Self>) {
-        // Logic to jump the view to make the selected cell visible
-        println!("Scrolling to cell at index {}", index);
+        self.cell_list.scroll_to_reveal_item(index);
     }
 
     fn button_group(cx: &ViewContext<Self>) -> Div {
