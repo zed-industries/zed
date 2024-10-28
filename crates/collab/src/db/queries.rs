@@ -10,7 +10,6 @@ pub mod contacts;
 pub mod contributors;
 pub mod embeddings;
 pub mod extensions;
-pub mod hosted_projects;
 pub mod messages;
 pub mod notifications;
 pub mod processed_stripe_events;

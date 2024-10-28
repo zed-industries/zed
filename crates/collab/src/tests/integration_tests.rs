@@ -6575,3 +6575,95 @@ async fn test_context_collaboration_with_reconnect(
         assert!(context.buffer().read(cx).read_only());
     });
 }
+
+#[gpui::test]
+async fn test_remote_git_branches(
+    executor: BackgroundExecutor,
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+
+    client_a
+        .fs()
+        .insert_tree("/project", serde_json::json!({ ".git":{} }))
+        .await;
+    let branches = ["main", "dev", "feature-1"];
+    client_a
+        .fs()
+        .insert_branches(Path::new("/project/.git"), &branches);
+
+    let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+
+    let root_path = ProjectPath::root_path(worktree_id);
+    // Client A sees that a guest has joined.
+    executor.run_until_parked();
+
+    let branches_b = cx_b
+        .update(|cx| project_b.update(cx, |project, cx| project.branches(root_path.clone(), cx)))
+        .await
+        .unwrap();
+
+    let new_branch = branches[2];
+
+    let branches_b = branches_b
+        .into_iter()
+        .map(|branch| branch.name)
+        .collect::<Vec<_>>();
+
+    assert_eq!(&branches_b, &branches);
+
+    cx_b.update(|cx| {
+        project_b.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), new_branch.to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_branch = cx_a.update(|cx| {
+        project_a.update(cx, |project, cx| {
+            project.worktree_store().update(cx, |worktree_store, cx| {
+                worktree_store
+                    .current_branch(root_path.clone(), cx)
+                    .unwrap()
+            })
+        })
+    });
+
+    assert_eq!(host_branch.as_ref(), branches[2]);
+
+    // Also try creating a new branch
+    cx_b.update(|cx| {
+        project_b.update(cx, |project, cx| {
+            project.update_or_create_branch(root_path.clone(), "totally-new-branch".to_string(), cx)
+        })
+    })
+    .await
+    .unwrap();
+
+    executor.run_until_parked();
+
+    let host_branch = cx_a.update(|cx| {
+        project_a.update(cx, |project, cx| {
+            project.worktree_store().update(cx, |worktree_store, cx| {
+                worktree_store.current_branch(root_path, cx).unwrap()
+            })
+        })
+    });
+
+    assert_eq!(host_branch.as_ref(), "totally-new-branch");
+}
