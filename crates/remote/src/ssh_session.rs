@@ -1221,9 +1221,11 @@ impl RemoteConnection for SshRemoteConnection {
         delegate.set_status(Some("Starting proxy"), cx);
 
         let mut start_proxy_command = format!(
-            "RUST_LOG={} RUST_BACKTRACE={} {:?} proxy --identifier {}",
+            "RUST_LOG={} {} {:?} proxy --identifier {}",
             std::env::var("RUST_LOG").unwrap_or_default(),
-            std::env::var("RUST_BACKTRACE").unwrap_or_default(),
+            std::env::var("RUST_BACKTRACE")
+                .map(|b| { format!("RUST_BACKTRACE={}", b) })
+                .unwrap_or_default(),
             remote_binary_path,
             unique_identifier,
         );
