@@ -52,7 +52,7 @@ impl<const CAPACITY: usize> Chunk<CAPACITY> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct ChunkRef<'a> {
     chars: usize,
     chars_utf16: usize,
@@ -64,7 +64,7 @@ pub struct ChunkRef<'a> {
 impl<'a> ChunkRef<'a> {
     #[inline(always)]
     pub fn slice(self, range: Range<usize>) -> Self {
-        let mask = (1 << range.end) - 1;
+        let mask = ((1u128 << range.end) - 1) as usize;
         Self {
             chars: (self.chars & mask) >> range.start,
             chars_utf16: (self.chars_utf16 & mask) >> range.start,
@@ -115,7 +115,7 @@ impl<'a> ChunkRef<'a> {
         if self.newlines == 0 {
             self.chars.count_ones()
         } else {
-            let mask = (1 << self.newlines.trailing_zeros() as usize) - 1;
+            let mask = ((1u128 << self.newlines.trailing_zeros() as usize) - 1) as usize;
             (self.chars & mask).count_ones()
         }
     }
@@ -158,8 +158,10 @@ impl<'a> ChunkRef<'a> {
                 longest_row_chars = row_chars;
             }
 
-            newlines >>= newline_ix + 1;
-            chars >>= newline_ix + 1;
+            newlines >>= newline_ix;
+            newlines >>= 1;
+            chars >>= newline_ix;
+            chars >>= 1;
             row += 1;
         }
 
@@ -182,7 +184,7 @@ impl<'a> ChunkRef<'a> {
             return Point::zero();
         }
 
-        let mask = (1 << offset) - 1;
+        let mask = ((1u128 << offset) - 1) as usize;
         let row = (self.newlines & mask).count_ones();
         let newline_ix = usize::BITS - (self.newlines & mask).leading_zeros();
         let column = (offset - newline_ix as usize) as u32;
@@ -206,7 +208,11 @@ impl<'a> ChunkRef<'a> {
             0
         };
 
-        let newlines = self.newlines >> row_start_offset;
+        let newlines = if row_start_offset == usize::BITS as usize {
+            0
+        } else {
+            self.newlines >> row_start_offset
+        };
         let row_len = cmp::min(newlines.trailing_zeros(), self.text.len() as u32);
         if point.column > row_len {
             debug_panic!(
@@ -222,7 +228,7 @@ impl<'a> ChunkRef<'a> {
 
     #[inline(always)]
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
-        let mask = (1 << offset) - 1;
+        let mask = ((1u128 << offset) - 1) as usize;
         OffsetUtf16((self.chars_utf16 & mask).count_ones() as usize)
     }
 
@@ -242,7 +248,7 @@ impl<'a> ChunkRef<'a> {
 
     #[inline(always)]
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        let mask = (1 << offset) - 1;
+        let mask = ((1u128 << offset) - 1) as usize;
         let row = (self.newlines & mask).count_ones();
         let newline_ix = usize::BITS - (self.newlines & mask).leading_zeros();
         let column = ((self.chars_utf16 & mask) >> newline_ix).count_ones();
@@ -276,9 +282,9 @@ impl<'a> ChunkRef<'a> {
 
         let row_len_utf8 = cmp::min(
             (self.newlines >> row_start_offset).trailing_zeros(),
-            self.text.len() as u32,
+            (self.text.len() - row_start_offset) as u32,
         );
-        let mask = (1 << row_len_utf8) - 1;
+        let mask = ((1u128 << row_len_utf8) - 1) as usize;
         let row_chars_utf16 = (self.chars_utf16 >> row_start_offset) & mask;
         if point.column > row_chars_utf16.count_ones() {
             if !clip {
@@ -461,7 +467,7 @@ mod tests {
             .ok()
             .and_then(|s| s.parse().ok())
             .unwrap_or(64);
-        let chunk_len = rng.gen_range(0..max_len);
+        let chunk_len = rng.gen_range(0..=max_len);
         let text = RandomCharIter::new(&mut rng)
             .take(chunk_len)
             .collect::<String>();
