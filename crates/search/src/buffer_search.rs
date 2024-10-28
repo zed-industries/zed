@@ -9,7 +9,7 @@ use any_vec::AnyVec;
 use collections::HashMap;
 use editor::{
     actions::{Tab, TabPrev},
-    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle,
+    DisplayPoint, Editor, EditorElement, EditorSettings, EditorStyle, SearchSettings,
 };
 use futures::channel::oneshot;
 use gpui::{
@@ -19,6 +19,7 @@ use gpui::{
     VisualContext as _, WindowContext,
 };
 use project::{
+    project_settings::SearchSettings as LocalSearchSettings,
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
@@ -661,13 +662,27 @@ impl BufferSearchBar {
         }
     }
 
+    fn load_searchsettings(cx: &mut ViewContext<Self>) -> SearchOptions {
+        if let Some(project_search_setting) = LocalSearchSettings::try_global(cx) {
+            let settings = SearchSettings {
+                whole_word: project_search_setting.whole_word,
+                case_sensitive: project_search_setting.case_sensitive,
+                include_ignored: project_search_setting.include_ignored,
+                regex: project_search_setting.regex,
+                include: project_search_setting.include.clone(),
+                exclude: project_search_setting.exclude.clone(),
+            };
+            return SearchOptions::from_settings(&settings);
+        }
+        SearchOptions::from_settings(&EditorSettings::get_global(cx).search)
+    }
+
     pub fn show(&mut self, cx: &mut ViewContext<Self>) -> bool {
         let Some(handle) = self.active_searchable_item.as_ref() else {
             return false;
         };
-
-        self.configured_options =
-            SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
+        let search_options = Self::load_searchsettings(cx);
+        self.configured_options = search_options;
         if self.dismissed && self.configured_options != self.default_options {
             self.search_options = self.configured_options;
             self.default_options = self.configured_options;
@@ -2410,6 +2425,8 @@ mod tests {
                 case_sensitive: false,
                 include_ignored: false,
                 regex: false,
+                include: None,
+                exclude: None,
             },
             cx,
         );
@@ -2475,6 +2492,8 @@ mod tests {
                 case_sensitive: true,
                 include_ignored: false,
                 regex: false,
+                include: None,
+                exclude: None,
             },
             cx,
         );

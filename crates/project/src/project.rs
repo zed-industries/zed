@@ -55,7 +55,7 @@ use lsp_command::*;
 use node_runtime::NodeRuntime;
 use parking_lot::{Mutex, RwLock};
 pub use prettier_store::PrettierStore;
-use project_settings::{ProjectSettings, SettingsObserver, SettingsObserverEvent};
+use project_settings::{ProjectSettings, SearchSettings, SettingsObserver, SettingsObserverEvent};
 use remote::{SshConnectionOptions, SshRemoteClient};
 use rpc::{
     proto::{LanguageServerPromptResponse, SSH_PROJECT_ID},
@@ -2107,9 +2107,38 @@ impl Project {
                         message,
                     });
                 }
-                Ok(_) => cx.emit(Event::HideToast {
-                    notification_id: "local-settings".into(),
-                }),
+                Ok(_) => {
+                    cx.emit(Event::HideToast {
+                        notification_id: "local-settings".into(),
+                    });
+                    let mut search_setting = SearchSettings {
+                        whole_word: false,
+                        case_sensitive: false,
+                        include_ignored: false,
+                        regex: false,
+                        include: None,
+                        exclude: None,
+                    };
+                    let mut find_localsetting = false;
+                    if let Some(worktree) = self.worktrees(cx).next() {
+                        let project_setting = ProjectSettings::get(
+                            Some(SettingsLocation {
+                                worktree_id: worktree.read(cx).id(),
+                                path: worktree.read(cx).abs_path().as_ref(),
+                            }),
+                            cx,
+                        );
+                        if let Some(setting) = &project_setting.search {
+                            search_setting = setting.clone();
+                            find_localsetting = true;
+                        }
+                    }
+                    if find_localsetting {
+                        SearchSettings::set_global(search_setting, cx);
+                    } else {
+                        SearchSettings::remove_global(cx);
+                    }
+                }
                 Err(_) => {}
             },
         }

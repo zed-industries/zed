@@ -1,7 +1,9 @@
 use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
+use gpui::{
+    AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Global, Model, ModelContext,
+};
 use language::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
@@ -56,6 +58,43 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
+    /// Configuration for search-related features
+    pub search: Option<SearchSettings>,
+}
+
+/// Default options for buffer and project search items.
+#[derive(Clone, Default, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct SearchSettings {
+    #[serde(default)]
+    pub whole_word: bool,
+    #[serde(default)]
+    pub case_sensitive: bool,
+    #[serde(default)]
+    pub include_ignored: bool,
+    #[serde(default)]
+    pub regex: bool,
+    pub include: Option<String>,
+    pub exclude: Option<String>,
+}
+
+struct GlobalLocalSearchSettings(SearchSettings);
+
+impl Global for GlobalLocalSearchSettings {}
+
+impl SearchSettings {
+    /// Returns the global [`LocalSearchSettings`], if one is set.
+    pub fn try_global(cx: &AppContext) -> Option<SearchSettings> {
+        cx.try_global::<GlobalLocalSearchSettings>()
+            .map(|settings| settings.0.clone())
+    }
+    /// Sets the global [`LocalSearchSettings`].
+    pub fn set_global(settings: SearchSettings, cx: &mut AppContext) {
+        cx.set_global(GlobalLocalSearchSettings(settings))
+    }
+    /// Remove the global [`LocalSearchSettings`].
+    pub fn remove_global(cx: &mut AppContext) {
+        cx.remove_global::<GlobalLocalSearchSettings>();
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
