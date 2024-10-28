@@ -2166,7 +2166,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 
 ### Indent Guides
 
-- Description: Whether to show indent guides in the project panel or not.
+- Description: Whether to show indent guides in the project panel.
 - Setting: `indent_guides`
 - Default: `true`
 
