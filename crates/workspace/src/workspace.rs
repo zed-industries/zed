@@ -5530,6 +5530,14 @@ pub fn open_ssh_project(
             )
         })?;
 
+        let toolchains = DB.toolchains(workspace_id).await?;
+        for (toolchain, worktree_id) in toolchains {
+            project
+                .update(&mut cx, |this, cx| {
+                    this.activate_toolchain(worktree_id, toolchain, cx)
+                })?
+                .await;
+        }
         let mut project_paths_to_open = vec![];
         let mut project_path_errors = vec![];
 
