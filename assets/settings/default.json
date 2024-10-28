@@ -388,6 +388,8 @@
     "git_status": true,
     // Amount of indentation for nested items.
     "indent_size": 20,
+    // Whether to show indent guides in the outline panel.
+    "indent_guides": true,
     // Whether to reveal it in the outline panel automatically,
     // when a corresponding outline entry becomes active.
     // Gitignored entries are never auto revealed.

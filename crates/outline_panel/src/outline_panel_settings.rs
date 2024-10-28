@@ -19,6 +19,7 @@ pub struct OutlinePanelSettings {
     pub folder_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
+    pub indent_guides: bool,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
 }
@@ -53,6 +54,10 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: 20
     pub indent_size: Option<f32>,
+    /// Whether to show indent guides in the outline panel.
+    ///
+    /// Default: true
+    pub indent_guides: Option<bool>,
     /// Whether to reveal it in the outline panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.

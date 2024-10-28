@@ -2237,6 +2237,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "folder_icons": true,
   "git_status": true,
   "indent_size": 20,
+  "indent_guides": true,
   "auto_reveal_entries": true,
   "auto_fold_dirs": true,
 }
