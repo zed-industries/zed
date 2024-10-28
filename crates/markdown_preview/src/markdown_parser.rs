@@ -931,9 +931,10 @@ mod tests {
             parsed.children,
             vec![p("Checkout this https://zed.dev link", 0..34)]
         );
-      
-     #[gpui::test]
-     async fn test_image_links_detection() {
+    }
+
+    #[gpui::test]
+    async fn test_image_links_detection() {
         let parsed = parse("![test](https://blog.logrocket.com/wp-content/uploads/2024/04/exploring-zed-open-source-code-editor-rust-2.png)").await;
 
         let paragraph = if let ParsedMarkdownElement::Paragraph(text) = &parsed.children[0] {
