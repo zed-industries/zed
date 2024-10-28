@@ -8,6 +8,7 @@ use futures::future::Shared;
 use futures::FutureExt;
 use gpui::canvas;
 use gpui::ClipboardItem;
+use gpui::ScrollAnchor;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
@@ -1177,12 +1178,47 @@ impl RemoteServerProjects {
             unreachable!()
         };
 
+        let scroll_anchor = ScrollAnchor::for_handle(scroll_handle.clone());
+        let scroll_anchor2 = ScrollAnchor::for_handle(scroll_handle.clone());
+        let id = cx.entity_id();
+        cx.spawn({
+            let scroll_anchor = scroll_anchor.clone();
+            let scroll_anchor2 = ScrollAnchor::for_handle(scroll_handle.clone());
+            |_, mut cx| async move {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
+                cx.update(|cx| {
+                    scroll_anchor.scroll_to(cx);
+
+                    cx.notify(id);
+                })
+                .ok();
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(5))
+                    .await;
+                cx.update(|cx| {
+                    scroll_anchor2.scroll_to(cx);
+
+                    cx.notify(id);
+                })
+                .ok();
+            }
+        })
+        .detach();
+
         let mut modal_section = v_flex()
             .id("ssh-server-list")
             .overflow_y_scroll()
             .track_scroll(&scroll_handle)
             .size_full()
             .child(connect_button)
+            .child(
+                div()
+                    .child("Ayy")
+                    .id("lmaoaaa")
+                    .anchor_scroll(&scroll_anchor2),
+            )
             .child(
                 List::new()
                     .empty_message(
@@ -1199,6 +1235,7 @@ impl RemoteServerProjects {
                         },
                     )),
             )
+            .child(div().child("Xdd").id("lmao").anchor_scroll(&scroll_anchor))
             .into_any_element();
 
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
