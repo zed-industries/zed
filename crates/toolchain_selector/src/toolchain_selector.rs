@@ -15,7 +15,7 @@ use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{ModalView, Workspace};
 
-actions!(toolchain_selector, [Toggle]);
+actions!(toolchain, [Select]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(ToolchainSelector::register).detach();
@@ -27,7 +27,7 @@ pub struct ToolchainSelector {
 
 impl ToolchainSelector {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(move |workspace, _: &Toggle, cx| {
+        workspace.register_action(move |workspace, _: &Select, cx| {
             Self::toggle(workspace, cx);
         });
     }
