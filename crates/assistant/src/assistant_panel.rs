@@ -4027,9 +4027,9 @@ impl Render for ContextEditor {
                                 .items_center()
                                 .justify_end()
                                 .gap_1p5()
-                                .child(div().child(self.render_edit_button(cx)))
+                                .child(self.render_edit_button(cx))
                                 .child(Label::new("or").size(LabelSize::Small).color(Color::Muted))
-                                .child(div().child(self.render_send_button(cx))),
+                                .child(self.render_send_button(cx)),
                         ),
                 ),
             )
