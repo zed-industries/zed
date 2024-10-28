@@ -53,7 +53,7 @@ impl EmptyHead {
 
 impl Render for EmptyHead {
     fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        div().track_focus(&self.focus_handle)
+        div().track_focus(&self.focus_handle(cx))
     }
 }
 
