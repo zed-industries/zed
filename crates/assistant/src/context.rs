@@ -2117,10 +2117,17 @@ impl Context {
                 continue;
             }
 
+            let content = match request_type {
+                RequestType::Chat => Vec::new(),
+                RequestType::SuggestEdits => {
+                    vec![MessageContent::Text(SUGGEST_EDITS_PREAMBLE.to_string())]
+                }
+            };
+
             let mut offset = message.offset_range.start;
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
-                content: Vec::new(),
+                content,
                 cache: message
                     .cache
                     .as_ref()
@@ -2180,16 +2187,6 @@ impl Context {
 
             completion_request.messages.push(request_message);
         }
-
-        if let RequestType::SuggestEdits = request_type {
-            completion_request
-                .messages
-                .push(LanguageModelRequestMessage {
-                    role: Role::System,
-                    content: vec![MessageContent::Text(SUGGEST_EDITS_PREAMBLE.to_string())],
-                    cache: true,
-                });
-        };
 
         completion_request
     }
