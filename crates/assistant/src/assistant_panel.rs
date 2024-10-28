@@ -3695,7 +3695,7 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Edit"))
+            .child(Label::new("Suggest Edits"))
             .children(
                 KeyBinding::for_action_in(&Edit, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
@@ -4024,9 +4024,11 @@ impl Render for ContextEditor {
                         .child(
                             h_flex()
                                 .w_full()
+                                .items_center()
                                 .justify_end()
-                                .gap_2()
+                                .gap_1p5()
                                 .child(div().child(self.render_edit_button(cx)))
+                                .child(Label::new("or").size(LabelSize::Small).color(Color::Muted))
                                 .child(div().child(self.render_send_button(cx))),
                         ),
                 ),
