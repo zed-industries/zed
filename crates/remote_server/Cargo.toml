@@ -35,7 +35,7 @@ git_hosting_providers.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 language.workspace = true
-languages.workspace = true
+languages = {workspace = true, features = ["load-grammars"]}
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
