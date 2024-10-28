@@ -124,7 +124,7 @@ impl Render for ActiveToolchain {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div().when_some(self.active_toolchain.as_ref(), |el, active_toolchain| {
             el.child(
-                Button::new("change-toolchain", active_toolchain.label.clone())
+                Button::new("change-toolchain", active_toolchain.name.clone())
                     .label_size(LabelSize::Small)
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(workspace) = this.workspace.upgrade() {

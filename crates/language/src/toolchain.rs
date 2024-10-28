@@ -16,7 +16,7 @@ use crate::LanguageName;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Toolchain {
     /// User-facing label
-    pub label: SharedString,
+    pub name: SharedString,
     pub path: SharedString,
     pub language_name: LanguageName,
 }

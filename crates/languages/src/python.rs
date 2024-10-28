@@ -379,14 +379,14 @@ impl ToolchainLister for PythonToolchainProvider {
         let mut toolchains: Vec<_> = toolchains
             .into_iter()
             .filter_map(|toolchain| {
-                let label = if let Some(version) = &toolchain.version {
+                let name = if let Some(version) = &toolchain.version {
                     format!("Python {version} ({:?})", toolchain.kind?)
                 } else {
                     format!("{:?}", toolchain.kind?)
                 }
                 .into();
                 Some(Toolchain {
-                    label,
+                    name,
                     path: toolchain.executable?.to_str()?.to_owned().into(),
                     language_name: LanguageName::new("Python"),
                 })

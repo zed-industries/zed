@@ -115,7 +115,7 @@ impl ToolchainStore {
                 bail!("Missing `toolchain` in payload");
             };
             let toolchain = Toolchain {
-                label: toolchain.name.into(),
+                name: toolchain.name.into(),
                 path: toolchain.path.into(),
                 language_name,
             };
@@ -140,7 +140,7 @@ impl ToolchainStore {
 
         Ok(proto::ActiveToolchainResponse {
             toolchain: toolchain.map(|toolchain| proto::Toolchain {
-                name: toolchain.label.into(),
+                name: toolchain.name.into(),
                 path: toolchain.path.into(),
             }),
         })
@@ -164,7 +164,7 @@ impl ToolchainStore {
                 .toolchains
                 .into_iter()
                 .map(|toolchain| proto::Toolchain {
-                    name: toolchain.label.to_string(),
+                    name: toolchain.name.to_string(),
                     path: toolchain.path.to_string(),
                 })
                 .collect::<Vec<_>>()
@@ -320,7 +320,7 @@ impl RemoteToolchainStore {
                     worktree_id: worktree_id.to_proto(),
                     language_name: toolchain.language_name.into(),
                     toolchain: Some(proto::Toolchain {
-                        name: toolchain.label.into(),
+                        name: toolchain.name.into(),
                         path: toolchain.path.into(),
                     }),
                 })
@@ -354,7 +354,7 @@ impl RemoteToolchainStore {
                 .into_iter()
                 .map(|toolchain| Toolchain {
                     language_name: language_name.clone(),
-                    label: toolchain.name.into(),
+                    name: toolchain.name.into(),
                     path: toolchain.path.into(),
                 })
                 .collect();
@@ -384,7 +384,7 @@ impl RemoteToolchainStore {
 
             response.toolchain.map(|toolchain| Toolchain {
                 language_name: language_name.clone(),
-                label: toolchain.name.into(),
+                name: toolchain.name.into(),
                 path: toolchain.path.into(),
             })
         })

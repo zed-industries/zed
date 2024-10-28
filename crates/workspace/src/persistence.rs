@@ -1088,7 +1088,7 @@ impl WorkspaceDb {
                 select((workspace_id, language_name.0.to_owned(), worktree_id.to_usize()))?;
 
             Ok(toolchain.into_iter().next().map(|(name, path)| Toolchain {
-                label: name.into(),
+                name: name.into(),
                 path: path.into(),
                 language_name,
             }))
@@ -1117,7 +1117,7 @@ impl WorkspaceDb {
                 workspace_id,
                 worktree_id.to_usize(),
                 toolchain.language_name.0.as_ref(),
-                toolchain.label.as_ref(),
+                toolchain.name.as_ref(),
                 toolchain.path.as_ref(),
             ))?;
 

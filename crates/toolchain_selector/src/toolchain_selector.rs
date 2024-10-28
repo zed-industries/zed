@@ -265,7 +265,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .enumerate()
                     .map(|(index, candidate)| {
                         let path = Self::relativize_path(candidate.path, &worktree_root_path);
-                        let string = format!("{}{}", candidate.label, path);
+                        let string = format!("{}{}", candidate.name, path);
                         StringMatch {
                             candidate_id: index,
                             string,
@@ -281,7 +281,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .enumerate()
                     .map(|(candidate_id, toolchain)| {
                         let path = Self::relativize_path(toolchain.path, &worktree_root_path);
-                        let string = format!("{}{}", toolchain.label, path);
+                        let string = format!("{}{}", toolchain.name, path);
                         StringMatchCandidate::new(candidate_id, string)
                     })
                     .collect::<Vec<_>>();
@@ -317,7 +317,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         let mat = &self.matches[ix];
         let toolchain = &self.candidates.toolchains[mat.candidate_id];
 
-        let label = toolchain.label.clone();
+        let label = toolchain.name.clone();
         let path = Self::relativize_path(toolchain.path.clone(), &self.worktree_abs_path_root);
         let (name_highlights, mut path_highlights) = mat
             .positions
