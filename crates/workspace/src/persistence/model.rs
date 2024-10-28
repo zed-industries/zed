@@ -4,7 +4,6 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
-use client::DevServerProjectId;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
@@ -17,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::SharedString;
 use util::ResultExt;
 use uuid::Uuid;
 
@@ -90,13 +88,6 @@ impl Column for SerializedSshProject {
             start_index + 5,
         ))
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct SerializedDevServerProject {
-    pub id: DevServerProjectId,
-    pub dev_server_name: String,
-    pub paths: Vec<SharedString>,
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -176,49 +167,10 @@ impl Column for LocalPathsOrder {
     }
 }
 
-impl From<SerializedDevServerProject> for SerializedWorkspaceLocation {
-    fn from(dev_server_project: SerializedDevServerProject) -> Self {
-        Self::DevServer(dev_server_project)
-    }
-}
-
-impl StaticColumnCount for SerializedDevServerProject {}
-impl Bind for &SerializedDevServerProject {
-    fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let next_index = statement.bind(&self.id.0, start_index)?;
-        let next_index = statement.bind(&self.dev_server_name, next_index)?;
-        let paths = serde_json::to_string(&self.paths)?;
-        statement.bind(&paths, next_index)
-    }
-}
-
-impl Column for SerializedDevServerProject {
-    fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let id = statement.column_int64(start_index)?;
-        let dev_server_name = statement.column_text(start_index + 1)?.to_string();
-        let paths = statement.column_text(start_index + 2)?.to_string();
-        let paths: Vec<SharedString> = if paths.starts_with('[') {
-            serde_json::from_str(&paths).context("JSON deserialization of paths failed")?
-        } else {
-            vec![paths.into()]
-        };
-
-        Ok((
-            Self {
-                id: DevServerProjectId(id as u64),
-                dev_server_name,
-                paths,
-            },
-            start_index + 3,
-        ))
-    }
-}
-
 #[derive(Debug, PartialEq, Clone)]
 pub enum SerializedWorkspaceLocation {
     Local(LocalPaths, LocalPathsOrder),
     Ssh(SerializedSshProject),
-    DevServer(SerializedDevServerProject),
 }
 
 impl SerializedWorkspaceLocation {

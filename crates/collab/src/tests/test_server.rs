@@ -203,7 +203,7 @@ impl TestServer {
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
-                    Ok(Credentials::User {
+                    Ok(Credentials {
                         user_id: user_id.to_proto(),
                         access_token,
                     })
@@ -212,7 +212,7 @@ impl TestServer {
             .override_establish_connection(move |credentials, cx| {
                 assert_eq!(
                     credentials,
-                    &Credentials::User {
+                    &Credentials {
                         user_id: user_id.0 as u64,
                         access_token: "the-token".into()
                     }
@@ -296,7 +296,6 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
             assistant::context_store::init(&client.clone().into());

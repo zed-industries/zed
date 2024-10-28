@@ -298,25 +298,64 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                                     return;
                                 };
 
-                                if let Some(prompts) = protocol.list_prompts().await.log_err() {
-                                    for prompt in prompts
-                                        .into_iter()
-                                        .filter(context_server_command::acceptable_prompt)
-                                    {
-                                        log::info!(
-                                            "registering context server command: {:?}",
-                                            prompt.name
-                                        );
-                                        context_server_registry.register_command(
-                                            server.id.clone(),
-                                            prompt.name.as_str(),
-                                        );
-                                        slash_command_registry.register_command(
-                                            context_server_command::ContextServerSlashCommand::new(
-                                                &server, prompt,
-                                            ),
-                                            true,
-                                        );
+                                if protocol.capable(context_servers::protocol::ServerCapability::Prompts) {
+                                    if let Some(prompts) = protocol.list_prompts().await.log_err() {
+                                        for prompt in prompts
+                                            .into_iter()
+                                            .filter(context_server_command::acceptable_prompt)
+                                        {
+                                            log::info!(
+                                                "registering context server command: {:?}",
+                                                prompt.name
+                                            );
+                                            context_server_registry.register_command(
+                                                server.id.clone(),
+                                                prompt.name.as_str(),
+                                            );
+                                            slash_command_registry.register_command(
+                                                context_server_command::ContextServerSlashCommand::new(
+                                                    &server, prompt,
+                                                ),
+                                                true,
+                                            );
+                                        }
+                                    }
+                                }
+                            })
+                            .detach();
+                        }
+                    },
+                );
+
+                cx.update_model(
+                    &manager,
+                    |manager: &mut context_servers::manager::ContextServerManager, cx| {
+                        let tool_registry = ToolRegistry::global(cx);
+                        let context_server_registry = ContextServerRegistry::global(cx);
+                        if let Some(server) = manager.get_server(server_id) {
+                            cx.spawn(|_, _| async move {
+                                let Some(protocol) = server.client.read().clone() else {
+                                    return;
+                                };
+
+                                if protocol.capable(context_servers::protocol::ServerCapability::Tools) {
+                                    if let Some(tools) = protocol.list_tools().await.log_err() {
+                                        for tool in tools.tools {
+                                            log::info!(
+                                                "registering context server tool: {:?}",
+                                                tool.name
+                                            );
+                                            context_server_registry.register_tool(
+                                                server.id.clone(),
+                                                tool.name.as_str(),
+                                            );
+                                            tool_registry.register_tool(
+                                                tools::context_server_tool::ContextServerTool::new(
+                                                    server.id.clone(),
+                                                    tool
+                                                ),
+                                            );
+                                        }
                                     }
                                 }
                             })
@@ -332,6 +371,14 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                     for command_name in commands {
                         slash_command_registry.unregister_command_by_name(&command_name);
                         context_server_registry.unregister_command(&server_id, &command_name);
+                    }
+                }
+
+                if let Some(tools) = context_server_registry.get_tools(server_id) {
+                    let tool_registry = ToolRegistry::global(cx);
+                    for tool_name in tools {
+                        tool_registry.unregister_tool_by_name(&tool_name);
+                        context_server_registry.unregister_tool(&server_id, &tool_name);
                     }
                 }
             }

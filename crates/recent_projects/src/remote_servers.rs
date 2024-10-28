@@ -1,19 +1,12 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
-use anyhow::anyhow;
-use anyhow::Context;
-use anyhow::Result;
-use dev_server_projects::{DevServer, DevServerId, DevServerProjectId};
 use editor::Editor;
 use file_finder::OpenPathDelegate;
 use futures::channel::oneshot;
 use futures::future::Shared;
 use futures::FutureExt;
 use gpui::canvas;
-use gpui::AsyncWindowContext;
 use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakView;
@@ -22,17 +15,11 @@ use gpui::{
     PromptLevel, ScrollHandle, View, ViewContext,
 };
 use picker::Picker;
-use project::terminals::wrap_for_ssh;
-use project::terminals::SshCommand;
 use project::Project;
 use remote::SshConnectionOptions;
-use rpc::proto::DevServerStatus;
+use remote::SshRemoteClient;
 use settings::update_settings_file;
 use settings::Settings;
-use task::HideStrategy;
-use task::RevealStrategy;
-use task::SpawnInTerminal;
-use terminal_view::terminal_panel::TerminalPanel;
 use ui::{
     prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar,
     ScrollbarState, Section, Tooltip,
@@ -43,7 +30,6 @@ use workspace::OpenOptions;
 use workspace::Toast;
 use workspace::{notifications::DetachAndPromptErr, ModalView, Workspace};
 
-use crate::open_dev_server_project;
 use crate::ssh_connections::connect_over_ssh;
 use crate::ssh_connections::open_ssh_project;
 use crate::ssh_connections::RemoteSettingsContent;
@@ -61,6 +47,7 @@ pub struct RemoteServerProjects {
     scroll_handle: ScrollHandle,
     workspace: WeakView<Workspace>,
     selectable_items: SelectableItemList,
+    retained_connections: Vec<Model<SshRemoteClient>>,
 }
 
 struct CreateRemoteServer {
@@ -210,11 +197,7 @@ impl ProjectPicker {
             picker
         });
         let connection_string = connection.connection_string().into();
-        let nickname = SshSettings::get_global(cx).nickname_for(
-            &connection.host,
-            connection.port,
-            &connection.username,
-        );
+        let nickname = connection.nickname.clone().map(|nick| nick.into());
         let _path_task = cx
             .spawn({
                 let workspace = workspace.clone();
@@ -370,6 +353,7 @@ impl RemoteServerProjects {
             scroll_handle: ScrollHandle::new(),
             workspace,
             selectable_items: Default::default(),
+            retained_connections: Vec::new(),
         }
     }
 
@@ -426,7 +410,7 @@ impl RemoteServerProjects {
                 return;
             }
         };
-        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, None, cx));
+        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
         let connection = connect_over_ssh(
             connection_options.remote_server_identifier(),
@@ -439,7 +423,7 @@ impl RemoteServerProjects {
         let address_editor = editor.clone();
         let creating = cx.spawn(move |this, mut cx| async move {
             match connection.await {
-                Some(_) => this
+                Some(Some(client)) => this
                     .update(&mut cx, |this, cx| {
                         let _ = this.workspace.update(cx, |workspace, _| {
                             workspace
@@ -447,14 +431,14 @@ impl RemoteServerProjects {
                                 .telemetry()
                                 .report_app_event("create ssh server".to_string())
                         });
-
+                        this.retained_connections.push(client);
                         this.add_ssh_server(connection_options, cx);
                         this.mode = Mode::default_mode();
                         this.selectable_items.reset_selection();
                         cx.notify()
                     })
                     .log_err(),
-                None => this
+                _ => this
                     .update(&mut cx, |this, cx| {
                         address_editor.update(cx, |this, _| {
                             this.set_read_only(false);
@@ -503,12 +487,11 @@ impl RemoteServerProjects {
             return;
         };
 
-        let nickname = ssh_connection.nickname.clone();
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, Vec::new(), nickname, cx)
+                    SshConnectionModal::new(&connection_options, Vec::new(), cx)
                 });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
@@ -596,9 +579,7 @@ impl RemoteServerProjects {
                 self.create_ssh_server(state.address_editor.clone(), cx);
             }
             Mode::EditNickname(state) => {
-                let text = Some(state.editor.read(cx).text(cx))
-                    .filter(|text| !text.is_empty())
-                    .map(SharedString::from);
+                let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
                 self.update_settings_file(cx, move |setting, _| {
                     if let Some(connections) = setting.ssh_connections.as_mut() {
@@ -645,7 +626,7 @@ impl RemoteServerProjects {
     ) -> impl IntoElement {
         let (main_label, aux_label) = if let Some(nickname) = ssh_connection.nickname.clone() {
             let aux_label = SharedString::from(format!("({})", ssh_connection.host));
-            (nickname, Some(aux_label))
+            (nickname.into(), Some(aux_label))
         } else {
             (ssh_connection.host.clone(), None)
         };
@@ -757,14 +738,13 @@ impl RemoteServerProjects {
                 };
                 let project = project.clone();
                 let server = server.clone();
-                cx.spawn(|remote_server_projects, mut cx| async move {
-                    let nickname = server.nickname.clone();
+                cx.emit(DismissEvent);
+                cx.spawn(|_, mut cx| async move {
                     let result = open_ssh_project(
                         server.into(),
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions::default(),
-                        nickname,
                         &mut cx,
                     )
                     .await;
@@ -778,10 +758,6 @@ impl RemoteServerProjects {
                         )
                         .await
                         .ok();
-                    } else {
-                        remote_server_projects
-                            .update(&mut cx, |_, cx| cx.emit(DismissEvent))
-                            .ok();
                     }
                 })
                 .detach();
@@ -873,6 +849,7 @@ impl RemoteServerProjects {
                     projects: vec![],
                     nickname: None,
                     args: connection_options.args.unwrap_or_default(),
+                    upload_binary_over_ssh: None,
                 })
         });
     }
@@ -965,7 +942,7 @@ impl RemoteServerProjects {
                 SshConnectionHeader {
                     connection_string: connection_string.clone(),
                     paths: Default::default(),
-                    nickname: connection.nickname.clone(),
+                    nickname: connection.nickname.clone().map(|s| s.into()),
                 }
                 .render(cx),
             )
@@ -1071,7 +1048,7 @@ impl RemoteServerProjects {
                             );
 
                             cx.spawn(|mut cx| async move {
-                                if confirmation.await.ok() == Some(1) {
+                                if confirmation.await.ok() == Some(0) {
                                     remote_servers
                                         .update(&mut cx, |this, cx| {
                                             this.delete_ssh_server(index, cx);
@@ -1147,13 +1124,14 @@ impl RemoteServerProjects {
         };
 
         let connection_string = connection.host.clone();
+        let nickname = connection.nickname.clone().map(|s| s.into());
 
         v_flex()
             .child(
                 SshConnectionHeader {
                     connection_string,
                     paths: Default::default(),
-                    nickname: connection.nickname.clone(),
+                    nickname,
                 }
                 .render(cx),
             )
@@ -1318,147 +1296,4 @@ impl Render for RemoteServerProjects {
                 }
             })
     }
-}
-
-pub fn reconnect_to_dev_server_project(
-    workspace: View<Workspace>,
-    dev_server: DevServer,
-    dev_server_project_id: DevServerProjectId,
-    replace_current_window: bool,
-    cx: &mut WindowContext,
-) -> Task<Result<()>> {
-    let store = dev_server_projects::Store::global(cx);
-    let reconnect = reconnect_to_dev_server(workspace.clone(), dev_server, cx);
-    cx.spawn(|mut cx| async move {
-        reconnect.await?;
-
-        cx.background_executor()
-            .timer(Duration::from_millis(1000))
-            .await;
-
-        if let Some(project_id) = store.update(&mut cx, |store, _| {
-            store
-                .dev_server_project(dev_server_project_id)
-                .and_then(|p| p.project_id)
-        })? {
-            workspace
-                .update(&mut cx, move |_, cx| {
-                    open_dev_server_project(
-                        replace_current_window,
-                        dev_server_project_id,
-                        project_id,
-                        cx,
-                    )
-                })?
-                .await?;
-        }
-
-        Ok(())
-    })
-}
-
-pub fn reconnect_to_dev_server(
-    workspace: View<Workspace>,
-    dev_server: DevServer,
-    cx: &mut WindowContext,
-) -> Task<Result<()>> {
-    let Some(ssh_connection_string) = dev_server.ssh_connection_string else {
-        return Task::ready(Err(anyhow!("Can't reconnect, no ssh_connection_string")));
-    };
-    let dev_server_store = dev_server_projects::Store::global(cx);
-    let get_access_token = dev_server_store.update(cx, |store, cx| {
-        store.regenerate_dev_server_token(dev_server.id, cx)
-    });
-
-    cx.spawn(|mut cx| async move {
-        let access_token = get_access_token.await?.access_token;
-
-        spawn_ssh_task(
-            workspace,
-            dev_server_store,
-            dev_server.id,
-            ssh_connection_string.to_string(),
-            access_token,
-            &mut cx,
-        )
-        .await
-    })
-}
-
-pub async fn spawn_ssh_task(
-    workspace: View<Workspace>,
-    dev_server_store: Model<dev_server_projects::Store>,
-    dev_server_id: DevServerId,
-    ssh_connection_string: String,
-    access_token: String,
-    cx: &mut AsyncWindowContext,
-) -> Result<()> {
-    let terminal_panel = workspace
-        .update(cx, |workspace, cx| workspace.panel::<TerminalPanel>(cx))
-        .ok()
-        .flatten()
-        .with_context(|| anyhow!("No terminal panel"))?;
-
-    let command = "sh".to_string();
-    let args = vec![
-        "-x".to_string(),
-        "-c".to_string(),
-        format!(
-            r#"~/.local/bin/zed -v >/dev/stderr || (curl -f https://zed.dev/install.sh || wget -qO- https://zed.dev/install.sh) | sh && ZED_HEADLESS=1 ~/.local/bin/zed --dev-server-token {}"#,
-            access_token
-        ),
-    ];
-
-    let ssh_connection_string = ssh_connection_string.to_string();
-    let (command, args) = wrap_for_ssh(
-        &SshCommand::DevServer(ssh_connection_string.clone()),
-        Some((&command, &args)),
-        None,
-        HashMap::default(),
-        None,
-    );
-
-    let terminal = terminal_panel
-        .update(cx, |terminal_panel, cx| {
-            terminal_panel.spawn_in_new_terminal(
-                SpawnInTerminal {
-                    id: task::TaskId("ssh-remote".into()),
-                    full_label: "Install zed over ssh".into(),
-                    label: "Install zed over ssh".into(),
-                    command,
-                    args,
-                    command_label: ssh_connection_string.clone(),
-                    cwd: None,
-                    use_new_terminal: true,
-                    allow_concurrent_runs: false,
-                    reveal: RevealStrategy::Always,
-                    hide: HideStrategy::Never,
-                    env: Default::default(),
-                    shell: Default::default(),
-                },
-                cx,
-            )
-        })?
-        .await?;
-
-    terminal
-        .update(cx, |terminal, cx| terminal.wait_for_completed_task(cx))?
-        .await;
-
-    // There's a race-condition between the task completing successfully, and the server sending us the online status. Make it less likely we'll show the error state.
-    if dev_server_store.update(cx, |this, _| this.dev_server_status(dev_server_id))?
-        == DevServerStatus::Offline
-    {
-        cx.background_executor()
-            .timer(Duration::from_millis(200))
-            .await
-    }
-
-    if dev_server_store.update(cx, |this, _| this.dev_server_status(dev_server_id))?
-        == DevServerStatus::Offline
-    {
-        return Err(anyhow!("couldn't reconnect"))?;
-    }
-
-    Ok(())
 }

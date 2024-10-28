@@ -196,8 +196,6 @@ message Envelope {
         GetImplementation get_implementation = 162;
         GetImplementationResponse get_implementation_response = 163;
 
-        JoinHostedProject join_hosted_project = 164;
-
         CountLanguageModelTokens count_language_model_tokens = 230;
         CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
@@ -217,32 +215,13 @@ message Envelope {
         MultiLspQueryResponse multi_lsp_query_response = 176;
         RestartLanguageServers restart_language_servers = 208;
 
-        CreateDevServerProject create_dev_server_project = 177;
-        CreateDevServerProjectResponse create_dev_server_project_response = 188;
-        CreateDevServer create_dev_server = 178;
-        CreateDevServerResponse create_dev_server_response = 179;
-        ShutdownDevServer shutdown_dev_server = 180;
-        DevServerInstructions dev_server_instructions = 181;
-        ReconnectDevServer reconnect_dev_server = 182;
-        ReconnectDevServerResponse reconnect_dev_server_response = 183;
-
-        ShareDevServerProject share_dev_server_project = 184;
-        JoinDevServerProject join_dev_server_project = 185;
         RejoinRemoteProjects rejoin_remote_projects = 186;
         RejoinRemoteProjectsResponse rejoin_remote_projects_response = 187;
 
-        DevServerProjectsUpdate dev_server_projects_update = 193;
-        ValidateDevServerProjectRequest validate_dev_server_project_request = 194;
-        DeleteDevServer delete_dev_server = 195;
         OpenNewBuffer open_new_buffer = 196;
-        DeleteDevServerProject delete_dev_server_project = 197;
 
         GetSupermavenApiKey get_supermaven_api_key = 198;
         GetSupermavenApiKeyResponse get_supermaven_api_key_response = 199;
-
-        RegenerateDevServerToken regenerate_dev_server_token = 200;
-        RegenerateDevServerTokenResponse regenerate_dev_server_token_response = 201;
-        RenameDevServer rename_dev_server = 202;
 
         TaskContextForLocation task_context_for_location = 203;
         TaskContext task_context = 204;
@@ -264,7 +243,6 @@ message Envelope {
 
         ListRemoteDirectory list_remote_directory = 219;
         ListRemoteDirectoryResponse list_remote_directory_response = 220;
-        UpdateDevServerProject update_dev_server_project = 221;
         AddWorktree add_worktree = 222;
         AddWorktreeResponse add_worktree_response = 223;
 
@@ -280,9 +258,6 @@ message Envelope {
 
         CloseBuffer close_buffer = 245;
         UpdateUserSettings update_user_settings = 246;
-
-        CheckFileExists check_file_exists = 255;
-        CheckFileExistsResponse check_file_exists_response = 256;
 
         ShutdownRemoteServer shutdown_remote_server = 257;
 
@@ -301,15 +276,36 @@ message Envelope {
         FlushBufferedMessages flush_buffered_messages = 267;
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
-        LanguageServerPromptResponse language_server_prompt_response = 269; // current max
+        LanguageServerPromptResponse language_server_prompt_response = 269;
+        GitBranches git_branches = 270;
+        GitBranchesResponse git_branches_response = 271;
+
+        UpdateGitBranch update_git_branch = 272;
+
+        ListToolchains list_toolchains = 273;
+        ListToolchainsResponse list_toolchains_response = 274;
+        ActivateToolchain activate_toolchain = 275;
+        ActiveToolchain active_toolchain = 276;
+        ActiveToolchainResponse active_toolchain_response = 277;
+
+        GetPathMetadata get_path_metadata = 278;
+        GetPathMetadataResponse get_path_metadata_response = 279; // current max
     }
 
     reserved 87 to 88;
     reserved 158 to 161;
+    reserved 164;
     reserved 166 to 169;
+    reserved 177 to 185;
+    reserved 188;
+    reserved 193 to 195;
+    reserved 197;
+    reserved 200 to 202;
     reserved 205 to 206;
+    reserved 221;
     reserved 224 to 229;
     reserved 247 to 254;
+    reserved 255 to 256;
 }
 
 // Messages
@@ -342,12 +338,11 @@ enum ErrorCode {
     WrongMoveTarget = 11;
     UnsharedItem = 12;
     NoSuchProject = 13;
-    DevServerAlreadyOnline = 14;
-    DevServerOffline = 15;
     DevServerProjectPathDoesNotExist = 16;
     RemoteUpgradeRequired = 17;
     RateLimitExceeded = 18;
     reserved 6;
+    reserved 14 to 15;
 }
 
 message EndStream {}
@@ -511,7 +506,7 @@ message LiveKitConnectionInfo {
 message ShareProject {
     uint64 room_id = 1;
     repeated WorktreeMetadata worktrees = 2;
-    optional uint64 dev_server_project_id = 3;
+    reserved 3;
     bool is_ssh_project = 4;
 }
 
@@ -532,24 +527,6 @@ message JoinProject {
     uint64 project_id = 1;
 }
 
-message JoinHostedProject {
-    uint64 project_id = 1;
-}
-
-message CreateDevServerProject {
-    reserved 1;
-    reserved 2;
-    uint64 dev_server_id = 3;
-    string path = 4;
-}
-message CreateDevServerProjectResponse {
-    DevServerProject dev_server_project = 1;
-}
-
-message ValidateDevServerProjectRequest {
-    string path = 1;
-}
-
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
     string path = 2;
@@ -559,77 +536,6 @@ message ListRemoteDirectoryResponse {
     repeated string entries = 1;
 }
 
-message UpdateDevServerProject {
-    uint64 dev_server_project_id = 1;
-    repeated string paths = 2;
-}
-
-message CreateDevServer {
-    reserved 1;
-    string name = 2;
-    optional string ssh_connection_string = 3;
-}
-
-message RegenerateDevServerToken {
-    uint64 dev_server_id = 1;
-}
-
-message RegenerateDevServerTokenResponse {
-    uint64 dev_server_id = 1;
-    string access_token = 2;
-}
-
-message CreateDevServerResponse {
-    uint64 dev_server_id = 1;
-    reserved 2;
-    string access_token = 3;
-    string name = 4;
-}
-
-message ShutdownDevServer {
-    optional string reason = 1;
-}
-
-message RenameDevServer {
-    uint64 dev_server_id = 1;
-    string name = 2;
-    optional string ssh_connection_string = 3;
-}
-
-message DeleteDevServer {
-    uint64 dev_server_id = 1;
-}
-
-message DeleteDevServerProject {
-    uint64 dev_server_project_id = 1;
-}
-
-message ReconnectDevServer {
-    repeated UpdateProject reshared_projects = 1;
-}
-
-message ReconnectDevServerResponse {
-    repeated ResharedProject reshared_projects = 1;
-}
-
-message DevServerInstructions {
-    repeated DevServerProject projects = 1;
-}
-
-message DevServerProjectsUpdate {
-    repeated DevServer dev_servers = 1;
-    repeated DevServerProject dev_server_projects = 2;
-}
-
-message ShareDevServerProject {
-    uint64 dev_server_project_id = 1;
-    repeated WorktreeMetadata worktrees = 2;
-}
-
-message JoinDevServerProject {
-    uint64 dev_server_project_id = 1;
-}
-
 message JoinProjectResponse {
     uint64 project_id = 5;
     uint32 replica_id = 1;
@@ -637,7 +543,7 @@ message JoinProjectResponse {
     repeated Collaborator collaborators = 3;
     repeated LanguageServer language_servers = 4;
     ChannelRole role = 6;
-    optional uint64 dev_server_project_id = 7;
+    reserved 7;
 }
 
 message LeaveProject {
@@ -1387,13 +1293,7 @@ message UpdateChannels {
     repeated ChannelMessageId latest_channel_message_ids = 8;
     repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
 
-    repeated HostedProject hosted_projects = 10;
-    repeated uint64 deleted_hosted_projects = 11;
-
-    reserved 12;
-    reserved 13;
-    reserved 14;
-    reserved 15;
+    reserved 10 to 15;
 }
 
 message UpdateUserChannels {
@@ -1420,36 +1320,6 @@ message ChannelPermission {
 message ChannelParticipants {
     uint64 channel_id = 1;
     repeated uint64 participant_user_ids = 2;
-}
-
-message HostedProject {
-    uint64 project_id = 1;
-    uint64 channel_id = 2;
-    string name = 3;
-    ChannelVisibility visibility = 4;
-}
-
-message DevServerProject {
-    uint64 id = 1;
-    optional uint64 project_id = 2;
-    reserved 3;
-    reserved 4;
-    uint64 dev_server_id = 5;
-    string path = 6;
-    repeated string paths = 7;
-}
-
-message DevServer {
-    reserved 1;
-    uint64 dev_server_id = 2;
-    string name = 3;
-    DevServerStatus status = 4;
-    optional string ssh_connection_string = 5;
-}
-
-enum DevServerStatus {
-    Offline = 0;
-    Online = 1;
 }
 
 message JoinChannel {
@@ -2488,14 +2358,15 @@ message UpdateUserSettings {
     }
 }
 
-message CheckFileExists {
+message GetPathMetadata {
     uint64 project_id = 1;
     string path = 2;
 }
 
-message CheckFileExistsResponse {
+message GetPathMetadataResponse {
     bool exists = 1;
     string path = 2;
+    bool is_dir = 3;
 }
 
 message ShutdownRemoteServer {}
@@ -2528,7 +2399,6 @@ message GetPermalinkToLine {
 message GetPermalinkToLineResponse {
     string permalink = 1;
 }
-
 message FlushBufferedMessages {}
 message FlushBufferedMessagesResponse {}
 
@@ -2552,4 +2422,65 @@ message LanguageServerPromptRequest {
 
 message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
+}
+
+message ListToolchains {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+}
+
+message Toolchain {
+    string name = 1;
+    string path = 2;
+}
+
+message ToolchainGroup {
+    uint64 start_index = 1;
+    string name = 2;
+}
+
+message ListToolchainsResponse {
+    repeated Toolchain toolchains = 1;
+    bool has_values = 2;
+    repeated ToolchainGroup groups = 3;
+}
+
+message ActivateToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    Toolchain toolchain = 3;
+    string language_name = 4;
+}
+
+message ActiveToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+}
+
+message ActiveToolchainResponse {
+    optional Toolchain toolchain = 1;
+}
+
+message Branch {
+    bool is_head = 1;
+    string name = 2;
+    optional uint64 unix_timestamp = 3;
+}
+
+message GitBranches {
+    uint64 project_id = 1;
+    ProjectPath repository = 2;
+}
+
+message GitBranchesResponse {
+    repeated Branch branches = 1;
+}
+
+message UpdateGitBranch {
+    uint64 project_id = 1;
+    string branch_name = 2;
+    ProjectPath repository = 3;
+
 }

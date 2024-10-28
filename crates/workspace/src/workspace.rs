@@ -16,7 +16,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
-    ChannelId, Client, DevServerProjectId, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -52,7 +52,7 @@ use notifications::{
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
-    model::{ItemId, LocalPaths, SerializedDevServerProject, SerializedWorkspaceLocation},
+    model::{ItemId, LocalPaths, SerializedWorkspaceLocation},
     WorkspaceDb, DB as WORKSPACE_DB,
 };
 use persistence::{
@@ -97,7 +97,7 @@ use ui::{
     IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, ViewContext,
     VisualContext as _, WindowContext,
 };
-use util::{maybe, ResultExt, TryFutureExt};
+use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
 pub use workspace_settings::{
     AutosaveSetting, RestoreOnStartupBehavior, TabBarSettings, WorkspaceSettings,
@@ -1153,6 +1153,14 @@ impl Workspace {
                 DB.next_id().await.unwrap_or_else(|_| Default::default())
             };
 
+            let toolchains = DB.toolchains(workspace_id).await?;
+            for (toolchain, worktree_id) in toolchains {
+                project_handle
+                    .update(&mut cx, |this, cx| {
+                        this.activate_toolchain(worktree_id, toolchain, cx)
+                    })?
+                    .await;
+            }
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |_, cx| {
                     cx.replace_root_view(|cx| {
@@ -1210,7 +1218,7 @@ impl Workspace {
             notify_if_database_failed(window, &mut cx);
             let opened_items = window
                 .update(&mut cx, |_workspace, cx| {
-                    open_items(serialized_workspace, project_paths, app_state, cx)
+                    open_items(serialized_workspace, project_paths, cx)
                 })?
                 .await
                 .unwrap_or_default();
@@ -2050,14 +2058,16 @@ impl Workspace {
         cx: &mut ViewContext<Self>,
     ) -> Task<anyhow::Result<Box<dyn ItemHandle>>> {
         match path {
-            ResolvedPath::ProjectPath(project_path) => self.open_path(project_path, None, true, cx),
-            ResolvedPath::AbsPath(path) => self.open_abs_path(path, false, cx),
+            ResolvedPath::ProjectPath { project_path, .. } => {
+                self.open_path(project_path, None, true, cx)
+            }
+            ResolvedPath::AbsPath { path, .. } => self.open_abs_path(path, false, cx),
         }
     }
 
     fn add_folder_to_project(&mut self, _: &AddFolderToProject, cx: &mut ViewContext<Self>) {
         let project = self.project.read(cx);
-        if project.is_via_collab() && project.dev_server_project_id().is_none() {
+        if project.is_via_collab() {
             self.show_error(
                 &anyhow!("You cannot add folders to someone else's project"),
                 cx,
@@ -4137,20 +4147,6 @@ impl Workspace {
             } else {
                 None
             }
-        } else if let Some(dev_server_project_id) = self.project().read(cx).dev_server_project_id()
-        {
-            let store = dev_server_projects::Store::global(cx).read(cx);
-            maybe!({
-                let project = store.dev_server_project(dev_server_project_id)?;
-                let dev_server = store.dev_server(project.dev_server_id)?;
-
-                let dev_server_project = SerializedDevServerProject {
-                    id: dev_server_project_id,
-                    dev_server_name: dev_server.name.to_string(),
-                    paths: project.paths.to_vec(),
-                };
-                Some(SerializedWorkspaceLocation::DevServer(dev_server_project))
-            })
         } else {
             None
         };
@@ -4569,7 +4565,6 @@ fn window_bounds_env_override() -> Option<Bounds<Pixels>> {
 fn open_items(
     serialized_workspace: Option<SerializedWorkspace>,
     mut project_paths_to_open: Vec<(PathBuf, Option<ProjectPath>)>,
-    app_state: Arc<AppState>,
     cx: &mut ViewContext<Workspace>,
 ) -> impl 'static + Future<Output = Result<Vec<Option<Result<Box<dyn ItemHandle>>>>>> {
     let restored_items = serialized_workspace.map(|serialized_workspace| {
@@ -4625,14 +4620,20 @@ fn open_items(
                 .enumerate()
                 .map(|(ix, (abs_path, project_path))| {
                     let workspace = workspace.clone();
-                    cx.spawn(|mut cx| {
-                        let fs = app_state.fs.clone();
-                        async move {
-                            let file_project_path = project_path?;
-                            if fs.is_dir(&abs_path).await {
-                                None
-                            } else {
-                                Some((
+                    cx.spawn(|mut cx| async move {
+                        let file_project_path = project_path?;
+                        let abs_path_task = workspace.update(&mut cx, |workspace, cx| {
+                            workspace.project().update(cx, |project, cx| {
+                                project.resolve_abs_path(abs_path.to_string_lossy().as_ref(), cx)
+                            })
+                        });
+
+                        // We only want to open file paths here. If one of the items
+                        // here is a directory, it was already opened further above
+                        // with a `find_or_create_worktree`.
+                        if let Ok(task) = abs_path_task {
+                            if task.await.map_or(true, |p| p.is_file()) {
+                                return Some((
                                     ix,
                                     workspace
                                         .update(&mut cx, |workspace, cx| {
@@ -4640,9 +4641,10 @@ fn open_items(
                                         })
                                         .log_err()?
                                         .await,
-                                ))
+                                ));
                             }
                         }
+                        None
                     })
                 });
 
@@ -5183,13 +5185,12 @@ async fn join_channel_internal(
             if let Some(workspace) = requesting_window {
                 let project = workspace.update(cx, |workspace, cx| {
                     let project = workspace.project.read(cx);
-                    let is_dev_server = project.dev_server_project_id().is_some();
 
-                    if !is_dev_server && !CallSettings::get_global(cx).share_on_join {
+                    if !CallSettings::get_global(cx).share_on_join {
                         return None;
                     }
 
-                    if (project.is_local() || project.is_via_ssh() || is_dev_server)
+                    if (project.is_local() || project.is_via_ssh())
                         && project.visible_worktrees(cx).any(|tree| {
                             tree.read(cx)
                                 .root_entry()
@@ -5484,58 +5485,6 @@ pub fn create_and_open_local_file(
     })
 }
 
-pub fn join_hosted_project(
-    hosted_project_id: ProjectId,
-    app_state: Arc<AppState>,
-    cx: &mut AppContext,
-) -> Task<Result<()>> {
-    cx.spawn(|mut cx| async move {
-        let existing_window = cx.update(|cx| {
-            cx.windows().into_iter().find_map(|window| {
-                let workspace = window.downcast::<Workspace>()?;
-                workspace
-                    .read(cx)
-                    .is_ok_and(|workspace| {
-                        workspace.project().read(cx).hosted_project_id() == Some(hosted_project_id)
-                    })
-                    .then_some(workspace)
-            })
-        })?;
-
-        let workspace = if let Some(existing_window) = existing_window {
-            existing_window
-        } else {
-            let project = Project::hosted(
-                hosted_project_id,
-                app_state.user_store.clone(),
-                app_state.client.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx.clone(),
-            )
-            .await?;
-
-            let window_bounds_override = window_bounds_env_override();
-            cx.update(|cx| {
-                let mut options = (app_state.build_window_options)(None, cx);
-                options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
-                cx.open_window(options, |cx| {
-                    cx.new_view(|cx| {
-                        Workspace::new(Default::default(), project, app_state.clone(), cx)
-                    })
-                })
-            })??
-        };
-
-        workspace.update(&mut cx, |_, cx| {
-            cx.activate(true);
-            cx.activate_window();
-        })?;
-
-        Ok(())
-    })
-}
-
 pub fn open_ssh_project(
     window: WindowHandle<Workspace>,
     connection_options: SshConnectionOptions,
@@ -5589,6 +5538,14 @@ pub fn open_ssh_project(
             )
         })?;
 
+        let toolchains = DB.toolchains(workspace_id).await?;
+        for (toolchain, worktree_id) in toolchains {
+            project
+                .update(&mut cx, |this, cx| {
+                    this.activate_toolchain(worktree_id, toolchain, cx)
+                })?
+                .await;
+        }
         let mut project_paths_to_open = vec![];
         let mut project_path_errors = vec![];
 
@@ -5631,7 +5588,7 @@ pub fn open_ssh_project(
             .update(&mut cx, |_, cx| {
                 cx.activate_window();
 
-                open_items(serialized_workspace, project_paths_to_open, app_state, cx)
+                open_items(serialized_workspace, project_paths_to_open, cx)
             })?
             .await?;
 
@@ -5685,84 +5642,6 @@ fn serialize_ssh_project(
         };
 
         Ok((serialized_ssh_project, workspace_id, serialized_workspace))
-    })
-}
-
-pub fn join_dev_server_project(
-    dev_server_project_id: DevServerProjectId,
-    project_id: ProjectId,
-    app_state: Arc<AppState>,
-    window_to_replace: Option<WindowHandle<Workspace>>,
-    cx: &mut AppContext,
-) -> Task<Result<WindowHandle<Workspace>>> {
-    let windows = cx.windows();
-    cx.spawn(|mut cx| async move {
-        let existing_workspace = windows.into_iter().find_map(|window| {
-            window.downcast::<Workspace>().and_then(|window| {
-                window
-                    .update(&mut cx, |workspace, cx| {
-                        if workspace.project().read(cx).remote_id() == Some(project_id.0) {
-                            Some(window)
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(None)
-            })
-        });
-
-        let serialized_workspace: Option<SerializedWorkspace> =
-            persistence::DB.workspace_for_dev_server_project(dev_server_project_id);
-
-        let workspace = if let Some(existing_workspace) = existing_workspace {
-            existing_workspace
-        } else {
-            let project = Project::remote(
-                project_id.0,
-                app_state.client.clone(),
-                app_state.user_store.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx.clone(),
-            )
-            .await?;
-
-            let workspace_id = if let Some(ref serialized_workspace) = serialized_workspace {
-                serialized_workspace.id
-            } else {
-                persistence::DB.next_id().await?
-            };
-
-            if let Some(window_to_replace) = window_to_replace {
-                cx.update_window(window_to_replace.into(), |_, cx| {
-                    cx.replace_root_view(|cx| {
-                        Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
-                    });
-                })?;
-                window_to_replace
-            } else {
-                let window_bounds_override = window_bounds_env_override();
-                cx.update(|cx| {
-                    let mut options = (app_state.build_window_options)(None, cx);
-                    options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
-                    cx.open_window(options, |cx| {
-                        cx.new_view(|cx| {
-                            Workspace::new(Some(workspace_id), project, app_state.clone(), cx)
-                        })
-                    })
-                })??
-            }
-        };
-
-        workspace
-            .update(&mut cx, |_, cx| {
-                cx.activate(true);
-                cx.activate_window();
-                open_items(serialized_workspace, vec![], app_state, cx)
-            })?
-            .await?;
-
-        anyhow::Ok(workspace)
     })
 }
 
