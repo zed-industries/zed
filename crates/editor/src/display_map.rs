@@ -21,7 +21,7 @@ mod block_map;
 mod crease_map;
 mod fold_map;
 mod inlay_map;
-mod invisibles;
+pub(crate) mod invisibles;
 mod tab_map;
 mod wrap_map;
 

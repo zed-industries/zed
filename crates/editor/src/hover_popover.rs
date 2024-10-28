@@ -1,5 +1,5 @@
 use crate::{
-    display_map::{InlayOffset, ToDisplayPoint},
+    display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
@@ -11,7 +11,7 @@ use gpui::{
     StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
 use itertools::Itertools;
-use language::{DiagnosticEntry, Language, LanguageRegistry};
+use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
@@ -259,7 +259,7 @@ fn show_hover(
             }
 
             // If there's a diagnostic, assign it on the hover state and notify
-            let local_diagnostic = snapshot
+            let mut local_diagnostic = snapshot
                 .buffer_snapshot
                 .diagnostics_in_range::<_, usize>(anchor..anchor, false)
                 // Find the entry with the most specific range
@@ -280,6 +280,41 @@ fn show_hover(
                         range: entry.range.to_anchors(&snapshot.buffer_snapshot),
                     })
             });
+            if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let after = snapshot.buffer_snapshot.anchor_after(
+                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: anchor..after,
+                })
+            } else if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .reversed_chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let before = snapshot.buffer_snapshot.anchor_before(
+                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: before..anchor,
+                })
+            }
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
