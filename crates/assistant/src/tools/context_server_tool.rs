@@ -1,4 +1,4 @@
-use anyhow::anyhow;
+use anyhow::{anyhow, bail};
 use assistant_tool::Tool;
 use context_servers::manager::ContextServerManager;
 use context_servers::types;
@@ -30,10 +30,10 @@ impl Tool for ContextServerTool {
     fn input_schema(&self) -> serde_json::Value {
         match &self.tool.input_schema {
             serde_json::Value::Null => {
-                serde_json::json!({"type": "object", "properties": []})
+                serde_json::json!({ "type": "object", "properties": [] })
             }
-            serde_json::Value::Object(m) if m.is_empty() => {
-                serde_json::json!({"type": "object", "properties": []})
+            serde_json::Value::Object(map) if map.is_empty() => {
+                serde_json::json!({ "type": "object", "properties": [] })
             }
             _ => self.tool.input_schema.clone(),
         }
@@ -45,35 +45,35 @@ impl Tool for ContextServerTool {
         _workspace: gpui::WeakView<workspace::Workspace>,
         cx: &mut ui::WindowContext,
     ) -> gpui::Task<gpui::Result<String>> {
-        let tool_name = self.tool.name.clone();
-
         let manager = ContextServerManager::global(cx);
         let manager = manager.read(cx);
         if let Some(server) = manager.get_server(&self.server_id) {
-            cx.foreground_executor().spawn(async move {
-                let Some(protocol) = server.client.read().clone() else {
-                    return Err(anyhow!("Context server not initialized"));
-                };
+            cx.foreground_executor().spawn({
+                let tool_name = self.tool.name.clone();
+                async move {
+                    let Some(protocol) = server.client.read().clone() else {
+                        bail!("Context server not initialized");
+                    };
 
-                // Convert input to our expect map from parameters to serde_json::Value
-                let arguments = if let serde_json::Value::Object(map) = input {
-                    Some(map.into_iter().collect())
-                } else {
-                    None
-                };
+                    let arguments = if let serde_json::Value::Object(map) = input {
+                        Some(map.into_iter().collect())
+                    } else {
+                        None
+                    };
 
-                log::trace!(
-                    "Running tool: {} with arguments: {:?}",
-                    tool_name,
-                    arguments
-                );
-                let response = protocol.run_tool(tool_name, arguments).await?;
+                    log::trace!(
+                        "Running tool: {} with arguments: {:?}",
+                        tool_name,
+                        arguments
+                    );
+                    let response = protocol.run_tool(tool_name, arguments).await?;
 
-                let tool_result = match response.tool_result {
-                    serde_json::Value::String(s) => s,
-                    _ => serde_json::to_string(&response.tool_result)?,
-                };
-                Ok(tool_result)
+                    let tool_result = match response.tool_result {
+                        serde_json::Value::String(s) => s,
+                        _ => serde_json::to_string(&response.tool_result)?,
+                    };
+                    Ok(tool_result)
+                }
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

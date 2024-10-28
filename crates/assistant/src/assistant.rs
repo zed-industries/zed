@@ -373,6 +373,7 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                         context_server_registry.unregister_command(&server_id, &command_name);
                     }
                 }
+
                 if let Some(tools) = context_server_registry.get_tools(server_id) {
                     let tool_registry = ToolRegistry::global(cx);
                     for tool_name in tools {
