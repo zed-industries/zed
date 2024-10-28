@@ -343,8 +343,6 @@ messages!(
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
-    (CheckFileExists, Background),
-    (CheckFileExistsResponse, Background),
     (ShutdownRemoteServer, Foreground),
     (RemoveWorktree, Foreground),
     (LanguageServerLog, Foreground),
@@ -363,7 +361,9 @@ messages!(
     (ListToolchainsResponse, Foreground),
     (ActivateToolchain, Foreground),
     (ActiveToolchain, Foreground),
-    (ActiveToolchainResponse, Foreground)
+    (ActiveToolchainResponse, Foreground),
+    (GetPathMetadata, Background),
+    (GetPathMetadataResponse, Background)
 );
 
 request_messages!(
@@ -472,7 +472,6 @@ request_messages!(
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CheckFileExists, CheckFileExistsResponse),
     (ShutdownRemoteServer, Ack),
     (RemoveWorktree, Ack),
     (OpenServerSettings, OpenBufferResponse),
@@ -483,7 +482,8 @@ request_messages!(
     (UpdateGitBranch, Ack),
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
-    (ActiveToolchain, ActiveToolchainResponse)
+    (ActiveToolchain, ActiveToolchainResponse),
+    (GetPathMetadata, GetPathMetadataResponse)
 );
 
 entity_messages!(
@@ -555,7 +555,6 @@ entity_messages!(
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
-    CheckFileExists,
     LanguageServerLog,
     Toast,
     HideToast,
@@ -566,7 +565,8 @@ entity_messages!(
     UpdateGitBranch,
     ListToolchains,
     ActivateToolchain,
-    ActiveToolchain
+    ActiveToolchain,
+    GetPathMetadata
 );
 
 entity_messages!(

@@ -3094,7 +3094,7 @@ impl Project {
     }
 
     /// Returns the resolved version of `path`, that was found in `buffer`, if it exists.
-    pub fn resolve_existing_file_path(
+    pub fn resolve_path_in_buffer(
         &self,
         path: &str,
         buffer: &Model<Buffer>,
@@ -3102,47 +3102,56 @@ impl Project {
     ) -> Task<Option<ResolvedPath>> {
         let path_buf = PathBuf::from(path);
         if path_buf.is_absolute() || path.starts_with("~") {
-            self.resolve_abs_file_path(path, cx)
+            self.resolve_abs_path(path, cx)
         } else {
             self.resolve_path_in_worktrees(path_buf, buffer, cx)
         }
     }
 
-    pub fn abs_file_path_exists(&self, path: &str, cx: &mut ModelContext<Self>) -> Task<bool> {
-        let resolve_task = self.resolve_abs_file_path(path, cx);
+    pub fn resolve_abs_file_path(
+        &self,
+        path: &str,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Option<ResolvedPath>> {
+        let resolve_task = self.resolve_abs_path(path, cx);
         cx.background_executor().spawn(async move {
             let resolved_path = resolve_task.await;
-            resolved_path.is_some()
+            resolved_path.filter(|path| path.is_file())
         })
     }
 
-    fn resolve_abs_file_path(
+    pub fn resolve_abs_path(
         &self,
         path: &str,
         cx: &mut ModelContext<Self>,
     ) -> Task<Option<ResolvedPath>> {
         if self.is_local() {
             let expanded = PathBuf::from(shellexpand::tilde(&path).into_owned());
-
             let fs = self.fs.clone();
             cx.background_executor().spawn(async move {
                 let path = expanded.as_path();
-                let exists = fs.is_file(path).await;
+                let metadata = fs.metadata(path).await.ok().flatten();
 
-                exists.then(|| ResolvedPath::AbsPath(expanded))
+                metadata.map(|metadata| ResolvedPath::AbsPath {
+                    path: expanded,
+                    is_dir: metadata.is_dir,
+                })
             })
         } else if let Some(ssh_client) = self.ssh_client.as_ref() {
             let request = ssh_client
                 .read(cx)
                 .proto_client()
-                .request(proto::CheckFileExists {
+                .request(proto::GetPathMetadata {
                     project_id: SSH_PROJECT_ID,
                     path: path.to_string(),
                 });
             cx.background_executor().spawn(async move {
                 let response = request.await.log_err()?;
                 if response.exists {
-                    Some(ResolvedPath::AbsPath(PathBuf::from(response.path)))
+                    Some(ResolvedPath::AbsPath {
+                        path: PathBuf::from(response.path),
+                        is_dir: response.is_dir,
+                    })
                 } else {
                     None
                 }
@@ -3181,10 +3190,14 @@ impl Project {
                                 resolved.strip_prefix(root_entry_path).unwrap_or(&resolved);
 
                             worktree.entry_for_path(stripped).map(|entry| {
-                                ResolvedPath::ProjectPath(ProjectPath {
+                                let project_path = ProjectPath {
                                     worktree_id: worktree.id(),
                                     path: entry.path.clone(),
-                                })
+                                };
+                                ResolvedPath::ProjectPath {
+                                    project_path,
+                                    is_dir: entry.is_dir(),
+                                }
                             })
                         })
                         .ok()?;
@@ -4149,22 +4162,39 @@ fn resolve_path(base: &Path, path: &Path) -> PathBuf {
 /// or an AbsPath and that *exists*.
 #[derive(Debug, Clone)]
 pub enum ResolvedPath {
-    ProjectPath(ProjectPath),
-    AbsPath(PathBuf),
+    ProjectPath {
+        project_path: ProjectPath,
+        is_dir: bool,
+    },
+    AbsPath {
+        path: PathBuf,
+        is_dir: bool,
+    },
 }
 
 impl ResolvedPath {
     pub fn abs_path(&self) -> Option<&Path> {
         match self {
-            Self::AbsPath(path) => Some(path.as_path()),
+            Self::AbsPath { path, .. } => Some(path.as_path()),
             _ => None,
         }
     }
 
     pub fn project_path(&self) -> Option<&ProjectPath> {
         match self {
-            Self::ProjectPath(path) => Some(&path),
+            Self::ProjectPath { project_path, .. } => Some(&project_path),
             _ => None,
+        }
+    }
+
+    pub fn is_file(&self) -> bool {
+        !self.is_dir()
+    }
+
+    pub fn is_dir(&self) -> bool {
+        match self {
+            Self::ProjectPath { is_dir, .. } => *is_dir,
+            Self::AbsPath { is_dir, .. } => *is_dir,
         }
     }
 }

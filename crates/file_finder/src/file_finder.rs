@@ -790,9 +790,9 @@ impl FileFinderDelegate {
             let mut path_matches = Vec::new();
 
             let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
-                this.abs_file_path_exists(query.path_query(), cx)
+                this.resolve_abs_file_path(query.path_query(), cx)
             }) {
-                task.await
+                task.await.is_some()
             } else {
                 false
             };

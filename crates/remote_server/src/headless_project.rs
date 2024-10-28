@@ -150,7 +150,7 @@ impl HeadlessProject {
         session.subscribe_to_entity(SSH_PROJECT_ID, &settings_observer);
 
         client.add_request_handler(cx.weak_model(), Self::handle_list_remote_directory);
-        client.add_request_handler(cx.weak_model(), Self::handle_check_file_exists);
+        client.add_request_handler(cx.weak_model(), Self::handle_get_path_metadata);
         client.add_request_handler(cx.weak_model(), Self::handle_shutdown_remote_server);
         client.add_request_handler(cx.weak_model(), Self::handle_ping);
 
@@ -525,18 +525,20 @@ impl HeadlessProject {
         Ok(proto::ListRemoteDirectoryResponse { entries })
     }
 
-    pub async fn handle_check_file_exists(
+    pub async fn handle_get_path_metadata(
         this: Model<Self>,
-        envelope: TypedEnvelope<proto::CheckFileExists>,
+        envelope: TypedEnvelope<proto::GetPathMetadata>,
         cx: AsyncAppContext,
-    ) -> Result<proto::CheckFileExistsResponse> {
+    ) -> Result<proto::GetPathMetadataResponse> {
         let fs = cx.read_model(&this, |this, _| this.fs.clone())?;
         let expanded = shellexpand::tilde(&envelope.payload.path).to_string();
 
-        let exists = fs.is_file(&PathBuf::from(expanded.clone())).await;
+        let metadata = fs.metadata(&PathBuf::from(expanded.clone())).await?;
+        let is_dir = metadata.map(|metadata| metadata.is_dir).unwrap_or(false);
 
-        Ok(proto::CheckFileExistsResponse {
-            exists,
+        Ok(proto::GetPathMetadataResponse {
+            exists: metadata.is_some(),
+            is_dir,
             path: expanded,
         })
     }
