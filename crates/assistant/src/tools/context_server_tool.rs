@@ -10,7 +10,7 @@ pub struct ContextServerTool {
 }
 
 impl ContextServerTool {
-    pub fn new<S: Into<String>>(server_id: S, tool: types::Tool) -> Self {
+    pub fn new(server_id: impl Into<String>, tool: types::Tool) -> Self {
         Self {
             server_id: server_id.into(),
             tool,
