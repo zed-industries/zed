@@ -358,7 +358,12 @@ messages!(
     (LanguageServerPromptResponse, Foreground),
     (GitBranches, Background),
     (GitBranchesResponse, Background),
-    (UpdateGitBranch, Background)
+    (UpdateGitBranch, Background),
+    (ListToolchains, Foreground),
+    (ListToolchainsResponse, Foreground),
+    (ActivateToolchain, Foreground),
+    (ActiveToolchain, Foreground),
+    (ActiveToolchainResponse, Foreground)
 );
 
 request_messages!(
@@ -475,7 +480,10 @@ request_messages!(
     (FlushBufferedMessages, Ack),
     (LanguageServerPromptRequest, LanguageServerPromptResponse),
     (GitBranches, GitBranchesResponse),
-    (UpdateGitBranch, Ack)
+    (UpdateGitBranch, Ack),
+    (ListToolchains, ListToolchainsResponse),
+    (ActivateToolchain, Ack),
+    (ActiveToolchain, ActiveToolchainResponse)
 );
 
 entity_messages!(
@@ -555,7 +563,10 @@ entity_messages!(
     GetPermalinkToLine,
     LanguageServerPromptRequest,
     GitBranches,
-    UpdateGitBranch
+    UpdateGitBranch,
+    ListToolchains,
+    ActivateToolchain,
+    ActiveToolchain
 );
 
 entity_messages!(

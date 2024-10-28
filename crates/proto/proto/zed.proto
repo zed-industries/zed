@@ -280,11 +280,15 @@ message Envelope {
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
         LanguageServerPromptResponse language_server_prompt_response = 269;
-
         GitBranches git_branches = 270;
         GitBranchesResponse git_branches_response = 271;
 
-        UpdateGitBranch update_git_branch = 272; // current max
+        UpdateGitBranch update_git_branch = 272;
+        ListToolchains list_toolchains = 273;
+        ListToolchainsResponse list_toolchains_response = 274;
+        ActivateToolchain activate_toolchain = 275;
+        ActiveToolchain active_toolchain = 276;
+        ActiveToolchainResponse active_toolchain_response = 277; // current max
     }
 
 
@@ -2393,7 +2397,6 @@ message GetPermalinkToLine {
 message GetPermalinkToLineResponse {
     string permalink = 1;
 }
-
 message FlushBufferedMessages {}
 message FlushBufferedMessagesResponse {}
 
@@ -2419,6 +2422,45 @@ message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
 }
 
+message ListToolchains {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+}
+
+message Toolchain {
+    string name = 1;
+    string path = 2;
+}
+
+message ToolchainGroup {
+    uint64 start_index = 1;
+    string name = 2;
+}
+
+message ListToolchainsResponse {
+    repeated Toolchain toolchains = 1;
+    bool has_values = 2;
+    repeated ToolchainGroup groups = 3;
+}
+
+message ActivateToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    Toolchain toolchain = 3;
+    string language_name = 4;
+}
+
+message ActiveToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+}
+
+message ActiveToolchainResponse {
+    optional Toolchain toolchain = 1;
+}
+
 message Branch {
     bool is_head = 1;
     string name = 2;
@@ -2438,4 +2480,5 @@ message UpdateGitBranch {
     uint64 project_id = 1;
     string branch_name = 2;
     ProjectPath repository = 3;
+
 }
