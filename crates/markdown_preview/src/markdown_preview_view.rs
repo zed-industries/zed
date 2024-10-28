@@ -479,7 +479,7 @@ impl Render for MarkdownPreviewView {
         v_flex()
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()

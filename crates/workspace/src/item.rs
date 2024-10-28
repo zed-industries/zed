@@ -1173,8 +1173,8 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-            gpui::div().track_focus(&self.focus_handle)
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+            gpui::div().track_focus(&self.focus_handle(cx))
         }
     }
 

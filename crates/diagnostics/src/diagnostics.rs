@@ -101,7 +101,7 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         div()
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .when(self.path_states.is_empty(), |el| {
                 el.key_context("EmptyPane")
             })
