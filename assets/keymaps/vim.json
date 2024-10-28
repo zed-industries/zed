@@ -321,7 +321,6 @@
     "context": "vim_mode == insert",
     "bindings": {
       // experimental keybinding to toggle helix mode
-      "ctrl-h": "vim::HelixNormalAfter",
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
