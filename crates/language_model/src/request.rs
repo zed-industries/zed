@@ -410,6 +410,15 @@ impl LanguageModelRequest {
             top_p: None,
         }
     }
+
+    pub fn into_bedrock(
+        self,
+        model: String,
+        default_temperature: f32,
+        max_output_tokens: u32
+    ) -> bedrock::Request {
+        todo!();
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
