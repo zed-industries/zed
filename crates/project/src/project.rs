@@ -3603,6 +3603,13 @@ impl Project {
             anyhow::Ok(())
         })??;
 
+        // We drop `this` to avoid holding a reference in this future for too
+        // long.
+        // If we keep the reference, we might not drop the `Project` early
+        // enough when closing a window and it will only get releases on the
+        // next `flush_effects()` call.
+        drop(this);
+
         let answer = rx.next().await;
 
         Ok(LanguageServerPromptResponse {
