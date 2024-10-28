@@ -738,7 +738,8 @@ impl RemoteServerProjects {
                 };
                 let project = project.clone();
                 let server = server.clone();
-                cx.spawn(|remote_server_projects, mut cx| async move {
+                cx.emit(DismissEvent);
+                cx.spawn(|_, mut cx| async move {
                     let result = open_ssh_project(
                         server.into(),
                         project.paths.into_iter().map(PathBuf::from).collect(),
@@ -757,10 +758,6 @@ impl RemoteServerProjects {
                         )
                         .await
                         .ok();
-                    } else {
-                        remote_server_projects
-                            .update(&mut cx, |_, cx| cx.emit(DismissEvent))
-                            .ok();
                     }
                 })
                 .detach();
