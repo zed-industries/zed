@@ -223,7 +223,6 @@ pub fn render_parsed_markdown(
                 }
             }),
     );
-    // hello
 
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
@@ -3785,9 +3784,6 @@ impl Editor {
     pub fn newline_below(&mut self, _: &NewlineBelow, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
-        //
-        //
-        //
 
         let mut edits = Vec::new();
         let mut rows = Vec::new();
