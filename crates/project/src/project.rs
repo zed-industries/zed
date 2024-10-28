@@ -1047,6 +1047,7 @@ impl Project {
     }
 
     fn release(&mut self, cx: &mut AppContext) {
+        println!("-------------------> ssh project. release");
         if let Some(client) = self.ssh_client.take() {
             let shutdown = client
                 .read(cx)

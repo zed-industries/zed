@@ -192,16 +192,23 @@ pub(crate) struct Slot<T>(Model<T>);
 pub struct AnyModel {
     pub(crate) entity_id: EntityId,
     pub(crate) entity_type: TypeId,
+    entity_name: &'static str,
     entity_map: Weak<RwLock<EntityRefCounts>>,
     #[cfg(any(test, feature = "test-support"))]
     handle_id: HandleId,
 }
 
 impl AnyModel {
-    fn new(id: EntityId, entity_type: TypeId, entity_map: Weak<RwLock<EntityRefCounts>>) -> Self {
+    fn new(
+        id: EntityId,
+        entity_type: TypeId,
+        entity_name: &'static str,
+        entity_map: Weak<RwLock<EntityRefCounts>>,
+    ) -> Self {
         Self {
             entity_id: id,
             entity_type,
+            entity_name,
             entity_map: entity_map.clone(),
             #[cfg(any(test, feature = "test-support"))]
             handle_id: entity_map
@@ -228,6 +235,7 @@ impl AnyModel {
         AnyWeakModel {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
+            entity_name: self.entity_name,
             entity_ref_counts: self.entity_map.clone(),
         }
     }
@@ -261,6 +269,7 @@ impl Clone for AnyModel {
         Self {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
+            entity_name: self.entity_name,
             entity_map: self.entity_map.clone(),
             #[cfg(any(test, feature = "test-support"))]
             handle_id: self
@@ -285,6 +294,7 @@ impl Drop for AnyModel {
             let prev_count = count.fetch_sub(1, SeqCst);
             assert_ne!(prev_count, 0, "Detected over-release of a model.");
             if prev_count == 1 {
+                println!("dropping entity: {}", self.entity_name);
                 // We were the last reference to this entity, so we can remove it.
                 let mut entity_map = RwLockUpgradableReadGuard::upgrade(entity_map);
                 entity_map.dropped_entity_ids.push(self.entity_id);
@@ -374,7 +384,12 @@ impl<T: 'static> Model<T> {
         T: 'static,
     {
         Self {
-            any_model: AnyModel::new(id, TypeId::of::<T>(), entity_map),
+            any_model: AnyModel::new(
+                id,
+                TypeId::of::<T>(),
+                std::any::type_name::<T>(),
+                entity_map,
+            ),
             entity_type: PhantomData,
         }
     }
@@ -466,6 +481,7 @@ impl<T> PartialEq<WeakModel<T>> for Model<T> {
 pub struct AnyWeakModel {
     pub(crate) entity_id: EntityId,
     entity_type: TypeId,
+    entity_name: &'static str,
     entity_ref_counts: Weak<RwLock<EntityRefCounts>>,
 }
 
@@ -501,6 +517,7 @@ impl AnyWeakModel {
         Some(AnyModel {
             entity_id: self.entity_id,
             entity_type: self.entity_type,
+            entity_name: self.entity_name,
             entity_map: self.entity_ref_counts.clone(),
             #[cfg(any(test, feature = "test-support"))]
             handle_id: self
