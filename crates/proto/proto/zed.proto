@@ -2459,6 +2459,7 @@ message ActiveToolchain {
 
 message ActiveToolchainResponse {
     optional Toolchain toolchain = 1;
+}
 
 message Branch {
     bool is_head = 1;
