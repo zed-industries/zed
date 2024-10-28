@@ -8,7 +8,7 @@ use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, CustomBlockId,
+        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
@@ -17,8 +17,7 @@ use editor::{
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{
-    div, prelude::*, EntityId, EventEmitter, Model, Render, Subscription, Task, View, ViewContext,
-    WeakView,
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -91,12 +90,11 @@ impl EditorBlock {
 
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
-                position: code_range.end,
+                placement: BlockPlacement::Below(code_range.end),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: 1,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
-                disposition: BlockDisposition::Below,
                 priority: 0,
             };
 
@@ -149,23 +147,21 @@ impl EditorBlock {
                 .w(text_line_height)
                 .h(text_line_height)
                 .child(
-                    IconButton::new(
-                        ("close_output_area", EntityId::from(cx.block_id)),
-                        IconName::Close,
-                    )
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::text("Close output area", cx))
-                    .on_click(move |_, cx| {
-                        if let BlockId::Custom(block_id) = block_id {
-                            (on_close)(block_id, cx)
-                        }
-                    }),
+                    IconButton::new("close_output_area", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::Compact)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Close output area", cx))
+                        .on_click(move |_, cx| {
+                            if let BlockId::Custom(block_id) = block_id {
+                                (on_close)(block_id, cx)
+                            }
+                        }),
                 );
 
             div()
+                .id(cx.block_id)
                 .flex()
                 .items_start()
                 .min_h(text_line_height)

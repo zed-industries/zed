@@ -1,13 +1,12 @@
-use super::{MessageCacheMetadata, WorkflowStepEdit};
+use super::{AssistantEdit, MessageCacheMetadata};
 use crate::{
-    assistant_panel, prompt_library, slash_command::file_command, CacheStatus, Context,
-    ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
-    WorkflowStepEditKind,
+    assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
+    Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
 };
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandRegistry,
+    SlashCommandRegistry, SlashCommandResult,
 };
 use collections::HashSet;
 use fs::FakeFs;
@@ -15,6 +14,7 @@ use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use project::Project;
 use rand::prelude::*;
 use serde_json::json;
@@ -478,7 +478,15 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
-    let settings_store = cx.update(SettingsStore::test);
+    let mut settings_store = cx.update(SettingsStore::test);
+    cx.update(|cx| {
+        settings_store
+            .set_user_settings(
+                r#"{ "assistant": { "enable_experimental_live_diffs": true } }"#,
+                cx,
+            )
+            .unwrap()
+    });
     cx.set_global(settings_store);
     cx.update(language::init);
     cx.update(Project::init_settings);
@@ -520,7 +528,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         »",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -539,17 +547,17 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
         «
-        <step»",
+        <patch»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        <step",
+        <patch",
         &[],
         cx,
     );
@@ -563,36 +571,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step«>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch«>
         <edit>»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>»",
         &[&[]],
         cx,
     );
 
-    // The full suggestion is added
+    // The full patch is added
     edit(
         &context,
         "
@@ -600,52 +596,47 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>«
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn one</search>
-        <description>add a `two` function</description>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn one</search>
-        <description>add a `two` function</description>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn one".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn one".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -659,52 +650,47 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>«fn zero»</search>
-        <description>add a `two` function</description>
+        <old_text>«fn zero»</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -715,27 +701,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,",
         &[],
@@ -746,34 +729,32 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     context.update(cx, |context, cx| {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -792,34 +773,32 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             cx,
         )
     });
-    expect_steps(
+    expect_patches(
         &deserialized_context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -834,48 +813,58 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         cx.executor().run_until_parked();
     }
 
-    fn expect_steps(
+    #[track_caller]
+    fn expect_patches(
         context: &Model<Context>,
         expected_marked_text: &str,
-        expected_suggestions: &[&[WorkflowStepEdit]],
+        expected_suggestions: &[&[AssistantEdit]],
         cx: &mut TestAppContext,
     ) {
-        context.update(cx, |context, cx| {
-            let expected_marked_text = expected_marked_text.unindent();
-            let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
+        let expected_marked_text = expected_marked_text.unindent();
+        let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
+
+        let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
             context.buffer.read_with(cx, |buffer, _| {
-                assert_eq!(buffer.text(), expected_text);
                 let ranges = context
-                    .workflow_steps
+                    .patches
                     .iter()
                     .map(|entry| entry.range.to_offset(buffer))
                     .collect::<Vec<_>>();
-                let marked = generate_marked_text(&expected_text, &ranges, false);
-                assert_eq!(
-                    marked,
-                    expected_marked_text,
-                    "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
-                );
-                let suggestions = context
-                    .workflow_steps
-                    .iter()
-                    .map(|step| {
-                        step.edits
-                            .iter()
-                            .map(|edit| {
-                                let edit = edit.as_ref().unwrap();
-                                WorkflowStepEdit {
-                                    path: edit.path.clone(),
-                                    kind: edit.kind.clone(),
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-
-                assert_eq!(suggestions, expected_suggestions);
-            });
+                (
+                    buffer.text(),
+                    ranges,
+                    context
+                        .patches
+                        .iter()
+                        .map(|step| step.edits.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
         });
+
+        assert_eq!(buffer_text, expected_text);
+
+        let actual_marked_text = generate_marked_text(&expected_text, &ranges, false);
+        assert_eq!(actual_marked_text, expected_marked_text);
+
+        assert_eq!(
+            patches
+                .iter()
+                .map(|patch| {
+                    patch
+                        .iter()
+                        .map(|edit| {
+                            let edit = edit.as_ref().unwrap();
+                            AssistantEdit {
+                                path: edit.path.clone(),
+                                kind: edit.kind.clone(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+            expected_suggestions
+        );
     }
 }
 
@@ -1108,7 +1097,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             text: output_text,
                             sections,
                             run_commands_in_text: false,
-                        })),
+                        }
+                        .to_event_stream())),
                         true,
                         false,
                         cx,
@@ -1427,11 +1417,12 @@ impl SlashCommand for FakeSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),
             sections: vec![],
             run_commands_in_text: false,
-        }))
+        }
+        .to_event_stream()))
     }
 }

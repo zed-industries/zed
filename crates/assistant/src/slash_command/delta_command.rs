@@ -1,7 +1,8 @@
 use crate::slash_command::file_command::{FileCommandMetadata, FileSlashCommand};
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use collections::HashSet;
 use futures::future;
@@ -37,7 +38,7 @@ impl SlashCommand for DeltaSlashCommand {
         _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        unimplemented!()
+        Task::ready(Err(anyhow!("this command does not require argument")))
     }
 
     fn run(
@@ -48,7 +49,7 @@ impl SlashCommand for DeltaSlashCommand {
         workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let mut paths = HashSet::default();
         let mut file_command_old_outputs = Vec::new();
         let mut file_command_new_outputs = Vec::new();
@@ -85,25 +86,28 @@ impl SlashCommand for DeltaSlashCommand {
                 .zip(file_command_new_outputs)
             {
                 if let Ok(new_output) = new_output {
-                    if let Some(file_command_range) = new_output.sections.first() {
-                        let new_text = &new_output.text[file_command_range.range.clone()];
-                        if old_text.chars().ne(new_text.chars()) {
-                            output.sections.extend(new_output.sections.into_iter().map(
-                                |section| SlashCommandOutputSection {
-                                    range: output.text.len() + section.range.start
-                                        ..output.text.len() + section.range.end,
-                                    icon: section.icon,
-                                    label: section.label,
-                                    metadata: section.metadata,
-                                },
-                            ));
-                            output.text.push_str(&new_output.text);
+                    if let Ok(new_output) = SlashCommandOutput::from_event_stream(new_output).await
+                    {
+                        if let Some(file_command_range) = new_output.sections.first() {
+                            let new_text = &new_output.text[file_command_range.range.clone()];
+                            if old_text.chars().ne(new_text.chars()) {
+                                output.sections.extend(new_output.sections.into_iter().map(
+                                    |section| SlashCommandOutputSection {
+                                        range: output.text.len() + section.range.start
+                                            ..output.text.len() + section.range.end,
+                                        icon: section.icon,
+                                        label: section.label,
+                                        metadata: section.metadata,
+                                    },
+                                ));
+                                output.text.push_str(&new_output.text);
+                            }
                         }
                     }
                 }
             }
 
-            Ok(output)
+            Ok(output.to_event_stream())
         })
     }
 }

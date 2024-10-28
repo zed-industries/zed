@@ -9,7 +9,7 @@ use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
-        BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
@@ -54,7 +54,7 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
+use ui::{prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 
@@ -82,31 +82,11 @@ pub struct InlineAssistant {
     assists: HashMap<InlineAssistId, InlineAssist>,
     assists_by_editor: HashMap<WeakView<Editor>, EditorInlineAssists>,
     assist_groups: HashMap<InlineAssistGroupId, InlineAssistGroup>,
-    assist_observations: HashMap<
-        InlineAssistId,
-        (
-            async_watch::Sender<AssistStatus>,
-            async_watch::Receiver<AssistStatus>,
-        ),
-    >,
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Option<Arc<Telemetry>>,
     fs: Arc<dyn Fs>,
-}
-
-pub enum AssistStatus {
-    Idle,
-    Started,
-    Stopped,
-    Finished,
-}
-
-impl AssistStatus {
-    pub fn is_done(&self) -> bool {
-        matches!(self, Self::Stopped | Self::Finished)
-    }
 }
 
 impl Global for InlineAssistant {}
@@ -123,7 +103,6 @@ impl InlineAssistant {
             assists: HashMap::default(),
             assists_by_editor: HashMap::default(),
             assist_groups: HashMap::default(),
-            assist_observations: HashMap::default(),
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
@@ -467,15 +446,14 @@ impl InlineAssistant {
         let assist_blocks = vec![
             BlockProperties {
                 style: BlockStyle::Sticky,
-                position: range.start,
+                placement: BlockPlacement::Above(range.start),
                 height: prompt_editor_height,
                 render: build_assist_editor_renderer(prompt_editor),
-                disposition: BlockDisposition::Above,
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
-                position: range.end,
+                placement: BlockPlacement::Below(range.end),
                 height: 0,
                 render: Box::new(|cx| {
                     v_flex()
@@ -485,7 +463,6 @@ impl InlineAssistant {
                         .border_color(cx.theme().status().info_border)
                         .into_any_element()
                 }),
-                disposition: BlockDisposition::Below,
                 priority: 0,
             },
         ];
@@ -835,17 +812,6 @@ impl InlineAssistant {
                     .insert(assist_id, confirmed_alternative);
             }
         }
-
-        // Remove the assist from the status updates map
-        self.assist_observations.remove(&assist_id);
-    }
-
-    pub fn undo_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
-        let Some(codegen) = self.confirmed_assists.remove(&assist_id) else {
-            return false;
-        };
-        codegen.update(cx, |this, cx| this.undo(cx));
-        true
     }
 
     fn dismiss_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) -> bool {
@@ -1039,10 +1005,6 @@ impl InlineAssistant {
                 codegen.start(user_prompt, assistant_panel_context, cx)
             })
             .log_err();
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Started).ok();
-        }
     }
 
     pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut WindowContext) {
@@ -1053,25 +1015,6 @@ impl InlineAssistant {
         };
 
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
-
-        if let Some((tx, _)) = self.assist_observations.get(&assist_id) {
-            tx.send(AssistStatus::Stopped).ok();
-        }
-    }
-
-    pub fn assist_status(&self, assist_id: InlineAssistId, cx: &AppContext) -> InlineAssistStatus {
-        if let Some(assist) = self.assists.get(&assist_id) {
-            match assist.codegen.read(cx).status(cx) {
-                CodegenStatus::Idle => InlineAssistStatus::Idle,
-                CodegenStatus::Pending => InlineAssistStatus::Pending,
-                CodegenStatus::Done => InlineAssistStatus::Done,
-                CodegenStatus::Error(_) => InlineAssistStatus::Error,
-            }
-        } else if self.confirmed_assists.contains_key(&assist_id) {
-            InlineAssistStatus::Confirmed
-        } else {
-            InlineAssistStatus::Canceled
-        }
     }
 
     fn update_editor_highlights(&self, editor: &View<Editor>, cx: &mut WindowContext) {
@@ -1234,7 +1177,7 @@ impl InlineAssistant {
                 let height =
                     deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
-                    position: new_row,
+                    placement: BlockPlacement::Above(new_row),
                     height,
                     style: BlockStyle::Flex,
                     render: Box::new(move |cx| {
@@ -1246,7 +1189,6 @@ impl InlineAssistant {
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
                     }),
-                    disposition: BlockDisposition::Above,
                     priority: 0,
                 });
             }
@@ -1256,42 +1198,6 @@ impl InlineAssistant {
                 .into_iter()
                 .collect();
         })
-    }
-
-    pub fn observe_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-    ) -> async_watch::Receiver<AssistStatus> {
-        if let Some((_, rx)) = self.assist_observations.get(&assist_id) {
-            rx.clone()
-        } else {
-            let (tx, rx) = async_watch::channel(AssistStatus::Idle);
-            self.assist_observations.insert(assist_id, (tx, rx.clone()));
-            rx
-        }
-    }
-}
-
-pub enum InlineAssistStatus {
-    Idle,
-    Pending,
-    Done,
-    Error,
-    Confirmed,
-    Canceled,
-}
-
-impl InlineAssistStatus {
-    pub(crate) fn is_pending(&self) -> bool {
-        matches!(self, Self::Pending)
-    }
-
-    pub(crate) fn is_confirmed(&self) -> bool {
-        matches!(self, Self::Confirmed)
-    }
-
-    pub(crate) fn is_done(&self) -> bool {
-        matches!(self, Self::Done)
     }
 }
 
@@ -1690,7 +1596,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), cx), cx);
             editor
         });
 
@@ -1747,6 +1653,7 @@ impl PromptEditor {
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), cx), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {
@@ -1755,6 +1662,20 @@ impl PromptEditor {
             editor
         });
         self.subscribe_to_editor(cx);
+    }
+
+    fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
+        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+            .map(|keybinding| format!(" • {keybinding} for context"))
+            .unwrap_or_default();
+
+        let action = if codegen.is_insertion {
+            "Generate"
+        } else {
+            "Transform"
+        };
+
+        format!("{action}…{context_keybinding} • ↓↑ for history")
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
@@ -2278,7 +2199,7 @@ impl InlineAssist {
                                             struct InlineAssistantError;
 
                                             let id =
-                                                NotificationId::identified::<InlineAssistantError>(
+                                                NotificationId::composite::<InlineAssistantError>(
                                                     assist_id.0,
                                                 );
 
@@ -2290,8 +2211,6 @@ impl InlineAssist {
 
                             if assist.decorations.is_none() {
                                 this.finish_assist(assist_id, false, cx);
-                            } else if let Some(tx) = this.assist_observations.get(&assist_id) {
-                                tx.0.send(AssistStatus::Finished).ok();
                             }
                         }
                     })
@@ -2349,12 +2268,14 @@ pub enum CodegenEvent {
 pub struct Codegen {
     alternatives: Vec<Model<CodegenAlternative>>,
     active_alternative: usize,
+    seen_alternatives: HashSet<usize>,
     subscriptions: Vec<Subscription>,
     buffer: Model<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
     telemetry: Option<Arc<Telemetry>>,
     builder: Arc<PromptBuilder>,
+    is_insertion: bool,
 }
 
 impl Codegen {
@@ -2377,8 +2298,10 @@ impl Codegen {
             )
         });
         let mut this = Self {
+            is_insertion: range.to_offset(&buffer.read(cx).snapshot(cx)).is_empty(),
             alternatives: vec![codegen],
             active_alternative: 0,
+            seen_alternatives: HashSet::default(),
             subscriptions: Vec::new(),
             buffer,
             range,
@@ -2431,6 +2354,7 @@ impl Codegen {
     fn activate(&mut self, index: usize, cx: &mut ModelContext<Self>) {
         self.active_alternative()
             .update(cx, |codegen, cx| codegen.set_active(false, cx));
+        self.seen_alternatives.insert(index);
         self.active_alternative = index;
         self.active_alternative()
             .update(cx, |codegen, cx| codegen.set_active(true, cx));
@@ -2560,6 +2484,8 @@ pub struct CodegenAlternative {
     active: bool,
     edits: Vec<(Range<Anchor>, String)>,
     line_operations: Vec<LineOperation>,
+    request: Option<LanguageModelRequest>,
+    elapsed_time: Option<f64>,
 }
 
 enum CodegenStatus {
@@ -2631,6 +2557,8 @@ impl CodegenAlternative {
             edits: Vec::new(),
             line_operations: Vec::new(),
             range,
+            request: None,
+            elapsed_time: None,
         }
     }
 
@@ -2727,6 +2655,7 @@ impl CodegenAlternative {
                 async { Ok(stream::empty().boxed()) }.boxed_local()
             } else {
                 let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
+                self.request = Some(request.clone());
 
                 let chunks = cx
                     .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
@@ -2771,7 +2700,7 @@ impl CodegenAlternative {
 
         let prompt = self
             .builder
-            .generate_content_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();
@@ -2800,6 +2729,7 @@ impl CodegenAlternative {
         stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
         cx: &mut ModelContext<Self>,
     ) {
+        let start_time = Instant::now();
         let snapshot = self.snapshot.clone();
         let selected_text = snapshot
             .text_for_range(self.range.start..self.range.end)
@@ -3016,6 +2946,8 @@ impl CodegenAlternative {
                 };
 
                 let result = generate.await;
+                let elapsed_time = start_time.elapsed().as_secs_f64();
+
                 codegen
                     .update(&mut cx, |this, cx| {
                         this.last_equal_ranges.clear();
@@ -3024,6 +2956,7 @@ impl CodegenAlternative {
                         } else {
                             this.status = CodegenStatus::Done;
                         }
+                        this.elapsed_time = Some(elapsed_time);
                         cx.emit(CodegenEvent::Finished);
                         cx.notify();
                     })
@@ -3370,6 +3303,10 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         range: Range<text::Anchor>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<CodeAction>>> {
+        if !AssistantSettings::get_global(cx).enabled {
+            return Task::ready(Ok(Vec::new()));
+        }
+
         let snapshot = buffer.read(cx).snapshot();
         let mut range = range.to_point(&snapshot);
 

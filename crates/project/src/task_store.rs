@@ -298,9 +298,10 @@ impl TaskStore {
                     let result = task_store.update_user_tasks(None, Some(&user_tasks_content), cx);
                     if let Err(err) = &result {
                         log::error!("Failed to load user tasks: {err}");
-                        cx.emit(crate::Event::Notification(format!(
-                            "Invalid global tasks file\n{err}"
-                        )));
+                        cx.emit(crate::Event::Toast {
+                            notification_id: "load-user-tasks".into(),
+                            message: format!("Invalid global tasks file\n{err}"),
+                        });
                     }
                     cx.refresh();
                 }) else {

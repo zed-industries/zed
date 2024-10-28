@@ -45,7 +45,7 @@ use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
 use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::truncate_and_trailoff;
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
@@ -60,7 +60,7 @@ use thiserror::Error;
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
     Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
+    Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -274,19 +274,21 @@ impl TerminalError {
             })
     }
 
-    pub fn shell_to_string(&self) -> String {
-        match &self.shell {
-            Shell::System => "<system shell>".to_string(),
-            Shell::Program(p) => p.to_string(),
-            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
-        }
-    }
-
     pub fn fmt_shell(&self) -> String {
         match &self.shell {
             Shell::System => "<system defined shell>".to_string(),
             Shell::Program(s) => s.to_string(),
-            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => {
+                if let Some(title_override) = title_override {
+                    format!("{} {} ({})", program, args.join(" "), title_override)
+                } else {
+                    format!("{} {}", program, args.join(" "))
+                }
+            }
         }
     }
 }
@@ -328,6 +330,7 @@ impl TerminalBuilder {
         cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
+        is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
         cx: &AppContext,
@@ -348,20 +351,29 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
+        let mut terminal_title_override = None;
+
         let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }
-                Shell::WithArguments { program, args } => {
+                Shell::WithArguments {
+                    program,
+                    args,
+                    title_override,
+                } => {
+                    terminal_title_override = title_override;
                     Some(alacritty_terminal::tty::Shell::new(program, args))
                 }
             };
 
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
-                working_directory: working_directory.clone(),
+                working_directory: working_directory
+                    .clone()
+                    .or_else(|| Some(home_dir().to_path_buf())),
                 hold: false,
                 env: env.into_iter().collect(),
             }
@@ -441,6 +453,7 @@ impl TerminalBuilder {
             completion_tx,
             term,
             term_config: config,
+            title_override: terminal_title_override,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
             last_mouse: None,
@@ -457,6 +470,7 @@ impl TerminalBuilder {
             url_regex: RegexSearch::new(URL_REGEX).unwrap(),
             word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
             vi_mode_enabled: false,
+            is_ssh_terminal,
         };
 
         Ok(TerminalBuilder {
@@ -604,6 +618,7 @@ pub struct Terminal {
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
+    title_override: Option<SharedString>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -613,6 +628,7 @@ pub struct Terminal {
     word_regex: RegexSearch,
     task: Option<TaskState>,
     vi_mode_enabled: bool,
+    is_ssh_terminal: bool,
 }
 
 pub struct TaskState {
@@ -719,10 +735,6 @@ impl Terminal {
 
     pub fn selection_started(&self) -> bool {
         self.selection_phase == SelectionPhase::Selecting
-    }
-
-    pub fn get_cwd(&self) -> Option<PathBuf> {
-        self.pty_info.current.as_ref().map(|info| info.cwd.clone())
     }
 
     ///Takes events from Alacritty and translates them to behavior on this view
@@ -938,7 +950,7 @@ impl Terminal {
                             } else {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                                     maybe_path: maybe_url_or_path,
-                                    terminal_dir: self.get_cwd(),
+                                    terminal_dir: self.working_directory(),
                                 })
                             };
                             cx.emit(Event::Open(target));
@@ -993,7 +1005,7 @@ impl Terminal {
         } else {
             MaybeNavigationTarget::PathLike(PathLikeTarget {
                 maybe_path: word,
-                terminal_dir: self.get_cwd(),
+                terminal_dir: self.working_directory(),
             })
         };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
@@ -1623,6 +1635,23 @@ impl Terminal {
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
+        if self.is_ssh_terminal {
+            // We can't yet reliably detect the working directory of a shell on the
+            // SSH host. Until we can do that, it doesn't make sense to display
+            // the working directory on the client and persist that.
+            None
+        } else {
+            self.client_side_working_directory()
+        }
+    }
+
+    /// Returns the working directory of the process that's connected to the PTY.
+    /// That means it returns the working directory of the local shell or program
+    /// that's running inside the terminal.
+    ///
+    /// This does *not* return the working directory of the shell that runs on the
+    /// remote host, in case Zed is connected to a remote host.
+    fn client_side_working_directory(&self) -> Option<PathBuf> {
         self.pty_info
             .current
             .as_ref()
@@ -1640,37 +1669,42 @@ impl Terminal {
                 }
             }
             None => self
-                .pty_info
-                .current
+                .title_override
                 .as_ref()
-                .map(|fpi| {
-                    let process_file = fpi
-                        .cwd
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                .map(|title_override| title_override.to_string())
+                .unwrap_or_else(|| {
+                    self.pty_info
+                        .current
+                        .as_ref()
+                        .map(|fpi| {
+                            let process_file = fpi
+                                .cwd
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_default();
 
-                    let argv = fpi.argv.clone();
-                    let process_name = format!(
-                        "{}{}",
-                        fpi.name,
-                        if !argv.is_empty() {
-                            format!(" {}", (argv[1..]).join(" "))
-                        } else {
-                            "".to_string()
-                        }
-                    );
-                    let (process_file, process_name) = if truncate {
-                        (
-                            truncate_and_trailoff(&process_file, MAX_CHARS),
-                            truncate_and_trailoff(&process_name, MAX_CHARS),
-                        )
-                    } else {
-                        (process_file, process_name)
-                    };
-                    format!("{process_file} — {process_name}")
-                })
-                .unwrap_or_else(|| "Terminal".to_string()),
+                            let argv = fpi.argv.clone();
+                            let process_name = format!(
+                                "{}{}",
+                                fpi.name,
+                                if !argv.is_empty() {
+                                    format!(" {}", (argv[1..]).join(" "))
+                                } else {
+                                    "".to_string()
+                                }
+                            );
+                            let (process_file, process_name) = if truncate {
+                                (
+                                    truncate_and_trailoff(&process_file, MAX_CHARS),
+                                    truncate_and_trailoff(&process_name, MAX_CHARS),
+                                )
+                            } else {
+                                (process_file, process_name)
+                            };
+                            format!("{process_file} — {process_name}")
+                        })
+                        .unwrap_or_else(|| "Terminal".to_string())
+                }),
         }
     }
 

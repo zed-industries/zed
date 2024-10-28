@@ -6,7 +6,6 @@ use futures::{io::BufReader, StreamExt};
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
-use language_settings::all_language_settings;
 use lsp::LanguageServerBinary;
 use regex::Regex;
 use smol::fs::{self, File};
@@ -20,6 +19,8 @@ use std::{
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
+
+use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
 
@@ -424,13 +425,13 @@ impl ContextProvider for RustContextProvider {
         cx: &AppContext,
     ) -> Option<TaskTemplates> {
         const DEFAULT_RUN_NAME_STR: &str = "RUST_DEFAULT_PACKAGE_RUN";
-        let package_to_run = all_language_settings(file.as_ref(), cx)
-            .language(Some(&"Rust".into()))
+        let package_to_run = language_settings(Some("Rust".into()), file.as_ref(), cx)
             .tasks
             .variables
-            .get(DEFAULT_RUN_NAME_STR);
+            .get(DEFAULT_RUN_NAME_STR)
+            .cloned();
         let run_task_args = if let Some(package_to_run) = package_to_run {
-            vec!["run".into(), "-p".into(), package_to_run.clone()]
+            vec!["run".into(), "-p".into(), package_to_run]
         } else {
             vec!["run".into()]
         };

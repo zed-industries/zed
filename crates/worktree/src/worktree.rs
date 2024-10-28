@@ -36,7 +36,10 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::{proto, AnyProtoClient};
+use rpc::{
+    proto::{self, split_worktree_update},
+    AnyProtoClient,
+};
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{smallvec, SmallVec};
@@ -1721,11 +1724,6 @@ impl LocalWorktree {
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
         Fut: Send + Future<Output = bool>,
     {
-        #[cfg(any(test, feature = "test-support"))]
-        const MAX_CHUNK_SIZE: usize = 2;
-        #[cfg(not(any(test, feature = "test-support")))]
-        const MAX_CHUNK_SIZE: usize = 256;
-
         if let Some(observer) = self.update_observer.as_mut() {
             *observer.resume_updates.borrow_mut() = ();
             return;
@@ -1751,7 +1749,7 @@ impl LocalWorktree {
                         snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes);
                 }
 
-                for update in proto::split_worktree_update(update, MAX_CHUNK_SIZE) {
+                for update in proto::split_worktree_update(update) {
                     let _ = resume_updates_rx.try_recv();
                     loop {
                         let result = callback(update.clone());
@@ -1817,13 +1815,17 @@ impl RemoteWorktree {
         self.update_observer = Some(tx);
         cx.spawn(|this, mut cx| async move {
             let mut update = initial_update;
-            loop {
+            'outer: loop {
                 // SSH projects use a special project ID of 0, and we need to
                 // remap it to the correct one here.
                 update.project_id = project_id;
-                if !callback(update).await {
-                    break;
+
+                for chunk in split_worktree_update(update) {
+                    if !callback(chunk).await {
+                        break 'outer;
+                    }
                 }
+
                 if let Some(next_update) = rx.next().await {
                     update = next_update;
                 } else {
@@ -2380,6 +2382,12 @@ impl Snapshot {
     pub fn root_git_entry(&self) -> Option<RepositoryEntry> {
         self.repository_entries
             .get(&RepositoryWorkDirectory(Path::new("").into()))
+            .map(|entry| entry.to_owned())
+    }
+
+    pub fn git_entry(&self, work_directory_path: Arc<Path>) -> Option<RepositoryEntry> {
+        self.repository_entries
+            .get(&RepositoryWorkDirectory(work_directory_path))
             .map(|entry| entry.to_owned())
     }
 
@@ -3203,7 +3211,6 @@ pub struct Entry {
     pub mtime: Option<SystemTime>,
 
     pub canonical_path: Option<Box<Path>>,
-    pub is_symlink: bool,
     /// Whether this entry is ignored by Git.
     ///
     /// We only scan ignored entries once the directory is expanded and
@@ -3280,7 +3287,6 @@ impl Entry {
             mtime: Some(metadata.mtime),
             size: metadata.len,
             canonical_path,
-            is_symlink: metadata.is_symlink,
             is_ignored: false,
             is_external: false,
             is_private: false,
@@ -5249,12 +5255,15 @@ impl<'a> From<&'a Entry> for proto::Entry {
             path: entry.path.to_string_lossy().into(),
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
-            is_symlink: entry.is_symlink,
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: entry.git_status.map(git_status_to_proto),
             is_fifo: entry.is_fifo,
             size: Some(entry.size),
+            canonical_path: entry
+                .canonical_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().to_string()),
         }
     }
 }
@@ -5277,12 +5286,13 @@ impl<'a> TryFrom<(&'a CharBag, proto::Entry)> for Entry {
             inode: entry.inode,
             mtime: entry.mtime.map(|time| time.into()),
             size: entry.size.unwrap_or(0),
-            canonical_path: None,
+            canonical_path: entry
+                .canonical_path
+                .map(|path_string| Box::from(Path::new(&path_string))),
             is_ignored: entry.is_ignored,
             is_external: entry.is_external,
             git_status: git_status_from_proto(entry.git_status),
             is_private: false,
-            is_symlink: entry.is_symlink,
             char_bag,
             is_fifo: entry.is_fifo,
         })

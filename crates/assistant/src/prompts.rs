@@ -45,15 +45,6 @@ pub struct ProjectSlashCommandPromptContext {
     pub context_buffer: String,
 }
 
-/// Context required to generate a workflow step resolution prompt.
-#[derive(Debug, Serialize)]
-pub struct StepResolutionContext {
-    /// The full context, including <step>...</step> tags
-    pub workflow_context: String,
-    /// The text of the specific step from the context to resolve
-    pub step_to_resolve: String,
-}
-
 pub struct PromptLoadingParams<'a> {
     pub fs: Arc<dyn Fs>,
     pub repo_path: Option<PathBuf>,
@@ -213,7 +204,7 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn generate_content_prompt(
+    pub fn generate_inline_transformation_prompt(
         &self,
         user_prompt: String,
         language_name: Option<&LanguageName>,

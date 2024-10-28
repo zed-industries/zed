@@ -86,7 +86,7 @@ impl From<UiDensity> for String {
 }
 
 /// Customizable settings for the UI and theme system.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub struct ThemeSettings {
     /// The UI font size. Determines the size of text in the UI,
     /// as well as the size of a [gpui::Rems] unit.
@@ -213,7 +213,7 @@ pub(crate) struct AdjustedUiFontSize(Pixels);
 impl Global for AdjustedUiFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum ThemeSelection {
     /// A static theme selection, represented by a single theme name.
@@ -636,7 +636,12 @@ impl settings::Settings for ThemeSettings {
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
 
-        for value in sources.user.into_iter().chain(sources.release_channel) {
+        for value in sources
+            .user
+            .into_iter()
+            .chain(sources.release_channel)
+            .chain(sources.server)
+        {
             if let Some(value) = value.ui_density {
                 this.ui_density = value;
             }

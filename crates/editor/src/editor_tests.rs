@@ -1081,6 +1081,112 @@ fn test_fold_action_multiple_line_breaks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_fold_at_level(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let view = cx.add_window(|cx| {
+        let buffer = MultiBuffer::build_simple(
+            &"
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+                class Bar:
+                    # World!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+            "
+            .unindent(),
+            cx,
+        );
+        build_editor(buffer.clone(), cx)
+    });
+
+    _ = view.update(cx, |view, cx| {
+        view.fold_at_level(&FoldAtLevel { level: 2 }, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():⋯
+
+                    def b():⋯
+
+
+                class Bar:
+                    # World!
+
+                    def a():⋯
+
+                    def b():⋯
+
+
+            "
+            .unindent(),
+        );
+
+        view.fold_at_level(&FoldAtLevel { level: 1 }, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:⋯
+
+
+                class Bar:⋯
+
+
+            "
+            .unindent(),
+        );
+
+        view.unfold_all(&UnfoldAll, cx);
+        view.fold_at_level(&FoldAtLevel { level: 0 }, cx);
+        assert_eq!(
+            view.display_text(cx),
+            "
+                class Foo:
+                    # Hello!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+                class Bar:
+                    # World!
+
+                    def a():
+                        print(1)
+
+                    def b():
+                        print(2)
+
+
+            "
+            .unindent(),
+        );
+
+        assert_eq!(view.display_text(cx), view.buffer.read(cx).read(cx).text());
+    });
+}
+
+#[gpui::test]
 fn test_move_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -3868,8 +3974,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
         editor.insert_blocks(
             [BlockProperties {
                 style: BlockStyle::Fixed,
-                position: snapshot.anchor_after(Point::new(2, 0)),
-                disposition: BlockDisposition::Below,
+                placement: BlockPlacement::Below(snapshot.anchor_after(Point::new(2, 0))),
                 height: 1,
                 render: Box::new(|_| div().into_any()),
                 priority: 0,
@@ -7076,7 +7181,12 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
 
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffer,
+                cx,
+            )
         })
         .unwrap();
     fake_server
@@ -7112,7 +7222,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     });
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project, FormatTrigger::Manual, cx)
+            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx)
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -10309,7 +10419,12 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
 
     editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+            editor.perform_format(
+                project.clone(),
+                FormatTrigger::Manual,
+                FormatTarget::Buffer,
+                cx,
+            )
         })
         .unwrap()
         .await;
@@ -10323,7 +10438,12 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::Auto)
     });
     let format = editor.update(cx, |editor, cx| {
-        editor.perform_format(project.clone(), FormatTrigger::Manual, cx)
+        editor.perform_format(
+            project.clone(),
+            FormatTrigger::Manual,
+            FormatTarget::Buffer,
+            cx,
+        )
     });
     format.await.unwrap();
     assert_eq!(

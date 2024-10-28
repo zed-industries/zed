@@ -7,6 +7,7 @@ dependencies = [
     "mypy>=1.11.2",
     "pygithub>=2.4.0",
     "pytz>=2024.2",
+    "ruff>=0.6.9",
     "typer>=0.12.5",
     "types-pytz>=2024.2.0.20241003",
 ]

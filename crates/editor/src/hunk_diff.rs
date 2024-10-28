@@ -7,17 +7,19 @@ use multi_buffer::{
     MultiBufferSnapshot, ToPoint,
 };
 use std::{ops::Range, sync::Arc};
+use text::OffsetRangeExt;
 use ui::{
     prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
     ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
 };
 use util::RangeExt;
+use workspace::Item;
 
 use crate::{
-    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyDiffHunk,
-    BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
-    DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk, RevertFile,
-    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    editor_settings::CurrentLineHighlight, hunk_status, hunks_for_selections, ApplyAllDiffHunks,
+    ApplyDiffHunk, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight,
+    DisplayRow, DisplaySnapshot, Editor, EditorElement, ExpandAllHunkDiffs, GoToHunk, GoToPrevHunk,
+    RevertFile, RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -327,7 +329,7 @@ impl Editor {
         Some(())
     }
 
-    fn apply_changes_in_range(
+    fn apply_diff_hunks_in_range(
         &mut self,
         range: Range<Anchor>,
         cx: &mut ViewContext<'_, Editor>,
@@ -343,15 +345,57 @@ impl Editor {
             branch_buffer.merge_into_base(vec![range], cx);
         });
 
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
+        }
+
         None
     }
 
-    pub(crate) fn apply_all_changes(&self, cx: &mut ViewContext<Self>) {
+    pub(crate) fn apply_all_diff_hunks(
+        &mut self,
+        _: &ApplyAllDiffHunks,
+        cx: &mut ViewContext<Self>,
+    ) {
         let buffers = self.buffer.read(cx).all_buffers();
         for branch_buffer in buffers {
             branch_buffer.update(cx, |branch_buffer, cx| {
                 branch_buffer.merge_into_base(Vec::new(), cx);
             });
+        }
+
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
+        }
+    }
+
+    pub(crate) fn apply_selected_diff_hunks(
+        &mut self,
+        _: &ApplyDiffHunk,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
+        let mut ranges_by_buffer = HashMap::default();
+        self.transact(cx, |editor, cx| {
+            for hunk in hunks {
+                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
+                    ranges_by_buffer
+                        .entry(buffer.clone())
+                        .or_insert_with(Vec::new)
+                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
+                }
+            }
+
+            for (buffer, ranges) in ranges_by_buffer {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.merge_into_base(ranges, cx);
+                });
+            }
+        });
+
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
         }
     }
 
@@ -377,10 +421,9 @@ impl Editor {
         };
 
         BlockProperties {
-            position: hunk.multi_buffer_range.start,
+            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height: 1,
             style: BlockStyle::Sticky,
-            disposition: BlockDisposition::Above,
             priority: 0,
             render: Box::new({
                 let editor = cx.view().clone();
@@ -418,7 +461,7 @@ impl Editor {
                             h_flex()
                                 .px_6()
                                 .size_full()
-                                .justify_between()
+                                .justify_end()
                                 .child(
                                     h_flex()
                                         .gap_1()
@@ -548,11 +591,12 @@ impl Editor {
                                                             let hunk = hunk.clone();
                                                             move |_event, cx| {
                                                                 editor.update(cx, |editor, cx| {
-                                                                    editor.apply_changes_in_range(
-                                                                        hunk.multi_buffer_range
-                                                                            .clone(),
-                                                                        cx,
-                                                                    );
+                                                                    editor
+                                                                        .apply_diff_hunks_in_range(
+                                                                            hunk.multi_buffer_range
+                                                                                .clone(),
+                                                                            cx,
+                                                                        );
                                                                 });
                                                             }
                                                         }),
@@ -659,10 +703,9 @@ impl Editor {
         let hunk = hunk.clone();
         let height = editor_height.max(deleted_text_height);
         BlockProperties {
-            position: hunk.multi_buffer_range.start,
+            placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height,
             style: BlockStyle::Flex,
-            disposition: BlockDisposition::Above,
             priority: 0,
             render: Box::new(move |cx| {
                 let width = EditorElement::diff_hunk_strip_width(cx.line_height());

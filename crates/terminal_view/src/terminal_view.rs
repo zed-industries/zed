@@ -1192,7 +1192,7 @@ impl SerializableItem for TerminalView {
             return None;
         }
 
-        if let Some((cwd, workspace_id)) = terminal.get_cwd().zip(self.workspace_id) {
+        if let Some((cwd, workspace_id)) = terminal.working_directory().zip(self.workspace_id) {
             Some(cx.background_executor().spawn(async move {
                 TERMINAL_DB
                     .save_working_directory(item_id, workspace_id, cwd)

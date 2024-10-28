@@ -256,6 +256,9 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
+
+    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    pub(crate) name: Option<&'static str>,
 }
 
 impl AppContext {
@@ -309,6 +312,9 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+
+                #[cfg(any(test, feature = "test-support", debug_assertions))]
+                name: None,
             }),
         });
 
@@ -988,6 +994,7 @@ impl AppContext {
     }
 
     /// Move the global of the given type to the stack.
+    #[track_caller]
     pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(
             self.globals_by_type
@@ -1318,6 +1325,12 @@ impl AppContext {
         self.loading_assets.insert(asset_id, Box::new(task.clone()));
 
         (task, is_first)
+    }
+
+    /// Get the name for this App.
+    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    pub fn get_name(&self) -> &'static str {
+        self.name.as_ref().unwrap()
     }
 }
 

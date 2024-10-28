@@ -37,6 +37,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("c", tree_sitter_c::LANGUAGE),
         ("cpp", tree_sitter_cpp::LANGUAGE),
         ("css", tree_sitter_css::LANGUAGE),
+        ("diff", tree_sitter_diff::LANGUAGE),
         ("go", tree_sitter_go::LANGUAGE),
         ("gomod", tree_sitter_go_mod::LANGUAGE),
         ("gowork", tree_sitter_gowork::LANGUAGE),
@@ -105,6 +106,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         "css",
         vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
     );
+    language!("diff");
     language!("go", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
     language!("gomod", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
     language!(
@@ -285,15 +287,6 @@ fn load_config(name: &str) -> LanguageConfig {
     let mut config: LanguageConfig = ::toml::from_str(&config_toml)
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
         .unwrap();
-
-    #[cfg(not(feature = "load-grammars"))]
-    {
-        config = LanguageConfig {
-            name: config.name,
-            matcher: config.matcher,
-            ..Default::default()
-        }
-    }
 
     config
 }

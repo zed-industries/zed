@@ -256,6 +256,7 @@
       "@": ["vim::PushOperator", "ReplayRegister"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
+      "insert": "vim::InsertBefore",
       // tree-sitter related commands
       "[ x": "editor::SelectLargerSyntaxNode",
       "] x": "editor::SelectSmallerSyntaxNode",
@@ -338,7 +339,8 @@
       "ctrl-t": "vim::Indent",
       "ctrl-d": "vim::Outdent",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
-      "ctrl-r": ["vim::PushOperator", "Register"]
+      "ctrl-r": ["vim::PushOperator", "Register"],
+      "insert": "vim::ToggleReplace"
     }
   },
   {
@@ -357,7 +359,8 @@
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "backspace": "vim::UndoReplace",
       "tab": "vim::Tab",
-      "enter": "vim::Enter"
+      "enter": "vim::Enter",
+      "insert": "vim::InsertBefore"
     }
   },
   {
