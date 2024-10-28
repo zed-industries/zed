@@ -4,12 +4,12 @@ use context_servers::manager::ContextServerManager;
 use context_servers::types;
 use gpui::Task;
 
-pub struct SlashCommandTool {
+pub struct ContextServerTool {
     server_id: String,
     tool: types::Tool,
 }
 
-impl SlashCommandTool {
+impl ContextServerTool {
     pub fn new<S: Into<String>>(server_id: S, tool: types::Tool) -> Self {
         Self {
             server_id: server_id.into(),
@@ -18,7 +18,7 @@ impl SlashCommandTool {
     }
 }
 
-impl Tool for SlashCommandTool {
+impl Tool for ContextServerTool {
     fn name(&self) -> String {
         self.tool.name.clone()
     }

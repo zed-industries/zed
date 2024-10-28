@@ -350,7 +350,7 @@ fn register_context_server_handlers(cx: &mut AppContext) {
                                                 tool.name.as_str(),
                                             );
                                             tool_registry.register_tool(
-                                                tools::context_server_tool::SlashCommandTool::new(
+                                                tools::context_server_tool::ContextServerTool::new(
                                                     server.id.clone(),
                                                     tool
                                                 ),
