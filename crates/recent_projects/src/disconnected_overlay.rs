@@ -11,7 +11,7 @@ use ui::{
 };
 use workspace::{notifications::DetachAndPromptErr, ModalView, OpenOptions, Workspace};
 
-use crate::{open_ssh_project, SshSettings};
+use crate::open_ssh_project;
 
 enum Host {
     RemoteProject,
@@ -102,16 +102,6 @@ impl DisconnectedOverlay {
         let paths = ssh_project.paths.iter().map(PathBuf::from).collect();
 
         cx.spawn(move |_, mut cx| async move {
-            let nickname = cx
-                .update(|cx| {
-                    SshSettings::get_global(cx).nickname_for(
-                        &connection_options.host,
-                        connection_options.port,
-                        &connection_options.username,
-                    )
-                })
-                .ok()
-                .flatten();
             open_ssh_project(
                 connection_options,
                 paths,
@@ -120,7 +110,6 @@ impl DisconnectedOverlay {
                     replace_window: Some(window),
                     ..Default::default()
                 },
-                nickname,
                 &mut cx,
             )
             .await?;

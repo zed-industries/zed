@@ -881,12 +881,6 @@ pub fn open_new_ssh_project_from_project(
         return Task::ready(Err(anyhow::anyhow!("Not an ssh project")));
     };
     let connection_options = ssh_client.read(cx).connection_options();
-    let nickname = recent_projects::SshSettings::get_global(cx).nickname_for(
-        &connection_options.host,
-        connection_options.port,
-        &connection_options.username,
-    );
-
     cx.spawn(|_, mut cx| async move {
         open_ssh_project(
             connection_options,
@@ -897,7 +891,6 @@ pub fn open_new_ssh_project_from_project(
                 replace_window: None,
                 env: None,
             },
-            nickname,
             &mut cx,
         )
         .await

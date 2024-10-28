@@ -252,7 +252,10 @@ async fn create_billing_subscription(
 
     let default_model = llm_db.model(rpc::LanguageModelProvider::Anthropic, "claude-3-5-sonnet")?;
     let stripe_model = stripe_billing.register_model(default_model).await?;
-    let success_url = format!("{}/account", app.config.zed_dot_dev_url());
+    let success_url = format!(
+        "{}/account?checkout_complete=1",
+        app.config.zed_dot_dev_url()
+    );
     let checkout_session_url = stripe_billing
         .checkout(customer_id, &user.github_login, &stripe_model, &success_url)
         .await?;

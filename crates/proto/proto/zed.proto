@@ -196,8 +196,6 @@ message Envelope {
         GetImplementation get_implementation = 162;
         GetImplementationResponse get_implementation_response = 163;
 
-        JoinHostedProject join_hosted_project = 164;
-
         CountLanguageModelTokens count_language_model_tokens = 230;
         CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
@@ -281,12 +279,18 @@ message Envelope {
         FlushBufferedMessages flush_buffered_messages = 267;
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
-        LanguageServerPromptResponse language_server_prompt_response = 269; // current max
+        LanguageServerPromptResponse language_server_prompt_response = 269;
+
+        GitBranches git_branches = 270;
+        GitBranchesResponse git_branches_response = 271;
+
+        UpdateGitBranch update_git_branch = 272; // current max
     }
 
 
     reserved 87 to 88;
     reserved 158 to 161;
+    reserved 164;
     reserved 166 to 169;
     reserved 177 to 185;
     reserved 188;
@@ -517,11 +521,6 @@ message UpdateProject {
 message JoinProject {
     uint64 project_id = 1;
 }
-
-message JoinHostedProject {
-    uint64 project_id = 1;
-}
-
 
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
@@ -1289,13 +1288,7 @@ message UpdateChannels {
     repeated ChannelMessageId latest_channel_message_ids = 8;
     repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
 
-    repeated HostedProject hosted_projects = 10;
-    repeated uint64 deleted_hosted_projects = 11;
-
-    reserved 12;
-    reserved 13;
-    reserved 14;
-    reserved 15;
+    reserved 10 to 15;
 }
 
 message UpdateUserChannels {
@@ -1322,13 +1315,6 @@ message ChannelPermission {
 message ChannelParticipants {
     uint64 channel_id = 1;
     repeated uint64 participant_user_ids = 2;
-}
-
-message HostedProject {
-    uint64 project_id = 1;
-    uint64 channel_id = 2;
-    string name = 3;
-    ChannelVisibility visibility = 4;
 }
 
 message JoinChannel {
@@ -2431,4 +2417,25 @@ message LanguageServerPromptRequest {
 
 message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
+}
+
+message Branch {
+    bool is_head = 1;
+    string name = 2;
+    optional uint64 unix_timestamp = 3;
+}
+
+message GitBranches {
+    uint64 project_id = 1;
+    ProjectPath repository = 2;
+}
+
+message GitBranchesResponse {
+    repeated Branch branches = 1;
+}
+
+message UpdateGitBranch {
+    uint64 project_id = 1;
+    string branch_name = 2;
+    ProjectPath repository = 3;
 }

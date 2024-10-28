@@ -16,7 +16,7 @@ use anyhow::{anyhow, Context as _, Result};
 use call::{call_settings::CallSettings, ActiveCall};
 use client::{
     proto::{self, ErrorCode, PanelId, PeerId},
-    ChannelId, Client, ErrorExt, ProjectId, Status, TypedEnvelope, UserStore,
+    ChannelId, Client, ErrorExt, Status, TypedEnvelope, UserStore,
 };
 use collections::{hash_map, HashMap, HashSet};
 use derive_more::{Deref, DerefMut};
@@ -2947,9 +2947,7 @@ impl Workspace {
             status_bar.set_active_pane(&pane, cx);
         });
         if self.active_pane != pane {
-            self.active_pane = pane.clone();
-            self.active_item_path_changed(cx);
-            self.last_active_center_pane = Some(pane.downgrade());
+            self.set_active_pane(&pane, cx);
         }
 
         if self.last_active_center_pane.is_none() {
@@ -2970,6 +2968,12 @@ impl Workspace {
         });
 
         cx.notify();
+    }
+
+    fn set_active_pane(&mut self, pane: &View<Pane>, cx: &mut ViewContext<Self>) {
+        self.active_pane = pane.clone();
+        self.active_item_path_changed(cx);
+        self.last_active_center_pane = Some(pane.downgrade());
     }
 
     fn handle_panel_focused(&mut self, cx: &mut ViewContext<Self>) {
@@ -4263,12 +4267,11 @@ impl Workspace {
 
                     // Swap workspace center group
                     workspace.center = PaneGroup::with_root(center_group);
-                    workspace.last_active_center_pane = active_pane.as_ref().map(|p| p.downgrade());
                     if let Some(active_pane) = active_pane {
-                        workspace.active_pane = active_pane;
+                        workspace.set_active_pane(&active_pane, cx);
                         cx.focus_self();
                     } else {
-                        workspace.active_pane = workspace.center.first_pane().clone();
+                        workspace.set_active_pane(&workspace.center.first_pane(), cx);
                     }
                 }
 
@@ -5463,58 +5466,6 @@ pub fn create_and_open_local_file(
 
         let item = items.pop().flatten();
         item.ok_or_else(|| anyhow!("path {path:?} is not a file"))?
-    })
-}
-
-pub fn join_hosted_project(
-    hosted_project_id: ProjectId,
-    app_state: Arc<AppState>,
-    cx: &mut AppContext,
-) -> Task<Result<()>> {
-    cx.spawn(|mut cx| async move {
-        let existing_window = cx.update(|cx| {
-            cx.windows().into_iter().find_map(|window| {
-                let workspace = window.downcast::<Workspace>()?;
-                workspace
-                    .read(cx)
-                    .is_ok_and(|workspace| {
-                        workspace.project().read(cx).hosted_project_id() == Some(hosted_project_id)
-                    })
-                    .then_some(workspace)
-            })
-        })?;
-
-        let workspace = if let Some(existing_window) = existing_window {
-            existing_window
-        } else {
-            let project = Project::hosted(
-                hosted_project_id,
-                app_state.user_store.clone(),
-                app_state.client.clone(),
-                app_state.languages.clone(),
-                app_state.fs.clone(),
-                cx.clone(),
-            )
-            .await?;
-
-            let window_bounds_override = window_bounds_env_override();
-            cx.update(|cx| {
-                let mut options = (app_state.build_window_options)(None, cx);
-                options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
-                cx.open_window(options, |cx| {
-                    cx.new_view(|cx| {
-                        Workspace::new(Default::default(), project, app_state.clone(), cx)
-                    })
-                })
-            })??
-        };
-
-        workspace.update(&mut cx, |_, cx| {
-            cx.activate(true);
-            cx.activate_window();
-        })?;
-
-        Ok(())
     })
 }
 

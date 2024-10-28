@@ -478,6 +478,12 @@ impl TestAppContext {
         .await
         .unwrap();
     }
+
+    /// Set a name for this App.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn set_name(&mut self, name: &'static str) {
+        self.update(|cx| cx.name = Some(name))
+    }
 }
 
 impl<T: 'static> Model<T> {

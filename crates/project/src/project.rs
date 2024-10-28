@@ -24,9 +24,7 @@ mod yarn;
 
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferStore, BufferStoreEvent};
-use client::{
-    proto, Client, Collaborator, PendingEntitySubscription, ProjectId, TypedEnvelope, UserStore,
-};
+use client::{proto, Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore};
 use clock::ReplicaId;
 use collections::{BTreeSet, HashMap, HashSet};
 use debounced_delay::DebouncedDelay;
@@ -154,7 +152,6 @@ pub struct Project {
     remotely_created_models: Arc<Mutex<RemotelyCreatedModels>>,
     terminals: Terminals,
     node: Option<NodeRuntime>,
-    hosted_project_id: Option<ProjectId>,
     search_history: SearchHistory,
     search_included_history: SearchHistory,
     search_excluded_history: SearchHistory,
@@ -286,6 +283,13 @@ impl ProjectPath {
         proto::ProjectPath {
             worktree_id: self.worktree_id.to_proto(),
             path: self.path.to_string_lossy().to_string(),
+        }
+    }
+
+    pub fn root_path(worktree_id: WorktreeId) -> Self {
+        Self {
+            worktree_id,
+            path: Path::new("").into(),
         }
     }
 }
@@ -671,7 +675,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
-                hosted_project_id: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_models: Default::default(),
@@ -701,7 +704,7 @@ impl Project {
 
             let ssh_proto = ssh.read(cx).proto_client();
             let worktree_store =
-                cx.new_model(|_| WorktreeStore::remote(false, ssh_proto.clone(), 0));
+                cx.new_model(|_| WorktreeStore::remote(false, ssh_proto.clone(), SSH_PROJECT_ID));
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
@@ -789,7 +792,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: Some(node),
-                hosted_project_id: None,
                 search_history: Self::new_search_history(),
                 environment,
                 remotely_created_models: Default::default(),
@@ -986,7 +988,6 @@ impl Project {
                     local_handles: Vec::new(),
                 },
                 node: None,
-                hosted_project_id: None,
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
@@ -1036,47 +1037,6 @@ impl Project {
         })??;
 
         Ok(this)
-    }
-
-    pub async fn hosted(
-        remote_id: ProjectId,
-        user_store: Model<UserStore>,
-        client: Arc<Client>,
-        languages: Arc<LanguageRegistry>,
-        fs: Arc<dyn Fs>,
-        cx: AsyncAppContext,
-    ) -> Result<Model<Self>> {
-        client.authenticate_and_connect(true, &cx).await?;
-
-        let subscriptions = [
-            EntitySubscription::Project(client.subscribe_to_entity::<Self>(remote_id.0)?),
-            EntitySubscription::BufferStore(
-                client.subscribe_to_entity::<BufferStore>(remote_id.0)?,
-            ),
-            EntitySubscription::WorktreeStore(
-                client.subscribe_to_entity::<WorktreeStore>(remote_id.0)?,
-            ),
-            EntitySubscription::LspStore(client.subscribe_to_entity::<LspStore>(remote_id.0)?),
-            EntitySubscription::SettingsObserver(
-                client.subscribe_to_entity::<SettingsObserver>(remote_id.0)?,
-            ),
-        ];
-        let response = client
-            .request_envelope(proto::JoinHostedProject {
-                project_id: remote_id.0,
-            })
-            .await?;
-        Self::from_join_project_response(
-            response,
-            subscriptions,
-            client,
-            true,
-            user_store,
-            languages,
-            fs,
-            cx,
-        )
-        .await
     }
 
     fn new_search_history() -> SearchHistory {
@@ -1281,10 +1241,6 @@ impl Project {
             ProjectClientState::Shared { remote_id, .. }
             | ProjectClientState::Remote { remote_id, .. } => Some(remote_id),
         }
-    }
-
-    pub fn hosted_project_id(&self) -> Option<ProjectId> {
-        self.hosted_project_id
     }
 
     pub fn supports_terminal(&self, _cx: &AppContext) -> bool {
@@ -3368,6 +3324,25 @@ impl Project {
         let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
         let root_entry = worktree.root_git_entry()?;
         worktree.get_local_repo(&root_entry)?.repo().clone().into()
+    }
+
+    pub fn branches(
+        &self,
+        project_path: ProjectPath,
+        cx: &AppContext,
+    ) -> Task<Result<Vec<git::repository::Branch>>> {
+        self.worktree_store().read(cx).branches(project_path, cx)
+    }
+
+    pub fn update_or_create_branch(
+        &self,
+        repository: ProjectPath,
+        new_branch: String,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        self.worktree_store()
+            .read(cx)
+            .update_or_create_branch(repository, new_branch, cx)
     }
 
     pub fn blame_buffer(

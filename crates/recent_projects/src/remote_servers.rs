@@ -197,11 +197,7 @@ impl ProjectPicker {
             picker
         });
         let connection_string = connection.connection_string().into();
-        let nickname = SshSettings::get_global(cx).nickname_for(
-            &connection.host,
-            connection.port,
-            &connection.username,
-        );
+        let nickname = connection.nickname.clone().map(|nick| nick.into());
         let _path_task = cx
             .spawn({
                 let workspace = workspace.clone();
@@ -414,7 +410,7 @@ impl RemoteServerProjects {
                 return;
             }
         };
-        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, None, cx));
+        let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
         let connection = connect_over_ssh(
             connection_options.remote_server_identifier(),
@@ -491,12 +487,11 @@ impl RemoteServerProjects {
             return;
         };
 
-        let nickname = ssh_connection.nickname.clone();
         let connection_options = ssh_connection.into();
         workspace.update(cx, |_, cx| {
             cx.defer(move |workspace, cx| {
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, Vec::new(), nickname, cx)
+                    SshConnectionModal::new(&connection_options, Vec::new(), cx)
                 });
                 let prompt = workspace
                     .active_modal::<SshConnectionModal>(cx)
@@ -584,9 +579,7 @@ impl RemoteServerProjects {
                 self.create_ssh_server(state.address_editor.clone(), cx);
             }
             Mode::EditNickname(state) => {
-                let text = Some(state.editor.read(cx).text(cx))
-                    .filter(|text| !text.is_empty())
-                    .map(SharedString::from);
+                let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
                 self.update_settings_file(cx, move |setting, _| {
                     if let Some(connections) = setting.ssh_connections.as_mut() {
@@ -633,7 +626,7 @@ impl RemoteServerProjects {
     ) -> impl IntoElement {
         let (main_label, aux_label) = if let Some(nickname) = ssh_connection.nickname.clone() {
             let aux_label = SharedString::from(format!("({})", ssh_connection.host));
-            (nickname, Some(aux_label))
+            (nickname.into(), Some(aux_label))
         } else {
             (ssh_connection.host.clone(), None)
         };
@@ -746,13 +739,11 @@ impl RemoteServerProjects {
                 let project = project.clone();
                 let server = server.clone();
                 cx.spawn(|remote_server_projects, mut cx| async move {
-                    let nickname = server.nickname.clone();
                     let result = open_ssh_project(
                         server.into(),
                         project.paths.into_iter().map(PathBuf::from).collect(),
                         app_state,
                         OpenOptions::default(),
-                        nickname,
                         &mut cx,
                     )
                     .await;
@@ -861,6 +852,7 @@ impl RemoteServerProjects {
                     projects: vec![],
                     nickname: None,
                     args: connection_options.args.unwrap_or_default(),
+                    upload_binary_over_ssh: None,
                 })
         });
     }
@@ -953,7 +945,7 @@ impl RemoteServerProjects {
                 SshConnectionHeader {
                     connection_string: connection_string.clone(),
                     paths: Default::default(),
-                    nickname: connection.nickname.clone(),
+                    nickname: connection.nickname.clone().map(|s| s.into()),
                 }
                 .render(cx),
             )
@@ -1135,13 +1127,14 @@ impl RemoteServerProjects {
         };
 
         let connection_string = connection.host.clone();
+        let nickname = connection.nickname.clone().map(|s| s.into());
 
         v_flex()
             .child(
                 SshConnectionHeader {
                     connection_string,
                     paths: Default::default(),
-                    nickname: connection.nickname.clone(),
+                    nickname,
                 }
                 .render(cx),
             )
