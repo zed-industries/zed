@@ -3711,7 +3711,7 @@ impl ContextEditor {
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, cx| {
-                focus_handle.dispatch_action(&Assist, cx);
+                focus_handle.dispatch_action(&Edit, cx);
             })
     }
 
