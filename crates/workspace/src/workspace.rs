@@ -4632,7 +4632,7 @@ fn open_items(
                         // here is a directory, it was already opened further above
                         // with a `find_or_create_worktree`.
                         if let Ok(task) = abs_path_task {
-                            if task.await.map_or(false, |p| p.is_file()) {
+                            if task.await.map_or(true, |p| p.is_file()) {
                                 return Some((
                                     ix,
                                     workspace
