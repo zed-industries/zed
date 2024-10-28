@@ -931,7 +931,7 @@ impl Render for ChatPanel {
 
         v_flex()
             .key_context("ChatPanel")
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .size_full()
             .on_action(cx.listener(Self::send))
             .child(
