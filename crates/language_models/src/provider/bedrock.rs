@@ -11,13 +11,11 @@ use aws_config::Region;
 use aws_credential_types::Credentials;
 use aws_sdk_bedrockruntime as bedrock_client;
 use aws_sdk_bedrockruntime::Config;
-// use bedrock::{BedrockError, ContentDelta, Event, ResponseContent};
 use collections::{BTreeMap, HashMap};
 use editor::{Editor, EditorElement, EditorStyle};
 use futures::Stream;
 use futures::{future::BoxFuture, stream::BoxStream, FutureExt, StreamExt, TryStreamExt as _};
 use gpui::{AnyView, AppContext, AsyncAppContext, FontStyle, Model, ModelContext, Subscription, Task, TextStyle, View, WhiteSpace};
-use http_client::HttpClient;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -26,11 +24,10 @@ use std::str::FromStr;
 use std::{sync::Arc, time::Duration};
 use serde_json::Value;
 use strum::IntoEnumIterator;
-use bedrock::BedrockError;
+use bedrock::{BedrockError, ContentDelta, Event, ResponseContent};
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
-use crate::provider::anthropic::{count_anthropic_tokens, map_to_language_model_completion_events};
 
 const PROVIDER_ID : &str = "amazon-bedrock";
 const PROVIDER_NAME : &str = "Amazon Bedrock";
@@ -216,6 +213,7 @@ struct BedrockModel {
     id: LanguageModelId,
     model: bedrock::Model,
     state: Model<State>,
+    request_limiter: RateLimiter,
 }
 
 impl BedrockModel {
@@ -246,7 +244,7 @@ impl LanguageModel for BedrockModel {
     }
 
     fn telemetry_id(&self) -> String {
-        format!("anthropic/{}", self.model.id())
+        format!("bedrock/{}", self.model.id())
     }
 
     fn max_token_count(&self) -> usize {
@@ -262,7 +260,7 @@ impl LanguageModel for BedrockModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        count_anthropic_tokens(request, cx)
+        get_bedrock_tokens(request, cx)
     }
 
     fn stream_completion(
@@ -284,6 +282,10 @@ impl LanguageModel for BedrockModel {
         async move { Ok(future.await?.boxed()) }.boxed()
     }
 
+    fn use_any_tool(&self, request: LanguageModelRequest, name: String, description: String, schema: Value, cx: &AsyncAppContext) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
+        unimplemented!();
+    }
+
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
         self.model
             .cache_configuration()
@@ -293,42 +295,73 @@ impl LanguageModel for BedrockModel {
                 min_total_token: config.min_total_token,
             })
     }
+}
 
-    fn use_any_tool(
-        &self,
-        request: LanguageModelRequest,
-        tool_name: String,
-        tool_description: String,
-        input_schema: serde_json::Value,
-        cx: &AsyncAppContext,
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        let mut request = request.into_anthropic(
-            self.model.tool_model_id().into(),
-            self.model.default_temperature(),
-            self.model.max_output_tokens(),
-        );
-        request.tool_choice = Some(anthropic::ToolChoice::Tool {
-            name: tool_name.clone(),
-        });
-        request.tools = vec![anthropic::Tool {
-            name: tool_name.clone(),
-            description: tool_description,
-            input_schema,
-        }];
+fn get_bedrock_tokens(request: LanguageModelRequest, cx: &AppContext) -> BoxFuture<'static, Result<usize>> {
 
-        let response = self.stream_completion(request, cx);
-        self.request_limiter
-            .run(async move {
-                let response = response.await?;
-                Ok(anthropic::extract_tool_args_from_events(
-                    tool_name,
-                    Box::pin(response.map_err(|e| anyhow!(e))),
-                )
-                    .await?
-                    .boxed())
-            })
-            .boxed()
+}
+
+pub fn map_to_language_model_completion_events(
+    events: Pin<Box<dyn Send + Stream<Item = Result<Event, BedrockError>>>>,
+) -> impl Stream<Item = Result<LanguageModelCompletionEvent>> {
+    struct State {
+        events: Pin<Box<dyn Send + Stream<Item = Result<Event, BedrockError>>>>
     }
+
+    futures::stream::unfold(
+        State {
+            events
+        },
+        |mut state: State| async move {
+            while let Some(event) = state.events.next().await {
+                match event {
+                    Ok(event) => match event {
+                        Event::ContentBlockStart {
+                            index,
+                            content_block,
+                        } => match content_block {
+                            ResponseContent::Text { text } => {
+                                return Some((
+                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    state,
+                                ));
+                            }
+                        },
+                        Event::ContentBlockDelta { index, delta } => match delta {
+                            ContentDelta::TextDelta { text } => {
+                                return Some((
+                                    Some(Ok(LanguageModelCompletionEvent::Text(text))),
+                                    state,
+                                ));
+                            }
+                            _ => {}
+                        },
+                        Event::MessageDelta { delta, .. } => {
+                            if let Some(stop_reason) = delta.stop_reason.as_deref() {
+                                let stop_reason = match stop_reason {
+                                    "end_turn" => StopReason::EndTurn,
+                                    "max_tokens" => StopReason::MaxTokens,
+                                    "tool_use" => StopReason::ToolUse,
+                                    _ => StopReason::EndTurn,
+                                };
+
+                                return Some((
+                                    Some(Ok(LanguageModelCompletionEvent::Stop(stop_reason))),
+                                    state,
+                                ));
+                            }
+                        }
+                        _ => {}
+                    },
+                    Err(err) => {
+                        return Some((Some(Err(anyhow!(err))), state));
+                    }
+                }
+            }
+
+            None
+        }
+    ).filter_map(|event| async move { event })
 }
 
 impl LanguageModelProvider for BedrockLanguageModelProvider {
@@ -381,6 +414,7 @@ impl LanguageModelProvider for BedrockLanguageModelProvider {
                     id: LanguageModelId::from(model.id().to_string()),
                     model,
                     state: self.state.clone(),
+                    request_limiter: RateLimiter::new(4)
                 }) as Arc<dyn LanguageModel>
             })
             .collect()
@@ -422,6 +456,7 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     const PLACEHOLDER_TEXT: &'static str = "XXXXXXXXXXXXXXXXXXX";
+    const PLACEHOLDER_REGION: &'static str = "us-east-1";
 
     fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
         cx.observe(&state, |_, _, cx| {
@@ -460,7 +495,7 @@ impl ConfigurationView {
             }),
             region_editor: cx.new_view(|cx| {
                 let mut editor = Editor::single_line(cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_REGION, cx);
                 editor
             }),
             state,
@@ -575,9 +610,9 @@ impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const IAM_CONSOLE_URL: &str = "https://us-east-1.console.aws.amazon.com/iam/home";
         const INSTRUCTIONS: [&str; 3] = [
-            "To use Zed's assistant with Bedrock, you need to add the Access Key ID. and Secret Access Key. Follow these steps:",
+            "To use Zed's assistant with Bedrock, you need to add the Access Key ID, Secret Access Key and AWS Region. Follow these steps:",
             "- Create a pair at:",
-            "- Paste your Access Key ID and Secret Key below and hit enter to use the assistant:",
+            "- Paste your Access Key ID, Secret Key, and Region below and hit enter to use the assistant:",
         ];
         let env_var_set = self.state.read(cx).credentials_from_env;
 
@@ -589,7 +624,7 @@ impl Render for ConfigurationView {
                 .on_action(cx.listener(Self::save_credentials))
                 .child(Label::new(INSTRUCTIONS[0]))
                 .child(h_flex().child(Label::new(INSTRUCTIONS[1])).child(
-                    Button::new("anthropic_console", IAM_CONSOLE_URL)
+                    Button::new("iam_console", IAM_CONSOLE_URL)
                         .style(ButtonStyle::Subtle)
                         .icon(IconName::ExternalLink)
                         .icon_size(IconSize::XSmall)
@@ -607,7 +642,7 @@ impl Render for ConfigurationView {
                 )
                 .child(
                     Label::new(
-                        format!("You can also assign the {ZED_BEDROCK_AAID} and {ZED_BEDROCK_SK} environment variable and restart Zed."),
+                        format!("You can also assign the {ZED_BEDROCK_AAID}, {ZED_BEDROCK_SK} and {ZED_BEDROCK_REGION} environment variable and restart Zed."),
                     )
                         .size(LabelSize::Small),
                 )
@@ -621,7 +656,7 @@ impl Render for ConfigurationView {
                         .gap_1()
                         .child(Icon::new(IconName::Check).color(Color::Success))
                         .child(Label::new(if env_var_set {
-                            format!("Access Key ID is set in {ZED_BEDROCK_AAID}, Secret Key is set in {ZED_BEDROCK_SK} environment variables.")
+                            format!("Access Key ID is set in {ZED_BEDROCK_AAID}, Secret Key is set in {ZED_BEDROCK_SK}, Region is set in {ZED_BEDROCK_REGION} environment variables.")
                         } else {
                             "Credentials configured.".to_string()
                         })),
@@ -633,7 +668,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(|cx| Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_AAID} and {ZED_BEDROCK_SK} environment variables."), cx))
+                            this.tooltip(|cx| Tooltip::text(format!("To reset your credentials, unset the {ZED_BEDROCK_AAID}, {ZED_BEDROCK_SK}, and {ZED_BEDROCK_REGION} environment variables."), cx))
                         })
                         .on_click(cx.listener(|this, _, cx| this.reset_credentials(cx))),
                 )

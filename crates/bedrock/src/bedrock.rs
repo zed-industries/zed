@@ -37,8 +37,6 @@ pub enum Model {
         max_tokens: usize,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        /// Override this model with a different Bedrock model for tool calls.
-        tool_override: Option<String>,
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<BedrockModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
@@ -128,18 +126,6 @@ impl Model {
                 default_temperature,
                 ..
             } => default_temperature.unwrap_or(1.0),
-        }
-    }
-
-    pub fn tool_model_id(&self) -> &str {
-        if let Self::Custom {
-            tool_override: Some(tool_override),
-            ..
-        } = self
-        {
-            tool_override
-        } else {
-            self.id()
         }
     }
 }
