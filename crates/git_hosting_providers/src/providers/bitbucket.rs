@@ -1,6 +1,11 @@
+use std::str::FromStr;
+
 use url::Url;
 
-use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
+};
 
 pub struct Bitbucket;
 
@@ -25,18 +30,22 @@ impl GitHostingProvider for Bitbucket {
         format!("lines-{start_line}:{end_line}")
     }
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        if url.contains("bitbucket.org") {
-            let (_, repo_with_owner) = url.trim_end_matches(".git").split_once("bitbucket.org")?;
-            let (owner, repo) = repo_with_owner
-                .trim_start_matches('/')
-                .trim_start_matches(':')
-                .split_once('/')?;
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
+        let url = RemoteUrl::from_str(url).ok()?;
 
-            return Some(ParsedGitRemote { owner, repo });
+        let host = url.host_str()?;
+        if host != "bitbucket.org" {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?;
+        let repo = path_segments.next()?.trim_end_matches(".git");
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(
@@ -88,8 +97,8 @@ mod tests {
         let url = "https://thorstenballzed@bitbucket.org/thorstenzed/testingrepo.git";
         let (provider, parsed) = parse_git_remote_url(provider_registry, url).unwrap();
         assert_eq!(provider.name(), "Bitbucket");
-        assert_eq!(parsed.owner, "thorstenzed");
-        assert_eq!(parsed.repo, "testingrepo");
+        assert_eq!(parsed.owner.as_ref(), "thorstenzed");
+        assert_eq!(parsed.repo.as_ref(), "testingrepo");
     }
 
     #[test]
@@ -99,8 +108,8 @@ mod tests {
         let url = "https://bitbucket.org/thorstenzed/testingrepo.git";
         let (provider, parsed) = parse_git_remote_url(provider_registry, url).unwrap();
         assert_eq!(provider.name(), "Bitbucket");
-        assert_eq!(parsed.owner, "thorstenzed");
-        assert_eq!(parsed.repo, "testingrepo");
+        assert_eq!(parsed.owner.as_ref(), "thorstenzed");
+        assert_eq!(parsed.repo.as_ref(), "testingrepo");
     }
 
     #[test]
@@ -110,15 +119,15 @@ mod tests {
         let url = "git@bitbucket.org:thorstenzed/testingrepo.git";
         let (provider, parsed) = parse_git_remote_url(provider_registry, url).unwrap();
         assert_eq!(provider.name(), "Bitbucket");
-        assert_eq!(parsed.owner, "thorstenzed");
-        assert_eq!(parsed.repo, "testingrepo");
+        assert_eq!(parsed.owner.as_ref(), "thorstenzed");
+        assert_eq!(parsed.repo.as_ref(), "testingrepo");
     }
 
     #[test]
     fn test_build_bitbucket_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
-            owner: "thorstenzed",
-            repo: "testingrepo",
+            owner: "thorstenzed".into(),
+            repo: "testingrepo".into(),
         };
         let permalink = Bitbucket.build_permalink(
             remote,
@@ -136,8 +145,8 @@ mod tests {
     #[test]
     fn test_build_bitbucket_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "thorstenzed",
-            repo: "testingrepo",
+            owner: "thorstenzed".into(),
+            repo: "testingrepo".into(),
         };
         let permalink = Bitbucket.build_permalink(
             remote,
@@ -156,8 +165,8 @@ mod tests {
     #[test]
     fn test_build_bitbucket_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "thorstenzed",
-            repo: "testingrepo",
+            owner: "thorstenzed".into(),
+            repo: "testingrepo".into(),
         };
         let permalink = Bitbucket.build_permalink(
             remote,

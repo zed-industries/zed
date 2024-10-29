@@ -1,6 +1,11 @@
+use std::str::FromStr;
+
 use url::Url;
 
-use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
+};
 
 pub struct Sourcehut;
 
@@ -25,21 +30,27 @@ impl GitHostingProvider for Sourcehut {
         format!("L{start_line}-{end_line}")
     }
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        if url.starts_with("git@git.sr.ht:") || url.starts_with("https://git.sr.ht/") {
-            // sourcehut indicates a repo with '.git' suffix as a separate repo.
-            // For example, "git@git.sr.ht:~username/repo" and "git@git.sr.ht:~username/repo.git"
-            // are two distinct repositories.
-            let repo_with_owner = url
-                .trim_start_matches("git@git.sr.ht:~")
-                .trim_start_matches("https://git.sr.ht/~");
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
+        let url = RemoteUrl::from_str(url).ok()?;
 
-            let (owner, repo) = repo_with_owner.split_once('/')?;
-
-            return Some(ParsedGitRemote { owner, repo });
+        let host = url.host_str()?;
+        if host != "git.sr.ht" {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?;
+        // We don't trim the `.git` suffix here like we do elsewhere, as
+        // sourcehut treats a repo with `.git` suffix as a separate repo.
+        //
+        // For example, `git@git.sr.ht:~username/repo` and `git@git.sr.ht:~username/repo.git`
+        // are two distinct repositories.
+        let repo = path_segments.next()?;
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(
@@ -83,8 +94,8 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Sourcehut.build_permalink(
             remote,
@@ -102,8 +113,8 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url_with_git_prefix() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed.git",
+            owner: "rajveermalviya".into(),
+            repo: "zed.git".into(),
         };
         let permalink = Sourcehut.build_permalink(
             remote,
@@ -121,8 +132,8 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Sourcehut.build_permalink(
             remote,
@@ -140,8 +151,8 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Sourcehut.build_permalink(
             remote,
@@ -159,8 +170,8 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_https_url() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Sourcehut.build_permalink(
             remote,
@@ -178,8 +189,8 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_https_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Sourcehut.build_permalink(
             remote,
@@ -197,8 +208,8 @@ mod tests {
     #[test]
     fn test_build_sourcehut_permalink_from_https_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Sourcehut.build_permalink(
             remote,

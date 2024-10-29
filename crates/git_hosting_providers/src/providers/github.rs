@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::{Arc, OnceLock};
 
 use anyhow::{bail, Context, Result};
@@ -10,7 +11,7 @@ use url::Url;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
-    PullRequest,
+    PullRequest, RemoteUrl,
 };
 
 fn pull_request_number_regex() -> &'static Regex {
@@ -107,19 +108,22 @@ impl GitHostingProvider for Github {
         format!("L{start_line}-L{end_line}")
     }
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        if url.starts_with("git@github.com:") || url.starts_with("https://github.com/") {
-            let repo_with_owner = url
-                .trim_start_matches("git@github.com:")
-                .trim_start_matches("https://github.com/")
-                .trim_end_matches(".git");
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
+        let url = RemoteUrl::from_str(url).ok()?;
 
-            let (owner, repo) = repo_with_owner.split_once('/')?;
-
-            return Some(ParsedGitRemote { owner, repo });
+        let host = url.host_str()?;
+        if host != "github.com" {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?;
+        let repo = path_segments.next()?.trim_end_matches(".git");
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(
@@ -199,10 +203,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_remote_url_given_https_url_with_username() {
+        let parsed_remote = Github
+            .parse_remote_url("https://jlannister@github.com/some-org/some-repo.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "some-org".into(),
+                repo: "some-repo".into(),
+            }
+        );
+    }
+
+    #[test]
     fn test_build_github_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
         };
         let permalink = Github.build_permalink(
             remote,
@@ -220,8 +239,8 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
         };
         let permalink = Github.build_permalink(
             remote,
@@ -239,8 +258,8 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
         };
         let permalink = Github.build_permalink(
             remote,
@@ -258,8 +277,8 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_https_url() {
         let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
         };
         let permalink = Github.build_permalink(
             remote,
@@ -277,8 +296,8 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_https_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
         };
         let permalink = Github.build_permalink(
             remote,
@@ -296,8 +315,8 @@ mod tests {
     #[test]
     fn test_build_github_permalink_from_https_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
         };
         let permalink = Github.build_permalink(
             remote,
@@ -315,8 +334,8 @@ mod tests {
     #[test]
     fn test_github_pull_requests() {
         let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
+            owner: "zed-industries".into(),
+            repo: "zed".into(),
         };
 
         let message = "This does not contain a pull request";
