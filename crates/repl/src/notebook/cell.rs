@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, Hsla, Task, TextStyleRefinement, View};
+use gpui::{prelude::*, AppContext, Hsla, Task, TextStyleRefinement, View};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
@@ -207,7 +207,7 @@ impl Cell {
                     editor: editor_view,
                     outputs: convert_outputs(outputs, cx),
                     selected: false,
-                    // language_task,
+                    language_task,
                     cell_position: None,
                 }
             })),
@@ -420,10 +420,13 @@ pub struct CodeCell {
     outputs: Vec<Output>,
     selected: bool,
     cell_position: Option<CellPosition>,
-    // language_task: Task<()>,
+    language_task: Task<()>,
 }
 
 impl CodeCell {
+    pub fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.editor.read(cx).buffer().read(cx).is_dirty(cx)
+    }
     pub fn has_outputs(&self) -> bool {
         !self.outputs.is_empty()
     }

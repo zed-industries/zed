@@ -180,16 +180,20 @@ impl NotebookEditor {
         }
     }
 
-    fn cells(&self) -> impl Iterator<Item = &Cell> {
-        self.cell_order
-            .iter()
-            .filter_map(|id| self.cell_map.get(id))
-    }
-
     fn has_outputs(&self, cx: &ViewContext<Self>) -> bool {
         self.cell_map.values().any(|cell| {
             if let Cell::Code(code_cell) = cell {
                 code_cell.read(cx).has_outputs()
+            } else {
+                false
+            }
+        })
+    }
+
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.cell_map.values().any(|cell| {
+            if let Cell::Code(code_cell) = cell {
+                code_cell.read(cx).is_dirty(cx)
             } else {
                 false
             }
@@ -595,6 +599,10 @@ impl Item for NotebookEditor {
 
     fn show_toolbar(&self) -> bool {
         false
+    }
+
+    fn is_dirty(&self, cx: &AppContext) -> bool {
+        self.is_dirty(cx)
     }
 }
 
