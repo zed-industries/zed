@@ -110,7 +110,6 @@ fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) 
         let context_task = task_context(workspace, cx);
         cx.spawn(|workspace, mut cx| async move {
             let task_context = context_task.await;
-            println!("task_context: {:?}", task_context);
             workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.toggle_modal(cx, |cx| {
