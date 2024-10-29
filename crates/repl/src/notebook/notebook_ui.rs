@@ -195,7 +195,7 @@ impl NotebookEditor {
         }
 
         let view = cx.view().downgrade();
-        let cell_count = cell_order.len().clone();
+        let cell_count = cell_order.len();
         let cell_order_for_list = cell_order.clone();
         let cell_map_for_list = cell_map.clone();
 
@@ -223,7 +223,7 @@ impl NotebookEditor {
         );
 
         cell_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, cx| {
-            // TODO: Do we need to do anythign with the scroll handler?
+            // TODO: Do we need to do anything with the scroll handler?
 
             // Example from chat panel:
             // if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
@@ -249,7 +249,7 @@ impl NotebookEditor {
 
     fn build_list_state(&mut self, cx: &mut ViewContext<Self>) -> ListState {
         let cell_count = self.cell_order.len();
-        let selected_cell_index = self.selected_cell_index.clone();
+        let selected_cell_index = self.selected_cell_index;
         let cell_order = self.cell_order.clone();
         let cell_map = self.cell_map.clone();
 
