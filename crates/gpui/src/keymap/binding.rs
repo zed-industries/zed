@@ -69,6 +69,11 @@ impl KeyBinding {
     pub fn action(&self) -> &dyn Action {
         self.action.as_ref()
     }
+
+    /// Get the predicate used to match this binding
+    pub fn predicate(&self) -> Option<&KeyBindingContextPredicate> {
+        self.context_predicate.as_ref()
+    }
 }
 
 impl std::fmt::Debug for KeyBinding {

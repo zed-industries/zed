@@ -11,9 +11,12 @@ use std::fmt;
 pub struct KeyContext(SmallVec<[ContextEntry; 1]>);
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
-struct ContextEntry {
-    key: SharedString,
-    value: Option<SharedString>,
+/// An entry in a KeyContext
+pub struct ContextEntry {
+    /// The key (or name if no value)
+    pub key: SharedString,
+    /// The value
+    pub value: Option<SharedString>,
 }
 
 impl<'a> TryFrom<&'a str> for KeyContext {
@@ -37,6 +40,17 @@ impl KeyContext {
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         context.set("os", "unknown");
         context
+    }
+
+    /// Returns the primary context entry (usually the name of the component)
+    pub fn primary(&self) -> Option<&ContextEntry> {
+        self.0.iter().find(|p| p.value.is_none())
+    }
+
+    /// Returns everything except the primary context entry.
+    pub fn secondary(&self) -> impl Iterator<Item = &ContextEntry> {
+        let primary = self.primary();
+        self.0.iter().filter(move |&p| Some(p) != primary)
     }
 
     /// Parse a key context from a string.
@@ -176,6 +190,20 @@ pub enum KeyBindingContextPredicate {
         Box<KeyBindingContextPredicate>,
         Box<KeyBindingContextPredicate>,
     ),
+}
+
+impl fmt::Display for KeyBindingContextPredicate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Identifier(name) => write!(f, "{}", name),
+            Self::Equal(left, right) => write!(f, "{} == {}", left, right),
+            Self::NotEqual(left, right) => write!(f, "{} != {}", left, right),
+            Self::Not(pred) => write!(f, "!{}", pred),
+            Self::Child(parent, child) => write!(f, "{} > {}", parent, child),
+            Self::And(left, right) => write!(f, "({} && {})", left, right),
+            Self::Or(left, right) => write!(f, "({} || {})", left, right),
+        }
+    }
 }
 
 impl KeyBindingContextPredicate {
