@@ -5,15 +5,15 @@ use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
 use util::debug_panic;
 
-pub(crate) const MIN_BASE: usize = if cfg!(test) { 6 } else { 32 };
+pub(crate) const MIN_BASE: usize = if cfg!(test) { 6 } else { 64 };
 pub(crate) const MAX_BASE: usize = MIN_BASE * 2;
 
 #[derive(Clone, Debug, Default)]
 pub struct Chunk {
-    chars: usize,
-    chars_utf16: usize,
-    tabs: usize,
-    newlines: usize,
+    chars: u128,
+    chars_utf16: u128,
+    tabs: u128,
+    newlines: u128,
     pub text: ArrayString<MAX_BASE>,
 }
 
@@ -31,9 +31,9 @@ impl Chunk {
             let ix = self.text.len() + char_ix;
             self.chars |= 1 << ix;
             self.chars_utf16 |= 1 << ix;
-            self.chars_utf16 |= c.len_utf16() << ix;
-            self.tabs |= ((c == '\t') as usize) << ix;
-            self.newlines |= ((c == '\n') as usize) << ix;
+            self.chars_utf16 |= (c.len_utf16() as u128) << ix;
+            self.tabs |= ((c == '\t') as u128) << ix;
+            self.newlines |= ((c == '\n') as u128) << ix;
         }
         self.text.push_str(text);
     }
@@ -71,10 +71,10 @@ impl Chunk {
 
 #[derive(Clone, Copy, Debug)]
 pub struct ChunkSlice<'a> {
-    chars: usize,
-    chars_utf16: usize,
-    tabs: usize,
-    newlines: usize,
+    chars: u128,
+    chars_utf16: u128,
+    tabs: u128,
+    newlines: u128,
     text: &'a str,
 }
 
@@ -103,7 +103,7 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn split_at(self, mid: usize) -> (ChunkSlice<'a>, ChunkSlice<'a>) {
-        if mid == 64 {
+        if mid == MAX_BASE {
             let left = self;
             let right = ChunkSlice {
                 chars: 0,
@@ -114,7 +114,11 @@ impl<'a> ChunkSlice<'a> {
             };
             (left, right)
         } else {
-            let mask = ((1u128 << mid) - 1) as usize;
+            let mask = if mid == MAX_BASE {
+                u128::MAX
+            } else {
+                (1u128 << mid) - 1
+            };
             let (left_text, right_text) = self.text.split_at(mid);
             let left = ChunkSlice {
                 chars: self.chars & mask,
@@ -136,8 +140,12 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn slice(self, range: Range<usize>) -> Self {
-        let mask = ((1u128 << range.end) - 1) as usize;
-        if range.start == 64 {
+        let mask = if range.end == MAX_BASE {
+            u128::MAX
+        } else {
+            (1u128 << range.end) - 1
+        };
+        if range.start == MAX_BASE {
             Self {
                 chars: 0,
                 chars_utf16: 0,
@@ -187,7 +195,7 @@ impl<'a> ChunkSlice<'a> {
     #[inline(always)]
     pub fn lines(&self) -> Point {
         let row = self.newlines.count_ones();
-        let column = self.newlines.leading_zeros() - (usize::BITS - self.text.len() as u32);
+        let column = self.newlines.leading_zeros() - (u128::BITS - self.text.len() as u32);
         Point::new(row, column)
     }
 
@@ -197,7 +205,7 @@ impl<'a> ChunkSlice<'a> {
         if self.newlines == 0 {
             self.chars.count_ones()
         } else {
-            let mask = ((1u128 << self.newlines.trailing_zeros() as usize) - 1) as usize;
+            let mask = (1u128 << self.newlines.trailing_zeros()) - 1;
             (self.chars & mask).count_ones()
         }
     }
@@ -208,7 +216,7 @@ impl<'a> ChunkSlice<'a> {
         if self.newlines == 0 {
             self.chars.count_ones()
         } else {
-            let mask = !(usize::MAX >> self.newlines.leading_zeros());
+            let mask = !(u128::MAX >> self.newlines.leading_zeros());
             (self.chars & mask).count_ones()
         }
     }
@@ -219,7 +227,7 @@ impl<'a> ChunkSlice<'a> {
         if self.newlines == 0 {
             self.chars_utf16.count_ones()
         } else {
-            let mask = !(usize::MAX >> self.newlines.leading_zeros());
+            let mask = !(u128::MAX >> self.newlines.leading_zeros());
             (self.chars_utf16 & mask).count_ones()
         }
     }
@@ -266,9 +274,13 @@ impl<'a> ChunkSlice<'a> {
             return Point::zero();
         }
 
-        let mask = ((1u128 << offset) - 1) as usize;
+        let mask = if offset == MAX_BASE {
+            u128::MAX
+        } else {
+            (1u128 << offset) - 1
+        };
         let row = (self.newlines & mask).count_ones();
-        let newline_ix = usize::BITS - (self.newlines & mask).leading_zeros();
+        let newline_ix = u128::BITS - (self.newlines & mask).leading_zeros();
         let column = (offset - newline_ix as usize) as u32;
         Point::new(row, column)
     }
@@ -299,7 +311,11 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn offset_to_offset_utf16(&self, offset: usize) -> OffsetUtf16 {
-        let mask = ((1u128 << offset) - 1) as usize;
+        let mask = if offset == MAX_BASE {
+            u128::MAX
+        } else {
+            (1u128 << offset) - 1
+        };
         OffsetUtf16((self.chars_utf16 & mask).count_ones() as usize)
     }
 
@@ -309,8 +325,8 @@ impl<'a> ChunkSlice<'a> {
             0
         } else {
             let ix = nth_set_bit(self.chars_utf16, target.0) + 1;
-            if ix == 64 {
-                64
+            if ix == MAX_BASE {
+                MAX_BASE
             } else {
                 let utf8_additional_len = cmp::min(
                     (self.chars_utf16 >> ix).trailing_zeros() as usize,
@@ -323,10 +339,14 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn offset_to_point_utf16(&self, offset: usize) -> PointUtf16 {
-        let mask = ((1u128 << offset) - 1) as usize;
+        let mask = if offset == MAX_BASE {
+            u128::MAX
+        } else {
+            (1u128 << offset) - 1
+        };
         let row = (self.newlines & mask).count_ones();
-        let newline_ix = usize::BITS - (self.newlines & mask).leading_zeros();
-        let column = if newline_ix == 64 {
+        let newline_ix = u128::BITS - (self.newlines & mask).leading_zeros();
+        let column = if newline_ix as usize == MAX_BASE {
             0
         } else {
             ((self.chars_utf16 & mask) >> newline_ix).count_ones()
@@ -483,7 +503,7 @@ impl<'a> ChunkSlice<'a> {
         } else {
             0
         };
-        let row_len = if row_start == 64 {
+        let row_len = if row_start == MAX_BASE {
             0
         } else {
             cmp::min(
@@ -497,42 +517,11 @@ impl<'a> ChunkSlice<'a> {
 
 /// Finds the n-th bit that is set to 1.
 #[inline(always)]
-fn nth_set_bit(v: usize, mut n: usize) -> usize {
-    let v = v.reverse_bits();
-    let mut s: usize = 64;
-    let mut t: usize;
-
-    // Parallel bit count intermediates
-    let a = v - ((v >> 1) & usize::MAX / 3);
-    let b = (a & usize::MAX / 5) + ((a >> 2) & usize::MAX / 5);
-    let c = (b + (b >> 4)) & usize::MAX / 0x11;
-    let d = (c + (c >> 8)) & usize::MAX / 0x101;
-    t = (d >> 32) + (d >> 48);
-
-    // Branchless select
-    s -= ((t.wrapping_sub(n)) & 256) >> 3;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
-
-    t = (d >> (s - 16)) & 0xff;
-    s -= ((t.wrapping_sub(n)) & 256) >> 4;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
-
-    t = (c >> (s - 8)) & 0xf;
-    s -= ((t.wrapping_sub(n)) & 256) >> 5;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
-
-    t = (b >> (s - 4)) & 0x7;
-    s -= ((t.wrapping_sub(n)) & 256) >> 6;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
-
-    t = (a >> (s - 2)) & 0x3;
-    s -= ((t.wrapping_sub(n)) & 256) >> 7;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
-
-    t = (v >> (s - 1)) & 0x1;
-    s -= ((t.wrapping_sub(n)) & 256) >> 8;
-
-    65 - s - 1
+fn nth_set_bit(mut v: u128, n: usize) -> usize {
+    for _ in 0..(n - 1) {
+        v = v & (v - 1);
+    }
+    v.trailing_zeros() as usize
 }
 
 #[cfg(test)]
@@ -576,6 +565,9 @@ mod tests {
 
     #[test]
     fn test_nth_set_bit() {
+        assert_eq!(nth_set_bit(1 << 127, 1), 127);
+        assert_eq!(nth_set_bit((1 << 127) | (1 << 126), 1), 126);
+        assert_eq!(nth_set_bit((1 << 127) | (1 << 126), 2), 127);
         assert_eq!(
             nth_set_bit(
                 0b1000000000000000000000000000000000000000000000000000000000000000,
