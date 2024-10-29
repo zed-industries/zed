@@ -3420,7 +3420,7 @@ impl Project {
         buffer: &Model<Buffer>,
         version: Option<clock::Global>,
         cx: &AppContext,
-    ) -> Task<Result<Blame>> {
+    ) -> Task<Result<Option<Blame>>> {
         self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
@@ -4272,17 +4272,6 @@ impl Completion {
         }
     }
 }
-
-#[derive(Debug)]
-pub struct NoRepositoryError {}
-
-impl std::fmt::Display for NoRepositoryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "no git repository for worktree found")
-    }
-}
-
-impl std::error::Error for NoRepositoryError {}
 
 pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {

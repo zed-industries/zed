@@ -2117,10 +2117,16 @@ message CommitPermalink {
 }
 
 message BlameBufferResponse {
-    repeated BlameEntry entries = 1;
-    repeated CommitMessage messages = 2;
-    repeated CommitPermalink permalinks = 3;
-    optional string remote_url = 4;
+    message BlameResponse {
+        repeated BlameEntry entries = 1;
+        repeated CommitMessage messages = 2;
+        repeated CommitPermalink permalinks = 3;
+        optional string remote_url = 4;
+    }
+
+    optional BlameResponse blame_response = 5;
+
+    reserved 1 to 4;
 }
 
 message MultiLspQuery {
