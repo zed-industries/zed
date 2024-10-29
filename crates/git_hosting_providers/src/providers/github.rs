@@ -236,13 +236,30 @@ mod tests {
     }
 
     #[test]
-    fn test_build_github_permalink_from_ssh_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
+    fn test_build_github_permalink() {
         let permalink = Github.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
+            BuildPermalinkParams {
+                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+                path: "crates/zed/src/main.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_github_permalink_with_single_line_selection() {
+        let permalink = Github.build_permalink(
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
@@ -255,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn test_build_github_permalink_from_ssh_url_multi_line_selection() {
+    fn test_build_github_permalink_with_multi_line_selection() {
         let remote = ParsedGitRemote {
             owner: "zed-industries".into(),
             repo: "zed".into(),
@@ -270,63 +287,6 @@ mod tests {
         );
 
         let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-L48";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_github_permalink_from_https_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Github.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
-                selection: None,
-            },
-        );
-
-        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_github_permalink_from_https_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Github.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
-                selection: Some(6..6),
-            },
-        );
-
-        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L7";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_github_permalink_from_https_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Github.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
-                selection: Some(23..47),
-            },
-        );
-
-        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
