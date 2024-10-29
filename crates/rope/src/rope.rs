@@ -4,7 +4,7 @@ mod point;
 mod point_utf16;
 mod unclipped;
 
-use chunk::{Chunk, ChunkRef};
+use chunk::{Chunk, ChunkSlice};
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
@@ -18,15 +18,9 @@ pub use point::Point;
 pub use point_utf16::PointUtf16;
 pub use unclipped::Unclipped;
 
-#[cfg(test)]
-const CHUNK_BASE: usize = 6;
-
-#[cfg(not(test))]
-const CHUNK_BASE: usize = 32;
-
 #[derive(Clone, Default)]
 pub struct Rope {
-    chunks: SumTree<Chunk<{ 2 * CHUNK_BASE }>>,
+    chunks: SumTree<Chunk>,
 }
 
 impl Rope {
@@ -41,8 +35,8 @@ impl Rope {
             if self
                 .chunks
                 .last()
-                .map_or(false, |c| c.text.len() < CHUNK_BASE)
-                || chunk.text.len() < CHUNK_BASE
+                .map_or(false, |c| c.text.len() < chunk::MIN_BASE)
+                || chunk.text.len() < chunk::MIN_BASE
             {
                 self.push(&chunk.text);
                 chunks.next(&());
@@ -79,11 +73,13 @@ impl Rope {
     pub fn push(&mut self, mut text: &str) {
         self.chunks.update_last(
             |last_chunk| {
-                let split_ix = if last_chunk.text.len() + text.len() <= 2 * CHUNK_BASE {
+                let split_ix = if last_chunk.text.len() + text.len() <= chunk::MAX_BASE {
                     text.len()
                 } else {
-                    let mut split_ix =
-                        cmp::min(CHUNK_BASE.saturating_sub(last_chunk.text.len()), text.len());
+                    let mut split_ix = cmp::min(
+                        chunk::MIN_BASE.saturating_sub(last_chunk.text.len()),
+                        text.len(),
+                    );
                     while !text.is_char_boundary(split_ix) {
                         split_ix += 1;
                     }
@@ -103,7 +99,7 @@ impl Rope {
         let mut new_chunks = SmallVec::<[_; 16]>::new();
 
         while !text.is_empty() {
-            let mut split_ix = cmp::min(2 * CHUNK_BASE, text.len());
+            let mut split_ix = cmp::min(chunk::MAX_BASE, text.len());
             while !text.is_char_boundary(split_ix) {
                 split_ix -= 1;
             }
@@ -137,7 +133,7 @@ impl Rope {
         // a chunk ends with 3 bytes of a 4-byte character. These 3 bytes end up being stored in the following chunk, thus wasting
         // 3 bytes of storage in current chunk.
         // For example, a 1024-byte string can occupy between 32 (full ASCII, 1024/32) and 36 (full 4-byte UTF-8, 1024 / 29 rounded up) chunks.
-        const MIN_CHUNK_SIZE: usize = 2 * CHUNK_BASE - 3;
+        const MIN_CHUNK_SIZE: usize = chunk::MAX_BASE - 3;
 
         // We also round up the capacity up by one, for a good measure; we *really* don't want to realloc here, as we assume that the # of characters
         // we're working with there is large.
@@ -145,7 +141,7 @@ impl Rope {
         let mut new_chunks = Vec::with_capacity(capacity);
 
         while !text.is_empty() {
-            let mut split_ix = cmp::min(2 * CHUNK_BASE, text.len());
+            let mut split_ix = cmp::min(chunk::MAX_BASE, text.len());
             while !text.is_char_boundary(split_ix) {
                 split_ix -= 1;
             }
@@ -167,6 +163,35 @@ impl Rope {
 
         self.check_invariants();
     }
+
+    fn push_chunk(&mut self, mut chunk: ChunkSlice) {
+        self.chunks.update_last(
+            |last_chunk| {
+                let split_ix = if last_chunk.text.len() + chunk.len() <= chunk::MAX_BASE {
+                    chunk.len()
+                } else {
+                    let mut split_ix = cmp::min(
+                        chunk::MIN_BASE.saturating_sub(last_chunk.text.len()),
+                        chunk.len(),
+                    );
+                    while !chunk.is_char_boundary(split_ix) {
+                        split_ix += 1;
+                    }
+                    split_ix
+                };
+
+                let (suffix, remainder) = chunk.split_at(split_ix);
+                last_chunk.append(suffix);
+                chunk = remainder;
+            },
+            &(),
+        );
+
+        if !chunk.is_empty() {
+            self.chunks.push(chunk.into(), &());
+        }
+    }
+
     pub fn push_front(&mut self, text: &str) {
         let suffix = mem::replace(self, Rope::from(text));
         self.append(suffix);
@@ -180,7 +205,7 @@ impl Rope {
             let mut chunks = self.chunks.cursor::<()>(&()).peekable();
             while let Some(chunk) = chunks.next() {
                 if chunks.peek().is_some() {
-                    assert!(chunk.text.len() + 3 >= CHUNK_BASE);
+                    assert!(chunk.text.len() + 3 >= chunk::MIN_BASE);
                 }
             }
         }
@@ -468,7 +493,7 @@ impl fmt::Debug for Rope {
 
 pub struct Cursor<'a> {
     rope: &'a Rope,
-    chunks: sum_tree::Cursor<'a, Chunk<{ 2 * CHUNK_BASE }>, usize>,
+    chunks: sum_tree::Cursor<'a, Chunk, usize>,
     offset: usize,
 }
 
@@ -502,7 +527,7 @@ impl<'a> Cursor<'a> {
         if let Some(start_chunk) = self.chunks.item() {
             let start_ix = self.offset - self.chunks.start();
             let end_ix = cmp::min(end_offset, self.chunks.end(&())) - self.chunks.start();
-            slice.push(&start_chunk.text[start_ix..end_ix]);
+            slice.push_chunk(start_chunk.slice(start_ix..end_ix));
         }
 
         if end_offset > self.chunks.end(&()) {
@@ -512,7 +537,7 @@ impl<'a> Cursor<'a> {
             });
             if let Some(end_chunk) = self.chunks.item() {
                 let end_ix = end_offset - self.chunks.start();
-                slice.push(&end_chunk.text[..end_ix]);
+                slice.push_chunk(end_chunk.slice(0..end_ix));
             }
         }
 
@@ -553,7 +578,7 @@ impl<'a> Cursor<'a> {
 }
 
 pub struct Chunks<'a> {
-    chunks: sum_tree::Cursor<'a, Chunk<{ 2 * CHUNK_BASE }>, usize>,
+    chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
     offset: usize,
     reversed: bool,
@@ -765,7 +790,7 @@ impl<'a> Iterator for Chunks<'a> {
 }
 
 pub struct Bytes<'a> {
-    chunks: sum_tree::Cursor<'a, Chunk<{ 2 * CHUNK_BASE }>, usize>,
+    chunks: sum_tree::Cursor<'a, Chunk, usize>,
     range: Range<usize>,
     reversed: bool,
 }
@@ -900,7 +925,7 @@ impl<'a> Lines<'a> {
     }
 }
 
-impl sum_tree::Item for Chunk<{ 2 * CHUNK_BASE }> {
+impl sum_tree::Item for Chunk {
     type Summary = ChunkSummary;
 
     fn summary(&self, _cx: &()) -> Self::Summary {
@@ -1061,7 +1086,7 @@ impl std::ops::AddAssign<Self> for TextSummary {
 
 pub trait TextDimension: 'static + for<'a> Dimension<'a, ChunkSummary> {
     fn from_text_summary(summary: &TextSummary) -> Self;
-    fn from_chunk(chunk: ChunkRef) -> Self;
+    fn from_chunk(chunk: ChunkSlice) -> Self;
     fn add_assign(&mut self, other: &Self);
 }
 
@@ -1073,7 +1098,7 @@ impl<D1: TextDimension, D2: TextDimension> TextDimension for (D1, D2) {
         )
     }
 
-    fn from_chunk(chunk: ChunkRef) -> Self {
+    fn from_chunk(chunk: ChunkSlice) -> Self {
         (D1::from_chunk(chunk), D2::from_chunk(chunk))
     }
 
@@ -1098,7 +1123,7 @@ impl TextDimension for TextSummary {
         summary.clone()
     }
 
-    fn from_chunk(chunk: ChunkRef) -> Self {
+    fn from_chunk(chunk: ChunkSlice) -> Self {
         chunk.text_summary()
     }
 
@@ -1122,7 +1147,7 @@ impl TextDimension for usize {
         summary.len
     }
 
-    fn from_chunk(chunk: ChunkRef) -> Self {
+    fn from_chunk(chunk: ChunkSlice) -> Self {
         chunk.len()
     }
 
@@ -1146,7 +1171,7 @@ impl TextDimension for OffsetUtf16 {
         summary.len_utf16
     }
 
-    fn from_chunk(chunk: ChunkRef) -> Self {
+    fn from_chunk(chunk: ChunkSlice) -> Self {
         chunk.len_utf16()
     }
 
@@ -1170,7 +1195,7 @@ impl TextDimension for Point {
         summary.lines
     }
 
-    fn from_chunk(chunk: ChunkRef) -> Self {
+    fn from_chunk(chunk: ChunkSlice) -> Self {
         chunk.lines()
     }
 
@@ -1194,7 +1219,7 @@ impl TextDimension for PointUtf16 {
         summary.lines_utf16()
     }
 
-    fn from_chunk(chunk: ChunkRef) -> Self {
+    fn from_chunk(chunk: ChunkSlice) -> Self {
         PointUtf16 {
             row: chunk.lines().row,
             column: chunk.last_line_len_utf16(),
