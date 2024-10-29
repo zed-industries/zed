@@ -87,6 +87,7 @@ mod tests {
     use std::sync::Arc;
 
     use git::{parse_git_remote_url, GitHostingProviderRegistry};
+    use pretty_assertions::assert_eq;
 
     use super::*;
 
