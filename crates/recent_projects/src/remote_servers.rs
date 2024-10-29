@@ -8,7 +8,6 @@ use futures::future::Shared;
 use futures::FutureExt;
 use gpui::canvas;
 use gpui::ClipboardItem;
-use gpui::ScrollAnchor;
 use gpui::Task;
 use gpui::WeakView;
 use gpui::{
@@ -21,6 +20,8 @@ use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
 use settings::update_settings_file;
 use settings::Settings;
+use ui::Navigable;
+use ui::NavigableEntry;
 use ui::{
     prelude::*, IconButtonShape, List, ListItem, ListSeparator, Modal, ModalHeader, Scrollbar,
     ScrollbarState, Section, Tooltip,
@@ -42,77 +43,7 @@ use crate::ssh_connections::SshPrompt;
 use crate::ssh_connections::SshSettings;
 use crate::OpenRemote;
 
-mod navigation_base {
-    use gpui::{AnyElement, FocusHandle, ScrollAnchor};
-    use ui::{
-        div, ElementId, InteractiveElement, ParentElement, RenderOnce, Styled, WindowContext,
-    };
-
-    pub struct NavigationBase {
-        id: ElementId,
-        child: AnyElement,
-        selectable_children: Vec<(FocusHandle, ScrollAnchor)>,
-    }
-
-    impl NavigationBase {
-        pub fn new(id: ElementId, child: AnyElement) -> Self {
-            Self {
-                id,
-                child,
-                selectable_children: vec![],
-            }
-        }
-        pub fn selectable(mut self, child: (FocusHandle, ScrollAnchor)) -> Self {
-            self.selectable_children.push(child);
-            self
-        }
-        fn find_focused(
-            selectable_children: &[(FocusHandle, ScrollAnchor)],
-            cx: &mut WindowContext<'_>,
-        ) -> Option<usize> {
-            selectable_children
-                .iter()
-                .position(|(focus_handle, _)| focus_handle.contains_focused(cx))
-        }
-    }
-    impl RenderOnce for NavigationBase {
-        fn render(self, _: &mut WindowContext<'_>) -> impl ui::IntoElement {
-            div()
-                .id(self.id)
-                .on_action({
-                    let children = self.selectable_children.clone();
-
-                    move |_: &menu::SelectNext, cx| {
-                        let target = Self::find_focused(&children, cx)
-                            .and_then(|index| {
-                                index.checked_add(1).filter(|index| *index < children.len())
-                            })
-                            .unwrap_or(0);
-                        if let Some((focus_handle, scroll_anchor)) = children.get(target) {
-                            focus_handle.focus(cx);
-                            scroll_anchor.scroll_to(cx);
-                        }
-                    }
-                })
-                .on_action({
-                    let children = self.selectable_children;
-                    move |_: &menu::SelectPrev, cx| {
-                        let target = Self::find_focused(&children, cx)
-                            .and_then(|index| index.checked_sub(1))
-                            .or(children.len().checked_sub(1));
-                        if let Some((focus_handle, scroll_anchor)) =
-                            target.and_then(|target| children.get(target))
-                        {
-                            focus_handle.focus(cx);
-                            scroll_anchor.scroll_to(cx);
-                        }
-                    }
-                })
-                .size_full()
-                .child(self.child)
-        }
-    }
-}
+mod navigation_base {}
 pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
@@ -317,52 +248,33 @@ impl gpui::Render for ProjectPicker {
 }
 
 #[derive(Clone)]
-struct DefaultModeEntry {
-    focus_handle: FocusHandle,
-    scroll_anchor: ScrollAnchor,
-}
-
-impl From<DefaultModeEntry> for (FocusHandle, ScrollAnchor) {
-    fn from(other: DefaultModeEntry) -> Self {
-        (other.focus_handle, other.scroll_anchor)
-    }
-}
-impl DefaultModeEntry {
-    fn new(scroll_handle: &ScrollHandle, cx: &WindowContext<'_>) -> Self {
-        Self {
-            focus_handle: cx.focus_handle(),
-            scroll_anchor: ScrollAnchor::for_handle(scroll_handle.clone()),
-        }
-    }
-}
-#[derive(Clone)]
 struct ProjectEntry {
-    open_folder: DefaultModeEntry,
-    projects: Vec<(DefaultModeEntry, SshProject)>,
-    configure: DefaultModeEntry,
+    open_folder: NavigableEntry,
+    projects: Vec<(NavigableEntry, SshProject)>,
+    configure: NavigableEntry,
     connection: SshConnection,
 }
 
 #[derive(Clone)]
 struct DefaultState {
     scrollbar: ScrollbarState,
-    add_new_server: DefaultModeEntry,
+    add_new_server: NavigableEntry,
     servers: Vec<ProjectEntry>,
 }
 impl DefaultState {
     fn new(cx: &WindowContext<'_>) -> Self {
         let handle = ScrollHandle::new();
         let scrollbar = ScrollbarState::new(handle.clone());
-        let add_new_server = DefaultModeEntry::new(&handle, cx);
+        let add_new_server = NavigableEntry::new(&handle, cx);
         let servers = SshSettings::get_global(cx)
             .ssh_connections()
             .map(|connection| {
-                let open_folder = DefaultModeEntry::new(&handle, cx);
-                let configure = DefaultModeEntry::new(&handle, cx);
+                let open_folder = NavigableEntry::new(&handle, cx);
+                let configure = NavigableEntry::new(&handle, cx);
                 let projects = connection
                     .projects
                     .iter()
-                    .map(|project| (DefaultModeEntry::new(&handle, cx), project.clone()))
+                    .map(|project| (NavigableEntry::new(&handle, cx), project.clone()))
                     .collect();
                 ProjectEntry {
                     open_folder,
@@ -788,7 +700,7 @@ impl RemoteServerProjects {
         server_ix: usize,
         server: &ProjectEntry,
         ix: usize,
-        (navigation, project): &(DefaultModeEntry, SshProject),
+        (navigation, project): &(NavigableEntry, SshProject),
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
         let server = server.clone();
@@ -1212,8 +1124,7 @@ impl RemoteServerProjects {
             unreachable!()
         };
 
-        let mut modal_section = navigation_base::NavigationBase::new(
-            "ssh-modal-section".into(),
+        let mut modal_section = Navigable::new(
             v_flex()
                 .track_focus(&self.focus_handle(cx))
                 .id("ssh-server-list")
@@ -1240,15 +1151,15 @@ impl RemoteServerProjects {
                 )
                 .into_any_element(),
         )
-        .selectable(state.add_new_server.clone().into());
+        .entry(state.add_new_server.clone().into());
 
         for server in &state.servers {
             for (navigation_state, _) in &server.projects {
-                modal_section = modal_section.selectable(navigation_state.clone().into());
+                modal_section = modal_section.entry(navigation_state.clone().into());
             }
             modal_section = modal_section
-                .selectable(server.open_folder.clone().into())
-                .selectable(server.configure.clone().into());
+                .entry(server.open_folder.clone().into())
+                .entry(server.configure.clone().into());
         }
         let mut modal_section = modal_section.render(cx).into_any_element();
 
