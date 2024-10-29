@@ -1163,7 +1163,7 @@ impl Element for Div {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
-            *handle.last_origin.borrow_mut() = dbg!(bounds.origin) - dbg!(cx.element_offset());
+            *handle.last_origin.borrow_mut() = bounds.origin - cx.element_offset();
         }
         let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
