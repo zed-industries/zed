@@ -4465,7 +4465,7 @@ impl Workspace {
         self.modal_layer.read(cx).has_active_modal()
     }
 
-    pub fn active_modal<V: ManagedView + 'static>(&mut self, cx: &AppContext) -> Option<View<V>> {
+    pub fn active_modal<V: ManagedView + 'static>(&self, cx: &AppContext) -> Option<View<V>> {
         self.modal_layer.read(cx).active_modal()
     }
 
