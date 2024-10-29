@@ -10,7 +10,6 @@ use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
 use text::OffsetRangeExt;
-use workspace::Workspace;
 
 pub(crate) struct DeltaSlashCommand;
 
@@ -35,7 +34,6 @@ impl SlashCommand for DeltaSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancellation_flag: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
@@ -46,7 +44,6 @@ impl SlashCommand for DeltaSlashCommand {
         _arguments: &[String],
         context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
@@ -69,7 +66,6 @@ impl SlashCommand for DeltaSlashCommand {
                         &[metadata.path.clone()],
                         context_slash_command_output_sections,
                         context_buffer.clone(),
-                        workspace.clone(),
                         delegate.clone(),
                         cx,
                     ));

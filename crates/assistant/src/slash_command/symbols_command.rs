@@ -8,7 +8,7 @@ use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
-use ui::{IconName, WindowContext};
+use ui::{Context, IconName, WindowContext};
 use workspace::Workspace;
 
 pub(crate) struct OutlineSlashCommand;
@@ -30,7 +30,6 @@ impl SlashCommand for OutlineSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
@@ -45,10 +44,12 @@ impl SlashCommand for OutlineSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
+        let Some(workspace) = cx.window_handle().downcast::<Workspace>() else {
+            return Task::ready(Err(anyhow!("no workspace")));
+        };
         let output = workspace.update(cx, |workspace, cx| {
             let Some(active_item) = workspace.active_item(cx) else {
                 return Task::ready(Err(anyhow!("no active tab")));

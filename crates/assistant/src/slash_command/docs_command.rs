@@ -41,21 +41,14 @@ impl DocsSlashCommand {
     ///
     /// Ideally we would do this sooner, but we need to wait until we're able to
     /// access the workspace so we can read the project.
-    fn ensure_rust_doc_providers_are_registered(
-        &self,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut AppContext,
-    ) {
+    fn ensure_rust_doc_providers_are_registered(&self, cx: &mut WindowContext) {
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
         if indexed_docs_registry
             .get_provider_store(LocalRustdocProvider::id())
             .is_none()
         {
             let index_provider_deps = maybe!({
-                let workspace = workspace.clone().ok_or_else(|| anyhow!("no workspace"))?;
-                let workspace = workspace
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
+                let workspace = Workspace::in_window(cx).ok_or_else(|| anyhow!("no workspace"))?;
                 let project = workspace.read(cx).project().clone();
                 let fs = project.read(cx).fs().clone();
                 let cargo_workspace_root = Self::path_to_cargo_toml(project, cx)
@@ -78,10 +71,7 @@ impl DocsSlashCommand {
             .is_none()
         {
             let http_client = maybe!({
-                let workspace = workspace.ok_or_else(|| anyhow!("no workspace"))?;
-                let workspace = workspace
-                    .upgrade()
-                    .ok_or_else(|| anyhow!("workspace was dropped"))?;
+                let workspace = Workspace::in_window(cx).ok_or_else(|| anyhow!("no workspace"))?;
                 let project = workspace.read(cx).project().clone();
                 anyhow::Ok(project.read(cx).client().http_client().clone())
             });
@@ -164,10 +154,9 @@ impl SlashCommand for DocsSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        self.ensure_rust_doc_providers_are_registered(workspace, cx);
+        self.ensure_rust_doc_providers_are_registered(cx);
 
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
         let args = DocsSlashCommandArgs::parse(arguments);
@@ -272,7 +261,6 @@ impl SlashCommand for DocsSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {

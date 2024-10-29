@@ -1230,6 +1230,12 @@ impl Workspace {
         })
     }
 
+    pub fn in_window(cx: &mut WindowContext) -> Option<View<Self>> {
+        cx.window_handle()
+            .downcast::<Self>()
+            .and_then(|w| w.root(cx).ok())
+    }
+
     pub fn weak_handle(&self) -> WeakView<Self> {
         self.weak_self.clone()
     }

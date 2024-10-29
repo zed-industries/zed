@@ -3,7 +3,7 @@ mod slash_command_registry;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
@@ -11,7 +11,7 @@ use std::{
     ops::Range,
     sync::{atomic::AtomicBool, Arc},
 };
-use workspace::{ui::IconName, Workspace};
+use ui::IconName;
 
 pub fn init(cx: &mut AppContext) {
     SlashCommandRegistry::default_global(cx);
@@ -71,7 +71,6 @@ pub trait SlashCommand: 'static + Send + Sync {
         self: Arc<Self>,
         arguments: &[String],
         cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>>;
     fn requires_argument(&self) -> bool;
@@ -83,7 +82,6 @@ pub trait SlashCommand: 'static + Send + Sync {
         arguments: &[String],
         context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
         // TODO: We're just using the `LspAdapterDelegate` here because that is
         // what the extension API is already expecting.
         //

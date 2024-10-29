@@ -62,7 +62,6 @@ impl SlashCommand for ProjectSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
@@ -73,7 +72,6 @@ impl SlashCommand for ProjectSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<Anchor>],
         context_buffer: language::BufferSnapshot,
-        workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
@@ -81,7 +79,7 @@ impl SlashCommand for ProjectSlashCommand {
         let current_model = model_registry.active_model();
         let prompt_builder = self.prompt_builder.clone();
 
-        let Some(workspace) = workspace.upgrade() else {
+        let Some(workspace) = Workspace::in_window(cx) else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
         let project = workspace.read(cx).project().clone();

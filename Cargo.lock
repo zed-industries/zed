@@ -466,7 +466,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "serde_json",
- "workspace",
+ "ui",
 ]
 
 [[package]]

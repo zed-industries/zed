@@ -1583,7 +1583,6 @@ impl ContextEditor {
             &command.arguments,
             false,
             false,
-            self.workspace.clone(),
             cx,
         );
     }
@@ -1727,7 +1726,6 @@ impl ContextEditor {
 
         let selections = self.editor.read(cx).selections.disjoint_anchors();
         let mut commands_by_range = HashMap::default();
-        let workspace = self.workspace.clone();
         self.context.update(cx, |context, cx| {
             context.reparse(cx);
             for selection in selections.iter() {
@@ -1751,7 +1749,6 @@ impl ContextEditor {
                     &command.arguments,
                     true,
                     false,
-                    workspace.clone(),
                     cx,
                 );
             }
@@ -1767,7 +1764,6 @@ impl ContextEditor {
         arguments: &[String],
         ensure_trailing_newline: bool,
         expand_result: bool,
-        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
@@ -1783,7 +1779,6 @@ impl ContextEditor {
                 arguments,
                 &sections,
                 snapshot,
-                workspace,
                 self.lsp_adapter_delegate.clone(),
                 cx,
             );
@@ -1943,7 +1938,6 @@ impl ContextEditor {
 
                     let crease_ids = editor.insert_creases(
                         updated.iter().map(|command| {
-                            let workspace = self.workspace.clone();
                             let confirm_command = Arc::new({
                                 let context_editor = context_editor.clone();
                                 let command = command.clone();
@@ -1956,7 +1950,6 @@ impl ContextEditor {
                                                 &command.arguments,
                                                 false,
                                                 false,
-                                                workspace.clone(),
                                                 cx,
                                             );
                                         })
@@ -2074,7 +2067,6 @@ impl ContextEditor {
                             &command.arguments,
                             false,
                             false,
-                            self.workspace.clone(),
                             cx,
                         );
                     }

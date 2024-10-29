@@ -49,7 +49,6 @@ impl SlashCommand for AutoCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.
@@ -57,7 +56,7 @@ impl SlashCommand for AutoCommand {
         // That way, it can hopefully be done resummarizing by the time we've actually
         // typed out our prompt. This re-runs on every keystroke during autocomplete,
         // but in the future, we could instead do it only once, when /auto is first entered.
-        let Some(workspace) = workspace.and_then(|ws| ws.upgrade()) else {
+        let Some(workspace) = Workspace::in_window(cx) else {
             log::warn!("workspace was dropped or unavailable during /auto autocomplete");
 
             return Task::ready(Ok(Vec::new()));
@@ -92,11 +91,10 @@ impl SlashCommand for AutoCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: language::BufferSnapshot,
-        workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
-        let Some(workspace) = workspace.upgrade() else {
+        let Some(workspace) = Workspace::in_window(cx) else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
         if arguments.is_empty() {

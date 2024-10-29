@@ -132,10 +132,9 @@ impl SlashCommand for FileSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
-        let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
+        let Some(workspace) = Workspace::in_window(cx) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
@@ -185,11 +184,10 @@ impl SlashCommand for FileSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult> {
-        let Some(workspace) = workspace.upgrade() else {
+        let Some(workspace) = Workspace::in_window(cx) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
         };
 
