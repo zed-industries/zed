@@ -446,36 +446,34 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    // todo!("use bitsets")
-    pub fn clip_point_utf16(&self, target: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
-        for (row, line) in self.text.split('\n').enumerate() {
-            if row == target.0.row as usize {
-                let mut code_units = line.encode_utf16();
-                let mut column = code_units.by_ref().take(target.0.column as usize).count();
-                if char::decode_utf16(code_units).next().transpose().is_err() {
-                    match bias {
-                        Bias::Left => column -= 1,
-                        Bias::Right => column += 1,
-                    }
-                }
-                return PointUtf16::new(row as u32, column as u32);
-            }
+    pub fn clip_point_utf16(&self, point: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
+        let max_point = self.lines();
+        if point.0.row > max_point.row {
+            PointUtf16::new(max_point.row, self.last_line_len_utf16())
+        } else {
+            let line = self.slice(self.offset_range_for_row(point.0.row));
+            let column = line.clip_offset_utf16(OffsetUtf16(point.0.column as usize), bias);
+            PointUtf16::new(point.0.row, column.0 as u32)
         }
-        unreachable!()
     }
 
     #[inline(always)]
-    // todo!("use bitsets")
     pub fn clip_offset_utf16(&self, target: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
-        let mut code_units = self.text.encode_utf16();
-        let mut offset = code_units.by_ref().take(target.0).count();
-        if char::decode_utf16(code_units).next().transpose().is_err() {
-            match bias {
-                Bias::Left => offset -= 1,
-                Bias::Right => offset += 1,
+        if target == OffsetUtf16::default() {
+            OffsetUtf16::default()
+        } else if target >= self.len_utf16() {
+            self.len_utf16()
+        } else {
+            let mut offset = self.offset_utf16_to_offset(target);
+            while !self.text.is_char_boundary(offset) {
+                if bias == Bias::Left {
+                    offset -= 1;
+                } else {
+                    offset += 1;
+                }
             }
+            self.offset_to_offset_utf16(offset)
         }
-        OffsetUtf16(offset)
     }
 
     #[inline(always)]
@@ -746,6 +744,32 @@ mod tests {
                     "incorrect unclipped_point_utf16_to_point within multi-byte char at {:?}",
                     test_point
                 );
+                assert_eq!(
+                    chunk.clip_point_utf16(test_point, Bias::Left),
+                    point_utf16,
+                    "incorrect left clip_point_utf16 within multi-byte char at {:?}",
+                    test_point
+                );
+                assert_eq!(
+                    chunk.clip_point_utf16(test_point, Bias::Right),
+                    PointUtf16::new(point_utf16.row, point_utf16.column + c.len_utf16() as u32),
+                    "incorrect right clip_point_utf16 within multi-byte char at {:?}",
+                    test_point
+                );
+
+                let test_offset = OffsetUtf16(offset_utf16.0 + i);
+                assert_eq!(
+                    chunk.clip_offset_utf16(test_offset, Bias::Left),
+                    offset_utf16,
+                    "incorrect left clip_offset_utf16 within multi-byte char at {:?}",
+                    test_offset
+                );
+                assert_eq!(
+                    chunk.clip_offset_utf16(test_offset, Bias::Right),
+                    OffsetUtf16(offset_utf16.0 + c.len_utf16()),
+                    "incorrect right clip_offset_utf16 within multi-byte char at {:?}",
+                    test_offset
+                );
             }
 
             if c == '\n' {
@@ -811,6 +835,30 @@ mod tests {
             point,
             "incorrect right clip at final point {:?}",
             point
+        );
+        assert_eq!(
+            chunk.clip_point_utf16(Unclipped(point_utf16), Bias::Left),
+            point_utf16,
+            "incorrect left clip_point_utf16 at final point {:?}",
+            point_utf16
+        );
+        assert_eq!(
+            chunk.clip_point_utf16(Unclipped(point_utf16), Bias::Right),
+            point_utf16,
+            "incorrect right clip_point_utf16 at final point {:?}",
+            point_utf16
+        );
+        assert_eq!(
+            chunk.clip_offset_utf16(offset_utf16, Bias::Left),
+            offset_utf16,
+            "incorrect left clip_offset_utf16 at final offset {:?}",
+            offset_utf16
+        );
+        assert_eq!(
+            chunk.clip_offset_utf16(offset_utf16, Bias::Right),
+            offset_utf16,
+            "incorrect right clip_offset_utf16 at final offset {:?}",
+            offset_utf16
         );
 
         // Verify length methods
