@@ -1023,7 +1023,7 @@ impl SshRemoteClient {
             server_cx.update(|cx| ChannelClient::new(incoming_rx, outgoing_tx, cx, "fake-server"));
         let connection: Arc<dyn RemoteConnection> = Arc::new(fake::FakeRemoteConnection {
             connection_options: opts.clone(),
-            server_cx: fake::SendableCx::new(server_cx.to_async()),
+            server_cx: fake::SendableCx::new(server_cx),
             server_channel: server_client.clone(),
         });
 
@@ -2251,7 +2251,7 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AsyncAppContext, Task};
+    use gpui::{AsyncAppContext, Task, TestAppContext};
     use rpc::proto::Envelope;
 
     use super::{
@@ -2266,15 +2266,19 @@ mod fake {
     }
 
     pub(super) struct SendableCx(AsyncAppContext);
-    // safety: you can only get the other cx on the main thread.
     impl SendableCx {
-        pub(super) fn new(cx: AsyncAppContext) -> Self {
-            Self(cx)
+        // SAFETY: When run in test mode, GPUI is always single threaded.
+        pub(super) fn new(cx: &TestAppContext) -> Self {
+            Self(cx.to_async())
         }
+
+        // SAFETY: Enforce that we're on the main thread by requiring a valid AsyncAppContext
         fn get(&self, _: &AsyncAppContext) -> AsyncAppContext {
             self.0.clone()
         }
     }
+
+    // SAFETY: There is no way to access a SendableCx from a different thread, see [`SendableCx::new`] and [`SendableCx::get`]
     unsafe impl Send for SendableCx {}
     unsafe impl Sync for SendableCx {}
 
