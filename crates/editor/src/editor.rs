@@ -3244,9 +3244,21 @@ impl Editor {
                         }
 
                         if enabled && pair.start.ends_with(text.as_ref()) {
-                            bracket_pair = Some(pair.clone());
-                            is_bracket_pair_start = true;
-                            break;
+                            let prefix_len = pair.start.len() - text.len();
+                            let preceding_text_matches_prefix = prefix_len == 0
+                                || (selection.start.column >= (prefix_len as u32)
+                                    && snapshot.contains_str_at(
+                                        Point::new(
+                                            selection.start.row,
+                                            selection.start.column - (prefix_len as u32),
+                                        ),
+                                        &pair.start[..prefix_len],
+                                    ));
+                            if preceding_text_matches_prefix {
+                                bracket_pair = Some(pair.clone());
+                                is_bracket_pair_start = true;
+                                break;
+                            }
                         }
                         if pair.end.as_str() == text.as_ref() {
                             bracket_pair = Some(pair.clone());
@@ -3263,8 +3275,6 @@ impl Editor {
                         self.use_auto_surround && snapshot_settings.use_auto_surround;
                     if selection.is_empty() {
                         if is_bracket_pair_start {
-                            let prefix_len = bracket_pair.start.len() - text.len();
-
                             // If the inserted text is a suffix of an opening bracket and the
                             // selection is preceded by the rest of the opening bracket, then
                             // insert the closing bracket.
@@ -3272,15 +3282,6 @@ impl Editor {
                                 .chars_at(selection.start)
                                 .next()
                                 .map_or(true, |c| scope.should_autoclose_before(c));
-                            let preceding_text_matches_prefix = prefix_len == 0
-                                || (selection.start.column >= (prefix_len as u32)
-                                    && snapshot.contains_str_at(
-                                        Point::new(
-                                            selection.start.row,
-                                            selection.start.column - (prefix_len as u32),
-                                        ),
-                                        &bracket_pair.start[..prefix_len],
-                                    ));
 
                             let is_closing_quote = if bracket_pair.end == bracket_pair.start
                                 && bracket_pair.start.len() == 1
@@ -3299,7 +3300,6 @@ impl Editor {
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
-                                && preceding_text_matches_prefix
                                 && !is_closing_quote
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
