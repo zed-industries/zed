@@ -5470,6 +5470,56 @@ impl Editor {
         }
     }
 
+    pub fn spawn_nearest_task(&mut self, cx: &mut ViewContext<Self>) {
+        // TODO: What's still missing here is that we only use symbols that show
+        // up in the outline as possible candidates, but in some languages,
+        // other (nested) symbols but have run-indicators too. Example: subtests
+        // in Go.
+        let mut candidate = maybe!({
+            let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+            let offset = self.selections.newest::<usize>(cx).head();
+
+            let (_buffer_id, symbols) = buffer_snapshot.symbols_containing(offset, None)?;
+            for symbol in symbols.iter() {
+                let Some(excerpt) = buffer_snapshot.excerpt_containing(symbol.range.clone()) else {
+                    continue;
+                };
+                let buffer_offset =
+                    excerpt.map_offset_to_buffer(symbol.range.start.to_offset(&buffer_snapshot));
+
+                let row = excerpt.buffer().offset_to_point(buffer_offset).row;
+                let buffer_id = excerpt.buffer().remote_id();
+
+                if self.tasks.get(&(buffer_id, row)).is_some() {
+                    return Some(row);
+                }
+            }
+
+            None
+        });
+
+        if candidate.is_none() {
+            let cursor_row = self.selections.newest_adjusted(cx).head().row;
+            let mut min_distance = u32::MAX;
+            for (_, candidate_row) in self.tasks.keys() {
+                let distance = cursor_row.abs_diff(*candidate_row);
+                if distance < min_distance {
+                    min_distance = distance;
+                    candidate = Some(*candidate_row);
+                }
+            }
+        }
+
+        if let Some(row) = candidate {
+            let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let display_row = Point::new(row, 0).to_display_point(&snapshot).row();
+            let action = &ToggleCodeActions {
+                deployed_from_indicator: Some(display_row),
+            };
+            self.toggle_code_actions(action, cx);
+        };
+    }
+
     fn render_run_indicator(
         &self,
         _style: &EditorStyle,
