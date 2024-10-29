@@ -406,6 +406,8 @@ impl Render for CodeCell {
         let lines = self.source.lines().count();
         let height = lines as f32 * cx.line_height();
 
+        // todo!(): height will need to include the height of the outputs
+
         h_flex()
             .w_full()
             .pr_2()
@@ -415,19 +417,57 @@ impl Render for CodeCell {
             .bg(self.selected_bg_color(cx))
             .child(self.gutter(cx))
             .child(
-                div().py_1p5().w_full().child(
-                    div()
-                        .flex()
-                        .size_full()
-                        .flex_1()
-                        .py_3()
-                        .px_5()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(cx.theme().colors().border)
-                        .bg(cx.theme().colors().editor_background)
-                        .child(div().h(height).w_full().child(self.editor.clone())),
-                ),
+                div()
+                    .py_1p5()
+                    .w_full()
+                    .child(
+                        div()
+                            .flex()
+                            .size_full()
+                            .flex_1()
+                            .py_3()
+                            .px_5()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .bg(cx.theme().colors().editor_background)
+                            .child(div().h(height).w_full().child(self.editor.clone())),
+                    )
+                    .children(self.outputs.iter().map(|output| {
+                        let content = match output {
+                            Output::Plain { content, .. } => {
+                                Some(content.clone().into_any_element())
+                            }
+                            Output::Markdown { content, .. } => {
+                                Some(content.clone().into_any_element())
+                            }
+                            Output::Stream { content, .. } => {
+                                Some(content.clone().into_any_element())
+                            }
+                            Output::Image { content, .. } => {
+                                Some(content.clone().into_any_element())
+                            }
+                            Output::Message(message) => {
+                                Some(div().child(message.clone()).into_any_element())
+                            }
+                            Output::Table { content, .. } => {
+                                Some(content.clone().into_any_element())
+                            }
+                            Output::ErrorOutput(error_view) => error_view.render(cx),
+                            Output::ClearOutputWaitMarker => None,
+                        };
+
+                        div()
+                            // .w_full()
+                            // .mt_3()
+                            // .p_3()
+                            // .rounded_md()
+                            // .bg(cx.theme().colors().editor_background)
+                            // .border(px(1.))
+                            // .border_color(cx.theme().colors().border)
+                            // .shadow_sm()
+                            .children(content)
+                    })),
             )
     }
 }

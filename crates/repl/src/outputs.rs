@@ -201,7 +201,7 @@ impl Output {
         )
     }
 
-    fn render(
+    pub fn render(
         &self,
 
         workspace: WeakView<Workspace>,
