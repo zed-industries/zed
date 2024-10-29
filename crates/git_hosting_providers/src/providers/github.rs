@@ -202,6 +202,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_remote_url_given_ssh_url() {
+        let parsed_remote = Github
+            .parse_remote_url("git@github.com:zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_https_url() {
+        let parsed_remote = Github
+            .parse_remote_url("https://github.com/zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
         let parsed_remote = Github
             .parse_remote_url("https://jlannister@github.com/some-org/some-repo.git")
@@ -273,12 +303,11 @@ mod tests {
 
     #[test]
     fn test_build_github_permalink_with_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
         let permalink = Github.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
