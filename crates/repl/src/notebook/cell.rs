@@ -448,6 +448,7 @@ impl Render for CodeCell {
         let height = lines as f32 * cx.line_height();
 
         v_flex()
+            .size_full()
             // Editor portion
             .child(
                 h_flex()
