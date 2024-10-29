@@ -19,16 +19,15 @@ pub fn report_assistant_event(
 ) {
     if let Some(telemetry) = telemetry.as_ref() {
         telemetry.report_assistant_event(event.clone());
-    }
-
-    if event.model_provider == ANTHROPIC_PROVIDER_ID {
-        executor
-            .spawn(async move {
-                report_anthropic_event(event, client, model_api_key)
-                    .await
-                    .log_err();
-            })
-            .detach();
+        if telemetry.metrics_enabled() && event.model_provider == ANTHROPIC_PROVIDER_ID {
+            executor
+                .spawn(async move {
+                    report_anthropic_event(event, client, model_api_key)
+                        .await
+                        .log_err();
+                })
+                .detach();
+        }
     }
 }
 
@@ -71,7 +70,6 @@ async fn report_anthropic_event(
         }
     });
 
-    log::debug!("serialized_event: {serialized_event}");
     let request = request_builder
         .body(AsyncBody::from(serialized_event.to_string()))
         .context("failed to construct request body")?;

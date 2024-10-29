@@ -341,6 +341,13 @@ impl Telemetry {
             .detach();
     }
 
+    pub fn metrics_enabled(self: &Arc<Self>) -> bool {
+        let state = self.state.lock();
+        let enabled = state.settings.metrics;
+        drop(state);
+        return enabled;
+    }
+
     pub fn set_authenticated_user_info(
         self: &Arc<Self>,
         metrics_id: Option<String>,
