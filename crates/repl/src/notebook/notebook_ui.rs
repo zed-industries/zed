@@ -302,7 +302,7 @@ impl NotebookEditor {
         }
     }
 
-    fn jump_to_cell(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+    fn jump_to_cell(&mut self, index: usize, _cx: &mut ViewContext<Self>) {
         self.cell_list.scroll_to_reveal_item(index);
     }
 
@@ -322,7 +322,7 @@ impl NotebookEditor {
     fn render_notebook_control(
         id: impl Into<SharedString>,
         icon: IconName,
-        cx: &ViewContext<Self>,
+        _cx: &ViewContext<Self>,
     ) -> IconButton {
         let id: ElementId = ElementId::Name(id.into());
         IconButton::new(id, icon).width(px(CONTROL_SIZE).into())
@@ -439,15 +439,6 @@ impl NotebookEditor {
             )
     }
 
-    fn render_cells(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        v_flex()
-            .id("notebook-cells")
-            .flex_1()
-            .size_full()
-            .overflow_y_scroll()
-            .child(list(self.cell_list.clone()).size_full())
-    }
-
     fn cell_position(&self, index: usize) -> CellPosition {
         match index {
             0 => CellPosition::First,
@@ -515,7 +506,14 @@ impl Render for NotebookEditor {
             .px(Spacing::XLarge.px(cx))
             .gap(Spacing::XLarge.px(cx))
             .bg(cx.theme().colors().tab_bar_background)
-            .child(self.render_cells(cx))
+            .child(
+                v_flex()
+                    .id("notebook-cells")
+                    .flex_1()
+                    .size_full()
+                    .overflow_y_scroll()
+                    .child(list(self.cell_list.clone()).size_full()),
+            )
             .child(self.render_notebook_controls(cx))
     }
 }
