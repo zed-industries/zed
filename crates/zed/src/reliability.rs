@@ -1,13 +1,15 @@
 use anyhow::{Context, Result};
 use backtrace::{self, Backtrace};
 use chrono::Utc;
-use client::telemetry;
+use client::{telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http_client::{HttpRequestExt, Method};
+use http_client::{AsyncBody, HttpRequestExt, Method};
 
 use http_client::{self, HttpClient, HttpClientWithUrl};
 use paths::{crashes_dir, crashes_retired_dir};
+use project::Project;
+use proto::TypedEnvelope;
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
 use settings::Settings;
@@ -21,6 +23,7 @@ use std::{io::Write, panic, sync::atomic::AtomicU32, thread};
 use telemetry_events::LocationData;
 use telemetry_events::Panic;
 use telemetry_events::PanicRequest;
+use url::Url;
 use util::ResultExt;
 
 use crate::stdout_is_a_pty;
@@ -139,7 +142,44 @@ pub fn init(
     #[cfg(target_os = "macos")]
     monitor_main_thread_hangs(http_client.clone(), installation_id.clone(), cx);
 
-    upload_panics_and_crashes(http_client, installation_id, cx)
+    let Some(panic_report_url) = http_client
+        .build_zed_api_url("/telemetry/panics", &[])
+        .log_err()
+    else {
+        return;
+    };
+
+    upload_panics_and_crashes(
+        http_client.clone(),
+        panic_report_url.clone(),
+        installation_id,
+        cx,
+    );
+
+    cx.observe_new_model(move |project: &mut Project, cx| {
+        let http_client = http_client.clone();
+        let panic_report_url = panic_report_url.clone();
+
+        if let Some(ssh_client) = project.ssh_client() {
+            ssh_client.update(cx, |client, cx| {
+                if TelemetrySettings::get_global(cx).diagnostics {
+                    let request = client.proto_client().request(proto::GetPanicFiles {});
+                    cx.background_executor()
+                        .spawn(async move {
+                            let panic_files = request.await?;
+                            for file in panic_files.file_contents {
+                                upload_panic(&http_client, &panic_report_url, file, &mut None)
+                                    .await?;
+                            }
+
+                            anyhow::Ok(())
+                        })
+                        .detach_and_log_err(cx);
+                }
+            })
+        }
+    })
+    .detach();
 }
 
 #[cfg(target_os = "macos")]
@@ -346,16 +386,18 @@ pub fn monitor_main_thread_hangs(
 
 fn upload_panics_and_crashes(
     http: Arc<HttpClientWithUrl>,
+    panic_report_url: Url,
     installation_id: Option<String>,
     cx: &AppContext,
 ) {
     let telemetry_settings = *client::TelemetrySettings::get_global(cx);
     cx.background_executor()
         .spawn(async move {
-            let most_recent_panic = upload_previous_panics(http.clone(), telemetry_settings)
-                .await
-                .log_err()
-                .flatten();
+            let most_recent_panic =
+                upload_previous_panics(http.clone(), &panic_report_url, telemetry_settings)
+                    .await
+                    .log_err()
+                    .flatten();
             upload_previous_crashes(http, most_recent_panic, installation_id, telemetry_settings)
                 .await
                 .log_err()
@@ -366,9 +408,9 @@ fn upload_panics_and_crashes(
 /// Uploads panics via `zed.dev`.
 async fn upload_previous_panics(
     http: Arc<HttpClientWithUrl>,
+    panic_report_url: &Url,
     telemetry_settings: client::TelemetrySettings,
-) -> Result<Option<(i64, String)>> {
-    let panic_report_url = http.build_zed_api_url("/telemetry/panics", &[])?;
+) -> anyhow::Result<Option<(i64, String)>> {
     let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
 
     let mut most_recent_panic = None;
@@ -395,41 +437,15 @@ async fn upload_previous_panics(
                 .await
                 .context("error reading panic file")?;
 
-            let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
-                .ok()
-                .or_else(|| {
-                    panic_file_content
-                        .lines()
-                        .next()
-                        .and_then(|line| serde_json::from_str(line).ok())
-                })
-                .unwrap_or_else(|| {
-                    log::error!("failed to deserialize panic file {:?}", panic_file_content);
-                    None
-                });
-
-            if let Some(panic) = panic {
-                most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
-
-                let json_bytes = serde_json::to_vec(&PanicRequest { panic }).unwrap();
-
-                let Some(checksum) = client::telemetry::calculate_json_checksum(&json_bytes) else {
-                    continue;
-                };
-
-                let Ok(request) = http_client::Request::builder()
-                    .method(Method::POST)
-                    .uri(panic_report_url.as_ref())
-                    .header("x-zed-checksum", checksum)
-                    .body(json_bytes.into())
-                else {
-                    continue;
-                };
-
-                let response = http.send(request).await.context("error sending panic")?;
-                if !response.status().is_success() {
-                    log::error!("Error uploading panic to server: {}", response.status());
-                }
+            if !upload_panic(
+                &http,
+                &panic_report_url,
+                panic_file_content,
+                &mut most_recent_panic,
+            )
+            .await?
+            {
+                continue;
             }
         }
 
@@ -438,9 +454,57 @@ async fn upload_previous_panics(
             .context("error removing panic")
             .log_err();
     }
-    Ok::<_, anyhow::Error>(most_recent_panic)
+    Ok(most_recent_panic)
 }
 
+async fn upload_panic(
+    http: &Arc<HttpClientWithUrl>,
+    panic_report_url: &Url,
+    panic_file_content: String,
+    most_recent_panic: &mut Option<(i64, String)>,
+) -> Result<bool> {
+    let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
+        .log_err()
+        .or_else(|| {
+            panic_file_content
+                .lines()
+                .next()
+                .and_then(|line| serde_json::from_str(line).ok())
+        })
+        .unwrap_or_else(|| {
+            log::error!("failed to deserialize panic file {:?}", panic_file_content);
+            None
+        });
+
+    if let Some(panic) = panic {
+        *most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
+
+        let json_bytes = serde_json::to_vec(&PanicRequest {
+            panic: panic.clone(),
+        })
+        .unwrap();
+
+        let Some(checksum) = client::telemetry::calculate_json_checksum(&json_bytes) else {
+            return Ok(false);
+        };
+
+        let Ok(request) = http_client::Request::builder()
+            .method(Method::POST)
+            .uri(panic_report_url.as_ref())
+            .header("x-zed-checksum", checksum)
+            .body(json_bytes.into())
+        else {
+            return Ok(false);
+        };
+
+        let response = http.send(request).await.context("error sending panic")?;
+        if !response.status().is_success() {
+            log::error!("Error uploading panic to server: {}", response.status());
+        }
+    }
+
+    return Ok(true);
+}
 const LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 
 /// upload crashes from apple's diagnostic reports to our server.

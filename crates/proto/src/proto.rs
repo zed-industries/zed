@@ -363,7 +363,9 @@ messages!(
     (ActiveToolchain, Foreground),
     (ActiveToolchainResponse, Foreground),
     (GetPathMetadata, Background),
-    (GetPathMetadataResponse, Background)
+    (GetPathMetadataResponse, Background),
+    (GetPanicFiles, Background),
+    (GetPanicFilesResponse, Background),
 );
 
 request_messages!(
@@ -483,7 +485,8 @@ request_messages!(
     (ListToolchains, ListToolchainsResponse),
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
-    (GetPathMetadata, GetPathMetadataResponse)
+    (GetPathMetadata, GetPathMetadataResponse),
+    (GetPanicFiles, GetPanicFilesResponse)
 );
 
 entity_messages!(
@@ -566,7 +569,7 @@ entity_messages!(
     ListToolchains,
     ActivateToolchain,
     ActiveToolchain,
-    GetPathMetadata
+    GetPathMetadata,
 );
 
 entity_messages!(
