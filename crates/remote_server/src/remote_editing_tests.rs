@@ -604,7 +604,10 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
 }
 
 #[gpui::test]
-async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+async fn test_remote_resolve_path_in_buffer(
+    cx: &mut TestAppContext,
+    server_cx: &mut TestAppContext,
+) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
         "/code",
@@ -639,10 +642,11 @@ async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut 
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_existing_file_path("/code/project1/README.md", &buffer, cx)
+            project.resolve_path_in_buffer("/code/project1/README.md", &buffer, cx)
         })
         .await
         .unwrap();
+    assert!(path.is_file());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
         "/code/project1/README.md"
@@ -650,15 +654,80 @@ async fn test_remote_resolve_file_path(cx: &mut TestAppContext, server_cx: &mut 
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_existing_file_path("../README.md", &buffer, cx)
+            project.resolve_path_in_buffer("../README.md", &buffer, cx)
         })
         .await
         .unwrap();
-
+    assert!(path.is_file());
     assert_eq!(
         path.project_path().unwrap().clone(),
         ProjectPath::from((worktree_id, "README.md"))
     );
+
+    let path = project
+        .update(cx, |project, cx| {
+            project.resolve_path_in_buffer("../src", &buffer, cx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        path.project_path().unwrap().clone(),
+        ProjectPath::from((worktree_id, "src"))
+    );
+    assert!(path.is_dir());
+}
+
+#[gpui::test]
+async fn test_remote_resolve_abs_path(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+                "src": {
+                    "lib.rs": "fn one() -> usize { 1 }"
+                }
+            },
+        }),
+    )
+    .await;
+
+    let (project, _headless) = init_test(&fs, cx, server_cx).await;
+
+    let path = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_path("/code/project1/README.md", cx)
+        })
+        .await
+        .unwrap();
+
+    assert!(path.is_file());
+    assert_eq!(
+        path.abs_path().unwrap().to_string_lossy(),
+        "/code/project1/README.md"
+    );
+
+    let path = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_path("/code/project1/src", cx)
+        })
+        .await
+        .unwrap();
+
+    assert!(path.is_dir());
+    assert_eq!(
+        path.abs_path().unwrap().to_string_lossy(),
+        "/code/project1/src"
+    );
+
+    let path = project
+        .update(cx, |project, cx| {
+            project.resolve_abs_path("/code/project1/DOESNOTEXIST", cx)
+        })
+        .await;
+    assert!(path.is_none());
 }
 
 #[gpui::test(iterations = 10)]

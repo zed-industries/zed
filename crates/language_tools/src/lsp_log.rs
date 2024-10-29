@@ -1237,6 +1237,22 @@ impl Render for LspLogToolbarItemView {
                                     view.show_rpc_trace_for_server(row.server_id, cx);
                                 }),
                             );
+                            if server_selected && row.selected_entry == LogKind::Rpc {
+                                let selected_ix = menu.select_last();
+                                // Each language server has:
+                                // 1. A title.
+                                // 2. Server logs.
+                                // 3. Server trace.
+                                // 4. RPC messages.
+                                // 5. Server capabilities
+                                // Thus, if nth server's RPC is selected, the index of selected entry should match this formula
+                                let _expected_index = ix * 5 + 3;
+                                debug_assert_eq!(
+                                    Some(_expected_index),
+                                    selected_ix,
+                                    "Could not scroll to a just added LSP menu item"
+                                );
+                            }
                             menu = menu.entry(
                                 SERVER_CAPABILITIES,
                                 None,
@@ -1244,14 +1260,6 @@ impl Render for LspLogToolbarItemView {
                                     view.show_capabilities_for_server(row.server_id, cx);
                                 }),
                             );
-                            if server_selected && row.selected_entry == LogKind::Rpc {
-                                let selected_ix = menu.select_last();
-                                debug_assert_eq!(
-                                    Some(ix * 4 + 3),
-                                    selected_ix,
-                                    "Could not scroll to a just added LSP menu item"
-                                );
-                            }
                         }
                         menu
                     })

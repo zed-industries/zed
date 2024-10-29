@@ -223,7 +223,6 @@ pub fn render_parsed_markdown(
                 }
             }),
     );
-    // hello
 
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
@@ -3785,9 +3784,6 @@ impl Editor {
     pub fn newline_below(&mut self, _: &NewlineBelow, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
-        //
-        //
-        //
 
         let mut edits = Vec::new();
         let mut rows = Vec::new();
@@ -10760,12 +10756,10 @@ impl Editor {
                         let nested_start_row = foldable_range.0.start.row + 1;
                         let nested_end_row = foldable_range.0.end.row;
 
-                        if current_level == fold_at_level {
-                            fold_ranges.push(foldable_range);
-                        }
-
-                        if current_level <= fold_at_level {
+                        if current_level < fold_at_level {
                             stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        } else if current_level == fold_at_level {
+                            fold_ranges.push(foldable_range);
                         }
 
                         start_row = nested_end_row + 1;

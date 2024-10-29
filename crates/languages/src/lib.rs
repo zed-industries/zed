@@ -3,7 +3,7 @@ use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
 use node_runtime::NodeRuntime;
-use python::PythonContextProvider;
+use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
@@ -61,7 +61,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || Ok((config.clone(), load_queries($name), None)),
+                move || {
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: None,
+                        toolchain_provider: None,
+                    })
+                },
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -75,7 +82,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || Ok((config.clone(), load_queries($name), None)),
+                move || {
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: None,
+                        toolchain_provider: None,
+                    })
+                },
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
@@ -90,11 +104,33 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.grammar.clone(),
                 config.matcher.clone(),
                 move || {
-                    Ok((
-                        config.clone(),
-                        load_queries($name),
-                        Some(Arc::new($context_provider)),
-                    ))
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: Some(Arc::new($context_provider)),
+                        toolchain_provider: None,
+                    })
+                },
+            );
+        };
+        ($name:literal, $adapters:expr, $context_provider:expr, $toolchain_provider:expr) => {
+            let config = load_config($name);
+            // typeck helper
+            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
+            for adapter in adapters {
+                languages.register_lsp_adapter(config.name.clone(), adapter);
+            }
+            languages.register_language(
+                config.name.clone(),
+                config.grammar.clone(),
+                config.matcher.clone(),
+                move || {
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: Some(Arc::new($context_provider)),
+                        toolchain_provider: Some($toolchain_provider),
+                    })
                 },
             );
         };
@@ -141,7 +177,8 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         vec![Arc::new(python::PythonLspAdapter::new(
             node_runtime.clone(),
         ))],
-        PythonContextProvider
+        PythonContextProvider,
+        Arc::new(PythonToolchainProvider::default()) as Arc<dyn ToolchainLister>
     );
     language!(
         "rust",

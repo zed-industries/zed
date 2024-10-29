@@ -505,10 +505,14 @@ pub fn map_to_language_model_completion_events(
                                             LanguageModelToolUse {
                                                 id: tool_use.id,
                                                 name: tool_use.name,
-                                                input: serde_json::Value::from_str(
-                                                    &tool_use.input_json,
-                                                )
-                                                .map_err(|err| anyhow!(err))?,
+                                                input: if tool_use.input_json.is_empty() {
+                                                    serde_json::Value::Null
+                                                } else {
+                                                    serde_json::Value::from_str(
+                                                        &tool_use.input_json,
+                                                    )
+                                                    .map_err(|err| anyhow!(err))?
+                                                },
                                             },
                                         ))
                                     })),

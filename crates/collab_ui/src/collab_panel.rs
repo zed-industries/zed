@@ -2726,7 +2726,7 @@ impl Render for CollabPanel {
             .on_action(cx.listener(CollabPanel::collapse_selected_channel))
             .on_action(cx.listener(CollabPanel::expand_selected_channel))
             .on_action(cx.listener(CollabPanel::start_move_selected_channel))
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .child(if self.user_store.read(cx).current_user().is_none() {
                 self.render_signed_out(cx)

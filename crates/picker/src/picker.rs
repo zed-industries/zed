@@ -108,7 +108,11 @@ pub trait PickerDelegate: Sized + 'static {
     fn should_dismiss(&self) -> bool {
         true
     }
-    fn confirm_completion(&self, _query: String) -> Option<String> {
+    fn confirm_completion(
+        &mut self,
+        _query: String,
+        _: &mut ViewContext<Picker<Self>>,
+    ) -> Option<String> {
         None
     }
 
@@ -370,7 +374,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
-        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx)) {
+        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), cx) {
             self.set_query(new_query, cx);
         } else {
             cx.propagate()

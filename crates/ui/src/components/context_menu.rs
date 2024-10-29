@@ -348,7 +348,7 @@ impl Render for ContextMenu {
                     .min_w(px(200.))
                     .max_h(vh(0.75, cx))
                     .overflow_y_scroll()
-                    .track_focus(&self.focus_handle)
+                    .track_focus(&self.focus_handle(cx))
                     .on_mouse_down_out(cx.listener(|this, _, cx| this.cancel(&menu::Cancel, cx)))
                     .key_context("menu")
                     .on_action(cx.listener(ContextMenu::select_first))
