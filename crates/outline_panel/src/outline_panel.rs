@@ -35,7 +35,7 @@ use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
-use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
+use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, Item, Project};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
@@ -3748,7 +3748,7 @@ impl Render for OutlinePanel {
         let pinned = self.pinned;
         let settings = OutlinePanelSettings::get_global(cx);
         let indent_size = settings.indent_size;
-        let show_indent_guides = settings.indent_guides;
+        let show_indent_guides = settings.indent_guides.show == ShowIndentGuides::Always;
 
         let outline_panel = v_flex()
             .id("outline-panel")
@@ -3787,7 +3787,7 @@ impl Render for OutlinePanel {
                     }
                 }),
             )
-            .track_focus(&self.focus_handle);
+            .track_focus(&self.focus_handle(cx));
 
         if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries {

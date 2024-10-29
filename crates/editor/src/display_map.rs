@@ -21,6 +21,7 @@ mod block_map;
 mod crease_map;
 mod fold_map;
 mod inlay_map;
+pub(crate) mod invisibles;
 mod tab_map;
 mod wrap_map;
 
@@ -42,6 +43,7 @@ use gpui::{
 pub(crate) use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
+use invisibles::{is_invisible, replacement};
 use language::{
     language_settings::language_settings, ChunkRenderer, OffsetUtf16, Point,
     Subscription as BufferSubscription,
@@ -56,6 +58,7 @@ use std::{
     any::TypeId,
     borrow::Cow,
     fmt::Debug,
+    iter,
     num::NonZeroU32,
     ops::{Add, Range, Sub},
     sync::Arc,
@@ -63,7 +66,8 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
-use ui::WindowContext;
+use ui::{div, px, IntoElement, ParentElement, SharedString, Styled, WindowContext};
+use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -461,6 +465,98 @@ pub struct HighlightedChunk<'a> {
     pub renderer: Option<ChunkRenderer>,
 }
 
+impl<'a> HighlightedChunk<'a> {
+    fn highlight_invisibles(
+        self,
+        editor_style: &'a EditorStyle,
+    ) -> impl Iterator<Item = Self> + 'a {
+        let mut chars = self.text.chars().peekable();
+        let mut text = self.text;
+        let style = self.style;
+        let is_tab = self.is_tab;
+        let renderer = self.renderer;
+        iter::from_fn(move || {
+            let mut prefix_len = 0;
+            while let Some(&ch) = chars.peek() {
+                if !is_invisible(ch) {
+                    prefix_len += ch.len_utf8();
+                    chars.next();
+                    continue;
+                }
+                if prefix_len > 0 {
+                    let (prefix, suffix) = text.split_at(prefix_len);
+                    text = suffix;
+                    return Some(HighlightedChunk {
+                        text: prefix,
+                        style,
+                        is_tab,
+                        renderer: renderer.clone(),
+                    });
+                }
+                chars.next();
+                let (prefix, suffix) = text.split_at(ch.len_utf8());
+                text = suffix;
+                if let Some(replacement) = replacement(ch) {
+                    let background = editor_style.status.hint_background;
+                    let underline = editor_style.status.hint;
+                    return Some(HighlightedChunk {
+                        text: prefix,
+                        style: None,
+                        is_tab: false,
+                        renderer: Some(ChunkRenderer {
+                            render: Arc::new(move |_| {
+                                div()
+                                    .child(replacement)
+                                    .bg(background)
+                                    .text_decoration_1()
+                                    .text_decoration_color(underline)
+                                    .into_any_element()
+                            }),
+                            constrain_width: false,
+                        }),
+                    });
+                } else {
+                    let invisible_highlight = HighlightStyle {
+                        background_color: Some(editor_style.status.hint_background),
+                        underline: Some(UnderlineStyle {
+                            color: Some(editor_style.status.hint),
+                            thickness: px(1.),
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    };
+                    let invisible_style = if let Some(mut style) = style {
+                        style.highlight(invisible_highlight);
+                        style
+                    } else {
+                        invisible_highlight
+                    };
+
+                    return Some(HighlightedChunk {
+                        text: prefix,
+                        style: Some(invisible_style),
+                        is_tab: false,
+                        renderer: renderer.clone(),
+                    });
+                }
+            }
+
+            if !text.is_empty() {
+                let remainder = text;
+                text = "";
+                Some(HighlightedChunk {
+                    text: remainder,
+                    style,
+                    is_tab,
+                    renderer: renderer.clone(),
+                })
+            } else {
+                None
+            }
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct DisplaySnapshot {
     pub buffer_snapshot: MultiBufferSnapshot,
@@ -675,7 +771,7 @@ impl DisplaySnapshot {
                 suggestion: Some(editor_style.suggestions_style),
             },
         )
-        .map(|chunk| {
+        .flat_map(|chunk| {
             let mut highlight_style = chunk
                 .syntax_highlight_id
                 .and_then(|id| id.style(&editor_style.syntax));
@@ -718,6 +814,7 @@ impl DisplaySnapshot {
                 is_tab: chunk.is_tab,
                 renderer: chunk.renderer,
             }
+            .highlight_invisibles(editor_style)
         })
     }
 
@@ -784,12 +881,10 @@ impl DisplaySnapshot {
         layout_line.closest_index_for_x(x) as u32
     }
 
-    pub fn display_chars_at(
-        &self,
-        mut point: DisplayPoint,
-    ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
+    pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
         point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
-        self.text_chunks(point.row())
+        let chars = self
+            .text_chunks(point.row())
             .flat_map(str::chars)
             .skip_while({
                 let mut column = 0;
@@ -799,16 +894,24 @@ impl DisplaySnapshot {
                     !at_point
                 }
             })
-            .map(move |ch| {
-                let result = (ch, point);
-                if ch == '\n' {
-                    *point.row_mut() += 1;
-                    *point.column_mut() = 0;
-                } else {
-                    *point.column_mut() += ch.len_utf8() as u32;
+            .take_while({
+                let mut prev = false;
+                move |char| {
+                    let now = char.is_ascii();
+                    let end = char.is_ascii() && (char.is_ascii_whitespace() || prev);
+                    prev = now;
+                    !end
                 }
-                result
-            })
+            });
+        chars.collect::<String>().graphemes(true).next().map(|s| {
+            if let Some(invisible) = s.chars().next().filter(|&c| is_invisible(c)) {
+                replacement(invisible).unwrap_or(s).to_owned().into()
+            } else if s == "\n" {
+                " ".into()
+            } else {
+                s.to_owned().into()
+            }
+        })
     }
 
     pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {

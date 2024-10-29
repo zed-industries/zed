@@ -63,6 +63,12 @@ if [[ $# -gt 0 ]]; then
     fi
 fi
 
+# Get release channel
+pushd crates/zed
+channel=$(<RELEASE_CHANNEL)
+export ZED_RELEASE_CHANNEL="${channel}"
+popd
+
 export ZED_BUNDLE=true
 export MACOSX_DEPLOYMENT_TARGET=10.15.7
 
@@ -90,10 +96,6 @@ else
 fi
 
 echo "Creating application bundle"
-pushd crates/zed
-channel=$(<RELEASE_CHANNEL)
-popd
-
 pushd crates/zed
 cp Cargo.toml Cargo.toml.backup
 sed \

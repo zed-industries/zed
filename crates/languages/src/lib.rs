@@ -325,7 +325,7 @@ fn load_config(name: &str) -> LanguageConfig {
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
         .unwrap();
 
-    #[cfg(not(feature = "load-grammars"))]
+    #[cfg(not(any(feature = "load-grammars", test)))]
     {
         config = LanguageConfig {
             name: config.name,

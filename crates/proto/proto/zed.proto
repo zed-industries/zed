@@ -1721,6 +1721,7 @@ message Collaborator {
     PeerId peer_id = 1;
     uint32 replica_id = 2;
     uint64 user_id = 3;
+    bool is_host = 4;
 }
 
 message User {

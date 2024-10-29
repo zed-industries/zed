@@ -1176,7 +1176,7 @@ impl RemoteServerProjects {
         let mut modal_section = navigation_base::NavigationBase::new(
             "ssh-modal-section".into(),
             v_flex()
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .id("ssh-server-list")
                 .overflow_y_scroll()
                 .track_scroll(&scroll_handle)
@@ -1213,7 +1213,7 @@ impl RemoteServerProjects {
         Modal::new("remote-projects", None)
             .header(
                 ModalHeader::new()
-                    .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall)),
+                    .child(Headline::new("Remote Projects (beta)").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(
