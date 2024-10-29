@@ -456,37 +456,55 @@ impl<'a> ChunkSlice<'a> {
         point
     }
 
-    // todo!("use bitsets")
-    pub fn clip_point(&self, target: Point, bias: Bias) -> Point {
-        for (row, line) in self.text.split('\n').enumerate() {
-            if row == target.row as usize {
-                let bytes = line.as_bytes();
-                let mut column = target.column.min(bytes.len() as u32) as usize;
-                if column == 0
-                    || column == bytes.len()
-                    || (bytes[column - 1] < 128 && bytes[column] < 128)
-                {
-                    return Point::new(row as u32, column as u32);
-                }
-
-                let mut grapheme_cursor = GraphemeCursor::new(column, bytes.len(), true);
-                loop {
-                    if line.is_char_boundary(column)
-                        && grapheme_cursor.is_boundary(line, 0).unwrap_or(false)
-                    {
-                        break;
-                    }
-
-                    match bias {
-                        Bias::Left => column -= 1,
-                        Bias::Right => column += 1,
-                    }
-                    grapheme_cursor.set_cursor(column);
-                }
-                return Point::new(row as u32, column as u32);
-            }
+    pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
+        let max_point = self.lines();
+        if point.row > max_point.row {
+            return max_point;
         }
-        unreachable!()
+
+        let row_start_offset = if point.row > 0 {
+            (nth_set_bit(self.newlines, point.row as usize) + 1) as usize
+        } else {
+            0
+        };
+
+        let row_len_utf8 = if row_start_offset == 64 {
+            0
+        } else {
+            cmp::min(
+                (self.newlines >> row_start_offset).trailing_zeros(),
+                (self.text.len() - row_start_offset) as u32,
+            )
+        };
+
+        if point.column == 0 {
+            point
+        } else if point.column >= row_len_utf8 {
+            Point::new(point.row, row_len_utf8)
+        } else {
+            let mut column = point.column as usize;
+            let line = &self.text[row_start_offset..row_start_offset + row_len_utf8 as usize];
+            let bytes = line.as_bytes();
+            if bytes[column - 1] < 128 && bytes[column] < 128 {
+                return Point::new(point.row, column as u32);
+            }
+
+            let mut grapheme_cursor = GraphemeCursor::new(column, bytes.len(), true);
+            loop {
+                if line.is_char_boundary(column)
+                    && grapheme_cursor.is_boundary(line, 0).unwrap_or(false)
+                {
+                    break;
+                }
+
+                match bias {
+                    Bias::Left => column -= 1,
+                    Bias::Right => column += 1,
+                }
+                grapheme_cursor.set_cursor(column);
+            }
+            Point::new(point.row, column as u32)
+        }
     }
 
     // todo!("use bitsets")
@@ -724,6 +742,34 @@ mod tests {
                 point_utf16
             );
 
+            assert_eq!(
+                chunk.clip_point(point, Bias::Left),
+                point,
+                "incorrect left clip at {:?}",
+                point
+            );
+            assert_eq!(
+                chunk.clip_point(point, Bias::Right),
+                point,
+                "incorrect right clip at {:?}",
+                point
+            );
+            for i in 1..c.len_utf8() {
+                let test_point = Point::new(point.row, point.column + i as u32);
+                assert_eq!(
+                    chunk.clip_point(test_point, Bias::Left),
+                    point,
+                    "incorrect left clip within multi-byte char at {:?}",
+                    test_point
+                );
+                assert_eq!(
+                    chunk.clip_point(test_point, Bias::Right),
+                    Point::new(point.row, point.column + c.len_utf8() as u32),
+                    "incorrect right clip within multi-byte char at {:?}",
+                    test_point
+                );
+            }
+
             if c == '\n' {
                 point.row += 1;
                 point.column = 0;
@@ -769,6 +815,18 @@ mod tests {
             offset,
             "mismatch at final point_utf16 {:?}",
             point_utf16
+        );
+        assert_eq!(
+            chunk.clip_point(point, Bias::Left),
+            point,
+            "incorrect left clip at final point {:?}",
+            point
+        );
+        assert_eq!(
+            chunk.clip_point(point, Bias::Right),
+            point,
+            "incorrect right clip at final point {:?}",
+            point
         );
 
         // Verify length methods
