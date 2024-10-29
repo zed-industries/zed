@@ -59,6 +59,7 @@ actions!(
     assistant,
     [
         Assist,
+        Edit,
         Split,
         CopyCode,
         CycleMessageRole,

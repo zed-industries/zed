@@ -68,6 +68,14 @@ impl ContextId {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum RequestType {
+    /// Request a normal chat response from the model.
+    Chat,
+    /// Add a preamble to the message, which tells the model to return a structured response that suggests edits.
+    SuggestEdits,
+}
+
 #[derive(Clone, Debug)]
 pub enum ContextOperation {
     InsertMessage {
@@ -1045,7 +1053,7 @@ impl Context {
     }
 
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
-        let request = self.to_completion_request(cx);
+        let request = self.to_completion_request(RequestType::SuggestEdits, cx); // Conservatively assume SuggestEdits, since it takes more tokens.
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -1188,7 +1196,7 @@ impl Context {
         }
 
         let request = {
-            let mut req = self.to_completion_request(cx);
+            let mut req = self.to_completion_request(RequestType::Chat, cx);
             // Skip the last message because it's likely to change and
             // therefore would be a waste to cache.
             req.messages.pop();
@@ -2022,7 +2030,11 @@ impl Context {
         })
     }
 
-    pub fn assist(&mut self, cx: &mut ModelContext<Self>) -> Option<MessageAnchor> {
+    pub fn assist(
+        &mut self,
+        request_type: RequestType,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<MessageAnchor> {
         let model_registry = LanguageModelRegistry::read_global(cx);
         let provider = model_registry.active_provider()?;
         let model = model_registry.active_model()?;
@@ -2035,7 +2047,7 @@ impl Context {
         // Compute which messages to cache, including the last one.
         self.mark_cache_anchors(&model.cache_configuration(), false, cx);
 
-        let mut request = self.to_completion_request(cx);
+        let mut request = self.to_completion_request(request_type, cx);
 
         if cx.has_flag::<ToolUseFeatureFlag>() {
             let tool_registry = ToolRegistry::global(cx);
@@ -2237,7 +2249,11 @@ impl Context {
         Some(user_message)
     }
 
-    pub fn to_completion_request(&self, cx: &AppContext) -> LanguageModelRequest {
+    pub fn to_completion_request(
+        &self,
+        request_type: RequestType,
+        cx: &AppContext,
+    ) -> LanguageModelRequest {
         let buffer = self.buffer.read(cx);
 
         let mut contents = self.contents(cx).peekable();
@@ -2324,6 +2340,25 @@ impl Context {
             );
 
             completion_request.messages.push(request_message);
+        }
+
+        if let RequestType::SuggestEdits = request_type {
+            if let Ok(preamble) = self.prompt_builder.generate_workflow_prompt() {
+                let last_elem_index = completion_request.messages.len();
+
+                completion_request
+                    .messages
+                    .push(LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::Text(preamble)],
+                        cache: false,
+                    });
+
+                // The preamble message should be sent right before the last actual user message.
+                completion_request
+                    .messages
+                    .swap(last_elem_index, last_elem_index.saturating_sub(1));
+            }
         }
 
         completion_request
@@ -2651,7 +2686,7 @@ impl Context {
                 return;
             }
 
-            let mut request = self.to_completion_request(cx);
+            let mut request = self.to_completion_request(RequestType::Chat, cx);
             request.messages.push(LanguageModelRequestMessage {
                 role: Role::User,
                 content: vec![
