@@ -13,7 +13,7 @@ pub struct NavigableEntry {
     #[allow(missing_docs)]
     pub focus_handle: FocusHandle,
     #[allow(missing_docs)]
-    pub scroll_anchor: ScrollAnchor,
+    pub scroll_anchor: Option<ScrollAnchor>,
 }
 
 impl NavigableEntry {
@@ -21,7 +21,14 @@ impl NavigableEntry {
     pub fn new(scroll_handle: &ScrollHandle, cx: &WindowContext<'_>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
-            scroll_anchor: ScrollAnchor::for_handle(scroll_handle.clone()),
+            scroll_anchor: Some(ScrollAnchor::for_handle(scroll_handle.clone())),
+        }
+    }
+    /// Create a new [NavigableEntry] that cannot be scrolled to.
+    pub fn focusable(cx: &WindowContext<'_>) -> Self {
+        Self {
+            focus_handle: cx.focus_handle(),
+            scroll_anchor: None,
         }
     }
 }
@@ -65,7 +72,9 @@ impl RenderOnce for Navigable {
                         .unwrap_or(0);
                     if let Some(entry) = children.get(target) {
                         entry.focus_handle.focus(cx);
-                        entry.scroll_anchor.scroll_to(cx);
+                        if let Some(anchor) = &entry.scroll_anchor {
+                            anchor.scroll_to(cx);
+                        }
                     }
                 }
             })
@@ -77,7 +86,9 @@ impl RenderOnce for Navigable {
                         .or(children.len().checked_sub(1));
                     if let Some(entry) = target.and_then(|target| children.get(target)) {
                         entry.focus_handle.focus(cx);
-                        entry.scroll_anchor.scroll_to(cx);
+                        if let Some(anchor) = &entry.scroll_anchor {
+                            anchor.scroll_to(cx);
+                        }
                     }
                 }
             })

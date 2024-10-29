@@ -916,8 +916,8 @@ pub trait StatefulInteractiveElement: InteractiveElement {
     }
 
     /// Track the scroll state of this element with the given handle.
-    fn anchor_scroll(mut self, scroll_anchor: &ScrollAnchor) -> Self {
-        self.interactivity().scroll_anchor = Some(scroll_anchor.clone());
+    fn anchor_scroll(mut self, scroll_anchor: Option<ScrollAnchor>) -> Self {
+        self.interactivity().scroll_anchor = scroll_anchor;
         self
     }
 
