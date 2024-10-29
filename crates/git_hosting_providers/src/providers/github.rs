@@ -197,8 +197,7 @@ impl GitHostingProvider for Github {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Replace with `indoc`.
-    use unindent::Unindent;
+    use indoc::indoc;
 
     use super::*;
 
@@ -342,7 +341,7 @@ mod tests {
         assert!(Github.extract_pull_request(&remote, message).is_none());
 
         // Pull request number at end of first line
-        let message = r#"
+        let message = indoc! {r#"
             project panel: do not expand collapsed worktrees on "collapse all entries" (#10687)
 
             Fixes #10597
@@ -351,7 +350,7 @@ mod tests {
 
             - Fixed "project panel: collapse all entries" expanding collapsed worktrees.
             "#
-        .unindent();
+        };
 
         assert_eq!(
             Github
@@ -363,12 +362,12 @@ mod tests {
         );
 
         // Pull request number in middle of line, which we want to ignore
-        let message = r#"
+        let message = indoc! {r#"
             Follow-up to #10687 to fix problems
 
             See the original PR, this is a fix.
             "#
-        .unindent();
+        };
         assert_eq!(Github.extract_pull_request(&remote, &message), None);
     }
 }

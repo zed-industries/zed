@@ -4909,11 +4909,11 @@ dependencies = [
  "git",
  "gpui",
  "http_client",
+ "indoc",
  "pretty_assertions",
  "regex",
  "serde",
  "serde_json",
- "unindent",
  "url",
  "util",
 ]
