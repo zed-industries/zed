@@ -499,7 +499,7 @@ impl<'a> ChunkSlice<'a> {
     #[inline(always)]
     fn offset_range_for_row(&self, row: u32) -> Range<usize> {
         let row_start = if row > 0 {
-            (nth_set_bit(self.newlines, row as usize) + 1) as usize
+            nth_set_bit(self.newlines, row as usize) + 1
         } else {
             0
         };
@@ -536,10 +536,10 @@ fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
     let mut t: u64;
 
     // Parallel bit count intermediates
-    let a = v - ((v >> 1) & u64::MAX / 3);
-    let b = (a & u64::MAX / 5) + ((a >> 2) & u64::MAX / 5);
-    let c = (b + (b >> 4)) & u64::MAX / 0x11;
-    let d = (c + (c >> 8)) & u64::MAX / 0x101;
+    let a = v - ((v >> 1) & (u64::MAX / 3));
+    let b = (a & u64::MAX / 5) + ((a >> 2) & (u64::MAX / 5));
+    let c = (b + (b >> 4)) & (u64::MAX / 0x11);
+    let d = (c + (c >> 8)) & (u64::MAX / 0x101);
     t = (d >> 32) + (d >> 48);
 
     // Branchless select
