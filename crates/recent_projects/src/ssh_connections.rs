@@ -569,7 +569,7 @@ impl SshClientDelegate {
             let version = release
                 .version
                 .parse::<SemanticVersion>()
-                .map(|semantic| ServerVersion::Semantic(semantic))
+                .map(ServerVersion::Semantic)
                 .unwrap_or_else(|_| ServerVersion::Commit(release.version));
             Ok((
                 ServerBinary::ReleaseUrl {
