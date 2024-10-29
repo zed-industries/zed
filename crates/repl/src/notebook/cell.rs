@@ -64,7 +64,7 @@ impl CellControl {
 impl Clickable for CellControl {
     fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static) -> Self {
         let button = self.button.on_click(handler);
-        Self { button, ..self }
+        Self { button }
     }
 
     fn cursor_style(self, _cursor_style: gpui::CursorStyle) -> Self {
@@ -510,7 +510,7 @@ impl RenderableCell for CodeCell {
             CellControl::new("rerun-cell", CellControlType::RerunCell)
         } else {
             CellControl::new("run-cell", CellControlType::RunCell)
-                .on_click((cx.listener(move |this, _, cx| this.run(cx))))
+                .on_click(cx.listener(move |this, _, cx| this.run(cx)))
         };
 
         Some(cell_control)
