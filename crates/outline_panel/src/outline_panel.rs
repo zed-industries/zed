@@ -5,7 +5,7 @@ use std::{
     cmp,
     hash::Hash,
     ops::Range,
-    path::{Path, PathBuf},
+    path::{Path, PathBuf, MAIN_SEPARATOR_STR},
     sync::{atomic::AtomicBool, Arc, OnceLock},
     time::Duration,
     u32,
@@ -1625,16 +1625,11 @@ impl OutlinePanel {
         }
         .unwrap_or_else(empty_icon);
 
-        let buffer_snapshot = self.buffer_snapshot_for_id(buffer_id, cx)?;
-        let excerpt_range = range.context.to_point(&buffer_snapshot);
-        let label_element = Label::new(format!(
-            "Lines {}- {}",
-            excerpt_range.start.row + 1,
-            excerpt_range.end.row + 1,
-        ))
-        .single_line()
-        .color(color)
-        .into_any_element();
+        let label = self.excerpt_label(buffer_id, range, cx)?;
+        let label_element = Label::new(label)
+            .single_line()
+            .color(color)
+            .into_any_element();
 
         Some(self.entry_element(
             PanelEntry::Outline(OutlineEntry::Excerpt(buffer_id, excerpt_id, range.clone())),
@@ -1644,6 +1639,21 @@ impl OutlinePanel {
             is_active,
             label_element,
             cx,
+        ))
+    }
+
+    fn excerpt_label(
+        &self,
+        buffer_id: BufferId,
+        range: &ExcerptRange<language::Anchor>,
+        cx: &AppContext,
+    ) -> Option<String> {
+        let buffer_snapshot = self.buffer_snapshot_for_id(buffer_id, cx)?;
+        let excerpt_range = range.context.to_point(&buffer_snapshot);
+        Some(format!(
+            "Lines {}- {}",
+            excerpt_range.start.row + 1,
+            excerpt_range.end.row + 1,
         ))
     }
 
@@ -2814,10 +2824,11 @@ impl OutlinePanel {
             else {
                 return;
             };
-            let new_cached_entries = new_cached_entries.await;
+            let (new_cached_entries, max_width_item_index) = new_cached_entries.await;
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
                     outline_panel.cached_entries = new_cached_entries;
+                    outline_panel.max_width_item_index = max_width_item_index;
                     if outline_panel.selected_entry.is_invalidated() {
                         if let Some(new_selected_entry) =
                             outline_panel.active_editor().and_then(|active_editor| {
@@ -2840,11 +2851,10 @@ impl OutlinePanel {
         is_singleton: bool,
         query: Option<String>,
         cx: &mut ViewContext<'_, Self>,
-    ) -> Task<Vec<CachedEntry>> {
+    ) -> Task<(Vec<CachedEntry>, Option<usize>)> {
         let project = self.project.clone();
         cx.spawn(|outline_panel, mut cx| async move {
-            let mut entries = Vec::new();
-            let mut match_candidates = Vec::new();
+            let mut generation_state = GenerationState::default();
 
             let Ok(()) = outline_panel.update(&mut cx, |outline_panel, cx| {
                 let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
@@ -2964,8 +2974,7 @@ impl OutlinePanel {
                                                 folded_dirs,
                                             );
                                             outline_panel.push_entry(
-                                                &mut entries,
-                                                &mut match_candidates,
+                                                &mut generation_state,
                                                 track_matches,
                                                 new_folded_dirs,
                                                 folded_depth,
@@ -3002,8 +3011,7 @@ impl OutlinePanel {
                                     .map_or(true, |parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
-                                        &mut entries,
-                                        &mut match_candidates,
+                                        &mut generation_state,
                                         track_matches,
                                         PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                                         folded_depth,
@@ -3027,8 +3035,7 @@ impl OutlinePanel {
                                     .map_or(true, |parent| parent.expanded);
                                 if !is_singleton && (parent_expanded || query.is_some()) {
                                     outline_panel.push_entry(
-                                        &mut entries,
-                                        &mut match_candidates,
+                                        &mut generation_state,
                                         track_matches,
                                         PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                                         folded_depth,
@@ -3063,8 +3070,7 @@ impl OutlinePanel {
                         && (should_add || (query.is_some() && folded_dirs_entry.is_none()))
                     {
                         outline_panel.push_entry(
-                            &mut entries,
-                            &mut match_candidates,
+                            &mut generation_state,
                             track_matches,
                             PanelEntry::Fs(entry.clone()),
                             depth,
@@ -3076,8 +3082,7 @@ impl OutlinePanel {
                         ItemsDisplayMode::Search(_) => {
                             if is_singleton || query.is_some() || (should_add && is_expanded) {
                                 outline_panel.add_search_entries(
-                                    &mut entries,
-                                    &mut match_candidates,
+                                    &mut generation_state,
                                     entry.clone(),
                                     depth,
                                     query.clone(),
@@ -3103,14 +3108,13 @@ impl OutlinePanel {
                                 };
                             if let Some((buffer_id, entry_excerpts)) = excerpts_to_consider {
                                 outline_panel.add_excerpt_entries(
+                                    &mut generation_state,
                                     buffer_id,
                                     entry_excerpts,
                                     depth,
                                     track_matches,
                                     is_singleton,
                                     query.as_deref(),
-                                    &mut entries,
-                                    &mut match_candidates,
                                     cx,
                                 );
                             }
@@ -3119,13 +3123,12 @@ impl OutlinePanel {
 
                     if is_singleton
                         && matches!(entry, FsEntry::File(..) | FsEntry::ExternalFile(..))
-                        && !entries.iter().any(|item| {
+                        && !generation_state.entries.iter().any(|item| {
                             matches!(item.entry, PanelEntry::Outline(..) | PanelEntry::Search(_))
                         })
                     {
                         outline_panel.push_entry(
-                            &mut entries,
-                            &mut match_candidates,
+                            &mut generation_state,
                             track_matches,
                             PanelEntry::Fs(entry.clone()),
                             0,
@@ -3142,8 +3145,7 @@ impl OutlinePanel {
                         .map_or(true, |parent| parent.expanded);
                     if parent_expanded || query.is_some() {
                         outline_panel.push_entry(
-                            &mut entries,
-                            &mut match_candidates,
+                            &mut generation_state,
                             track_matches,
                             PanelEntry::FoldedDirs(worktree_id, folded_dirs),
                             folded_depth,
@@ -3152,15 +3154,20 @@ impl OutlinePanel {
                     }
                 }
             }) else {
-                return Vec::new();
+                return (Vec::new(), None);
             };
 
             let Some(query) = query else {
-                return entries;
+                return (
+                    generation_state.entries,
+                    generation_state
+                        .max_width_estimate_and_index
+                        .map(|(_, index)| index),
+                );
             };
 
             let mut matched_ids = match_strings(
-                &match_candidates,
+                &generation_state.match_candidates,
                 &query,
                 true,
                 usize::MAX,
@@ -3173,7 +3180,7 @@ impl OutlinePanel {
             .collect::<HashMap<_, _>>();
 
             let mut id = 0;
-            entries.retain_mut(|cached_entry| {
+            generation_state.entries.retain_mut(|cached_entry| {
                 let retain = match matched_ids.remove(&id) {
                     Some(string_match) => {
                         cached_entry.string_match = Some(string_match);
@@ -3185,15 +3192,19 @@ impl OutlinePanel {
                 retain
             });
 
-            entries
+            (
+                generation_state.entries,
+                generation_state
+                    .max_width_estimate_and_index
+                    .map(|(_, index)| index),
+            )
         })
     }
 
     #[allow(clippy::too_many_arguments)]
     fn push_entry(
         &self,
-        entries: &mut Vec<CachedEntry>,
-        match_candidates: &mut Vec<StringMatchCandidate>,
+        state: &mut GenerationState,
         track_matches: bool,
         entry: PanelEntry,
         depth: usize,
@@ -3213,13 +3224,13 @@ impl OutlinePanel {
         };
 
         if track_matches {
-            let id = entries.len();
+            let id = state.entries.len();
             match &entry {
                 PanelEntry::Fs(fs_entry) => {
                     if let Some(file_name) =
                         self.relative_path(fs_entry, cx).as_deref().map(file_name)
                     {
-                        match_candidates.push(StringMatchCandidate {
+                        state.match_candidates.push(StringMatchCandidate {
                             id,
                             string: file_name.to_string(),
                             char_bag: file_name.chars().collect(),
@@ -3229,7 +3240,7 @@ impl OutlinePanel {
                 PanelEntry::FoldedDirs(worktree_id, entries) => {
                     let dir_names = self.dir_names_string(entries, *worktree_id, cx);
                     {
-                        match_candidates.push(StringMatchCandidate {
+                        state.match_candidates.push(StringMatchCandidate {
                             id,
                             string: dir_names.clone(),
                             char_bag: dir_names.chars().collect(),
@@ -3238,7 +3249,7 @@ impl OutlinePanel {
                 }
                 PanelEntry::Outline(outline_entry) => match outline_entry {
                     OutlineEntry::Outline(_, _, outline) => {
-                        match_candidates.push(StringMatchCandidate {
+                        state.match_candidates.push(StringMatchCandidate {
                             id,
                             string: outline.text.clone(),
                             char_bag: outline.text.chars().collect(),
@@ -3247,7 +3258,7 @@ impl OutlinePanel {
                     OutlineEntry::Excerpt(..) => {}
                 },
                 PanelEntry::Search(new_search_entry) => {
-                    match_candidates.push(StringMatchCandidate {
+                    state.match_candidates.push(StringMatchCandidate {
                         id,
                         char_bag: new_search_entry.render_data.context_text.chars().collect(),
                         string: new_search_entry.render_data.context_text.clone(),
@@ -3255,7 +3266,16 @@ impl OutlinePanel {
                 }
             }
         }
-        entries.push(CachedEntry {
+
+        let width_estimate = self.width_estimate(depth, &entry, cx);
+        if Some(width_estimate)
+            > state
+                .max_width_estimate_and_index
+                .map(|(estimate, _)| estimate)
+        {
+            state.max_width_estimate_and_index = Some((width_estimate, state.entries.len()));
+        }
+        state.entries.push(CachedEntry {
             depth,
             entry,
             string_match: None,
@@ -3390,14 +3410,13 @@ impl OutlinePanel {
     #[allow(clippy::too_many_arguments)]
     fn add_excerpt_entries(
         &self,
+        state: &mut GenerationState,
         buffer_id: BufferId,
         entries_to_add: &[ExcerptId],
         parent_depth: usize,
         track_matches: bool,
         is_singleton: bool,
         query: Option<&str>,
-        entries: &mut Vec<CachedEntry>,
-        match_candidates: &mut Vec<StringMatchCandidate>,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(excerpts) = self.excerpts.get(&buffer_id) {
@@ -3407,8 +3426,7 @@ impl OutlinePanel {
                 };
                 let excerpt_depth = parent_depth + 1;
                 self.push_entry(
-                    entries,
-                    match_candidates,
+                    state,
                     track_matches,
                     PanelEntry::Outline(OutlineEntry::Excerpt(
                         buffer_id,
@@ -3422,8 +3440,7 @@ impl OutlinePanel {
                 let mut outline_base_depth = excerpt_depth + 1;
                 if is_singleton {
                     outline_base_depth = 0;
-                    entries.clear();
-                    match_candidates.clear();
+                    state.clear();
                 } else if query.is_none()
                     && self
                         .collapsed_entries
@@ -3434,8 +3451,7 @@ impl OutlinePanel {
 
                 for outline in excerpt.iter_outlines() {
                     self.push_entry(
-                        entries,
-                        match_candidates,
+                        state,
                         track_matches,
                         PanelEntry::Outline(OutlineEntry::Outline(
                             buffer_id,
@@ -3453,8 +3469,7 @@ impl OutlinePanel {
     #[allow(clippy::too_many_arguments)]
     fn add_search_entries(
         &mut self,
-        entries: &mut Vec<CachedEntry>,
-        match_candidates: &mut Vec<StringMatchCandidate>,
+        state: &mut GenerationState,
         parent_entry: FsEntry,
         parent_depth: usize,
         filter_query: Option<String>,
@@ -3485,7 +3500,8 @@ impl OutlinePanel {
                 || related_excerpts.contains(&match_range.end.excerpt_id)
         });
 
-        let previous_search_matches = entries
+        let previous_search_matches = state
+            .entries
             .iter()
             .skip_while(|entry| {
                 if let PanelEntry::Fs(entry) = &entry.entry {
@@ -3540,8 +3556,7 @@ impl OutlinePanel {
             .collect::<Vec<_>>();
         for new_search_entry in new_search_entries {
             self.push_entry(
-                entries,
-                match_candidates,
+                state,
                 filter_query.is_some(),
                 PanelEntry::Search(new_search_entry),
                 depth,
@@ -3768,6 +3783,46 @@ impl OutlinePanel {
                 })
                 .log_err();
         }))
+    }
+
+    fn width_estimate(&self, depth: usize, entry: &PanelEntry, cx: &AppContext) -> u64 {
+        let item_text_chars = match entry {
+            PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => self
+                .buffer_snapshot_for_id(*buffer_id, cx)
+                .and_then(|snapshot| {
+                    Some(snapshot.file()?.path().file_name()?.to_string_lossy().len())
+                })
+                .unwrap_or_default(),
+            PanelEntry::Fs(FsEntry::Directory(_, directory)) => directory
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().len())
+                .unwrap_or_default(),
+            PanelEntry::Fs(FsEntry::File(_, file, _, _)) => file
+                .path
+                .file_name()
+                .map(|name| name.to_string_lossy().len())
+                .unwrap_or_default(),
+            PanelEntry::FoldedDirs(_, dirs) => {
+                dirs.iter()
+                    .map(|dir| {
+                        dir.path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().len())
+                            .unwrap_or_default()
+                    })
+                    .sum::<usize>()
+                    + dirs.len().saturating_sub(1) * MAIN_SEPARATOR_STR.len()
+            }
+            PanelEntry::Outline(OutlineEntry::Excerpt(buffer_id, _, range)) => self
+                .excerpt_label(*buffer_id, range, cx)
+                .map(|label| label.len())
+                .unwrap_or_default(),
+            PanelEntry::Outline(OutlineEntry::Outline(_, _, outline)) => outline.text.len(),
+            PanelEntry::Search(search) => search.render_data.context_text.len(),
+        };
+
+        (item_text_chars + depth) as u64
     }
 }
 
@@ -4100,8 +4155,7 @@ impl Render for OutlinePanel {
                         }
                     })
                     .size_full()
-                    // TODO kb
-                    // .with_width_from_item(self.max_width_item_index)
+                    .with_width_from_item(self.max_width_item_index)
                     .track_scroll(self.scroll_handle.clone())
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
@@ -4301,6 +4355,21 @@ fn empty_icon() -> AnyElement {
 
 fn horizontal_separator(cx: &mut WindowContext) -> Div {
     div().mx_2().border_primary(cx).border_t_1()
+}
+
+#[derive(Debug, Default)]
+struct GenerationState {
+    entries: Vec<CachedEntry>,
+    match_candidates: Vec<StringMatchCandidate>,
+    max_width_estimate_and_index: Option<(u64, usize)>,
+}
+
+impl GenerationState {
+    fn clear(&mut self) {
+        self.entries.clear();
+        self.match_candidates.clear();
+        self.max_width_estimate_and_index = None;
+    }
 }
 
 #[cfg(test)]
