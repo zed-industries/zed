@@ -265,6 +265,9 @@
     "fsharp": {
       "icon": "icons/file_icons/fsharp.svg"
     },
+    "gleam": {
+      "icon": "icons/file_icons/gleam.svg"
+    },
     "go": {
       "icon": "icons/file_icons/go.svg"
     },
