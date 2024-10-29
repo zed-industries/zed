@@ -86,7 +86,7 @@ impl Cell {
                 source,
                 attachments,
             } => {
-                let source = source.join("\n");
+                let source = source.join("");
 
                 let view = cx.new_view(|cx| {
                     let markdown_parsing_task = {
@@ -127,7 +127,7 @@ impl Cell {
                 source,
                 outputs,
             } => Cell::Code(cx.new_view(|cx| {
-                let text = source.join("\n");
+                let text = source.join("");
 
                 let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
                 let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -172,7 +172,7 @@ impl Cell {
                     id: id.clone(),
                     metadata: metadata.clone(),
                     execution_count: execution_count.clone(),
-                    source: source.join("\n"),
+                    source: source.join(""),
                     editor: editor_view,
                     outputs: convert_outputs(outputs, cx),
                     selected: false,
@@ -186,7 +186,7 @@ impl Cell {
             } => Cell::Raw(cx.new_view(|_| RawCell {
                 id: id.clone(),
                 metadata: metadata.clone(),
-                source: source.join("\n"),
+                source: source.join(""),
                 selected: false,
             })),
         }

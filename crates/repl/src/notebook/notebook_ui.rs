@@ -54,7 +54,6 @@ pub(crate) const CONTROL_SIZE: f32 = 20.0;
 
 pub fn init(cx: &mut AppContext) {
     if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
-        eprintln!("Registering NotebookEditor...");
         workspace::register_project_item::<NotebookEditor>(cx);
     }
 
@@ -508,8 +507,6 @@ impl project::Item for NotebookItem {
     ) -> Option<Task<gpui::Result<Model<Self>>>> {
         let path = path.clone();
         let project = project.clone();
-
-        eprintln!("Trying to open notebook: {:?}", path);
 
         if path.path.extension().unwrap_or_default() == "ipynb" {
             Some(cx.spawn(|mut cx| async move {
