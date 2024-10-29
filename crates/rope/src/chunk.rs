@@ -254,15 +254,6 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn offset_to_point(&self, offset: usize) -> Point {
-        if !self.text.is_char_boundary(offset) {
-            debug_panic!(
-                "offset {:?} is not a char boundary for string {:?}",
-                offset,
-                self.text
-            );
-            return Point::zero();
-        }
-
         let mask = if offset == MAX_BASE {
             u128::MAX
         } else {
