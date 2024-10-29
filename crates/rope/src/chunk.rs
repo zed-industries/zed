@@ -12,7 +12,6 @@ pub(crate) const MAX_BASE: usize = MIN_BASE * 2;
 pub struct Chunk {
     chars: u128,
     chars_utf16: u128,
-    tabs: u128,
     newlines: u128,
     pub text: ArrayString<MAX_BASE>,
 }
@@ -32,7 +31,6 @@ impl Chunk {
             self.chars |= 1 << ix;
             self.chars_utf16 |= 1 << ix;
             self.chars_utf16 |= (c.len_utf16() as u128) << ix;
-            self.tabs |= ((c == '\t') as u128) << ix;
             self.newlines |= ((c == '\n') as u128) << ix;
         }
         self.text.push_str(text);
@@ -47,7 +45,6 @@ impl Chunk {
         let base_ix = self.text.len();
         self.chars |= slice.chars << base_ix;
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
-        self.tabs |= slice.tabs << base_ix;
         self.newlines |= slice.newlines << base_ix;
         self.text.push_str(&slice.text);
     }
@@ -57,7 +54,6 @@ impl Chunk {
         ChunkSlice {
             chars: self.chars,
             chars_utf16: self.chars_utf16,
-            tabs: self.tabs,
             newlines: self.newlines,
             text: &self.text,
         }
@@ -73,7 +69,6 @@ impl Chunk {
 pub struct ChunkSlice<'a> {
     chars: u128,
     chars_utf16: u128,
-    tabs: u128,
     newlines: u128,
     text: &'a str,
 }
@@ -83,7 +78,6 @@ impl<'a> Into<Chunk> for ChunkSlice<'a> {
         Chunk {
             chars: self.chars,
             chars_utf16: self.chars_utf16,
-            tabs: self.tabs,
             newlines: self.newlines,
             text: self.text.try_into().unwrap(),
         }
@@ -108,7 +102,6 @@ impl<'a> ChunkSlice<'a> {
             let right = ChunkSlice {
                 chars: 0,
                 chars_utf16: 0,
-                tabs: 0,
                 newlines: 0,
                 text: "",
             };
@@ -123,14 +116,12 @@ impl<'a> ChunkSlice<'a> {
             let left = ChunkSlice {
                 chars: self.chars & mask,
                 chars_utf16: self.chars_utf16 & mask,
-                tabs: self.tabs & mask,
                 newlines: self.newlines & mask,
                 text: left_text,
             };
             let right = ChunkSlice {
                 chars: self.chars >> mid,
                 chars_utf16: self.chars_utf16 >> mid,
-                tabs: self.tabs >> mid,
                 newlines: self.newlines >> mid,
                 text: right_text,
             };
@@ -149,7 +140,6 @@ impl<'a> ChunkSlice<'a> {
             Self {
                 chars: 0,
                 chars_utf16: 0,
-                tabs: 0,
                 newlines: 0,
                 text: "",
             }
@@ -157,7 +147,6 @@ impl<'a> ChunkSlice<'a> {
             Self {
                 chars: (self.chars & mask) >> range.start,
                 chars_utf16: (self.chars_utf16 & mask) >> range.start,
-                tabs: (self.tabs & mask) >> range.start,
                 newlines: (self.newlines & mask) >> range.start,
                 text: &self.text[range],
             }
