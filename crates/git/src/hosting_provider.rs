@@ -159,7 +159,7 @@ impl GitHostingProviderRegistry {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub struct ParsedGitRemote<'a> {
     pub owner: &'a str,
     pub repo: &'a str,

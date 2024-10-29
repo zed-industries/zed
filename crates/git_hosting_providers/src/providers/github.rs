@@ -199,6 +199,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_remote_url_given_https_url_with_username() {
+        let parsed_remote = Github
+            .parse_remote_url("https://jlannister@github.com/some-org/some-repo.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "some-org",
+                repo: "some-repo",
+            }
+        );
+    }
+
+    #[test]
     fn test_build_github_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
             owner: "zed-industries",
