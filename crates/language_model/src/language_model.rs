@@ -83,6 +83,15 @@ pub struct LanguageModelTextStream {
     pub stream: BoxStream<'static, Result<String>>,
 }
 
+impl Default for LanguageModelTextStream {
+    fn default() -> Self {
+        Self {
+            message_id: None,
+            stream: Box::pin(futures::stream::empty()),
+        }
+    }
+}
+
 pub trait LanguageModel: Send + Sync {
     fn id(&self) -> LanguageModelId;
     fn name(&self) -> LanguageModelName;
@@ -126,22 +135,26 @@ pub trait LanguageModel: Send + Sync {
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<LanguageModelTextStream>> {
         let events = self.stream_completion(request, cx);
-        let mut message_id = None;
 
         async move {
-            let events = events.await?.peekable();
-
+            let mut events = events.await?;
             let mut message_id = None;
-            if let Some(first_event) = events.get_ref().peek().await {
-                if let LanguageModelCompletionEvent::StartMessage { message_id: id } = first_event {
-                    message_id = Some(id);
-                    events.next().await;
+            let mut first_item_text = None;
+
+            if let Some(first_event) = events.next().await {
+                match first_event {
+                    Ok(LanguageModelCompletionEvent::StartMessage { message_id: id }) => {
+                        message_id = Some(id.clone());
+                    }
+                    Ok(LanguageModelCompletionEvent::Text(text)) => {
+                        first_item_text = Some(text);
+                    }
+                    _ => (),
                 }
             }
 
-            let stream = events
-                .await?
-                .filter_map(|result| async move {
+            let stream = futures::stream::iter(first_item_text.map(|text| Ok(text)))
+                .chain(events.filter_map(|result| async move {
                     match result {
                         Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
                         Ok(LanguageModelCompletionEvent::Text(text)) => Some(Ok(text)),
@@ -149,7 +162,7 @@ pub trait LanguageModel: Send + Sync {
                         Ok(LanguageModelCompletionEvent::ToolUse(_)) => None,
                         Err(err) => Some(Err(err)),
                     }
-                })
+                }))
                 .boxed();
 
             Ok(LanguageModelTextStream { message_id, stream })
