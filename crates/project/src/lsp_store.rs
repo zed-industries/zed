@@ -7,10 +7,11 @@ use crate::{
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
     relativize_path, resolve_path,
+    toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
     CodeAction, Completion, CoreCompletion, Hover, InlayHint, Item as _, ProjectPath,
-    ProjectTransaction, ResolveState, Symbol,
+    ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -30,16 +31,15 @@ use gpui::{
 use http_client::HttpClient;
 use language::{
     language_settings::{
-        all_language_settings, language_settings, AllLanguageSettings, FormatOnSave, Formatter,
-        LanguageSettings, SelectedFormatter,
+        language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageName,
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName, LanguageToolchainStore,
+    LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset,
+    ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
@@ -223,7 +223,8 @@ impl LocalLspStore {
                 })?;
 
             let settings = buffer.handle.update(&mut cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx).clone()
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
+                    .into_owned()
             })?;
 
             let remove_trailing_whitespace = settings.remove_trailing_whitespace_on_save;
@@ -280,7 +281,7 @@ impl LocalLspStore {
                 .zip(buffer.abs_path.as_ref());
 
             let prettier_settings = buffer.handle.read_with(&cx, |buffer, cx| {
-                language_settings(buffer.language(), buffer.file(), cx)
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx)
                     .prettier
                     .clone()
             })?;
@@ -707,12 +708,13 @@ pub struct LspStore {
     nonce: u128,
     buffer_store: Model<BufferStore>,
     worktree_store: Model<WorktreeStore>,
+    toolchain_store: Option<Model<ToolchainStore>>,
     buffer_snapshots: HashMap<BufferId, HashMap<LanguageServerId, Vec<LspBufferSnapshot>>>, // buffer_id -> server_id -> vec of snapshots
     pub languages: Arc<LanguageRegistry>,
     language_server_ids: HashMap<(WorktreeId, LanguageServerName), LanguageServerId>,
     pub language_server_statuses: BTreeMap<LanguageServerId, LanguageServerStatus>,
     active_entry: Option<ProjectEntryId>,
-    _maintain_workspace_config: Task<Result<()>>,
+    _maintain_workspace_config: (Task<Result<()>>, watch::Sender<()>),
     _maintain_buffer_languages: Task<()>,
     next_diagnostic_group_id: usize,
     diagnostic_summaries:
@@ -871,6 +873,7 @@ impl LspStore {
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
         prettier_store: Model<PrettierStore>,
+        toolchain_store: Model<ToolchainStore>,
         environment: Model<ProjectEnvironment>,
         languages: Arc<LanguageRegistry>,
         http_client: Arc<dyn HttpClient>,
@@ -884,9 +887,15 @@ impl LspStore {
             .detach();
         cx.subscribe(&prettier_store, Self::on_prettier_store_event)
             .detach();
+        cx.subscribe(&toolchain_store, Self::on_toolchain_store_event)
+            .detach();
         cx.observe_global::<SettingsStore>(Self::on_settings_changed)
             .detach();
 
+        let _maintain_workspace_config = {
+            let (sender, receiver) = watch::channel();
+            (Self::maintain_workspace_config(receiver, cx), sender)
+        };
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 supplementary_language_servers: Default::default(),
@@ -909,6 +918,7 @@ impl LspStore {
             downstream_client: None,
             buffer_store,
             worktree_store,
+            toolchain_store: Some(toolchain_store),
             languages: languages.clone(),
             language_server_ids: Default::default(),
             language_server_statuses: Default::default(),
@@ -919,7 +929,7 @@ impl LspStore {
             diagnostics: Default::default(),
             active_entry: None,
 
-            _maintain_workspace_config: Self::maintain_workspace_config(cx),
+            _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
         }
     }
@@ -942,9 +952,10 @@ impl LspStore {
         })
     }
 
-    pub fn new_remote(
+    pub(super) fn new_remote(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
+        toolchain_store: Option<Model<ToolchainStore>>,
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
         project_id: u64,
@@ -954,7 +965,10 @@ impl LspStore {
             .detach();
         cx.subscribe(&worktree_store, Self::on_worktree_store_event)
             .detach();
-
+        let _maintain_workspace_config = {
+            let (sender, receiver) = watch::channel();
+            (Self::maintain_workspace_config(receiver, cx), sender)
+        };
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
                 upstream_client: Some(upstream_client),
@@ -972,7 +986,8 @@ impl LspStore {
             diagnostic_summaries: Default::default(),
             diagnostics: Default::default(),
             active_entry: None,
-            _maintain_workspace_config: Self::maintain_workspace_config(cx),
+            toolchain_store,
+            _maintain_workspace_config,
             _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
         }
     }
@@ -1029,6 +1044,7 @@ impl LspStore {
                 })
                 .detach()
             }
+            WorktreeStoreEvent::WorktreeReleased(..) => {}
             WorktreeStoreEvent::WorktreeRemoved(_, id) => self.remove_worktree(*id, cx),
             WorktreeStoreEvent::WorktreeOrderChanged => {}
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
@@ -1062,6 +1078,22 @@ impl LspStore {
         }
     }
 
+    fn on_toolchain_store_event(
+        &mut self,
+        _: Model<ToolchainStore>,
+        event: &ToolchainStoreEvent,
+        _: &mut ModelContext<Self>,
+    ) {
+        match event {
+            ToolchainStoreEvent::ToolchainActivated { .. } => {
+                self.request_workspace_config_refresh()
+            }
+        }
+    }
+
+    fn request_workspace_config_refresh(&mut self) {
+        *self._maintain_workspace_config.1.borrow_mut() = ();
+    }
     // todo!
     pub fn prettier_store(&self) -> Option<Model<PrettierStore>> {
         self.as_local().map(|local| local.prettier_store.clone())
@@ -1225,7 +1257,8 @@ impl LspStore {
         });
 
         let buffer_file = buffer.read(cx).file().cloned();
-        let settings = language_settings(Some(&new_language), buffer_file.as_ref(), cx).clone();
+        let settings =
+            language_settings(Some(new_language.name()), buffer_file.as_ref(), cx).into_owned();
         let buffer_file = File::from_dyn(buffer_file.as_ref());
 
         let worktree_id = if let Some(file) = buffer_file {
@@ -1400,15 +1433,17 @@ impl LspStore {
             let buffer = buffer.read(cx);
             let buffer_file = File::from_dyn(buffer.file());
             let buffer_language = buffer.language();
-            let settings = language_settings(buffer_language, buffer.file(), cx);
+            let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
             if let Some(language) = buffer_language {
                 if settings.enable_language_server {
                     if let Some(file) = buffer_file {
                         language_servers_to_start.push((file.worktree.clone(), language.name()));
                     }
                 }
-                language_formatters_to_check
-                    .push((buffer_file.map(|f| f.worktree_id(cx)), settings.clone()));
+                language_formatters_to_check.push((
+                    buffer_file.map(|f| f.worktree_id(cx)),
+                    settings.into_owned(),
+                ));
             }
         }
 
@@ -1433,10 +1468,13 @@ impl LspStore {
             });
             if let Some((language, adapter)) = language {
                 let worktree = self.worktree_for_id(worktree_id, cx).ok();
-                let file = worktree.as_ref().and_then(|tree| {
-                    tree.update(cx, |tree, cx| tree.root_file(cx).map(|f| f as _))
+                let root_file = worktree.as_ref().and_then(|worktree| {
+                    worktree
+                        .update(cx, |tree, cx| tree.root_file(cx))
+                        .map(|f| f as _)
                 });
-                if !language_settings(Some(language), file.as_ref(), cx).enable_language_server {
+                let settings = language_settings(Some(language.name()), root_file.as_ref(), cx);
+                if !settings.enable_language_server {
                     language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
                 } else if let Some(worktree) = worktree {
                     let server_name = &adapter.name;
@@ -1753,10 +1791,9 @@ impl LspStore {
             })
             .filter(|_| {
                 maybe!({
-                    let language_name = buffer.read(cx).language_at(position)?.name();
+                    let language = buffer.read(cx).language_at(position)?;
                     Some(
-                        AllLanguageSettings::get_global(cx)
-                            .language(Some(&language_name))
+                        language_settings(Some(language.name()), buffer.read(cx).file(), cx)
                             .linked_edits,
                     )
                 }) == Some(true)
@@ -1850,11 +1887,14 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Option<Transaction>>> {
         let options = buffer.update(cx, |buffer, cx| {
-            lsp_command::lsp_formatting_options(language_settings(
-                buffer.language_at(position).as_ref(),
-                buffer.file(),
-                cx,
-            ))
+            lsp_command::lsp_formatting_options(
+                language_settings(
+                    buffer.language_at(position).map(|l| l.name()),
+                    buffer.file(),
+                    cx,
+                )
+                .as_ref(),
+            )
         });
         self.request_lsp(
             buffer.clone(),
@@ -3020,17 +3060,13 @@ impl LspStore {
         None
     }
 
-    fn maintain_workspace_config(cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
-        let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
-
-        let settings_observation = cx.observe_global::<SettingsStore>(move |_, _| {
-            *settings_changed_tx.borrow_mut() = ();
-        });
-
-        cx.spawn(move |this, mut cx| async move {
-            while let Some(()) = settings_changed_rx.next().await {
-                let servers = this.update(&mut cx, |this, cx| {
+    pub(crate) async fn refresh_workspace_configurations(
+        this: &WeakModel<Self>,
+        mut cx: AsyncAppContext,
+    ) {
+        maybe!(async move {
+            let servers = this
+                .update(&mut cx, |this, cx| {
                     this.language_server_ids
                         .iter()
                         .filter_map(|((worktree_id, _), server_id)| {
@@ -3052,17 +3088,52 @@ impl LspStore {
                             }
                         })
                         .collect::<Vec<_>>()
-                })?;
+                })
+                .ok()?;
 
-                for (adapter, server, delegate) in servers {
-                    let settings = adapter.workspace_configuration(&delegate, &mut cx).await?;
+            let toolchain_store = this
+                .update(&mut cx, |this, cx| this.toolchain_store(cx))
+                .ok()?;
+            for (adapter, server, delegate) in servers {
+                let settings = adapter
+                    .workspace_configuration(&delegate, toolchain_store.clone(), &mut cx)
+                    .await
+                    .ok()?;
 
-                    server
-                        .notify::<lsp::notification::DidChangeConfiguration>(
-                            lsp::DidChangeConfigurationParams { settings },
-                        )
-                        .ok();
-                }
+                server
+                    .notify::<lsp::notification::DidChangeConfiguration>(
+                        lsp::DidChangeConfigurationParams { settings },
+                    )
+                    .ok();
+            }
+            Some(())
+        })
+        .await;
+    }
+
+    fn toolchain_store(&self, cx: &AppContext) -> Arc<dyn LanguageToolchainStore> {
+        if let Some(toolchain_store) = self.toolchain_store.as_ref() {
+            toolchain_store.read(cx).as_language_toolchain_store()
+        } else {
+            Arc::new(EmptyToolchainStore)
+        }
+    }
+    fn maintain_workspace_config(
+        external_refresh_requests: watch::Receiver<()>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let (mut settings_changed_tx, mut settings_changed_rx) = watch::channel();
+        let _ = postage::stream::Stream::try_recv(&mut settings_changed_rx);
+
+        let settings_observation = cx.observe_global::<SettingsStore>(move |_, _| {
+            *settings_changed_tx.borrow_mut() = ();
+        });
+
+        let mut joint_future =
+            futures::stream::select(settings_changed_rx, external_refresh_requests);
+        cx.spawn(move |this, cx| async move {
+            while let Some(()) = joint_future.next().await {
+                Self::refresh_workspace_configurations(&this, cx.clone()).await;
             }
 
             drop(settings_observation);
@@ -3347,11 +3418,12 @@ impl LspStore {
         diagnostics: Vec<DiagnosticEntry<Unclipped<PointUtf16>>>,
         cx: &mut ModelContext<Self>,
     ) -> Result<(), anyhow::Error> {
-        let (worktree, relative_path) =
-            self.worktree_store
-                .read(cx)
-                .find_worktree(&abs_path, cx)
-                .ok_or_else(|| anyhow!("no worktree found for diagnostics path {abs_path:?}"))?;
+        let Some((worktree, relative_path)) =
+            self.worktree_store.read(cx).find_worktree(&abs_path, cx)
+        else {
+            log::warn!("skipping diagnostics update, no worktree found for path {abs_path:?}");
+            return Ok(());
+        };
 
         let project_path = ProjectPath {
             worktree_id: worktree.read(cx).id(),
@@ -5288,23 +5360,16 @@ impl LspStore {
         })
     }
 
-    fn language_settings<'a>(
-        &'a self,
-        worktree: &'a Model<Worktree>,
-        language: &LanguageName,
-        cx: &'a mut ModelContext<Self>,
-    ) -> &'a LanguageSettings {
-        let root_file = worktree.update(cx, |tree, cx| tree.root_file(cx));
-        all_language_settings(root_file.map(|f| f as _).as_ref(), cx).language(Some(language))
-    }
-
     pub fn start_language_servers(
         &mut self,
         worktree: &Model<Worktree>,
         language: LanguageName,
         cx: &mut ModelContext<Self>,
     ) {
-        let settings = self.language_settings(worktree, &language, cx);
+        let root_file = worktree
+            .update(cx, |tree, cx| tree.root_file(cx))
+            .map(|f| f as _);
+        let settings = language_settings(Some(language.clone()), root_file.as_ref(), cx);
         if !settings.enable_language_server || self.mode.is_remote() {
             return;
         }
@@ -5514,6 +5579,9 @@ impl LspStore {
                     let delegate = delegate.clone();
                     let adapter = adapter.clone();
                     let this = this.clone();
+                    let toolchains = this
+                        .update(&mut cx, |this, cx| this.toolchain_store(cx))
+                        .ok()?;
                     let mut cx = cx.clone();
                     async move {
                         let language_server = pending_server.await?;
@@ -5521,7 +5589,7 @@ impl LspStore {
                         let workspace_config = adapter
                             .adapter
                             .clone()
-                            .workspace_configuration(&delegate, &mut cx)
+                            .workspace_configuration(&delegate, toolchains.clone(), &mut cx)
                             .await?;
 
                         let mut initialization_options = adapter
@@ -5861,17 +5929,21 @@ impl LspStore {
                 }
             })
             .detach();
-
         language_server
             .on_request::<lsp::request::WorkspaceConfiguration, _, _>({
                 let adapter = adapter.adapter.clone();
                 let delegate = delegate.clone();
+                let this = this.clone();
                 move |params, mut cx| {
                     let adapter = adapter.clone();
                     let delegate = delegate.clone();
+                    let this = this.clone();
                     async move {
-                        let workspace_config =
-                            adapter.workspace_configuration(&delegate, &mut cx).await?;
+                        let toolchains =
+                            this.update(&mut cx, |this, cx| this.toolchain_store(cx))?;
+                        let workspace_config = adapter
+                            .workspace_configuration(&delegate, toolchains, &mut cx)
+                            .await?;
                         Ok(params
                             .items
                             .into_iter()

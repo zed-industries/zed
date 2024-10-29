@@ -1,7 +1,7 @@
 name = "Dart"
 grammar = "dart"
 path_suffixes = ["dart"]
-line_comments = ["// "]
+line_comments = ["// ", "/// "]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

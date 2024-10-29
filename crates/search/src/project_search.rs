@@ -327,7 +327,7 @@ impl Render for ProjectSearchView {
             div()
                 .flex_1()
                 .size_full()
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .child(self.results_editor.clone())
         } else {
             let model = self.model.read(cx);
@@ -365,7 +365,7 @@ impl Render for ProjectSearchView {
                 .size_full()
                 .justify_center()
                 .bg(cx.theme().colors().editor_background)
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .child(
                     h_flex()
                         .size_full()

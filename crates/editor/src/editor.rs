@@ -76,9 +76,9 @@ use gpui::{
     ClipboardItem, Context, DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent,
     FocusableView, FontId, FontWeight, HighlightStyle, Hsla, InteractiveText, KeyContext,
     ListSizingBehavior, Model, MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString,
-    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle, UTF16Selection,
-    UnderlineStyle, UniformListScrollHandle, View, ViewContext, ViewInputHandler, VisualContext,
-    WeakFocusHandle, WeakView, WindowContext,
+    Size, StrikethroughStyle, Styled, StyledText, Subscription, Task, TextStyle,
+    TextStyleRefinement, UTF16Selection, UnderlineStyle, UniformListScrollHandle, View,
+    ViewContext, ViewInputHandler, VisualContext, WeakFocusHandle, WeakView, WindowContext,
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
@@ -90,7 +90,7 @@ pub use inline_completion_provider::*;
 pub use items::MAX_TAB_TITLE_LEN;
 use itertools::Itertools;
 use language::{
-    language_settings::{self, all_language_settings, InlayHintSettings},
+    language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
@@ -428,8 +428,7 @@ impl Default for EditorStyle {
 }
 
 pub fn make_inlay_hints_style(cx: &WindowContext) -> HighlightStyle {
-    let show_background = all_language_settings(None, cx)
-        .language(None)
+    let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
 
@@ -547,6 +546,7 @@ pub struct Editor {
     ime_transaction: Option<TransactionId>,
     active_diagnostics: Option<ActiveDiagnosticGroup>,
     soft_wrap_mode_override: Option<language_settings::SoftWrap>,
+
     project: Option<Model<Project>>,
     semantics_provider: Option<Rc<dyn SemanticsProvider>>,
     completion_provider: Option<Box<dyn CompletionProvider>>,
@@ -616,6 +616,7 @@ pub struct Editor {
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
     gutter_dimensions: GutterDimensions,
     style: Option<EditorStyle>,
+    text_style_refinement: Option<TextStyleRefinement>,
     next_editor_action_id: EditorActionId,
     editor_actions: Rc<RefCell<BTreeMap<EditorActionId, Box<dyn Fn(&mut ViewContext<Self>)>>>>,
     use_autoclose: bool,
@@ -2063,6 +2064,7 @@ impl Editor {
             next_scroll_position: NextScrollCursorCenterTopBottom::default(),
             addons: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
+            text_style_refinement: None,
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -3280,10 +3282,25 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
 
+                            let is_closing_quote = if bracket_pair.end == bracket_pair.start
+                                && bracket_pair.start.len() == 1
+                            {
+                                let target = bracket_pair.start.chars().next().unwrap();
+                                let current_line_count = snapshot
+                                    .reversed_chars_at(selection.start)
+                                    .take_while(|&c| c != '\n')
+                                    .filter(|&c| c == target)
+                                    .count();
+                                current_line_count % 2 == 1
+                            } else {
+                                false
+                            };
+
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
+                                && !is_closing_quote
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
                                 new_selections.push((selection.map(|_| anchor), text.len()));
@@ -4248,7 +4265,10 @@ impl Editor {
             .text_anchor_for_position(position, cx)?;
 
         let settings = language_settings::language_settings(
-            buffer.read(cx).language_at(buffer_position).as_ref(),
+            buffer
+                .read(cx)
+                .language_at(buffer_position)
+                .map(|l| l.name()),
             buffer.read(cx).file(),
             cx,
         );
@@ -6253,28 +6273,6 @@ impl Editor {
                 editor.revert(revert_changes, cx);
             });
         }
-    }
-
-    fn apply_selected_diff_hunks(&mut self, _: &ApplyDiffHunk, cx: &mut ViewContext<Self>) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let hunks = hunks_for_selections(&snapshot, &self.selections.disjoint_anchors());
-        let mut ranges_by_buffer = HashMap::default();
-        self.transact(cx, |editor, cx| {
-            for hunk in hunks {
-                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
-                    ranges_by_buffer
-                        .entry(buffer.clone())
-                        .or_insert_with(Vec::new)
-                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
-                }
-            }
-
-            for (buffer, ranges) in ranges_by_buffer {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.merge_into_base(ranges, cx);
-                });
-            }
-        });
     }
 
     pub fn open_active_item_in_terminal(&mut self, _: &OpenInTerminal, cx: &mut ViewContext<Self>) {
@@ -10227,7 +10225,7 @@ impl Editor {
                     let block_id = this.insert_blocks(
                         [BlockProperties {
                             style: BlockStyle::Flex,
-                            position: range.start,
+                            placement: BlockPlacement::Below(range.start),
                             height: 1,
                             render: Box::new({
                                 let rename_editor = rename_editor.clone();
@@ -10263,7 +10261,6 @@ impl Editor {
                                         .into_any_element()
                                 }
                             }),
-                            disposition: BlockDisposition::Below,
                             priority: 0,
                         }],
                         Some(Autoscroll::fit()),
@@ -10548,10 +10545,11 @@ impl Editor {
                         let message_height = diagnostic.message.matches('\n').count() as u32 + 1;
                         BlockProperties {
                             style: BlockStyle::Fixed,
-                            position: buffer.anchor_after(entry.range.start),
+                            placement: BlockPlacement::Below(
+                                buffer.anchor_after(entry.range.start),
+                            ),
                             height: message_height,
                             render: diagnostic_block_renderer(diagnostic, None, true, true),
-                            disposition: BlockDisposition::Below,
                             priority: 0,
                         }
                     }),
@@ -10745,15 +10743,42 @@ impl Editor {
         self.fold_ranges(fold_ranges, true, cx);
     }
 
+    fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
+        let fold_at_level = fold_at.level;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut fold_ranges = Vec::new();
+        let mut stack = vec![(0, snapshot.max_buffer_row().0, 1)];
+
+        while let Some((mut start_row, end_row, current_level)) = stack.pop() {
+            while start_row < end_row {
+                match self.snapshot(cx).foldable_range(MultiBufferRow(start_row)) {
+                    Some(foldable_range) => {
+                        let nested_start_row = foldable_range.0.start.row + 1;
+                        let nested_end_row = foldable_range.0.end.row;
+
+                        if current_level < fold_at_level {
+                            stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        } else if current_level == fold_at_level {
+                            fold_ranges.push(foldable_range);
+                        }
+
+                        start_row = nested_end_row + 1;
+                    }
+                    None => start_row += 1,
+                }
+            }
+        }
+
+        self.fold_ranges(fold_ranges, true, cx);
+    }
+
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        for row in 0..display_map.max_buffer_row().0 {
-            if let Some((foldable_range, fold_text)) =
-                display_map.foldable_range(MultiBufferRow(row))
-            {
-                fold_ranges.push((foldable_range, fold_text));
+        for row in 0..snapshot.max_buffer_row().0 {
+            if let Some(foldable_range) = self.snapshot(cx).foldable_range(MultiBufferRow(row)) {
+                fold_ranges.push(foldable_range);
             }
         }
 
@@ -11178,7 +11203,12 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn set_style(&mut self, style: EditorStyle, cx: &mut ViewContext<Self>) {
+    pub fn set_text_style_refinement(&mut self, style: TextStyleRefinement) {
+        self.text_style_refinement = Some(style);
+    }
+
+    /// called by the Element so we know what style we were most recently rendered with.
+    pub(crate) fn set_style(&mut self, style: EditorStyle, cx: &mut ViewContext<Self>) {
         let rem_size = cx.rem_size();
         self.display_map.update(cx, |map, cx| {
             map.set_font(
@@ -13374,11 +13404,8 @@ fn inlay_hint_settings(
     cx: &mut ViewContext<'_, Editor>,
 ) -> InlayHintSettings {
     let file = snapshot.file_at(location);
-    let language = snapshot.language_at(location);
-    let settings = all_language_settings(file, cx);
-    settings
-        .language(language.map(|l| l.name()).as_ref())
-        .inlay_hints
+    let language = snapshot.language_at(location).map(|l| l.name());
+    language_settings(language, file, cx).inlay_hints
 }
 
 fn consume_contiguous_rows(
@@ -13677,7 +13704,7 @@ impl Render for Editor {
     fn render<'a>(&mut self, cx: &mut ViewContext<'a, Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
-        let text_style = match self.mode {
+        let mut text_style = match self.mode {
             EditorMode::SingleLine { .. } | EditorMode::AutoHeight { .. } => TextStyle {
                 color: cx.theme().colors().editor_foreground,
                 font_family: settings.ui_font.family.clone(),
@@ -13699,6 +13726,9 @@ impl Render for Editor {
                 ..Default::default()
             },
         };
+        if let Some(text_style_refinement) = &self.text_style_refinement {
+            text_style.refine(text_style_refinement)
+        }
 
         let background = match self.mode {
             EditorMode::SingleLine { .. } => cx.theme().system().transparent,

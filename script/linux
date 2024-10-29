@@ -42,6 +42,8 @@ if [[ -n $apt ]]; then
     gettext-base
     elfutils
     libsqlite3-dev
+    musl-tools
+    musl-dev
   )
   if (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.04)' /etc/os-release); then
     deps+=( mold libstdc++-14-dev )

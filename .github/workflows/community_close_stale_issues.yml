@@ -14,10 +14,10 @@ jobs:
           stale-issue-message: >
             Hi there! 👋
 
-            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. Are you able to reproduce this issue in the latest version of Zed? If so, please let us know by commenting on this issue and we will keep it open; otherwise, we'll close it in 7 days. Feel free to open a new issue if you're seeing this message after the issue has been closed.
+            We're working to clean up our issue tracker by closing older issues that might not be relevant anymore. If you are able to reproduce this issue in the latest version of Zed, please let us know by commenting on this issue, and we will keep it open. If you can't reproduce it, feel free to close the issue yourself. Otherwise, we'll close it in 7 days.
 
             Thanks for your help!
-            close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please open a new issue with a link to this issue."
+          close-issue-message: "This issue was closed due to inactivity. If you're still experiencing this problem, please open a new issue with a link to this issue."
           # We will increase `days-before-stale` to 365 on or after Jan 24th,
           # 2024. This date marks one year since migrating issues from
           # 'community' to 'zed' repository. The migration added activity to all

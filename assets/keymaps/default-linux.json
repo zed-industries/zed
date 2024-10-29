@@ -313,6 +313,15 @@
       "ctrl-k ctrl-l": "editor::ToggleFold",
       "ctrl-k ctrl-[": "editor::FoldRecursive",
       "ctrl-k ctrl-]": "editor::UnfoldRecursive",
+      "ctrl-k ctrl-1": ["editor::FoldAtLevel", { "level": 1 }],
+      "ctrl-k ctrl-2": ["editor::FoldAtLevel", { "level": 2 }],
+      "ctrl-k ctrl-3": ["editor::FoldAtLevel", { "level": 3 }],
+      "ctrl-k ctrl-4": ["editor::FoldAtLevel", { "level": 4 }],
+      "ctrl-k ctrl-5": ["editor::FoldAtLevel", { "level": 5 }],
+      "ctrl-k ctrl-6": ["editor::FoldAtLevel", { "level": 6 }],
+      "ctrl-k ctrl-7": ["editor::FoldAtLevel", { "level": 7 }],
+      "ctrl-k ctrl-8": ["editor::FoldAtLevel", { "level": 8 }],
+      "ctrl-k ctrl-9": ["editor::FoldAtLevel", { "level": 9 }],
       "ctrl-k ctrl-0": "editor::FoldAll",
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
@@ -503,6 +512,13 @@
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
+    }
+  },
+  {
+    "context": "ProposedChangesEditor",
+    "bindings": {
+      "ctrl-shift-y": "editor::ApplyDiffHunk",
+      "ctrl-alt-a": "editor::ApplyAllDiffHunks"
     }
   },
   {

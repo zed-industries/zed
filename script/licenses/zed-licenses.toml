@@ -36,3 +36,141 @@ license = "BSD-3-Clause"
 [[fuchsia-cprng.clarify.files]]
 path = 'LICENSE'
 checksum = '03b114f53e6587a398931762ee11e2395bfdba252a329940e2c8c9e81813845b'
+
+[pet.clarify]
+license = "MIT"
+[[pet.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-conda.clarify]
+license = "MIT"
+[[pet-conda.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-core.clarify]
+license = "MIT"
+[[pet-core.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-env-var-path.clarify]
+license = "MIT"
+[[pet-env-var-path.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-fs.clarify]
+license = "MIT"
+[[pet-fs.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-global-virtualenvs.clarify]
+license = "MIT"
+[[pet-global-virtualenvs.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-homebrew.clarify]
+license = "MIT"
+[[pet-homebrew.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-jsonrpc.clarify]
+license = "MIT"
+[[pet-jsonrpc.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-linux-global-python.clarify]
+license = "MIT"
+[[pet-linux-global-python.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-mac-commandlinetools.clarify]
+license = "MIT"
+[[pet-mac-commandlinetools.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-mac-python-org.clarify]
+license = "MIT"
+[[pet-mac-python-org.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-mac-xcode.clarify]
+license = "MIT"
+[[pet-mac-xcode.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-pipenv.clarify]
+license = "MIT"
+[[pet-pipenv.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-poetry.clarify]
+license = "MIT"
+[[pet-poetry.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-pyenv.clarify]
+license = "MIT"
+[[pet-pyenv.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-python-utils.clarify]
+license = "MIT"
+[[pet-python-utils.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-reporter.clarify]
+license = "MIT"
+[[pet-reporter.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-telemetry.clarify]
+license = "MIT"
+[[pet-telemetry.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-venv.clarify]
+license = "MIT"
+[[pet-venv.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-virtualenv.clarify]
+license = "MIT"
+[[pet-virtualenv.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-virtualenvwrapper.clarify]
+license = "MIT"
+[[pet-virtualenvwrapper.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-windows-registry.clarify]
+license = "MIT"
+[[pet-windows-registry.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
+[pet-windows-store.clarify]
+license = "MIT"
+[[pet-windows-store.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'

@@ -16,6 +16,8 @@ pub enum RequestType {
     PromptsList,
     CompletionComplete,
     Ping,
+    ListTools,
+    ListResourceTemplates,
 }
 
 impl RequestType {
@@ -32,14 +34,23 @@ impl RequestType {
             RequestType::PromptsList => "prompts/list",
             RequestType::CompletionComplete => "completion/complete",
             RequestType::Ping => "ping",
+            RequestType::ListTools => "tools/list",
+            RequestType::ListResourceTemplates => "resources/templates/list",
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ProtocolVersion {
+    VersionString(String),
+    VersionNumber(u32),
 }
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeParams {
-    pub protocol_version: u32,
+    pub protocol_version: ProtocolVersion,
     pub capabilities: ClientCapabilities,
     pub client_info: Implementation,
 }
@@ -131,7 +142,7 @@ pub struct CompletionArgument {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InitializeResponse {
-    pub protocol_version: u32,
+    pub protocol_version: ProtocolVersion,
     pub capabilities: ServerCapabilities,
     pub server_info: Implementation,
 }
@@ -145,10 +156,9 @@ pub struct ResourcesReadResponse {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ResourcesListResponse {
+    pub resources: Vec<Resource>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub resource_templates: Option<Vec<ResourceTemplate>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resources: Option<Vec<Resource>>,
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -179,13 +189,15 @@ pub enum SamplingContent {
 pub struct PromptsGetResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    pub prompt: String,
+    pub messages: Vec<SamplingMessage>,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptsListResponse {
     pub prompts: Vec<Prompt>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -393,4 +405,18 @@ impl CompletionTotal {
 pub struct Completion {
     pub values: Vec<String>,
     pub total: CompletionTotal,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallToolResponse {
+    pub tool_result: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListToolsResponse {
+    pub tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }

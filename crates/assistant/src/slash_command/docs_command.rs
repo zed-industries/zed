@@ -6,6 +6,7 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
@@ -274,7 +275,7 @@ impl SlashCommand for DocsSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing an argument")));
         };
@@ -355,7 +356,8 @@ impl SlashCommand for DocsSlashCommand {
                     })
                     .collect(),
                 run_commands_in_text: false,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

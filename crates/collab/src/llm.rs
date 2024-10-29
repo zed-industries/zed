@@ -449,6 +449,10 @@ async fn check_usage_limit(
     model_name: &str,
     claims: &LlmTokenClaims,
 ) -> Result<()> {
+    if claims.is_staff {
+        return Ok(());
+    }
+
     let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
@@ -459,8 +463,9 @@ async fn check_usage_limit(
             Utc::now(),
         )
         .await?;
+    let free_tier = claims.free_tier_monthly_spending_limit();
 
-    if usage.spending_this_month >= FREE_TIER_MONTHLY_SPENDING_LIMIT {
+    if usage.spending_this_month >= free_tier {
         if !claims.has_llm_subscription {
             return Err(Error::http(
                 StatusCode::PAYMENT_REQUIRED,
@@ -468,9 +473,7 @@ async fn check_usage_limit(
             ));
         }
 
-        if (usage.spending_this_month - FREE_TIER_MONTHLY_SPENDING_LIMIT)
-            >= Cents(claims.max_monthly_spend_in_cents)
-        {
+        if (usage.spending_this_month - free_tier) >= Cents(claims.max_monthly_spend_in_cents) {
             return Err(Error::Http(
                 StatusCode::FORBIDDEN,
                 "Maximum spending limit reached for this month.".to_string(),
@@ -514,11 +517,6 @@ async fn check_usage_limit(
     ];
 
     for (used, limit, usage_measure) in checks {
-        // Temporarily bypass rate-limiting for staff members.
-        if claims.is_staff {
-            continue;
-        }
-
         if used > limit {
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
@@ -640,6 +638,7 @@ impl<S> Drop for TokenCountingStream<S> {
                     tokens,
                     claims.has_llm_subscription,
                     Cents(claims.max_monthly_spend_in_cents),
+                    claims.free_tier_monthly_spending_limit(),
                     Utc::now(),
                 )
                 .await

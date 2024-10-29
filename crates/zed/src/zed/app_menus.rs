@@ -13,7 +13,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Check for Updates", auto_update::Check),
                 MenuItem::separator(),
                 MenuItem::submenu(Menu {
-                    name: "Preferences".into(),
+                    name: "Settings".into(),
                     items: vec![
                         MenuItem::action("Open Settings", super::OpenSettings),
                         MenuItem::action("Open Key Bindings", zed_actions::OpenKeymap),
@@ -23,6 +23,12 @@ pub fn app_menus() -> Vec<Menu> {
                         MenuItem::action("Select Theme...", theme_selector::Toggle::default()),
                     ],
                 }),
+                MenuItem::separator(),
+                MenuItem::submenu(Menu {
+                    name: "Services".into(),
+                    items: vec![],
+                }),
+                MenuItem::separator(),
                 MenuItem::action("Extensions", extensions_ui::Extensions),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),

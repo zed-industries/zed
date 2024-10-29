@@ -48,6 +48,7 @@ where
         item_count,
         item_to_measure_index: 0,
         render_items: Box::new(render_range),
+        decorations: Vec::new(),
         interactivity: Interactivity {
             element_id: Some(id),
             base_style: Box::new(base_style),
@@ -69,6 +70,7 @@ pub struct UniformList {
     item_to_measure_index: usize,
     render_items:
         Box<dyn for<'a> Fn(Range<usize>, &'a mut WindowContext) -> SmallVec<[AnyElement; 64]>>,
+    decorations: Vec<Box<dyn UniformListDecoration>>,
     interactivity: Interactivity,
     scroll_handle: Option<UniformListScrollHandle>,
     sizing_behavior: ListSizingBehavior,
@@ -78,6 +80,7 @@ pub struct UniformList {
 /// Frame state used by the [UniformList].
 pub struct UniformListFrameState {
     items: SmallVec<[AnyElement; 32]>,
+    decorations: SmallVec<[AnyElement; 1]>,
 }
 
 /// A handle for controlling the scroll position of a uniform list.
@@ -185,6 +188,7 @@ impl Element for UniformList {
             layout_id,
             UniformListFrameState {
                 items: SmallVec::new(),
+                decorations: SmallVec::new(),
             },
         )
     }
@@ -292,9 +296,10 @@ impl Element for UniformList {
                         ..cmp::min(last_visible_element_ix, self.item_count);
 
                     let mut items = (self.render_items)(visible_range.clone(), cx);
+
                     let content_mask = ContentMask { bounds };
                     cx.with_content_mask(Some(content_mask), |cx| {
-                        for (mut item, ix) in items.into_iter().zip(visible_range) {
+                        for (mut item, ix) in items.into_iter().zip(visible_range.clone()) {
                             let item_origin = padded_bounds.origin
                                 + point(
                                     if can_scroll_horizontally {
@@ -317,6 +322,35 @@ impl Element for UniformList {
                             item.prepaint_at(item_origin, cx);
                             frame_state.items.push(item);
                         }
+
+                        let bounds = Bounds::new(
+                            padded_bounds.origin
+                                + point(
+                                    if can_scroll_horizontally {
+                                        scroll_offset.x + padding.left
+                                    } else {
+                                        scroll_offset.x
+                                    },
+                                    scroll_offset.y + padding.top,
+                                ),
+                            padded_bounds.size,
+                        );
+                        for decoration in &self.decorations {
+                            let mut decoration = decoration.as_ref().compute(
+                                visible_range.clone(),
+                                bounds,
+                                item_height,
+                                self.item_count,
+                                cx,
+                            );
+                            let available_space = size(
+                                AvailableSpace::Definite(bounds.size.width),
+                                AvailableSpace::Definite(bounds.size.height),
+                            );
+                            decoration.layout_as_root(available_space, cx);
+                            decoration.prepaint_at(bounds.origin, cx);
+                            frame_state.decorations.push(decoration);
+                        }
                     });
                 }
 
@@ -338,6 +372,9 @@ impl Element for UniformList {
                 for item in &mut request_layout.items {
                     item.paint(cx);
                 }
+                for decoration in &mut request_layout.decorations {
+                    decoration.paint(cx);
+                }
             })
     }
 }
@@ -348,6 +385,21 @@ impl IntoElement for UniformList {
     fn into_element(self) -> Self::Element {
         self
     }
+}
+
+/// A decoration for a [`UniformList`]. This can be used for various things,
+/// such as rendering indent guides, or other visual effects.
+pub trait UniformListDecoration {
+    /// Compute the decoration element, given the visible range of list items,
+    /// the bounds of the list, and the height of each item.
+    fn compute(
+        &self,
+        visible_range: Range<usize>,
+        bounds: Bounds<Pixels>,
+        item_height: Pixels,
+        item_count: usize,
+        cx: &mut WindowContext,
+    ) -> AnyElement;
 }
 
 impl UniformList {
@@ -379,6 +431,12 @@ impl UniformList {
                 self.interactivity.base_style.overflow.x = Some(Overflow::Scroll);
             }
         }
+        self
+    }
+
+    /// Adds a decoration element to the list.
+    pub fn with_decoration(mut self, decoration: impl UniformListDecoration + 'static) -> Self {
+        self.decorations.push(Box::new(decoration));
         self
     }
 

@@ -40,7 +40,7 @@ pub struct AnthropicSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-20240620
+    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
     pub name: String,
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
@@ -505,10 +505,14 @@ pub fn map_to_language_model_completion_events(
                                             LanguageModelToolUse {
                                                 id: tool_use.id,
                                                 name: tool_use.name,
-                                                input: serde_json::Value::from_str(
-                                                    &tool_use.input_json,
-                                                )
-                                                .map_err(|err| anyhow!(err))?,
+                                                input: if tool_use.input_json.is_empty() {
+                                                    serde_json::Value::Null
+                                                } else {
+                                                    serde_json::Value::from_str(
+                                                        &tool_use.input_json,
+                                                    )
+                                                    .map_err(|err| anyhow!(err))?
+                                                },
                                             },
                                         ))
                                     })),
