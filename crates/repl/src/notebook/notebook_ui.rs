@@ -1,3 +1,4 @@
+#![allow(unused, dead_code)]
 use std::{path::PathBuf, sync::Arc};
 
 use client::proto::ViewId;
@@ -11,7 +12,9 @@ use gpui::{
 use language::LanguageRegistry;
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
-use workspace::{Item, ProjectItem};
+use workspace::item::ItemEvent;
+use workspace::{Item, ItemHandle, ProjectItem, ToolbarItemLocation};
+use workspace::{ToolbarItemEvent, ToolbarItemView};
 
 use super::{Cell, CellPosition, RenderableCell};
 
@@ -582,6 +585,51 @@ impl project::Item for NotebookItem {
 
 impl EventEmitter<()> for NotebookEditor {}
 
+// pub struct NotebookControls {
+//     pane_focused: bool,
+//     active_item: Option<Box<dyn ItemHandle>>,
+//     // subscription: Option<Subscription>,
+// }
+
+// impl NotebookControls {
+//     pub fn new() -> Self {
+//         Self {
+//             pane_focused: false,
+//             active_item: Default::default(),
+//             // subscription: Default::default(),
+//         }
+//     }
+// }
+
+// impl EventEmitter<ToolbarItemEvent> for NotebookControls {}
+
+// impl Render for NotebookControls {
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+//         div().child("notebook controls")
+//     }
+// }
+
+// impl ToolbarItemView for NotebookControls {
+//     fn set_active_pane_item(
+//         &mut self,
+//         active_pane_item: Option<&dyn workspace::ItemHandle>,
+//         cx: &mut ViewContext<Self>,
+//     ) -> workspace::ToolbarItemLocation {
+//         cx.notify();
+//         self.active_item = None;
+
+//         let Some(item) = active_pane_item else {
+//             return ToolbarItemLocation::Hidden;
+//         };
+
+//         ToolbarItemLocation::PrimaryLeft
+//     }
+
+//     fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
+//         self.pane_focused = pane_focused;
+//     }
+// }
+
 impl Item for NotebookEditor {
     type Event = ();
 
@@ -602,7 +650,8 @@ impl Item for NotebookEditor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.is_dirty(cx)
+        // self.is_dirty(cx)
+        false
     }
 }
 

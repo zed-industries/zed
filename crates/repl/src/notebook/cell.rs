@@ -1,3 +1,4 @@
+#![allow(unused, dead_code)]
 use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
