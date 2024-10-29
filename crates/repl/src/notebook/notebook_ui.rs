@@ -10,8 +10,8 @@ use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::{future::Shared, FutureExt};
 use gpui::{
-    actions, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView, Model, Task, View,
-    WeakView,
+    actions, list, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView,
+    ListScrollEvent, ListState, Model, Task, View, WeakView,
 };
 use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
@@ -78,6 +78,7 @@ pub struct NotebookEditor {
     path: ProjectPath,
 
     remote_id: Option<ViewId>,
+    cell_list: ListState,
 
     metadata: NotebookMetadata,
     nbformat: i32,
@@ -144,19 +145,98 @@ impl NotebookEditor {
             );
         }
 
+        let view = cx.view().downgrade();
+        let cell_count = cell_order.len();
+        let cell_order_for_list = cell_order.clone();
+        let cell_map_for_list = cell_map.clone();
+
+        let cell_list = ListState::new(
+            cell_count,
+            gpui::ListAlignment::Top,
+            px(3000.),
+            move |ix, cx| {
+                let cell_order_for_list = cell_order_for_list.clone();
+                let cell_map = cell_map_for_list.clone();
+                let cell_id = cell_order_for_list[ix].clone();
+                if let Some(view) = view.upgrade() {
+                    let cell_id = cell_id.clone();
+                    if let Some(cell) = cell_map_for_list.clone().get(&cell_id) {
+                        view.update(cx, |view, cx| {
+                            view.render_cell(ix, cell, cx).into_any_element()
+                        })
+                    } else {
+                        div().into_any()
+                    }
+                } else {
+                    div().into_any()
+                }
+            },
+        );
+
+        cell_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, cx| {
+            // TODO: Do we need to do anything with the scroll handler?
+
+            // Example from chat panel:
+            // if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
+            //     this.load_more_messages(cx);
+            // }
+            // this.is_scrolled_to_bottom = !event.is_scrolled;
+        }));
+
         Self {
             languages: languages.clone(),
             focus_handle,
             project,
             path: notebook_item.read(cx).project_path.clone(),
             remote_id: None,
+            cell_list,
             selected_cell_index: 0,
             metadata,
             nbformat,
             nbformat_minor,
-            cell_order,
-            cell_map,
+            cell_order: cell_order.clone(),
+            cell_map: cell_map.clone(),
         }
+    }
+
+    fn build_list_state(&mut self, cx: &mut ViewContext<Self>) -> ListState {
+        let cell_count = self.cell_order.len();
+        let selected_cell_index = self.selected_cell_index;
+        let cell_order = self.cell_order.clone();
+        let cell_map = self.cell_map.clone();
+
+        ListState::new(
+            cell_count,
+            gpui::ListAlignment::Top,
+            px(1000.),
+            move |ix, cx| {
+                if let Some(cell) = cell_map.get(&cell_order[ix]) {
+                    let is_selected = ix == selected_cell_index;
+                    match cell {
+                        Cell::Code(cell) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.set_selected(is_selected);
+                            });
+                            cell.clone().into_any_element()
+                        }
+                        Cell::Markdown(cell) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.set_selected(is_selected);
+                            });
+                            cell.clone().into_any_element()
+                        }
+                        Cell::Raw(cell) => {
+                            cell.update(cx, |cell, cx| {
+                                cell.set_selected(is_selected);
+                            });
+                            cell.clone().into_any_element()
+                        }
+                    }
+                } else {
+                    div().into_any_element()
+                }
+            },
+        )
     }
 
     fn cells(&self) -> impl Iterator<Item = &Cell> {
@@ -275,8 +355,7 @@ impl NotebookEditor {
     }
 
     fn jump_to_cell(&mut self, index: usize, cx: &mut ViewContext<Self>) {
-        // Logic to jump the view to make the selected cell visible
-        println!("Scrolling to cell at index {}", index);
+        self.cell_list.scroll_to_reveal_item(index);
     }
 
     fn button_group(cx: &ViewContext<Self>) -> Div {
@@ -417,29 +496,36 @@ impl NotebookEditor {
             .flex_1()
             .size_full()
             .overflow_y_scroll()
-            .children(self.cells().enumerate().map(|(index, cell)| {
-                let is_selected = index == self.selected_cell_index;
-                match cell {
-                    Cell::Code(cell) => {
-                        cell.update(cx, |cell, cx| {
-                            cell.set_selected(is_selected);
-                        });
-                        cell.clone().into_any_element()
-                    }
-                    Cell::Markdown(cell) => {
-                        cell.update(cx, |cell, cx| {
-                            cell.set_selected(is_selected);
-                        });
-                        cell.clone().into_any_element()
-                    }
-                    Cell::Raw(cell) => {
-                        cell.update(cx, |cell, cx| {
-                            cell.set_selected(is_selected);
-                        });
-                        cell.clone().into_any_element()
-                    }
-                }
-            }))
+            .child(list(self.cell_list.clone()).size_full())
+    }
+
+    fn render_cell(
+        &self,
+        index: usize,
+        cell: &Cell,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        let is_selected = index == self.selected_cell_index;
+        match cell {
+            Cell::Code(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_selected(is_selected);
+                });
+                cell.clone().into_any_element()
+            }
+            Cell::Markdown(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_selected(is_selected);
+                });
+                cell.clone().into_any_element()
+            }
+            Cell::Raw(cell) => {
+                cell.update(cx, |cell, cx| {
+                    cell.set_selected(is_selected);
+                });
+                cell.clone().into_any_element()
+            }
+        }
     }
 }
 
@@ -464,10 +550,7 @@ impl Render for NotebookEditor {
             .on_action(cx.listener(Self::select_last))
             .flex()
             .items_start()
-            // .size_full()
-            // todo: figure out the flex height issue
-            .h(px(800.))
-            .w(px(1000.))
+            .size_full()
             .overflow_hidden()
             .p(large_gap)
             .gap(large_gap)
