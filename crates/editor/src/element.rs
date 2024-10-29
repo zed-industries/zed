@@ -68,6 +68,7 @@ use sum_tree::Bias;
 use theme::{ActiveTheme, Appearance, PlayerColor};
 use ui::prelude::*;
 use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use unicode_segmentation::UnicodeSegmentation;
 use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
@@ -1027,24 +1028,17 @@ impl EditorElement {
                     }
                     let block_text = if let CursorShape::Block = selection.cursor_shape {
                         snapshot
-                            .display_chars_at(cursor_position)
-                            .next()
+                            .grapheme_at(cursor_position)
                             .or_else(|| {
                                 if cursor_column == 0 {
-                                    snapshot
-                                        .placeholder_text()
-                                        .and_then(|s| s.chars().next())
-                                        .map(|c| (c, cursor_position))
+                                    snapshot.placeholder_text().and_then(|s| {
+                                        s.graphemes(true).next().map(|s| s.to_string().into())
+                                    })
                                 } else {
                                     None
                                 }
                             })
-                            .and_then(|(character, _)| {
-                                let text = if character == '\n' {
-                                    SharedString::from(" ")
-                                } else {
-                                    SharedString::from(character.to_string())
-                                };
+                            .and_then(|text| {
                                 let len = text.len();
 
                                 let font = cursor_row_layout
@@ -4159,7 +4153,16 @@ fn render_inline_blame_entry(
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
     let author = blame_entry.author.as_deref().unwrap_or_default();
-    let text = format!("{}, {}", author, relative_timestamp);
+    let summary_enabled = ProjectSettings::get_global(cx)
+        .git
+        .show_inline_commit_summary();
+
+    let text = match blame_entry.summary.as_ref() {
+        Some(summary) if summary_enabled => {
+            format!("{}, {} - {}", author, relative_timestamp, summary)
+        }
+        _ => format!("{}, {}", author, relative_timestamp),
+    };
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 

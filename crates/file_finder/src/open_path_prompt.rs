@@ -220,7 +220,11 @@ impl PickerDelegate for OpenPathDelegate {
         })
     }
 
-    fn confirm_completion(&self, query: String) -> Option<String> {
+    fn confirm_completion(
+        &mut self,
+        query: String,
+        _: &mut ViewContext<Picker<Self>>,
+    ) -> Option<String> {
         Some(
             maybe!({
                 let m = self.matches.get(self.selected_index)?;

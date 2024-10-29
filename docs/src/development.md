@@ -15,5 +15,5 @@ If you'd like to develop collaboration features, additionally see:
 - [CONTRIBUTING.md](https://github.com/zed-industries/zed/blob/main/CONTRIBUTING.md)
 - [Releases](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
-- [Code of Conduct](./code-of-conduct.md)
+- [Code of Conduct](https://zed.dev/code-of-conduct)
 - [Zed Contributor License](https://zed.dev/cla)

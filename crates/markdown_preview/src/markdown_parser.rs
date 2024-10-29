@@ -234,6 +234,10 @@ impl<'a> MarkdownParser<'a> {
                     text.push('\n');
                 }
 
+                // We want to ignore any inline HTML tags in the text but keep
+                // the text between them
+                Event::InlineHtml(_) => {}
+
                 Event::Text(t) => {
                     text.push_str(t.as_ref());
 
@@ -850,6 +854,16 @@ mod tests {
     }
 
     #[gpui::test]
+    async fn test_text_with_inline_html() {
+        let parsed = parse("This is a paragraph with an inline HTML <sometag>tag</sometag>.").await;
+
+        assert_eq!(
+            parsed.children,
+            vec![p("This is a paragraph with an inline HTML tag.", 0..63),],
+        );
+    }
+
+    #[gpui::test]
     async fn test_raw_links_detection() {
         let parsed = parse("Checkout this https://zed.dev link").await;
 
@@ -1088,6 +1102,26 @@ Some other content
                     p("This is a list item with two paragraphs.", 4..44),
                     p("This is the second paragraph in the list item.", 50..97)
                 ],
+            ),],
+        );
+    }
+
+    #[gpui::test]
+    async fn test_list_item_with_inline_html() {
+        let parsed = parse(
+            "\
+*   This is a list item with an inline HTML <sometag>tag</sometag>.
+",
+        )
+        .await;
+
+        assert_eq!(
+            parsed.children,
+            vec![list_item(
+                0..67,
+                1,
+                Unordered,
+                vec![p("This is a list item with an inline HTML tag.", 4..44),],
             ),],
         );
     }

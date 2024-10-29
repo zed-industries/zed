@@ -447,7 +447,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, cx| {
                     let _ = workspace.update(cx, |this, cx| {
-                        BranchList::open(this, &Default::default(), cx)
+                        BranchList::open(this, &Default::default(), cx);
                     });
                 }),
         )

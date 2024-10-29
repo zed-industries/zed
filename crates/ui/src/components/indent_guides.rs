@@ -140,13 +140,18 @@ mod uniform_list {
             visible_range: Range<usize>,
             bounds: Bounds<Pixels>,
             item_height: Pixels,
+            item_count: usize,
             cx: &mut WindowContext,
         ) -> AnyElement {
             let mut visible_range = visible_range.clone();
-            visible_range.end += 1;
+            let includes_trailing_indent = visible_range.end < item_count;
+            // Check if we have entries after the visible range,
+            // if so extend the visible range so we can fetch a trailing indent,
+            // which is needed to compute indent guides correctly.
+            if includes_trailing_indent {
+                visible_range.end += 1;
+            }
             let visible_entries = &(self.compute_indents_fn)(visible_range.clone(), cx);
-            // Check if we have an additional indent that is outside of the visible range
-            let includes_trailing_indent = visible_entries.len() == visible_range.len();
             let indent_guides = compute_indent_guides(
                 &visible_entries,
                 visible_range.start,
@@ -198,8 +203,12 @@ mod uniform_list {
         on_hovered_indent_guide_click: Option<Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>>,
     }
 
-    struct IndentGuidesElementPrepaintState {
-        hitboxes: SmallVec<[Hitbox; 12]>,
+    enum IndentGuidesElementPrepaintState {
+        Static,
+        Interactive {
+            hitboxes: Rc<SmallVec<[Hitbox; 12]>>,
+            on_hovered_indent_guide_click: Rc<dyn Fn(&IndentGuideLayout, &mut WindowContext)>,
+        },
     }
 
     impl Element for IndentGuidesElement {
@@ -225,11 +234,21 @@ mod uniform_list {
             _request_layout: &mut Self::RequestLayoutState,
             cx: &mut WindowContext,
         ) -> Self::PrepaintState {
-            let mut hitboxes = SmallVec::new();
-            for guide in self.indent_guides.as_ref().iter() {
-                hitboxes.push(cx.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false));
+            if let Some(on_hovered_indent_guide_click) = self.on_hovered_indent_guide_click.clone()
+            {
+                let hitboxes = self
+                    .indent_guides
+                    .as_ref()
+                    .iter()
+                    .map(|guide| cx.insert_hitbox(guide.hitbox.unwrap_or(guide.bounds), false))
+                    .collect();
+                Self::PrepaintState::Interactive {
+                    hitboxes: Rc::new(hitboxes),
+                    on_hovered_indent_guide_click,
+                }
+            } else {
+                Self::PrepaintState::Static
             }
-            Self::PrepaintState { hitboxes }
         }
 
         fn paint(
@@ -240,81 +259,96 @@ mod uniform_list {
             prepaint: &mut Self::PrepaintState,
             cx: &mut WindowContext,
         ) {
-            let callback = self.on_hovered_indent_guide_click.clone();
-            if let Some(callback) = callback {
-                cx.on_mouse_event({
-                    let hitboxes = prepaint.hitboxes.clone();
-                    let indent_guides = self.indent_guides.clone();
-                    move |event: &MouseDownEvent, phase, cx| {
-                        if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
-                            let mut active_hitbox_ix = None;
-                            for (i, hitbox) in hitboxes.iter().enumerate() {
+            match prepaint {
+                IndentGuidesElementPrepaintState::Static => {
+                    for indent_guide in self.indent_guides.as_ref() {
+                        let fill_color = if indent_guide.is_active {
+                            self.colors.active
+                        } else {
+                            self.colors.default
+                        };
+
+                        cx.paint_quad(fill(indent_guide.bounds, fill_color));
+                    }
+                }
+                IndentGuidesElementPrepaintState::Interactive {
+                    hitboxes,
+                    on_hovered_indent_guide_click,
+                } => {
+                    cx.on_mouse_event({
+                        let hitboxes = hitboxes.clone();
+                        let indent_guides = self.indent_guides.clone();
+                        let on_hovered_indent_guide_click = on_hovered_indent_guide_click.clone();
+                        move |event: &MouseDownEvent, phase, cx| {
+                            if phase == DispatchPhase::Bubble && event.button == MouseButton::Left {
+                                let mut active_hitbox_ix = None;
+                                for (i, hitbox) in hitboxes.iter().enumerate() {
+                                    if hitbox.is_hovered(cx) {
+                                        active_hitbox_ix = Some(i);
+                                        break;
+                                    }
+                                }
+
+                                let Some(active_hitbox_ix) = active_hitbox_ix else {
+                                    return;
+                                };
+
+                                let active_indent_guide = &indent_guides[active_hitbox_ix].layout;
+                                on_hovered_indent_guide_click(active_indent_guide, cx);
+
+                                cx.stop_propagation();
+                                cx.prevent_default();
+                            }
+                        }
+                    });
+                    let mut hovered_hitbox_id = None;
+                    for (i, hitbox) in hitboxes.iter().enumerate() {
+                        cx.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
+                        let indent_guide = &self.indent_guides[i];
+                        let fill_color = if hitbox.is_hovered(cx) {
+                            hovered_hitbox_id = Some(hitbox.id);
+                            self.colors.hover
+                        } else if indent_guide.is_active {
+                            self.colors.active
+                        } else {
+                            self.colors.default
+                        };
+
+                        cx.paint_quad(fill(indent_guide.bounds, fill_color));
+                    }
+
+                    cx.on_mouse_event({
+                        let prev_hovered_hitbox_id = hovered_hitbox_id;
+                        let hitboxes = hitboxes.clone();
+                        move |_: &MouseMoveEvent, phase, cx| {
+                            let mut hovered_hitbox_id = None;
+                            for hitbox in hitboxes.as_ref() {
                                 if hitbox.is_hovered(cx) {
-                                    active_hitbox_ix = Some(i);
+                                    hovered_hitbox_id = Some(hitbox.id);
                                     break;
                                 }
                             }
-
-                            let Some(active_hitbox_ix) = active_hitbox_ix else {
-                                return;
-                            };
-
-                            let active_indent_guide = &indent_guides[active_hitbox_ix].layout;
-                            callback(active_indent_guide, cx);
-
-                            cx.stop_propagation();
-                            cx.prevent_default();
-                        }
-                    }
-                });
-            }
-
-            let mut hovered_hitbox_id = None;
-            for (i, hitbox) in prepaint.hitboxes.iter().enumerate() {
-                cx.set_cursor_style(gpui::CursorStyle::PointingHand, hitbox);
-                let indent_guide = &self.indent_guides[i];
-                let fill_color = if hitbox.is_hovered(cx) {
-                    hovered_hitbox_id = Some(hitbox.id);
-                    self.colors.hover
-                } else if indent_guide.is_active {
-                    self.colors.active
-                } else {
-                    self.colors.default
-                };
-
-                cx.paint_quad(fill(indent_guide.bounds, fill_color));
-            }
-
-            cx.on_mouse_event({
-                let prev_hovered_hitbox_id = hovered_hitbox_id;
-                let hitboxes = prepaint.hitboxes.clone();
-                move |_: &MouseMoveEvent, phase, cx| {
-                    let mut hovered_hitbox_id = None;
-                    for hitbox in &hitboxes {
-                        if hitbox.is_hovered(cx) {
-                            hovered_hitbox_id = Some(hitbox.id);
-                            break;
-                        }
-                    }
-                    if phase == DispatchPhase::Capture {
-                        // If the hovered hitbox has changed, we need to re-paint the indent guides.
-                        match (prev_hovered_hitbox_id, hovered_hitbox_id) {
-                            (Some(prev_id), Some(id)) => {
-                                if prev_id != id {
-                                    cx.refresh();
+                            if phase == DispatchPhase::Capture {
+                                // If the hovered hitbox has changed, we need to re-paint the indent guides.
+                                match (prev_hovered_hitbox_id, hovered_hitbox_id) {
+                                    (Some(prev_id), Some(id)) => {
+                                        if prev_id != id {
+                                            cx.refresh();
+                                        }
+                                    }
+                                    (None, Some(_)) => {
+                                        cx.refresh();
+                                    }
+                                    (Some(_), None) => {
+                                        cx.refresh();
+                                    }
+                                    (None, None) => {}
                                 }
                             }
-                            (None, Some(_)) => {
-                                cx.refresh();
-                            }
-                            (Some(_), None) => {
-                                cx.refresh();
-                            }
-                            (None, None) => {}
                         }
-                    }
+                    });
                 }
-            });
+            }
         }
     }
 

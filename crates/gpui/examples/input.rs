@@ -485,7 +485,7 @@ impl Render for TextInput {
         div()
             .flex()
             .key_context("TextInput")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -549,7 +549,7 @@ impl Render for InputExample {
         let num_keystrokes = self.recent_keystrokes.len();
         div()
             .bg(rgb(0xaaaaaa))
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .flex()
             .flex_col()
             .size_full()

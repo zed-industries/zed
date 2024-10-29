@@ -975,7 +975,7 @@ impl Render for TerminalView {
         div()
             .size_full()
             .relative()
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .key_context(self.dispatch_context(cx))
             .on_action(cx.listener(TerminalView::send_text))
             .on_action(cx.listener(TerminalView::send_keystroke))

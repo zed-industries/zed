@@ -11,6 +11,13 @@ pub enum ProjectPanelDockPosition {
     Right,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowIndentGuides {
+    Always,
+    Never,
+}
+
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub button: bool,
@@ -20,10 +27,21 @@ pub struct ProjectPanelSettings {
     pub folder_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
-    pub indent_guides: bool,
+    pub indent_guides: IndentGuidesSettings,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettings {
+    pub show: ShowIndentGuides,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettingsContent {
+    /// When to show the scrollbar in the project panel.
+    pub show: Option<ShowIndentGuides>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -72,10 +90,6 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: 20
     pub indent_size: Option<f32>,
-    /// Whether to show indent guides in the project panel.
-    ///
-    /// Default: true
-    pub indent_guides: Option<bool>,
     /// Whether to reveal it in the project panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.
@@ -89,6 +103,8 @@ pub struct ProjectPanelSettingsContent {
     pub auto_fold_dirs: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
+    /// Settings related to indent guides in the project panel.
+    pub indent_guides: Option<IndentGuidesSettingsContent>,
 }
 
 impl Settings for ProjectPanelSettings {
