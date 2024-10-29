@@ -45,7 +45,8 @@ use crate::OpenRemote;
 mod navigation_base {
     use gpui::{AnyElement, FocusHandle, ScrollAnchor};
     use ui::{
-        div, ElementId, InteractiveElement, ParentElement, RenderOnce, Styled, WindowContext,
+        div, ElementId, InteractiveElement, ParentElement, RenderOnce, StatefulInteractiveElement,
+        Styled, WindowContext,
     };
 
     pub struct NavigationBase {
@@ -81,6 +82,7 @@ mod navigation_base {
                 .id(self.id)
                 .on_action({
                     let children = self.selectable_children.clone();
+
                     move |_: &menu::SelectNext, cx| {
                         let target = Self::find_focused(&children, cx)
                             .and_then(|index| {
@@ -98,8 +100,10 @@ mod navigation_base {
                     move |_: &menu::SelectPrev, cx| {
                         let target = Self::find_focused(&children, cx)
                             .and_then(|index| index.checked_sub(1))
-                            .unwrap_or(children.len());
-                        if let Some((focus_handle, scroll_anchor)) = children.get(target) {
+                            .or(children.len().checked_sub(1));
+                        if let Some((focus_handle, scroll_anchor)) =
+                            target.and_then(|target| children.get(target))
+                        {
                             focus_handle.focus(cx);
                             scroll_anchor.scroll_to(cx);
                         }
@@ -113,7 +117,6 @@ mod navigation_base {
 pub struct RemoteServerProjects {
     mode: Mode,
     focus_handle: FocusHandle,
-    scroll_handle: ScrollHandle,
     workspace: WeakView<Workspace>,
     retained_connections: Vec<Model<SshRemoteClient>>,
 }
@@ -320,6 +323,11 @@ struct DefaultModeEntry {
     scroll_anchor: ScrollAnchor,
 }
 
+impl From<DefaultModeEntry> for (FocusHandle, ScrollAnchor) {
+    fn from(other: DefaultModeEntry) -> Self {
+        (other.focus_handle, other.scroll_anchor)
+    }
+}
 impl DefaultModeEntry {
     fn new(scroll_handle: &ScrollHandle, cx: &WindowContext<'_>) -> Self {
         Self {
@@ -701,9 +709,13 @@ impl RemoteServerProjects {
                     // }))
                     .child(h_flex().map(|this| {
                         this.id(("new-remote-project-container", ix))
-                            .anchor_scroll(&ssh_server.configure.scroll_anchor)
+                            .track_focus(&ssh_server.open_folder.focus_handle)
+                            .anchor_scroll(&ssh_server.open_folder.scroll_anchor)
                             .child(
                                 ListItem::new(("new-remote-project", ix))
+                                    .selected(
+                                        ssh_server.open_folder.focus_handle.contains_focused(cx),
+                                    )
                                     .inset(true)
                                     .spacing(ui::ListItemSpacing::Sparse)
                                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
@@ -722,6 +734,7 @@ impl RemoteServerProjects {
                     }))
                     .child(h_flex().map(|this| {
                         this.id(("server-options-container", ix))
+                            .track_focus(&ssh_server.configure.focus_handle)
                             .anchor_scroll(&ssh_server.configure.scroll_anchor)
                             .child(
                                 ListItem::new(("server-options", ix))
@@ -1137,9 +1150,9 @@ impl RemoteServerProjects {
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let scroll_state = state.scrollbar.parent_view(cx.view());
-
         let connect_button = div()
             .id("ssh-connect-new-server-container")
+            .track_focus(&state.add_new_server.focus_handle)
             .anchor_scroll(&state.add_new_server.scroll_anchor)
             .child(
                 ListItem::new("register-remove-server-button")
@@ -1160,35 +1173,44 @@ impl RemoteServerProjects {
             unreachable!()
         };
 
-        let mut modal_section = v_flex()
-            .id("ssh-server-list")
-            .overflow_y_scroll()
-            .track_scroll(&scroll_handle)
-            .size_full()
-            .child(connect_button)
-            .child(
-                List::new()
-                    .empty_message(
-                        v_flex()
-                            .child(div().px_3().child(
-                                Label::new("No remote servers registered yet.").color(Color::Muted),
-                            ))
-                            .into_any_element(),
-                    )
-                    .children(
-                        state
-                            .servers
-                            .into_iter()
-                            .enumerate()
-                            .map(|(ix, connection)| {
-                                self.render_ssh_connection(ix, connection, cx)
-                                    .into_any_element()
-                            }),
-                    ),
-            )
-            .into_any_element();
+        let mut modal_section = navigation_base::NavigationBase::new(
+            "ssh-modal-section".into(),
+            v_flex()
+                .track_focus(&self.focus_handle)
+                .id("ssh-server-list")
+                .overflow_y_scroll()
+                .track_scroll(&scroll_handle)
+                .size_full()
+                .child(connect_button)
+                .child(
+                    List::new()
+                        .empty_message(
+                            v_flex()
+                                .child(
+                                    div().px_3().child(
+                                        Label::new("No remote servers registered yet.")
+                                            .color(Color::Muted),
+                                    ),
+                                )
+                                .into_any_element(),
+                        )
+                        .children(state.servers.iter().enumerate().map(|(ix, connection)| {
+                            self.render_ssh_connection(ix, connection.clone(), cx)
+                                .into_any_element()
+                        })),
+                )
+                .into_any_element(),
+        )
+        .selectable(state.add_new_server.clone().into());
 
-        Modal::new("remote-projects", Some(self.scroll_handle.clone()))
+        for server in &state.servers {
+            modal_section = modal_section
+                .selectable(server.open_folder.clone().into())
+                .selectable(server.configure.clone().into());
+        }
+        let mut modal_section = modal_section.render(cx).into_any_element();
+
+        Modal::new("remote-projects", None)
             .header(
                 ModalHeader::new()
                     .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall)),
@@ -1252,7 +1274,6 @@ impl EventEmitter<DismissEvent> for RemoteServerProjects {}
 impl Render for RemoteServerProjects {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            .track_focus(&self.focus_handle)
             .elevation_3(cx)
             .w(rems(34.))
             .key_context("RemoteServerModal")
