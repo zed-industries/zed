@@ -171,7 +171,7 @@ impl Cell {
                 CodeCell {
                     id: id.clone(),
                     metadata: metadata.clone(),
-                    execution_count: execution_count.clone(),
+                    execution_count: *execution_count,
                     source: source.join(""),
                     editor: editor_view,
                     outputs: convert_outputs(outputs, cx),

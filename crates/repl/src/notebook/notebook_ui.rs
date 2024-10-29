@@ -134,15 +134,10 @@ impl NotebookEditor {
         let mut cell_map = HashMap::default();
 
         for (index, cell) in notebook.cells.iter().enumerate() {
-            let id = match &cell {
-                nbformat::v4::Cell::Markdown { id, .. }
-                | nbformat::v4::Cell::Code { id, .. }
-                | nbformat::v4::Cell::Raw { id, .. } => id,
-            };
-            let cell_id = CellId::from(id.clone());
+            let cell_id = cell.id();
             cell_order.push(cell_id.clone());
             cell_map.insert(
-                cell_id,
+                cell_id.clone(),
                 Cell::load(cell, &languages, notebook_language.clone(), cx),
             );
         }
@@ -519,8 +514,11 @@ impl project::Item for NotebookItem {
 
                 let notebook = match notebook {
                     Ok(nbformat::Notebook::V4(notebook)) => notebook,
-                    Ok(nbformat::Notebook::Legacy(_)) => {
-                        anyhow::bail!("Legacy notebook encountered");
+                    Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
+                        // todo!(): Decide if we want to mutate the notebook by including Cell IDs
+                        // and any other conversions
+                        let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
+                        notebook
                     }
                     Err(e) => {
                         anyhow::bail!("Failed to parse notebook: {:?}", e);

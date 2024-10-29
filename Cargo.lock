@@ -7109,9 +7109,9 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf90f5e04546cd3ef65a2b4887ceff79eb200c8b364d5b5359b50630169ab12d"
+checksum = "146074ad45cab20f5d98ccded164826158471f21d04f96e40b9872529e10979d"
 dependencies = [
  "anyhow",
  "chrono",
