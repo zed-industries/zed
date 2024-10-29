@@ -689,6 +689,10 @@ impl SshClientDelegate {
     }
 }
 
+pub fn is_connecting_over_ssh(workspace: &Workspace, cx: &AppContext) -> bool {
+    workspace.active_modal::<SshConnectionModal>(cx).is_some()
+}
+
 pub fn connect_over_ssh(
     unique_identifier: String,
     connection_options: SshConnectionOptions,
