@@ -300,7 +300,7 @@ struct BackgroundScannerState {
     removed_entries: HashMap<u64, Entry>,
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
-    git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
+    git_hosting_provider_registry: Option<Arc<GitHostingProviderRegistry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1006,7 +1006,7 @@ impl LocalWorktree {
         let share_private_files = self.share_private_files;
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
-        let git_hosting_provider_registry = GitHostingProviderRegistry::global(cx);
+        let git_hosting_provider_registry = GitHostingProviderRegistry::try_global(cx);
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_executor().spawn({
@@ -2952,10 +2952,12 @@ impl BackgroundScannerState {
         log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
         let work_directory = RepositoryWorkDirectory(work_dir_path.clone());
 
-        git_hosting_providers::register_additional_providers(
-            self.git_hosting_provider_registry.clone(),
-            repository.clone(),
-        );
+        if let Some(git_hosting_provider_registry) = self.git_hosting_provider_registry.clone() {
+            git_hosting_providers::register_additional_providers(
+                git_hosting_provider_registry,
+                repository.clone(),
+            );
+        }
 
         self.snapshot.repository_entries.insert(
             work_directory.clone(),
