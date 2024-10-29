@@ -2049,7 +2049,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
       "show": null
     },
     "indent_guides": {
-      "show": "always",
+      "show": "always"
     }
   }
 }
