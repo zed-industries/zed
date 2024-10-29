@@ -9,7 +9,7 @@ use workspace::{tasks::schedule_resolved_task, Workspace};
 mod modal;
 mod settings;
 
-pub use modal::{Rerun, Spawn, SpawnNearest};
+pub use modal::{Rerun, Spawn};
 
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
@@ -17,7 +17,6 @@ pub fn init(cx: &mut AppContext) {
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
-                .register_action(spawn_nearest)
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
                     if let Some((task_source_kind, mut last_scheduled_task)) = workspace
                         .project()
@@ -88,16 +87,6 @@ fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewC
         Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
         None => toggle_modal(workspace, cx).detach(),
     }
-}
-
-fn spawn_nearest(workspace: &mut Workspace, _: &SpawnNearest, cx: &mut ViewContext<Workspace>) {
-    let Some(editor) = workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))
-    else {
-        return;
-    };
-    editor.update(cx, |editor, cx| editor.spawn_nearest_task(cx));
 }
 
 fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {

@@ -334,6 +334,7 @@ gpui::actions!(
         ShuffleLines,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
+        SpawnNearestTask,
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,

@@ -5470,7 +5470,7 @@ impl Editor {
         }
     }
 
-    pub fn spawn_nearest_task(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn spawn_nearest_task(&mut self, _: &SpawnNearestTask, cx: &mut ViewContext<Self>) {
         // Try to find a node using tree-sitter that contains the cursor and has
         // a task.
         let mut target_row = maybe!({

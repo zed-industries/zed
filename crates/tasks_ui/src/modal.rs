@@ -60,7 +60,6 @@ pub struct Rerun {
 }
 
 impl_actions!(task, [Rerun, Spawn]);
-gpui::actions!(task, [SpawnNearest]);
 
 /// A modal used to spawn new tasks.
 pub(crate) struct TasksModalDelegate {
