@@ -10,6 +10,13 @@ pub enum OutlinePanelDockPosition {
     Right,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowIndentGuides {
+    Always,
+    Never,
+}
+
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct OutlinePanelSettings {
     pub button: bool,
@@ -19,9 +26,20 @@ pub struct OutlinePanelSettings {
     pub folder_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
-    pub indent_guides: bool,
+    pub indent_guides: IndentGuidesSettings,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettings {
+    pub show: ShowIndentGuides,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettingsContent {
+    /// When to show the scrollbar in the outline panel.
+    pub show: Option<ShowIndentGuides>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -54,10 +72,6 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: 20
     pub indent_size: Option<f32>,
-    /// Whether to show indent guides in the outline panel.
-    ///
-    /// Default: true
-    pub indent_guides: Option<bool>,
     /// Whether to reveal it in the outline panel automatically,
     /// when a corresponding project entry becomes active.
     /// Gitignored entries are never auto revealed.
@@ -69,6 +83,8 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: true
     pub auto_fold_dirs: Option<bool>,
+    /// Settings related to indent guides in the outline panel.
+    pub indent_guides: Option<IndentGuidesSettingsContent>,
 }
 
 impl Settings for OutlinePanelSettings {
