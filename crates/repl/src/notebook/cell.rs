@@ -366,6 +366,47 @@ impl CodeCell {
     pub fn clear_outputs(&mut self) {
         self.outputs.clear();
     }
+
+    pub fn gutter_output(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let is_selected = self.selected();
+
+        div()
+            .relative()
+            .h_full()
+            .w(px(GUTTER_WIDTH))
+            .child(
+                div()
+                    .w(px(GUTTER_WIDTH))
+                    .flex()
+                    .flex_none()
+                    .justify_center()
+                    .h_full()
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(1.))
+                            .h_full()
+                            .when(is_selected, |this| this.bg(cx.theme().colors().icon_accent))
+                            .when(!is_selected, |this| this.bg(cx.theme().colors().border)),
+                    ),
+            )
+            .when(self.has_outputs(), |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top(px(CODE_BLOCK_INSET - 2.0))
+                        .left_0()
+                        .flex()
+                        .flex_none()
+                        .w(px(GUTTER_WIDTH))
+                        .h(px(GUTTER_WIDTH + 12.0))
+                        .items_center()
+                        .justify_center()
+                        .bg(cx.theme().colors().tab_bar_background)
+                        .child(IconButton::new("control", IconName::MailOpen)),
+                )
+            })
+    }
 }
 
 impl RenderableCell for CodeCell {
@@ -406,68 +447,96 @@ impl Render for CodeCell {
         let lines = self.source.lines().count();
         let height = lines as f32 * cx.line_height();
 
-        // todo!(): height will need to include the height of the outputs
-
-        h_flex()
-            .w_full()
-            .pr_2()
-            .rounded_sm()
-            .items_start()
-            .gap(Spacing::Large.rems(cx))
-            .bg(self.selected_bg_color(cx))
-            .child(self.gutter(cx))
+        v_flex()
+            // Editor portion
             .child(
-                div()
-                    .py_1p5()
+                h_flex()
                     .w_full()
+                    .pr_2()
+                    .rounded_sm()
+                    .items_start()
+                    .gap(Spacing::Large.rems(cx))
+                    .bg(self.selected_bg_color(cx))
+                    .child(self.gutter(cx))
                     .child(
-                        div()
-                            .flex()
-                            .size_full()
-                            .flex_1()
-                            .py_3()
-                            .px_5()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(cx.theme().colors().border)
-                            .bg(cx.theme().colors().editor_background)
-                            .child(div().h(height).w_full().child(self.editor.clone())),
-                    )
-                    .children(self.outputs.iter().map(|output| {
-                        let content = match output {
-                            Output::Plain { content, .. } => {
-                                Some(content.clone().into_any_element())
-                            }
-                            Output::Markdown { content, .. } => {
-                                Some(content.clone().into_any_element())
-                            }
-                            Output::Stream { content, .. } => {
-                                Some(content.clone().into_any_element())
-                            }
-                            Output::Image { content, .. } => {
-                                Some(content.clone().into_any_element())
-                            }
-                            Output::Message(message) => {
-                                Some(div().child(message.clone()).into_any_element())
-                            }
-                            Output::Table { content, .. } => {
-                                Some(content.clone().into_any_element())
-                            }
-                            Output::ErrorOutput(error_view) => error_view.render(cx),
-                            Output::ClearOutputWaitMarker => None,
-                        };
+                        div().py_1p5().w_full().child(
+                            div()
+                                .flex()
+                                .size_full()
+                                .flex_1()
+                                .py_3()
+                                .px_5()
+                                .rounded_lg()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .bg(cx.theme().colors().editor_background)
+                                .child(div().h(height).w_full().child(self.editor.clone())),
+                        ),
+                    ),
+            )
+            // Output portion
+            .child(
+                h_flex()
+                    .w_full()
+                    .pr_2()
+                    .rounded_sm()
+                    .items_start()
+                    .gap(Spacing::Large.rems(cx))
+                    .bg(self.selected_bg_color(cx))
+                    .child(self.gutter_output(cx))
+                    .child(
+                        div().py_1p5().w_full().child(
+                            div()
+                                .flex()
+                                .size_full()
+                                .flex_1()
+                                .py_3()
+                                .px_5()
+                                .rounded_lg()
+                                .border_1()
+                                // .border_color(cx.theme().colors().border)
+                                // .bg(cx.theme().colors().editor_background)
+                                .child(div().w_full().children(self.outputs.iter().map(
+                                    |output| {
+                                        let content = match output {
+                                            Output::Plain { content, .. } => {
+                                                Some(content.clone().into_any_element())
+                                            }
+                                            Output::Markdown { content, .. } => {
+                                                Some(content.clone().into_any_element())
+                                            }
+                                            Output::Stream { content, .. } => {
+                                                Some(content.clone().into_any_element())
+                                            }
+                                            Output::Image { content, .. } => {
+                                                Some(content.clone().into_any_element())
+                                            }
+                                            Output::Message(message) => Some(
+                                                div().child(message.clone()).into_any_element(),
+                                            ),
+                                            Output::Table { content, .. } => {
+                                                Some(content.clone().into_any_element())
+                                            }
+                                            Output::ErrorOutput(error_view) => {
+                                                error_view.render(cx)
+                                            }
+                                            Output::ClearOutputWaitMarker => None,
+                                        };
 
-                        div()
-                            // .w_full()
-                            // .mt_3()
-                            // .p_3()
-                            // .rounded_md()
-                            // .bg(cx.theme().colors().editor_background)
-                            // .border(px(1.))
-                            // .border_color(cx.theme().colors().border)
-                            // .shadow_sm()
-                            .children(content)
-                    })),
+                                        div()
+                                            // .w_full()
+                                            // .mt_3()
+                                            // .p_3()
+                                            // .rounded_md()
+                                            // .bg(cx.theme().colors().editor_background)
+                                            // .border(px(1.))
+                                            // .border_color(cx.theme().colors().border)
+                                            // .shadow_sm()
+                                            .children(content)
+                                    },
+                                ))),
+                        ),
+                    ),
             )
     }
 }
