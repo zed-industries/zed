@@ -48,6 +48,7 @@ pub struct Collaborator {
     pub peer_id: proto::PeerId,
     pub replica_id: ReplicaId,
     pub user_id: UserId,
+    pub is_host: bool,
 }
 
 impl PartialOrd for User {
@@ -824,6 +825,7 @@ impl Collaborator {
             peer_id: message.peer_id.ok_or_else(|| anyhow!("invalid peer id"))?,
             replica_id: message.replica_id as ReplicaId,
             user_id: message.user_id as UserId,
+            is_host: message.is_host,
         })
     }
 }
