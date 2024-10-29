@@ -27,9 +27,10 @@ use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
     Div, ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
-    IntoElement, KeyContext, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Render, SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
-    UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
+    IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
+    StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle, View,
+    ViewContext, VisualContext, WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
@@ -4155,6 +4156,8 @@ impl Render for OutlinePanel {
                         }
                     })
                     .size_full()
+                    .with_sizing_behavior(ListSizingBehavior::Infer)
+                    .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
                     .with_width_from_item(self.max_width_item_index)
                     .track_scroll(self.scroll_handle.clone())
                     .when(show_indent_guides, |list| {
@@ -4229,6 +4232,7 @@ impl Render for OutlinePanel {
         }))
         .child(
             v_flex().child(horizontal_separator(cx)).child(
+                // TODO kb rework, has to be below the panel, to avoid scroll overlaps
                 h_flex().p_2().child(self.filter_editor.clone()).child(
                     div().child(
                         IconButton::new(
