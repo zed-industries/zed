@@ -2255,8 +2255,8 @@ mod fake {
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelClient, RemoteConnection, ServerBinary, SshClientDelegate, SshConnectionOptions,
-        SshPlatform,
+        ChannelClient, RemoteConnection, ServerBinary, ServerVersion, SshClientDelegate,
+        SshConnectionOptions, SshPlatform,
     };
 
     pub(super) struct FakeRemoteConnection {
