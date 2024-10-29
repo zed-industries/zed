@@ -111,6 +111,12 @@ impl GitHostingProviderRegistry {
         cx.global::<GlobalGitHostingProviderRegistry>().0.clone()
     }
 
+    /// Returns the global [`GitHostingProviderRegistry`], if one is set.
+    pub fn try_global(cx: &AppContext) -> Option<Arc<Self>> {
+        cx.try_global::<GlobalGitHostingProviderRegistry>()
+            .map(|registry| registry.0.clone())
+    }
+
     /// Returns the global [`GitHostingProviderRegistry`].
     ///
     /// Inserts a default [`GitHostingProviderRegistry`] if one does not yet exist.

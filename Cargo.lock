@@ -4915,6 +4915,7 @@ dependencies = [
  "serde_json",
  "unindent",
  "url",
+ "util",
 ]
 
 [[package]]
@@ -14730,6 +14731,7 @@ dependencies = [
  "fuzzy",
  "git",
  "git2",
+ "git_hosting_providers",
  "gpui",
  "http_client",
  "ignore",
