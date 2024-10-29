@@ -1,14 +1,9 @@
+use derive_more::Deref;
 use url::Url;
 
 /// The URL to a Git remote.
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Deref)]
 pub struct RemoteUrl(Url);
-
-impl RemoteUrl {
-    pub fn as_str(&self) -> &str {
-        self.0.as_str()
-    }
-}
 
 impl std::str::FromStr for RemoteUrl {
     type Err = url::ParseError;

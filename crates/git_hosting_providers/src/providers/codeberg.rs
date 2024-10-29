@@ -103,7 +103,7 @@ impl GitHostingProvider for Codeberg {
         format!("L{start_line}-L{end_line}")
     }
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
         if url.starts_with("git@codeberg.org:") || url.starts_with("https://codeberg.org/") {
             let repo_with_owner = url
                 .trim_start_matches("git@codeberg.org:")
@@ -112,7 +112,10 @@ impl GitHostingProvider for Codeberg {
 
             let (owner, repo) = repo_with_owner.split_once('/')?;
 
-            return Some(ParsedGitRemote { owner, repo });
+            return Some(ParsedGitRemote {
+                owner: owner.into(),
+                repo: repo.into(),
+            });
         }
 
         None
@@ -175,8 +178,8 @@ mod tests {
     #[test]
     fn test_build_codeberg_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Codeberg.build_permalink(
             remote,
@@ -194,8 +197,8 @@ mod tests {
     #[test]
     fn test_build_codeberg_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Codeberg.build_permalink(
             remote,
@@ -213,8 +216,8 @@ mod tests {
     #[test]
     fn test_build_codeberg_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Codeberg.build_permalink(
             remote,
@@ -232,8 +235,8 @@ mod tests {
     #[test]
     fn test_build_codeberg_permalink_from_https_url() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Codeberg.build_permalink(
             remote,
@@ -251,8 +254,8 @@ mod tests {
     #[test]
     fn test_build_codeberg_permalink_from_https_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Codeberg.build_permalink(
             remote,
@@ -270,8 +273,8 @@ mod tests {
     #[test]
     fn test_build_codeberg_permalink_from_https_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "rajveermalviya",
-            repo: "zed",
+            owner: "rajveermalviya".into(),
+            repo: "zed".into(),
         };
         let permalink = Codeberg.build_permalink(
             remote,

@@ -25,7 +25,7 @@ impl GitHostingProvider for Gitee {
         format!("L{start_line}-{end_line}")
     }
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
         if url.starts_with("git@gitee.com:") || url.starts_with("https://gitee.com/") {
             let repo_with_owner = url
                 .trim_start_matches("git@gitee.com:")
@@ -34,7 +34,10 @@ impl GitHostingProvider for Gitee {
 
             let (owner, repo) = repo_with_owner.split_once('/')?;
 
-            return Some(ParsedGitRemote { owner, repo });
+            return Some(ParsedGitRemote {
+                owner: owner.into(),
+                repo: repo.into(),
+            });
         }
 
         None
@@ -81,8 +84,8 @@ mod tests {
     #[test]
     fn test_build_gitee_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
-            repo: "zed",
+            owner: "libkitten".into(),
+            repo: "zed".into(),
         };
         let permalink = Gitee.build_permalink(
             remote,
@@ -100,8 +103,8 @@ mod tests {
     #[test]
     fn test_build_gitee_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
-            repo: "zed",
+            owner: "libkitten".into(),
+            repo: "zed".into(),
         };
         let permalink = Gitee.build_permalink(
             remote,
@@ -119,8 +122,8 @@ mod tests {
     #[test]
     fn test_build_gitee_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
-            repo: "zed",
+            owner: "libkitten".into(),
+            repo: "zed".into(),
         };
         let permalink = Gitee.build_permalink(
             remote,
@@ -138,8 +141,8 @@ mod tests {
     #[test]
     fn test_build_gitee_permalink_from_https_url() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
-            repo: "zed",
+            owner: "libkitten".into(),
+            repo: "zed".into(),
         };
         let permalink = Gitee.build_permalink(
             remote,
@@ -157,8 +160,8 @@ mod tests {
     #[test]
     fn test_build_gitee_permalink_from_https_url_single_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
-            repo: "zed",
+            owner: "libkitten".into(),
+            repo: "zed".into(),
         };
         let permalink = Gitee.build_permalink(
             remote,
@@ -176,8 +179,8 @@ mod tests {
     #[test]
     fn test_build_gitee_permalink_from_https_url_multi_line_selection() {
         let remote = ParsedGitRemote {
-            owner: "libkitten",
-            repo: "zed",
+            owner: "libkitten".into(),
+            repo: "zed".into(),
         };
         let permalink = Gitee.build_permalink(
             remote,
