@@ -517,11 +517,55 @@ impl<'a> ChunkSlice<'a> {
 
 /// Finds the n-th bit that is set to 1.
 #[inline(always)]
-fn nth_set_bit(mut v: u128, n: usize) -> usize {
-    for _ in 0..(n - 1) {
-        v = v & (v - 1);
+fn nth_set_bit(v: u128, n: usize) -> usize {
+    let low = v as u64;
+    let high = (v >> 64) as u64;
+
+    let low_count = low.count_ones() as usize;
+    if n > low_count {
+        64 + nth_set_bit_u64(high, (n - low_count) as u64) as usize
+    } else {
+        nth_set_bit_u64(low, n as u64) as usize
     }
-    v.trailing_zeros() as usize
+}
+
+#[inline(always)]
+fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
+    let v = v.reverse_bits();
+    let mut s: u64 = 64;
+    let mut t: u64;
+
+    // Parallel bit count intermediates
+    let a = v - ((v >> 1) & u64::MAX / 3);
+    let b = (a & u64::MAX / 5) + ((a >> 2) & u64::MAX / 5);
+    let c = (b + (b >> 4)) & u64::MAX / 0x11;
+    let d = (c + (c >> 8)) & u64::MAX / 0x101;
+    t = (d >> 32) + (d >> 48);
+
+    // Branchless select
+    s -= ((t.wrapping_sub(n)) & 256) >> 3;
+    n -= t & ((t.wrapping_sub(n)) >> 8);
+
+    t = (d >> (s - 16)) & 0xff;
+    s -= ((t.wrapping_sub(n)) & 256) >> 4;
+    n -= t & ((t.wrapping_sub(n)) >> 8);
+
+    t = (c >> (s - 8)) & 0xf;
+    s -= ((t.wrapping_sub(n)) & 256) >> 5;
+    n -= t & ((t.wrapping_sub(n)) >> 8);
+
+    t = (b >> (s - 4)) & 0x7;
+    s -= ((t.wrapping_sub(n)) & 256) >> 6;
+    n -= t & ((t.wrapping_sub(n)) >> 8);
+
+    t = (a >> (s - 2)) & 0x3;
+    s -= ((t.wrapping_sub(n)) & 256) >> 7;
+    n -= t & ((t.wrapping_sub(n)) >> 8);
+
+    t = (v >> (s - 1)) & 0x1;
+    s -= ((t.wrapping_sub(n)) & 256) >> 8;
+
+    65 - s - 1
 }
 
 #[cfg(test)]
@@ -563,88 +607,26 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_nth_set_bit() {
-        assert_eq!(nth_set_bit(1 << 127, 1), 127);
-        assert_eq!(nth_set_bit((1 << 127) | (1 << 126), 1), 126);
-        assert_eq!(nth_set_bit((1 << 127) | (1 << 126), 2), 127);
-        assert_eq!(
-            nth_set_bit(
-                0b1000000000000000000000000000000000000000000000000000000000000000,
-                1
-            ),
-            63
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b1100000000000000000000000000000000000000000000000000000000000000,
-                1
-            ),
-            62
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b1100000000000000000000000000000000000000000000000000000000000000,
-                2
-            ),
-            63
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b0000000000000000000000000000000000000000000000000000000000000001,
-                1
-            ),
-            0
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b0000000000000000000000000000000000000000000000000000000000000011,
-                2
-            ),
-            1
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b0101010101010101010101010101010101010101010101010101010101010101,
-                1
-            ),
-            0
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b0101010101010101010101010101010101010101010101010101010101010101,
-                32
-            ),
-            62
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b1111111111111111111111111111111111111111111111111111111111111111,
-                64
-            ),
-            63
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b1111111111111111111111111111111111111111111111111111111111111111,
-                1
-            ),
-            0
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b1010101010101010101010101010101010101010101010101010101010101010,
-                1
-            ),
-            1
-        );
-        assert_eq!(
-            nth_set_bit(
-                0b1111000011110000111100001111000011110000111100001111000011110000,
-                8
-            ),
-            15
-        );
+    #[gpui::test]
+    fn test_nth_set_bit_random(mut rng: StdRng) {
+        let set_count = rng.gen_range(0..=128);
+        let mut set_bits = (0..128).choose_multiple(&mut rng, set_count);
+        set_bits.sort();
+        let mut n = 0;
+        for ix in set_bits.iter().copied() {
+            n |= 1 << ix;
+        }
+
+        for (mut ix, position) in set_bits.into_iter().enumerate() {
+            ix += 1;
+            assert_eq!(
+                nth_set_bit(n, ix),
+                position,
+                "nth_set_bit({:0128b}, {})",
+                n,
+                ix
+            );
+        }
     }
 
     fn verify_chunk(chunk: ChunkSlice<'_>, text: &str) {
