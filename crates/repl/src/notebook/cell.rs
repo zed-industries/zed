@@ -10,6 +10,7 @@ use futures::future::Shared;
 use gpui::{prelude::*, Hsla, Task, TextStyleRefinement, View, WeakView};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
+use nbformat::v4::{CellId, CellMetadata, CellType};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::Settings as _;
@@ -21,52 +22,6 @@ use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
     outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
 };
-use runtimelib::{DisplayData, ErrorOutput, ExecuteResult, StreamContent};
-
-#[derive(Debug, Clone, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct CellId(String);
-
-impl Display for CellId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-impl Default for CellId {
-    fn default() -> Self {
-        Self(Uuid::new_v4().to_string())
-    }
-}
-
-impl From<Uuid> for CellId {
-    fn from(uuid: Uuid) -> Self {
-        Self(uuid.to_string())
-    }
-}
-
-impl From<String> for CellId {
-    fn from(string: String) -> Self {
-        Self(string)
-    }
-}
-
-impl From<Option<String>> for CellId {
-    fn from(string: Option<String>) -> Self {
-        if string.is_some() {
-            string.into()
-        } else {
-            Self::default()
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum CellType {
-    Code,
-    Markdown,
-    // parse cell source as usual -> render as plain text
-    Raw,
-}
 
 #[derive(IntoElement)]
 pub enum CellControl {
@@ -87,114 +42,6 @@ impl RenderOnce for CellControl {
     }
 }
 
-#[derive(Deserialize, Debug)]
-#[serde(tag = "cell_type")]
-pub enum DeserializedCell {
-    #[serde(rename = "markdown")]
-    Markdown {
-        id: Option<String>,
-        metadata: DeserializedCellMetadata,
-        source: Vec<String>,
-        #[serde(default)]
-        attachments: Option<Value>,
-    },
-    #[serde(rename = "code")]
-    Code {
-        id: Option<String>,
-        metadata: DeserializedCellMetadata,
-        execution_count: Option<i32>,
-        source: Vec<String>,
-        #[serde(deserialize_with = "deserialize_outputs")]
-        outputs: Vec<DeserializedOutput>,
-    },
-    #[serde(rename = "raw")]
-    Raw {
-        id: Option<String>,
-        metadata: DeserializedCellMetadata,
-        source: Vec<String>,
-    },
-}
-
-pub fn deserialize_cells<'de, D>(deserializer: D) -> Result<Vec<DeserializedCell>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let cells: Vec<serde_json::Value> = Deserialize::deserialize(deserializer)?;
-    cells
-        .into_iter()
-        .enumerate()
-        .filter_map(
-            |(index, cell)| match serde_json::from_value::<DeserializedCell>(cell) {
-                Ok(cell) => Some(Ok(cell)),
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to deserialize cell at index {}: {}",
-                        index, e
-                    );
-                    None
-                }
-            },
-        )
-        .collect()
-}
-
-// importing a notebook -> deserialize
-// prefer to keep data as it was over adding optional fields
-// when we serialize
-
-#[derive(Serialize, Deserialize, Debug)]
-pub struct DeserializedCellMetadata {
-    // https://nbformat.readthedocs.io/en/latest/format_description.html#cell-ids
-    id: Option<String>, // make one once we load it. -> use uuid
-    collapsed: Option<bool>,
-    scrolled: Option<serde_json::Value>,
-    deletable: Option<bool>,
-    editable: Option<bool>,
-    format: Option<String>,
-    name: Option<String>,
-    tags: Option<Vec<String>>,
-}
-
-#[derive(Serialize, Deserialize, Debug)]
-#[serde(tag = "output_type")]
-pub enum DeserializedOutput {
-    #[serde(rename = "stream")]
-    Stream(StreamContent),
-    #[serde(rename = "display_data")]
-    DisplayData(DisplayData),
-    #[serde(rename = "execute_result")]
-    ExecuteResult(ExecuteResult),
-    #[serde(rename = "error")]
-    Error(ErrorOutput),
-}
-
-pub fn deserialize_outputs<'de, D>(deserializer: D) -> Result<Vec<DeserializedOutput>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    let outputs: Vec<serde_json::Value> = Deserialize::deserialize(deserializer)?;
-    outputs
-        .into_iter()
-        .enumerate()
-        .filter_map(|(index, output)| {
-            match serde_json::from_value::<DeserializedOutput>(output.clone()) {
-                Ok(output) => Some(Ok(output)),
-                Err(e) => {
-                    eprintln!(
-                        "Warning: Failed to deserialize output at index {} of cell: {}",
-                        index, e
-                    );
-                    eprintln!(
-                        "Output JSON: {}",
-                        serde_json::to_string_pretty(&output).unwrap_or_default()
-                    );
-                    None
-                }
-            }
-        })
-        .collect()
-}
-
 /// A notebook cell
 #[derive(Clone)]
 pub enum Cell {
@@ -203,29 +50,22 @@ pub enum Cell {
     Raw(View<RawCell>),
 }
 
-fn convert_outputs(outputs: Vec<DeserializedOutput>, cx: &mut WindowContext) -> Vec<Output> {
+fn convert_outputs(outputs: &Vec<nbformat::v4::Output>, cx: &mut WindowContext) -> Vec<Output> {
     outputs
         .into_iter()
         .map(|output| match output {
-            DeserializedOutput::Stream(stream) => Output::Stream {
-                content: cx.new_view(|cx| TerminalOutput::from(&stream.text, cx)),
+            nbformat::v4::Output::Stream { name, text } => Output::Stream {
+                content: cx.new_view(|cx| TerminalOutput::from(&text.0, cx)),
             },
-            DeserializedOutput::DisplayData(display_data) => Output::new(
-                &display_data.data,
-                display_data.transient.display_id.clone(),
-                cx,
-            ),
-            DeserializedOutput::ExecuteResult(execute_result) => Output::new(
-                &execute_result.data,
-                execute_result
-                    .transient
-                    .as_ref()
-                    .and_then(|t| t.display_id.clone()),
-                cx,
-            ),
-            DeserializedOutput::Error(error) => Output::ErrorOutput(ErrorView {
-                ename: error.ename,
-                evalue: error.evalue,
+            nbformat::v4::Output::DisplayData(display_data) => {
+                Output::new(&display_data.data, None, cx)
+            }
+            nbformat::v4::Output::ExecuteResult(execute_result) => {
+                Output::new(&execute_result.data, None, cx)
+            }
+            nbformat::v4::Output::Error(error) => Output::ErrorOutput(ErrorView {
+                ename: error.ename.clone(),
+                evalue: error.evalue.clone(),
                 traceback: cx.new_view(|cx| TerminalOutput::from(&error.traceback.join("\n"), cx)),
             }),
         })
@@ -234,19 +74,19 @@ fn convert_outputs(outputs: Vec<DeserializedOutput>, cx: &mut WindowContext) -> 
 
 impl Cell {
     pub fn load(
-        cell: DeserializedCell,
+        cell: &nbformat::v4::Cell,
         languages: &Arc<LanguageRegistry>,
         notebook_language: Shared<Task<Option<Arc<Language>>>>,
         cx: &mut WindowContext,
     ) -> Self {
         match cell {
-            DeserializedCell::Markdown {
+            nbformat::v4::Cell::Markdown {
                 id,
                 metadata,
                 source,
                 attachments,
             } => {
-                let source = source.join("\n");
+                let source = source.join("");
 
                 let view = cx.new_view(|cx| {
                     let markdown_parsing_task = {
@@ -270,9 +110,8 @@ impl Cell {
                     MarkdownCell {
                         markdown_parsing_task,
                         languages: languages.clone(),
-                        id: id.into(),
-                        cell_type: CellType::Markdown,
-                        metadata,
+                        id: id.clone(),
+                        metadata: metadata.clone(),
                         source: source.clone(),
                         parsed_markdown: None,
                         selected: false,
@@ -281,14 +120,14 @@ impl Cell {
 
                 Cell::Markdown(view)
             }
-            DeserializedCell::Code {
+            nbformat::v4::Cell::Code {
                 id,
                 metadata,
                 execution_count,
                 source,
                 outputs,
             } => Cell::Code(cx.new_view(|cx| {
-                let text = source.join("\n");
+                let text = source.join("");
 
                 let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
                 let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -330,26 +169,24 @@ impl Cell {
                 });
 
                 CodeCell {
-                    id: id.into(),
-                    cell_type: CellType::Code,
-                    metadata,
-                    execution_count,
-                    source: source.join("\n"),
+                    id: id.clone(),
+                    metadata: metadata.clone(),
+                    execution_count: *execution_count,
+                    source: source.join(""),
                     editor: editor_view,
                     outputs: convert_outputs(outputs, cx),
                     selected: false,
                     language_task,
                 }
             })),
-            DeserializedCell::Raw {
+            nbformat::v4::Cell::Raw {
                 id,
                 metadata,
                 source,
             } => Cell::Raw(cx.new_view(|_| RawCell {
-                id: id.into(),
-                cell_type: CellType::Raw,
-                metadata,
-                source: source.join("\n"),
+                id: id.clone(),
+                metadata: metadata.clone(),
+                source: source.join(""),
                 selected: false,
             })),
         }
@@ -361,8 +198,8 @@ pub trait RenderableCell: Render {
 
     // fn new(cx: &mut WindowContext) -> View<Self>;
     fn id(&self) -> &CellId;
-    fn cell_type(&self) -> &CellType;
-    fn metadata(&self) -> &DeserializedCellMetadata;
+    fn cell_type(&self) -> CellType;
+    fn metadata(&self) -> &CellMetadata;
     fn source(&self) -> &String;
     fn selected(&self) -> bool;
     fn set_selected(&mut self, selected: bool) -> &mut Self;
@@ -429,8 +266,7 @@ pub trait RenderableCell: Render {
 
 pub struct MarkdownCell {
     id: CellId,
-    cell_type: CellType,
-    metadata: DeserializedCellMetadata,
+    metadata: CellMetadata,
     source: String,
     parsed_markdown: Option<markdown_preview::markdown_elements::ParsedMarkdown>,
     markdown_parsing_task: Task<()>,
@@ -449,11 +285,11 @@ impl RenderableCell for MarkdownCell {
         &self.id
     }
 
-    fn cell_type(&self) -> &CellType {
-        &self.cell_type
+    fn cell_type(&self) -> CellType {
+        CellType::Markdown
     }
 
-    fn metadata(&self) -> &DeserializedCellMetadata {
+    fn metadata(&self) -> &CellMetadata {
         &self.metadata
     }
 
@@ -513,8 +349,7 @@ impl Render for MarkdownCell {
 
 pub struct CodeCell {
     id: CellId,
-    cell_type: CellType,
-    metadata: DeserializedCellMetadata,
+    metadata: CellMetadata,
     execution_count: Option<i32>,
     source: String,
     editor: View<editor::Editor>,
@@ -540,11 +375,11 @@ impl RenderableCell for CodeCell {
         &self.id
     }
 
-    fn cell_type(&self) -> &CellType {
-        &self.cell_type
+    fn cell_type(&self) -> CellType {
+        CellType::Code
     }
 
-    fn metadata(&self) -> &DeserializedCellMetadata {
+    fn metadata(&self) -> &CellMetadata {
         &self.metadata
     }
 
@@ -599,8 +434,7 @@ impl Render for CodeCell {
 
 pub struct RawCell {
     id: CellId,
-    cell_type: CellType,
-    metadata: DeserializedCellMetadata,
+    metadata: CellMetadata,
     source: String,
     selected: bool,
 }
@@ -612,11 +446,11 @@ impl RenderableCell for RawCell {
         &self.id
     }
 
-    fn cell_type(&self) -> &CellType {
-        &self.cell_type
+    fn cell_type(&self) -> CellType {
+        CellType::Raw
     }
 
-    fn metadata(&self) -> &DeserializedCellMetadata {
+    fn metadata(&self) -> &CellMetadata {
         &self.metadata
     }
 
