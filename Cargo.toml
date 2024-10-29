@@ -371,6 +371,7 @@ linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
+nbformat = "0.3.1"
 nix = "0.29"
 num-format = "0.4.4"
 once_cell = "1.19.0"
@@ -402,7 +403,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.15", default-features = false, features = [
+runtimelib = { version = "0.16.0", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
