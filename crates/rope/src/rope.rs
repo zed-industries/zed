@@ -5,6 +5,7 @@ mod point_utf16;
 mod unclipped;
 
 use chunk::{Chunk, ChunkSlice};
+use rayon::iter::{IntoParallelIterator, ParallelIterator as _};
 use smallvec::SmallVec;
 use std::{
     cmp, fmt, io, mem,
@@ -104,7 +105,7 @@ impl Rope {
                 split_ix -= 1;
             }
             let (chunk, remainder) = text.split_at(split_ix);
-            new_chunks.push(Chunk::new(chunk));
+            new_chunks.push(chunk);
             text = remainder;
         }
 
@@ -114,9 +115,11 @@ impl Rope {
         const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
-            self.chunks.par_extend(new_chunks.into_vec(), &());
+            self.chunks
+                .par_extend(new_chunks.into_vec().into_par_iter().map(Chunk::new), &());
         } else {
-            self.chunks.extend(new_chunks, &());
+            self.chunks
+                .extend(new_chunks.into_iter().map(Chunk::new), &());
         }
 
         self.check_invariants();
@@ -146,7 +149,7 @@ impl Rope {
                 split_ix -= 1;
             }
             let (chunk, remainder) = text.split_at(split_ix);
-            new_chunks.push(Chunk::new(chunk));
+            new_chunks.push(chunk);
             text = remainder;
         }
 
@@ -156,9 +159,11 @@ impl Rope {
         const PARALLEL_THRESHOLD: usize = 4 * (2 * sum_tree::TREE_BASE);
 
         if new_chunks.len() >= PARALLEL_THRESHOLD {
-            self.chunks.par_extend(new_chunks, &());
+            self.chunks
+                .par_extend(new_chunks.into_par_iter().map(Chunk::new), &());
         } else {
-            self.chunks.extend(new_chunks, &());
+            self.chunks
+                .extend(new_chunks.into_iter().map(Chunk::new), &());
         }
 
         self.check_invariants();
