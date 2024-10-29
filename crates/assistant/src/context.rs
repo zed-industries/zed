@@ -49,8 +49,6 @@ use text::BufferSnapshot;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 
-const SUGGEST_EDITS_PREAMBLE: &str = include_str!("suggest_edits_preamble.txt");
-
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
 
@@ -2117,17 +2115,10 @@ impl Context {
                 continue;
             }
 
-            let content = match request_type {
-                RequestType::Chat => Vec::new(),
-                RequestType::SuggestEdits => {
-                    vec![MessageContent::Text(SUGGEST_EDITS_PREAMBLE.to_string())]
-                }
-            };
-
             let mut offset = message.offset_range.start;
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
-                content,
+                content: Vec::new(),
                 cache: message
                     .cache
                     .as_ref()
@@ -2186,6 +2177,25 @@ impl Context {
             );
 
             completion_request.messages.push(request_message);
+        }
+
+        if let RequestType::SuggestEdits = request_type {
+            if let Ok(preamble) = self.prompt_builder.generate_workflow_prompt() {
+                let last_elem_index = completion_request.messages.len();
+
+                completion_request
+                    .messages
+                    .push(LanguageModelRequestMessage {
+                        role: Role::User,
+                        content: vec![MessageContent::Text(preamble)],
+                        cache: false,
+                    });
+
+                // The preamble message should be sent right before the last actual user message.
+                completion_request
+                    .messages
+                    .swap(last_elem_index, last_elem_index.saturating_sub(1));
+            }
         }
 
         completion_request
