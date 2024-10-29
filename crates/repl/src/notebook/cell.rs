@@ -16,6 +16,7 @@ use crate::{
     outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
 };
 
+#[derive(Copy, Clone, PartialEq, PartialOrd)]
 pub enum CellPosition {
     First,
     Middle,
@@ -247,6 +248,23 @@ pub trait RenderableCell: Render {
     fn control(&self, _cx: &ViewContext<Self>) -> Option<CellControl> {
         None
     }
+
+    fn cell_position_spacer(
+        &self,
+        is_first: bool,
+        cx: &ViewContext<Self>,
+    ) -> Option<impl IntoElement> {
+        let cell_position = self.cell_position();
+
+        if (cell_position == Some(&CellPosition::First) && is_first)
+            || (cell_position == Some(&CellPosition::Last) && !is_first)
+        {
+            Some(div().flex().w_full().h(Spacing::XLarge.px(cx)))
+        } else {
+            None
+        }
+    }
+
     fn gutter(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let is_selected = self.selected();
 
@@ -360,30 +378,36 @@ impl Render for MarkdownCell {
         let mut markdown_render_context =
             markdown_preview::markdown_renderer::RenderContext::new(None, cx);
 
-        h_flex()
-            .w_full()
-            .pr_6()
-            .rounded_sm()
-            .items_start()
-            .gap(Spacing::Large.rems(cx))
-            .bg(self.selected_bg_color(cx))
-            .child(self.gutter(cx))
+        v_flex()
+            .size_full()
+            // TODO: Move base cell render into trait impl so we don't have to repeat this
+            .children(self.cell_position_spacer(true, cx))
             .child(
-                v_flex()
-                    .size_full()
-                    .flex_1()
-                    .p_3()
-                    .font_ui(cx)
-                    .text_size(TextSize::Default.rems(cx))
-                    //
-                    .children(parsed.children.iter().map(|child| {
-                        div().relative().child(
-                            div()
-                                .relative()
-                                .child(render_markdown_block(child, &mut markdown_render_context)),
-                        )
-                    })),
+                h_flex()
+                    .w_full()
+                    .pr_6()
+                    .rounded_sm()
+                    .items_start()
+                    .gap(Spacing::Large.rems(cx))
+                    .bg(self.selected_bg_color(cx))
+                    .child(self.gutter(cx))
+                    .child(
+                        v_flex()
+                            .size_full()
+                            .flex_1()
+                            .p_3()
+                            .font_ui(cx)
+                            .text_size(TextSize::Default.rems(cx))
+                            //
+                            .children(parsed.children.iter().map(|child| {
+                                div().relative().child(div().relative().child(
+                                    render_markdown_block(child, &mut markdown_render_context),
+                                ))
+                            })),
+                    ),
             )
+            // TODO: Move base cell render into trait impl so we don't have to repeat this
+            .children(self.cell_position_spacer(false, cx))
     }
 }
 
@@ -530,6 +554,8 @@ impl Render for CodeCell {
 
         v_flex()
             .size_full()
+            // TODO: Move base cell render into trait impl so we don't have to repeat this
+            .children(self.cell_position_spacer(true, cx))
             // Editor portion
             .child(
                 h_flex()
@@ -620,6 +646,8 @@ impl Render for CodeCell {
                         ),
                     ),
             )
+            // TODO: Move base cell render into trait impl so we don't have to repeat this
+            .children(self.cell_position_spacer(false, cx))
     }
 }
 
@@ -671,23 +699,31 @@ impl RenderableCell for RawCell {
 
 impl Render for RawCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        h_flex()
-            .w_full()
-            .pr_2()
-            .rounded_sm()
-            .items_start()
-            .gap(Spacing::Large.rems(cx))
-            .bg(self.selected_bg_color(cx))
-            .child(self.gutter(cx))
+        v_flex()
+            .size_full()
+            // TODO: Move base cell render into trait impl so we don't have to repeat this
+            .children(self.cell_position_spacer(true, cx))
             .child(
-                div()
-                    .flex()
-                    .size_full()
-                    .flex_1()
-                    .p_3()
-                    .font_ui(cx)
-                    .text_size(TextSize::Default.rems(cx))
-                    .child(self.source.clone()),
+                h_flex()
+                    .w_full()
+                    .pr_2()
+                    .rounded_sm()
+                    .items_start()
+                    .gap(Spacing::Large.rems(cx))
+                    .bg(self.selected_bg_color(cx))
+                    .child(self.gutter(cx))
+                    .child(
+                        div()
+                            .flex()
+                            .size_full()
+                            .flex_1()
+                            .p_3()
+                            .font_ui(cx)
+                            .text_size(TextSize::Default.rems(cx))
+                            .child(self.source.clone()),
+                    ),
             )
+            // TODO: Move base cell render into trait impl so we don't have to repeat this
+            .children(self.cell_position_spacer(false, cx))
     }
 }
