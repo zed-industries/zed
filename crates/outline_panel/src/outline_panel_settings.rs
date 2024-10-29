@@ -38,7 +38,7 @@ pub struct IndentGuidesSettings {
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct IndentGuidesSettingsContent {
-    /// When to show the scrollbar in the project panel.
+    /// When to show the scrollbar in the outline panel.
     pub show: Option<ShowIndentGuides>,
 }
 
@@ -83,7 +83,7 @@ pub struct OutlinePanelSettingsContent {
     ///
     /// Default: true
     pub auto_fold_dirs: Option<bool>,
-    /// Settings related to indent guides in the project panel.
+    /// Settings related to indent guides in the outline panel.
     pub indent_guides: Option<IndentGuidesSettingsContent>,
 }
 
