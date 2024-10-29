@@ -129,8 +129,8 @@ impl EasyMotion {
         cx.new_view(|cx: &mut ViewContext<EasyMotion>| {
             cx.subscribe(&editor, EasyMotion::update_overlays).detach();
 
-            let listener = cx.listener(EasyMotion::observe_keystrokes);
-            cx.observe_keystrokes(listener).detach();
+            cx.observe_keystrokes(EasyMotion::observe_keystrokes)
+                .detach();
             Self {
                 editor: editor.downgrade(),
                 vim,
