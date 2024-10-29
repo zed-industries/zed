@@ -394,7 +394,6 @@ impl Vim {
                             .language_scope_at(Point::new(row, 0))
                             .map(|s| s.insert_trailing_commas())
                             .unwrap_or_default();
-                        dbg!(insert_trailing_commas);
                         let should_insert_trailing = !["{", ",", " ", "", "["].contains(&last_char);
                         if should_insert_trailing && inside_brackets && insert_trailing_commas {
                             edit.push(',');
