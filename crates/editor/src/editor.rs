@@ -5471,46 +5471,61 @@ impl Editor {
     }
 
     pub fn spawn_nearest_task(&mut self, cx: &mut ViewContext<Self>) {
-        // TODO: What's still missing here is that we only use symbols that show
-        // up in the outline as possible candidates, but in some languages,
-        // other (nested) symbols but have run-indicators too. Example: subtests
-        // in Go.
-        let mut candidate = maybe!({
-            let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
+        // Try to find a node using tree-sitter that contains the cursor and has
+        // a task.
+        let mut target_row = maybe!({
+            let snapshot = self.buffer.read(cx).snapshot(cx);
             let offset = self.selections.newest::<usize>(cx).head();
+            let excerpt = snapshot.excerpt_containing(offset..offset)?;
 
-            let (_buffer_id, symbols) = buffer_snapshot.symbols_containing(offset, None)?;
-            for symbol in symbols.iter() {
-                let Some(excerpt) = buffer_snapshot.excerpt_containing(symbol.range.clone()) else {
-                    continue;
-                };
-                let buffer_offset =
-                    excerpt.map_offset_to_buffer(symbol.range.start.to_offset(&buffer_snapshot));
-
-                let row = excerpt.buffer().offset_to_point(buffer_offset).row;
-                let buffer_id = excerpt.buffer().remote_id();
-
-                if self.tasks.get(&(buffer_id, row)).is_some() {
-                    return Some(row);
+            // Find the node at the cursor location
+            let layer = excerpt.buffer().syntax_layer_at(offset)?;
+            let mut cursor = layer.node().walk();
+            while cursor.goto_first_child_for_byte(offset).is_some() {
+                if cursor.node().end_byte() == offset {
+                    cursor.goto_next_sibling();
                 }
             }
 
+            // Ascend to the smallest ancestor that contains the range.
+            loop {
+                let node_range = cursor.node().byte_range();
+                if node_range.start <= offset && node_range.end >= offset {
+                    break;
+                }
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
+
+            // Walk the tree upwards until we find a node that starts on a row
+            // that has a task.
+            let buffer_id = excerpt.buffer().remote_id();
+            loop {
+                let symbol_start_row = excerpt
+                    .buffer()
+                    .offset_to_point(cursor.node().start_byte())
+                    .row;
+                if self.tasks.get(&(buffer_id, symbol_start_row)).is_some() {
+                    return Some(symbol_start_row);
+                }
+                if !cursor.goto_parent() {
+                    break;
+                }
+            }
             None
         });
 
-        if candidate.is_none() {
+        if target_row.is_none() {
             let cursor_row = self.selections.newest_adjusted(cx).head().row;
-            let mut min_distance = u32::MAX;
-            for (_, candidate_row) in self.tasks.keys() {
-                let distance = cursor_row.abs_diff(*candidate_row);
-                if distance < min_distance {
-                    min_distance = distance;
-                    candidate = Some(*candidate_row);
-                }
-            }
+            target_row = self
+                .tasks
+                .keys()
+                .map(|(_, row)| cursor_row.abs_diff(*row))
+                .min();
         }
 
-        if let Some(row) = candidate {
+        if let Some(row) = target_row {
             let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let display_row = Point::new(row, 0).to_display_point(&snapshot).row();
             let action = &ToggleCodeActions {
