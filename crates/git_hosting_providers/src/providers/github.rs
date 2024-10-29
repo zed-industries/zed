@@ -197,10 +197,40 @@ impl GitHostingProvider for Github {
 
 #[cfg(test)]
 mod tests {
-    // TODO: Replace with `indoc`.
-    use unindent::Unindent;
+    use indoc::indoc;
+    use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn test_parse_remote_url_given_ssh_url() {
+        let parsed_remote = Github
+            .parse_remote_url("git@github.com:zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_https_url() {
+        let parsed_remote = Github
+            .parse_remote_url("https://github.com/zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
 
     #[test]
     fn test_parse_remote_url_given_https_url_with_username() {
@@ -237,51 +267,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_github_permalink_from_ssh_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
+    fn test_build_github_permalink() {
         let permalink = Github.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(6..6),
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
             },
-        );
-
-        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_github_permalink_from_ssh_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Github.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
-                path: "crates/editor/src/git/permalink.rs",
-                selection: Some(23..47),
-            },
-        );
-
-        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-L48";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_github_permalink_from_https_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Github.build_permalink(
-            remote,
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
                 path: "crates/zed/src/main.rs",
@@ -294,40 +285,38 @@ mod tests {
     }
 
     #[test]
-    fn test_build_github_permalink_from_https_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
+    fn test_build_github_permalink_with_single_line_selection() {
         let permalink = Github.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
+                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                path: "crates/editor/src/git/permalink.rs",
                 selection: Some(6..6),
             },
         );
 
-        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L7";
+        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_github_permalink_from_https_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
+    fn test_build_github_permalink_with_multi_line_selection() {
         let permalink = Github.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
+                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                path: "crates/editor/src/git/permalink.rs",
                 selection: Some(23..47),
             },
         );
 
-        let expected_url = "https://github.com/zed-industries/zed/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-L48";
+        let expected_url = "https://github.com/zed-industries/zed/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
@@ -342,7 +331,7 @@ mod tests {
         assert!(Github.extract_pull_request(&remote, message).is_none());
 
         // Pull request number at end of first line
-        let message = r#"
+        let message = indoc! {r#"
             project panel: do not expand collapsed worktrees on "collapse all entries" (#10687)
 
             Fixes #10597
@@ -351,7 +340,7 @@ mod tests {
 
             - Fixed "project panel: collapse all entries" expanding collapsed worktrees.
             "#
-        .unindent();
+        };
 
         assert_eq!(
             Github
@@ -363,12 +352,12 @@ mod tests {
         );
 
         // Pull request number in middle of line, which we want to ignore
-        let message = r#"
+        let message = indoc! {r#"
             Follow-up to #10687 to fix problems
 
             See the original PR, this is a fix.
             "#
-        .unindent();
+        };
         assert_eq!(Github.extract_pull_request(&remote, &message), None);
     }
 }

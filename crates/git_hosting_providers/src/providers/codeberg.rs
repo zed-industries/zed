@@ -175,16 +175,47 @@ impl GitHostingProvider for Codeberg {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
-    fn test_build_codeberg_permalink_from_ssh_url() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya".into(),
-            repo: "zed".into(),
-        };
+    fn test_parse_remote_url_given_ssh_url() {
+        let parsed_remote = Codeberg
+            .parse_remote_url("git@codeberg.org:zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_https_url() {
+        let parsed_remote = Codeberg
+            .parse_remote_url("https://codeberg.org/zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_build_codeberg_permalink() {
         let permalink = Codeberg.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
@@ -192,18 +223,17 @@ mod tests {
             },
         );
 
-        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
+        let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_codeberg_permalink_from_ssh_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya".into(),
-            repo: "zed".into(),
-        };
+    fn test_build_codeberg_permalink_with_single_line_selection() {
         let permalink = Codeberg.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
@@ -211,18 +241,17 @@ mod tests {
             },
         );
 
-        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
+        let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L7";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 
     #[test]
-    fn test_build_codeberg_permalink_from_ssh_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya".into(),
-            repo: "zed".into(),
-        };
+    fn test_build_codeberg_permalink_with_multi_line_selection() {
         let permalink = Codeberg.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
                 path: "crates/editor/src/git/permalink.rs",
@@ -230,64 +259,7 @@ mod tests {
             },
         );
 
-        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_codeberg_permalink_from_https_url() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Codeberg.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/zed/src/main.rs",
-                selection: None,
-            },
-        );
-
-        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_codeberg_permalink_from_https_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Codeberg.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/zed/src/main.rs",
-                selection: Some(6..6),
-            },
-        );
-
-        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L7";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_codeberg_permalink_from_https_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "rajveermalviya".into(),
-            repo: "zed".into(),
-        };
-        let permalink = Codeberg.build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "faa6f979be417239b2e070dbbf6392b909224e0b",
-                path: "crates/zed/src/main.rs",
-                selection: Some(23..47),
-            },
-        );
-
-        let expected_url = "https://codeberg.org/rajveermalviya/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/zed/src/main.rs#L24-L48";
+        let expected_url = "https://codeberg.org/zed-industries/zed/src/commit/faa6f979be417239b2e070dbbf6392b909224e0b/crates/editor/src/git/permalink.rs#L24-L48";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }
