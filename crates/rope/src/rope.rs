@@ -38,7 +38,7 @@ impl Rope {
                 .map_or(false, |c| c.text.len() < chunk::MIN_BASE)
                 || chunk.text.len() < chunk::MIN_BASE
             {
-                self.push(&chunk.text);
+                self.push_chunk(chunk.as_slice());
                 chunks.next(&());
             }
         }
