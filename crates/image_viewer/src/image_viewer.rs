@@ -271,7 +271,7 @@ impl Render for ImageView {
             .left_0();
 
         div()
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .child(checkered_background)
             .child(

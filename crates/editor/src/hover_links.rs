@@ -706,10 +706,11 @@ pub(crate) async fn find_file(
     ) -> Option<ResolvedPath> {
         project
             .update(cx, |project, cx| {
-                project.resolve_existing_file_path(&candidate_file_path, buffer, cx)
+                project.resolve_path_in_buffer(&candidate_file_path, buffer, cx)
             })
             .ok()?
             .await
+            .filter(|s| s.is_file())
     }
 
     if let Some(existing_path) = check_path(&candidate_file_path, &project, buffer, cx).await {
@@ -1611,5 +1612,47 @@ mod tests {
 
             assert_eq!(file_path.to_str().unwrap(), "/root/dir/file2.rs");
         });
+    }
+
+    #[gpui::test]
+    async fn test_hover_directories(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        // Insert a new file
+        let fs = cx.update_workspace(|workspace, cx| workspace.project().read(cx).fs().clone());
+        fs.as_fake()
+            .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
+            .await;
+
+        cx.set_state(indoc! {"
+            You can't open ../diˇr because it's a directory.
+        "});
+
+        // File does not exist
+        let screen_coord = cx.pixel_position(indoc! {"
+            You can't open ../diˇr because it's a directory.
+        "});
+        cx.simulate_mouse_move(screen_coord, None, Modifiers::secondary_key());
+
+        // No highlight
+        cx.update_editor(|editor, cx| {
+            assert!(editor
+                .snapshot(cx)
+                .text_highlight_ranges::<HoveredLinkState>()
+                .unwrap_or_default()
+                .1
+                .is_empty());
+        });
+
+        // Does not open the directory
+        cx.simulate_click(screen_coord, Modifiers::secondary_key());
+        cx.update_workspace(|workspace, cx| assert_eq!(workspace.items(cx).count(), 1));
     }
 }

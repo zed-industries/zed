@@ -1,7 +1,6 @@
 use crate::{
-    display_map::{InlayOffset, ToDisplayPoint},
+    display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
-    is_invisible,
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
     Hover, RangeToAnchorExt,
@@ -200,6 +199,7 @@ fn show_hover(
     if editor.pending_rename.is_some() {
         return None;
     }
+
     let snapshot = editor.snapshot(cx);
 
     let (buffer, buffer_position) = editor
@@ -280,7 +280,6 @@ fn show_hover(
                         range: entry.range.to_anchors(&snapshot.buffer_snapshot),
                     })
             });
-
             if let Some(invisible) = snapshot
                 .buffer_snapshot
                 .chars_at(anchor)
@@ -324,6 +323,7 @@ fn show_hover(
                     }
                     None => local_diagnostic.diagnostic.message.clone(),
                 };
+
                 let mut border_color: Option<Hsla> = None;
                 let mut background_color: Option<Hsla> = None;
 
@@ -379,6 +379,7 @@ fn show_hover(
                         Markdown::new_text(text, markdown_style.clone(), None, cx, None)
                     })
                     .ok();
+
                 Some(DiagnosticPopover {
                     local_diagnostic,
                     primary_diagnostic,
@@ -466,6 +467,7 @@ fn show_hover(
                 cx.notify();
                 cx.refresh();
             })?;
+
             anyhow::Ok(())
         }
         .log_err()

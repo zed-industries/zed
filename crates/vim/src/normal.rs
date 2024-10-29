@@ -328,14 +328,18 @@ impl Vim {
                     .into_iter()
                     .map(|selection| selection.start.row)
                     .collect();
-                let edits = selection_start_rows.into_iter().map(|row| {
-                    let indent = snapshot
-                        .indent_size_for_line(MultiBufferRow(row))
-                        .chars()
-                        .collect::<String>();
-                    let start_of_line = Point::new(row, 0);
-                    (start_of_line..start_of_line, indent + "\n")
-                });
+                let edits = selection_start_rows
+                    .into_iter()
+                    .map(|row| {
+                        let indent = snapshot
+                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
+                            .chars()
+                            .collect::<String>();
+
+                        let start_of_line = Point::new(row, 0);
+                        (start_of_line..start_of_line, indent + "\n")
+                    })
+                    .collect::<Vec<_>>();
                 editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
@@ -361,14 +365,18 @@ impl Vim {
                     .into_iter()
                     .map(|selection| selection.end.row)
                     .collect();
-                let edits = selection_end_rows.into_iter().map(|row| {
-                    let indent = snapshot
-                        .indent_size_for_line(MultiBufferRow(row))
-                        .chars()
-                        .collect::<String>();
-                    let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
-                    (end_of_line..end_of_line, "\n".to_string() + &indent)
-                });
+                let edits = selection_end_rows
+                    .into_iter()
+                    .map(|row| {
+                        let indent = snapshot
+                            .indent_and_comment_for_line(MultiBufferRow(row), cx)
+                            .chars()
+                            .collect::<String>();
+
+                        let end_of_line = Point::new(row, snapshot.line_len(MultiBufferRow(row)));
+                        (end_of_line..end_of_line, "\n".to_string() + &indent)
+                    })
+                    .collect::<Vec<_>>();
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.maybe_move_cursors_with(|map, cursor, goal| {
                         Motion::CurrentLine.move_point(
@@ -1413,5 +1421,17 @@ mod test {
         cx.shared_state()
             .await
             .assert_eq("th th\nth th\nth th\nth th\nth th\nˇth th\n");
+    }
+
+    #[gpui::test]
+    async fn test_o_comment(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.set_neovim_option("filetype=rust").await;
+
+        cx.set_shared_state("// helloˇ\n").await;
+        cx.simulate_shared_keystrokes("o").await;
+        cx.shared_state().await.assert_eq("// hello\n// ˇ\n");
+        cx.simulate_shared_keystrokes("x escape shift-o").await;
+        cx.shared_state().await.assert_eq("// hello\n// ˇ\n// x\n");
     }
 }

@@ -337,6 +337,7 @@ impl EditorElement {
         register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::open_file);
         register_action(view, cx, Editor::fold);
+        register_action(view, cx, Editor::fold_at_level);
         register_action(view, cx, Editor::fold_all);
         register_action(view, cx, Editor::fold_at);
         register_action(view, cx, Editor::fold_recursive);
@@ -445,6 +446,7 @@ impl EditorElement {
         register_action(view, cx, Editor::accept_inline_completion);
         register_action(view, cx, Editor::revert_file);
         register_action(view, cx, Editor::revert_selected_hunks);
+        register_action(view, cx, Editor::apply_all_diff_hunks);
         register_action(view, cx, Editor::apply_selected_diff_hunks);
         register_action(view, cx, Editor::open_active_item_in_terminal);
         register_action(view, cx, Editor::reload_file)
@@ -1030,18 +1032,13 @@ impl EditorElement {
                             .or_else(|| {
                                 if cursor_column == 0 {
                                     snapshot.placeholder_text().and_then(|s| {
-                                        s.graphemes(true).next().map(|s| s.to_owned())
+                                        s.graphemes(true).next().map(|s| s.to_string().into())
                                     })
                                 } else {
                                     None
                                 }
                             })
-                            .and_then(|grapheme| {
-                                let text = if grapheme == "\n" {
-                                    SharedString::from(" ")
-                                } else {
-                                    SharedString::from(grapheme)
-                                };
+                            .and_then(|text| {
                                 let len = text.len();
 
                                 let font = cursor_row_layout
@@ -4156,7 +4153,16 @@ fn render_inline_blame_entry(
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
     let author = blame_entry.author.as_deref().unwrap_or_default();
-    let text = format!("{}, {}", author, relative_timestamp);
+    let summary_enabled = ProjectSettings::get_global(cx)
+        .git
+        .show_inline_commit_summary();
+
+    let text = match blame_entry.summary.as_ref() {
+        Some(summary) if summary_enabled => {
+            format!("{}, {} - {}", author, relative_timestamp, summary)
+        }
+        _ => format!("{}, {}", author, relative_timestamp),
+    };
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 

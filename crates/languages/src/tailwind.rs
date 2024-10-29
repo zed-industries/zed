@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use collections::HashMap;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
-use language::{LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{LanguageServerName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
@@ -111,6 +111,7 @@ impl LspAdapter for TailwindLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let tailwind_user_settings = cx.update(|cx| {

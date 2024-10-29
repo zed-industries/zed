@@ -1241,7 +1241,6 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             Some(AutoindentMode::EachLine),
             cx,
         );
-
         assert_eq!(
             buffer.text(),
             "
@@ -1256,6 +1255,74 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             "
             .unindent()
         );
+
+        // Insert a newline after the open brace. It is auto-indented
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {«
+            »
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+                ˇ
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+            .replace("ˇ", "")
+        );
+
+        // Manually outdent the line. It stays outdented.
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+            «»
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+        );
+
         buffer
     });
 

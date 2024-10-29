@@ -64,6 +64,9 @@ pub struct SshConnectionOptions {
     pub port: Option<u16>,
     pub password: Option<String>,
     pub args: Option<Vec<String>>,
+
+    pub nickname: Option<String>,
+    pub upload_binary_over_ssh: bool,
 }
 
 impl SshConnectionOptions {
@@ -141,8 +144,10 @@ impl SshConnectionOptions {
             host: hostname.to_string(),
             username: username.clone(),
             port,
-            password: None,
             args: Some(args),
+            password: None,
+            nickname: None,
+            upload_binary_over_ssh: false,
         })
     }
 
@@ -222,6 +227,20 @@ pub enum ServerBinary {
     ReleaseUrl { url: String, body: String },
 }
 
+pub enum ServerVersion {
+    Semantic(SemanticVersion),
+    Commit(String),
+}
+
+impl std::fmt::Display for ServerVersion {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Semantic(version) => write!(f, "{}", version),
+            Self::Commit(commit) => write!(f, "{}", commit),
+        }
+    }
+}
+
 pub trait SshClientDelegate: Send + Sync {
     fn ask_password(
         &self,
@@ -236,8 +255,9 @@ pub trait SshClientDelegate: Send + Sync {
     fn get_server_binary(
         &self,
         platform: SshPlatform,
+        upload_binary_over_ssh: bool,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>>;
+    ) -> oneshot::Receiver<Result<(ServerBinary, ServerVersion)>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
 }
 
@@ -1215,9 +1235,11 @@ impl RemoteConnection for SshRemoteConnection {
         delegate.set_status(Some("Starting proxy"), cx);
 
         let mut start_proxy_command = format!(
-            "RUST_LOG={} RUST_BACKTRACE={} {:?} proxy --identifier {}",
+            "RUST_LOG={} {} {:?} proxy --identifier {}",
             std::env::var("RUST_LOG").unwrap_or_default(),
-            std::env::var("RUST_BACKTRACE").unwrap_or_default(),
+            std::env::var("RUST_BACKTRACE")
+                .map(|b| { format!("RUST_BACKTRACE={}", b) })
+                .unwrap_or_default(),
             remote_binary_path,
             unique_identifier,
         );
@@ -1705,32 +1727,48 @@ impl SshRemoteConnection {
             return Ok(());
         }
 
-        let (binary, version) = delegate.get_server_binary(platform, cx).await??;
+        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
+        let (binary, new_server_version) = delegate
+            .get_server_binary(platform, upload_binary_over_ssh, cx)
+            .await??;
 
-        let mut remote_version = None;
         if cfg!(not(debug_assertions)) {
-            if let Ok(installed_version) =
+            let installed_version = if let Ok(version_output) =
                 run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
             {
-                if let Ok(version) = installed_version.trim().parse::<SemanticVersion>() {
-                    remote_version = Some(version);
+                if let Ok(version) = version_output.trim().parse::<SemanticVersion>() {
+                    Some(ServerVersion::Semantic(version))
                 } else {
-                    log::warn!("failed to parse version of remote server: {installed_version:?}",);
+                    Some(ServerVersion::Commit(version_output.trim().to_string()))
                 }
-            }
+            } else {
+                None
+            };
 
-            if let Some(remote_version) = remote_version {
-                if remote_version == version {
-                    log::info!("remote development server present and matching client version");
-                    return Ok(());
-                } else if remote_version > version {
-                    let error = anyhow!("The version of the remote server ({}) is newer than the Zed version ({}). Please update Zed.", remote_version, version);
-                    return Err(error);
-                } else {
-                    log::info!(
-                        "remote development server has older version: {}. updating...",
-                        remote_version
-                    );
+            if let Some(installed_version) = installed_version {
+                use ServerVersion::*;
+                match (installed_version, new_server_version) {
+                    (Semantic(installed), Semantic(new)) if installed == new => {
+                        log::info!("remote development server present and matching client version");
+                        return Ok(());
+                    }
+                    (Semantic(installed), Semantic(new)) if installed > new => {
+                        let error = anyhow!("The version of the remote server ({}) is newer than the Zed version ({}). Please update Zed.", installed, new);
+                        return Err(error);
+                    }
+                    (Commit(installed), Commit(new)) if installed == new => {
+                        log::info!(
+                            "remote development server present and matching client version {}",
+                            installed
+                        );
+                        return Ok(());
+                    }
+                    (installed, _) => {
+                        log::info!(
+                            "remote development server has version: {}. updating...",
+                            installed
+                        );
+                    }
                 }
             }
         }
@@ -2213,12 +2251,12 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AsyncAppContext, SemanticVersion, Task};
+    use gpui::{AsyncAppContext, Task};
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelClient, RemoteConnection, ServerBinary, SshClientDelegate, SshConnectionOptions,
-        SshPlatform,
+        ChannelClient, RemoteConnection, ServerBinary, ServerVersion, SshClientDelegate,
+        SshConnectionOptions, SshPlatform,
     };
 
     pub(super) struct FakeRemoteConnection {
@@ -2336,8 +2374,9 @@ mod fake {
         fn get_server_binary(
             &self,
             _: SshPlatform,
+            _: bool,
             _: &mut AsyncAppContext,
-        ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
+        ) -> oneshot::Receiver<Result<(ServerBinary, ServerVersion)>> {
             unreachable!()
         }
 

@@ -3282,10 +3282,25 @@ impl Editor {
                                         &bracket_pair.start[..prefix_len],
                                     ));
 
+                            let is_closing_quote = if bracket_pair.end == bracket_pair.start
+                                && bracket_pair.start.len() == 1
+                            {
+                                let target = bracket_pair.start.chars().next().unwrap();
+                                let current_line_count = snapshot
+                                    .reversed_chars_at(selection.start)
+                                    .take_while(|&c| c != '\n')
+                                    .filter(|&c| c == target)
+                                    .count();
+                                current_line_count % 2 == 1
+                            } else {
+                                false
+                            };
+
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
                                 && preceding_text_matches_prefix
+                                && !is_closing_quote
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
                                 new_selections.push((selection.map(|_| anchor), text.len()));
@@ -10728,15 +10743,42 @@ impl Editor {
         self.fold_ranges(fold_ranges, true, cx);
     }
 
+    fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
+        let fold_at_level = fold_at.level;
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let mut fold_ranges = Vec::new();
+        let mut stack = vec![(0, snapshot.max_buffer_row().0, 1)];
+
+        while let Some((mut start_row, end_row, current_level)) = stack.pop() {
+            while start_row < end_row {
+                match self.snapshot(cx).foldable_range(MultiBufferRow(start_row)) {
+                    Some(foldable_range) => {
+                        let nested_start_row = foldable_range.0.start.row + 1;
+                        let nested_end_row = foldable_range.0.end.row;
+
+                        if current_level < fold_at_level {
+                            stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        } else if current_level == fold_at_level {
+                            fold_ranges.push(foldable_range);
+                        }
+
+                        start_row = nested_end_row + 1;
+                    }
+                    None => start_row += 1,
+                }
+            }
+        }
+
+        self.fold_ranges(fold_ranges, true, cx);
+    }
+
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
         let mut fold_ranges = Vec::new();
-        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let snapshot = self.buffer.read(cx).snapshot(cx);
 
-        for row in 0..display_map.max_buffer_row().0 {
-            if let Some((foldable_range, fold_text)) =
-                display_map.foldable_range(MultiBufferRow(row))
-            {
-                fold_ranges.push((foldable_range, fold_text));
+        for row in 0..snapshot.max_buffer_row().0 {
+            if let Some(foldable_range) = self.snapshot(cx).foldable_range(MultiBufferRow(row)) {
+                fold_ranges.push(foldable_range);
             }
         }
 
@@ -14146,7 +14188,7 @@ pub fn diagnostic_block_renderer(
             .relative()
             .size_full()
             .pl(cx.gutter_dimensions.width)
-            .w(cx.max_width + cx.gutter_dimensions.width)
+            .w(cx.max_width - cx.gutter_dimensions.full_width())
             .child(
                 div()
                     .flex()

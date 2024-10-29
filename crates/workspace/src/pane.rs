@@ -2574,7 +2574,7 @@ impl Render for Pane {
 
         v_flex()
             .key_context(key_context)
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .flex_none()
             .overflow_hidden()

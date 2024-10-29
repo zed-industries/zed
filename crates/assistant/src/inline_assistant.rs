@@ -54,7 +54,7 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
+use ui::{prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 
@@ -1596,7 +1596,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), cx), cx);
             editor
         });
 
@@ -1653,6 +1653,7 @@ impl PromptEditor {
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), cx), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {
@@ -1661,6 +1662,20 @@ impl PromptEditor {
             editor
         });
         self.subscribe_to_editor(cx);
+    }
+
+    fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
+        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+            .map(|keybinding| format!(" • {keybinding} for context"))
+            .unwrap_or_default();
+
+        let action = if codegen.is_insertion {
+            "Generate"
+        } else {
+            "Transform"
+        };
+
+        format!("{action}…{context_keybinding} • ↓↑ for history")
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
@@ -2260,6 +2275,7 @@ pub struct Codegen {
     initial_transaction_id: Option<TransactionId>,
     telemetry: Option<Arc<Telemetry>>,
     builder: Arc<PromptBuilder>,
+    is_insertion: bool,
 }
 
 impl Codegen {
@@ -2282,6 +2298,7 @@ impl Codegen {
             )
         });
         let mut this = Self {
+            is_insertion: range.to_offset(&buffer.read(cx).snapshot(cx)).is_empty(),
             alternatives: vec![codegen],
             active_alternative: 0,
             seen_alternatives: HashSet::default(),
@@ -2683,7 +2700,7 @@ impl CodegenAlternative {
 
         let prompt = self
             .builder
-            .generate_content_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();

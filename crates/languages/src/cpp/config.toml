@@ -1,7 +1,7 @@
 name = "C++"
 grammar = "cpp"
 path_suffixes = ["cc", "hh", "cpp", "h", "hpp", "cxx", "hxx", "c++", "ipp", "inl", "cu", "cuh"]
-line_comments = ["// "]
+line_comments = ["// ", "/// ", "//! "]
 autoclose_before = ";:.,=}])>"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

@@ -25,7 +25,6 @@ use gpui::{
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
-use remote::SshConnectionOptions;
 use reqwest_client::ReqwestClient;
 
 use assets::Assets;
@@ -33,7 +32,7 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
-use release_channel::{AppCommitSha, AppVersion};
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{
     handle_settings_file_changes, watch_config_file, InvalidSettingsError, Settings, SettingsStore,
@@ -165,32 +164,29 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    #[cfg(target_os = "linux")]
-    {
-        if env::var("ZED_STATELESS").is_err() {
-            if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
-                println!("zed is already running");
-                return;
+    let failed_single_instance_check =
+        if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+            false
+        } else {
+            #[cfg(target_os = "linux")]
+            {
+                crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
             }
-        }
-    }
 
-    #[cfg(target_os = "windows")]
-    {
-        use zed::windows_only_instance::*;
-        if !check_single_instance() {
-            println!("zed is already running");
-            return;
-        }
-    }
+            #[cfg(target_os = "windows")]
+            {
+                !crate::zed::windows_only_instance::check_single_instance()
+            }
 
-    #[cfg(target_os = "macos")]
-    {
-        use zed::mac_only_instance::*;
-        if ensure_only_instance() != IsOnlyInstance::Yes {
-            println!("zed is already running");
-            return;
-        }
+            #[cfg(target_os = "macos")]
+            {
+                use zed::mac_only_instance::*;
+                ensure_only_instance() != IsOnlyInstance::Yes
+            }
+        };
+    if failed_single_instance_check {
+        println!("zed is already running");
+        return;
     }
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
@@ -442,6 +438,7 @@ fn main() {
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
         language_selector::init(cx);
+        toolchain_selector::init(cx);
         theme_selector::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);
@@ -616,26 +613,15 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         return;
     }
 
-    if let Some(connection_info) = request.ssh_connection {
+    if let Some(connection_options) = request.ssh_connection {
         cx.spawn(|mut cx| async move {
-            let nickname = cx
-                .update(|cx| {
-                    SshSettings::get_global(cx).nickname_for(
-                        &connection_info.host,
-                        connection_info.port,
-                        &connection_info.username,
-                    )
-                })
-                .ok()
-                .flatten();
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
             open_ssh_project(
-                connection_info,
+                connection_options,
                 paths_with_position.into_iter().map(|p| p.path).collect(),
                 app_state,
                 workspace::OpenOptions::default(),
-                nickname,
                 &mut cx,
             )
             .await
@@ -798,25 +784,10 @@ async fn restore_or_create_workspace(
                     task.await?;
                 }
                 SerializedWorkspaceLocation::Ssh(ssh) => {
-                    let args = cx
-                        .update(|cx| {
-                            SshSettings::get_global(cx).args_for(&ssh.host, ssh.port, &ssh.user)
-                        })
-                        .ok()
-                        .flatten();
-                    let nickname = cx
-                        .update(|cx| {
-                            SshSettings::get_global(cx).nickname_for(&ssh.host, ssh.port, &ssh.user)
-                        })
-                        .ok()
-                        .flatten();
-                    let connection_options = SshConnectionOptions {
-                        args,
-                        host: ssh.host.clone(),
-                        username: ssh.user.clone(),
-                        port: ssh.port,
-                        password: None,
-                    };
+                    let connection_options = cx.update(|cx| {
+                        SshSettings::get_global(cx)
+                            .connection_options_for(ssh.host, ssh.port, ssh.user)
+                    })?;
                     let app_state = app_state.clone();
                     cx.spawn(move |mut cx| async move {
                         recent_projects::open_ssh_project(
@@ -824,7 +795,6 @@ async fn restore_or_create_workspace(
                             ssh.paths.into_iter().map(PathBuf::from).collect(),
                             app_state,
                             workspace::OpenOptions::default(),
-                            nickname,
                             &mut cx,
                         )
                         .await
