@@ -242,7 +242,7 @@ impl PickerDelegate for BranchListDelegate {
                         BranchEntry::NewBranch { name: branch_name } => branch_name,
                     };
                     let worktree = project
-                        .worktrees(cx)
+                        .visible_worktrees(cx)
                         .next()
                         .context("worktree disappeared")?;
                     let repository = ProjectPath::root_path(worktree.read(cx).id());
