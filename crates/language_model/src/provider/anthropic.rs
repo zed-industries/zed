@@ -524,6 +524,14 @@ pub fn map_to_language_model_completion_events(
                                 ));
                             }
                         }
+                        Event::MessageStart { message } => {
+                            return Some((
+                                Some(Ok(LanguageModelCompletionEvent::StartMessage {
+                                    message_id: message.id,
+                                })),
+                                state,
+                            ))
+                        }
                         Event::MessageDelta { delta, .. } => {
                             if let Some(stop_reason) = delta.stop_reason.as_deref() {
                                 let stop_reason = match stop_reason {
