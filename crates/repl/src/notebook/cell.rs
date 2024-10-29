@@ -486,7 +486,7 @@ impl Render for MarkdownCell {
 
         h_flex()
             .w_full()
-            .pr_2()
+            .pr_8()
             .rounded_sm()
             .items_start()
             .gap(Spacing::Large.rems(cx))
@@ -573,7 +573,7 @@ impl Render for CodeCell {
 
         h_flex()
             .w_full()
-            .pr_2()
+            .pr_8()
             .rounded_sm()
             .items_start()
             .gap(Spacing::Large.rems(cx))
@@ -642,7 +642,7 @@ impl Render for RawCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .w_full()
-            .pr_2()
+            .pr_8()
             .rounded_sm()
             .items_start()
             .gap(Spacing::Large.rems(cx))

@@ -429,15 +429,19 @@ impl NotebookEditor {
     }
 
     fn render_notebook_controls(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let large_gap = Spacing::XLarge.px(cx);
         let has_outputs = self.has_outputs(cx);
 
+        let max_w = px(CONTROL_SIZE + 4.0) + (large_gap * 2);
+
         v_flex()
-            .max_w(px(CONTROL_SIZE + 4.0))
+            .max_w(max_w)
             .items_center()
             .gap(Spacing::XXLarge.rems(cx))
             .justify_between()
             .flex_none()
             .h_full()
+            .p(large_gap)
             .child(
                 v_flex()
                     .gap(Spacing::Large.rems(cx))
@@ -600,19 +604,9 @@ impl Render for NotebookEditor {
             .items_start()
             .size_full()
             .overflow_hidden()
-            .p(large_gap)
-            .gap(large_gap)
             .bg(cx.theme().colors().tab_bar_background)
             .child(self.render_notebook_controls(cx))
             .child(self.render_cells(cx))
-            .child(
-                div()
-                    .w(px(GUTTER_WIDTH))
-                    .h_full()
-                    .flex_none()
-                    .overflow_hidden()
-                    .child("scrollbar"),
-            )
     }
 }
 
