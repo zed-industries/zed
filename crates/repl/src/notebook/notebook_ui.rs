@@ -75,6 +75,8 @@ pub struct NotebookEditor {
 
     focus_handle: FocusHandle,
     project: Model<Project>,
+    path: ProjectPath,
+
     remote_id: Option<ViewId>,
 
     metadata: NotebookMetadata,
@@ -146,6 +148,7 @@ impl NotebookEditor {
             languages: languages.clone(),
             focus_handle,
             project,
+            path: notebook_item.read(cx).project_path.clone(),
             remote_id: None,
             selected_cell_index: 0,
             metadata,
@@ -551,8 +554,11 @@ impl Item for NotebookEditor {
     type Event = ();
 
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        // TODO: We want file name
-        Some("Notebook".into())
+        let path = self.path.path.clone();
+
+        path.file_stem()
+            .map(|stem| stem.to_string_lossy().into_owned())
+            .map(SharedString::from)
     }
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
