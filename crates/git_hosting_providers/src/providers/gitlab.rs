@@ -234,15 +234,14 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_self_hosted_permalink_from_ssh_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
         let gitlab =
             Gitlab::from_remote_url("git@gitlab.some-enterprise.com:zed-industries/zed.git")
                 .unwrap();
         let permalink = gitlab.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
@@ -256,15 +255,14 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_self_hosted_permalink_from_https_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries".into(),
-            repo: "zed".into(),
-        };
         let gitlab =
             Gitlab::from_remote_url("https://gitlab-instance.big-co.com/zed-industries/zed.git")
                 .unwrap();
         let permalink = gitlab.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
                 path: "crates/zed/src/main.rs",
