@@ -1586,7 +1586,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "proc-macro2",
@@ -5584,7 +5584,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.4.10",
+ "socket2 0.5.7",
  "tokio",
  "tower-service",
  "tracing",
@@ -6155,6 +6155,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jupyter-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a444fb3f87ee6885eb316028cc998c7d84811663ef95d78c419419423d5a054"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6474,7 +6488,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7135,6 +7149,21 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nbformat"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "146074ad45cab20f5d98ccded164826158471f21d04f96e40b9872529e10979d"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "jupyter-serde",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -9579,6 +9608,7 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "env_logger 0.11.5",
+ "feature_flags",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -9588,7 +9618,9 @@ dependencies = [
  "languages",
  "log",
  "markdown_preview",
+ "menu",
  "multi_buffer",
+ "nbformat",
  "project",
  "runtimelib",
  "schemars",
@@ -9927,9 +9959,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d76d28b882a7b889ebb04e79bc2b160b3061821ea596ff0f4a838fc7a76db0"
+checksum = "263588fe9593333c4bfde258c9021fc64e766ea434e070c6b67c7100536d6499"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -9941,6 +9973,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures 0.3.30",
  "glob",
+ "jupyter-serde",
  "rand 0.8.5",
  "ring 0.17.8",
  "serde",
@@ -14126,7 +14159,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
