@@ -7,11 +7,11 @@ xtask = "run --package xtask --"
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "link-arg=-Bmold"]
 
 [target.aarch64-unknown-linux-gnu]
 linker = "clang"
-rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+rustflags = ["-C", "link-arg=-Bmold"]
 
 # This cfg will reduce the size of `windows::core::Error` from 16 bytes to 4 bytes
 [target.'cfg(target_os = "windows")']
