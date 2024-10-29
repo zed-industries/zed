@@ -5715,7 +5715,7 @@ pub fn join_in_room_project(
                             .read(cx)
                             .collaborators()
                             .values()
-                            .find(|collaborator| collaborator.replica_id == 0)?;
+                            .find(|collaborator| collaborator.is_host)?;
                         Some(collaborator.peer_id)
                     });
 
