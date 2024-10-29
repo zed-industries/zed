@@ -66,7 +66,8 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
-use ui::{div, px, IntoElement, ParentElement, Styled, WindowContext};
+use ui::{div, px, IntoElement, ParentElement, SharedString, Styled, WindowContext};
+use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -880,12 +881,10 @@ impl DisplaySnapshot {
         layout_line.closest_index_for_x(x) as u32
     }
 
-    pub fn display_chars_at(
-        &self,
-        mut point: DisplayPoint,
-    ) -> impl Iterator<Item = (char, DisplayPoint)> + '_ {
+    pub fn grapheme_at(&self, mut point: DisplayPoint) -> Option<SharedString> {
         point = DisplayPoint(self.block_snapshot.clip_point(point.0, Bias::Left));
-        self.text_chunks(point.row())
+        let chars = self
+            .text_chunks(point.row())
             .flat_map(str::chars)
             .skip_while({
                 let mut column = 0;
@@ -895,16 +894,24 @@ impl DisplaySnapshot {
                     !at_point
                 }
             })
-            .map(move |ch| {
-                let result = (ch, point);
-                if ch == '\n' {
-                    *point.row_mut() += 1;
-                    *point.column_mut() = 0;
-                } else {
-                    *point.column_mut() += ch.len_utf8() as u32;
+            .take_while({
+                let mut prev = false;
+                move |char| {
+                    let now = char.is_ascii();
+                    let end = char.is_ascii() && (char.is_ascii_whitespace() || prev);
+                    prev = now;
+                    !end
                 }
-                result
-            })
+            });
+        chars.collect::<String>().graphemes(true).next().map(|s| {
+            if let Some(invisible) = s.chars().next().filter(|&c| is_invisible(c)) {
+                replacement(invisible).unwrap_or(s).to_owned().into()
+            } else if s == "\n" {
+                " ".into()
+            } else {
+                s.to_owned().into()
+            }
+        })
     }
 
     pub fn buffer_chars_at(&self, mut offset: usize) -> impl Iterator<Item = (char, usize)> + '_ {
