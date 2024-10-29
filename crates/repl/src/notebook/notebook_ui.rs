@@ -557,14 +557,6 @@ impl Render for NotebookEditor {
             .bg(cx.theme().colors().tab_bar_background)
             .child(self.render_notebook_controls(cx))
             .child(self.render_cells(cx))
-            .child(
-                div()
-                    .w(px(GUTTER_WIDTH))
-                    .h_full()
-                    .flex_none()
-                    .overflow_hidden()
-                    .child("scrollbar"),
-            )
     }
 }
 

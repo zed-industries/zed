@@ -322,7 +322,7 @@ impl Render for MarkdownCell {
 
         h_flex()
             .w_full()
-            .pr_2()
+            .pr_6()
             .rounded_sm()
             .items_start()
             .gap(Spacing::Large.rems(cx))
@@ -452,7 +452,7 @@ impl Render for CodeCell {
             .child(
                 h_flex()
                     .w_full()
-                    .pr_2()
+                    .pr_6()
                     .rounded_sm()
                     .items_start()
                     .gap(Spacing::Large.rems(cx))
@@ -478,7 +478,7 @@ impl Render for CodeCell {
             .child(
                 h_flex()
                     .w_full()
-                    .pr_2()
+                    .pr_6()
                     .rounded_sm()
                     .items_start()
                     .gap(Spacing::Large.rems(cx))
