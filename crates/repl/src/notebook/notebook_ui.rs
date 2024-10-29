@@ -46,7 +46,10 @@ pub(crate) const CODE_BLOCK_INSET: f32 = MEDIUM_SPACING_SIZE;
 pub(crate) const CONTROL_SIZE: f32 = 20.0;
 
 pub fn init(cx: &mut AppContext) {
-    if cx.has_flag::<NotebookFeatureFlag>() || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok() {
+    if cx.is_staff()
+        || cx.has_flag::<NotebookFeatureFlag>()
+        || std::env::var("LOCAL_NOTEBOOK_DEV").is_ok()
+    {
         workspace::register_project_item::<NotebookEditor>(cx);
     }
 
