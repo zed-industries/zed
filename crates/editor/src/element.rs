@@ -4153,7 +4153,16 @@ fn render_inline_blame_entry(
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
 
     let author = blame_entry.author.as_deref().unwrap_or_default();
-    let text = format!("{}, {}", author, relative_timestamp);
+    let summary_enabled = ProjectSettings::get_global(cx)
+        .git
+        .show_inline_commit_summary();
+
+    let text = match blame_entry.summary.as_ref() {
+        Some(summary) if summary_enabled => {
+            format!("{}, {} - {}", author, relative_timestamp, summary)
+        }
+        _ => format!("{}, {}", author, relative_timestamp),
+    };
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
