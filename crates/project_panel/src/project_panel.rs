@@ -30,7 +30,7 @@ use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowIndentGuides};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -3043,7 +3043,8 @@ impl Render for ProjectPanel {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
-        let indent_guides = ProjectPanelSettings::get_global(cx).indent_guides;
+        let show_indent_guides =
+            ProjectPanelSettings::get_global(cx).indent_guides.show == ShowIndentGuides::Always;
         let is_local = project.is_local();
 
         if has_worktree {
@@ -3147,7 +3148,7 @@ impl Render for ProjectPanel {
                             items
                         }
                     })
-                    .when(indent_guides, |list| {
+                    .when(show_indent_guides, |list| {
                         list.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
