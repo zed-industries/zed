@@ -5,12 +5,7 @@ use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
 use util::debug_panic;
 
-#[cfg(test)]
-pub(crate) const MIN_BASE: usize = 32;
-
-#[cfg(not(test))]
-pub(crate) const MIN_BASE: usize = 32;
-
+pub(crate) const MIN_BASE: usize = if cfg!(test) { 6 } else { 32 };
 pub(crate) const MAX_BASE: usize = MIN_BASE * 2;
 
 #[derive(Clone, Debug, Default)]
@@ -280,37 +275,26 @@ impl<'a> ChunkSlice<'a> {
 
     #[inline(always)]
     pub fn point_to_offset(&self, point: Point) -> usize {
-        if point.row > self.newlines.count_ones() {
+        if point.row > self.lines().row {
             debug_panic!(
                 "point {:?} extends beyond rows for string {:?}",
                 point,
                 self.text
             );
-            return 0;
+            return self.len();
         }
 
-        let row_start_offset = if point.row > 0 {
-            (nth_set_bit(self.newlines, point.row as usize) + 1) as usize
-        } else {
-            0
-        };
-
-        let newlines = if row_start_offset == usize::BITS as usize {
-            0
-        } else {
-            self.newlines >> row_start_offset
-        };
-        let row_len = cmp::min(newlines.trailing_zeros(), self.text.len() as u32);
-        if point.column > row_len {
+        let row_offset_range = self.offset_range_for_row(point.row);
+        if point.column > row_offset_range.len() as u32 {
             debug_panic!(
                 "point {:?} extends beyond row for string {:?}",
                 point,
                 self.text
             );
-            return row_start_offset + row_len as usize;
+            row_offset_range.end
+        } else {
+            row_offset_range.start + point.column as usize
         }
-
-        row_start_offset + point.column as usize
     }
 
     #[inline(always)]
@@ -369,27 +353,9 @@ impl<'a> ChunkSlice<'a> {
             return self.len();
         }
 
-        let row_start_offset = if point.row > 0 {
-            (nth_set_bit(self.newlines, point.row as usize) + 1) as usize
-        } else {
-            0
-        };
-
-        let row_len_utf8 = if row_start_offset == 64 {
-            0
-        } else {
-            cmp::min(
-                (self.newlines >> row_start_offset).trailing_zeros(),
-                (self.text.len() - row_start_offset) as u32,
-            )
-        };
-        let mask = ((1u128 << row_len_utf8) - 1) as usize;
-        let row_chars_utf16 = if row_start_offset == 64 {
-            0
-        } else {
-            (self.chars_utf16 >> row_start_offset) & mask
-        };
-        if point.column > row_chars_utf16.count_ones() {
+        let row_offset_range = self.offset_range_for_row(point.row);
+        let line = self.slice(row_offset_range.clone());
+        if point.column > line.last_line_len_utf16() {
             if !clip {
                 debug_panic!(
                     "point {:?} is beyond the end of the line in chunk {:?}",
@@ -397,13 +363,12 @@ impl<'a> ChunkSlice<'a> {
                     self.text
                 );
             }
-
-            return row_start_offset + row_len_utf8 as usize;
+            return line.len();
         }
 
-        let mut offset = row_start_offset;
+        let mut offset = row_offset_range.start;
         if point.column > 0 {
-            let offset_within_row = nth_set_bit(row_chars_utf16, point.column as usize) + 1;
+            let offset_within_row = nth_set_bit(line.chars_utf16, point.column as usize) + 1;
             offset += offset_within_row;
             if offset < 64 {
                 offset += cmp::min(
@@ -429,6 +394,8 @@ impl<'a> ChunkSlice<'a> {
         offset
     }
 
+    #[inline(always)]
+    // todo!("use bitsets")
     pub fn unclipped_point_utf16_to_point(&self, target: Unclipped<PointUtf16>) -> Point {
         let mut point = Point::zero();
         let mut point_utf16 = PointUtf16::zero();
@@ -456,35 +423,21 @@ impl<'a> ChunkSlice<'a> {
         point
     }
 
+    #[inline(always)]
     pub fn clip_point(&self, point: Point, bias: Bias) -> Point {
         let max_point = self.lines();
         if point.row > max_point.row {
             return max_point;
         }
 
-        let row_start_offset = if point.row > 0 {
-            (nth_set_bit(self.newlines, point.row as usize) + 1) as usize
-        } else {
-            0
-        };
-
-        let row_len_utf8 = if row_start_offset == 64 {
-            0
-        } else {
-            cmp::min(
-                (self.newlines >> row_start_offset).trailing_zeros(),
-                (self.text.len() - row_start_offset) as u32,
-            )
-        };
-
+        let line = self.slice(self.offset_range_for_row(point.row));
         if point.column == 0 {
             point
-        } else if point.column >= row_len_utf8 {
-            Point::new(point.row, row_len_utf8)
+        } else if point.column >= line.len() as u32 {
+            Point::new(point.row, line.len() as u32)
         } else {
             let mut column = point.column as usize;
-            let line = &self.text[row_start_offset..row_start_offset + row_len_utf8 as usize];
-            let bytes = line.as_bytes();
+            let bytes = line.text.as_bytes();
             if bytes[column - 1] < 128 && bytes[column] < 128 {
                 return Point::new(point.row, column as u32);
             }
@@ -492,7 +445,7 @@ impl<'a> ChunkSlice<'a> {
             let mut grapheme_cursor = GraphemeCursor::new(column, bytes.len(), true);
             loop {
                 if line.is_char_boundary(column)
-                    && grapheme_cursor.is_boundary(line, 0).unwrap_or(false)
+                    && grapheme_cursor.is_boundary(line.text, 0).unwrap_or(false)
                 {
                     break;
                 }
@@ -507,6 +460,7 @@ impl<'a> ChunkSlice<'a> {
         }
     }
 
+    #[inline(always)]
     // todo!("use bitsets")
     pub fn clip_point_utf16(&self, target: Unclipped<PointUtf16>, bias: Bias) -> PointUtf16 {
         for (row, line) in self.text.split('\n').enumerate() {
@@ -525,6 +479,7 @@ impl<'a> ChunkSlice<'a> {
         unreachable!()
     }
 
+    #[inline(always)]
     // todo!("use bitsets")
     pub fn clip_offset_utf16(&self, target: OffsetUtf16, bias: Bias) -> OffsetUtf16 {
         let mut code_units = self.text.encode_utf16();
@@ -536,6 +491,24 @@ impl<'a> ChunkSlice<'a> {
             }
         }
         OffsetUtf16(offset)
+    }
+
+    #[inline(always)]
+    fn offset_range_for_row(&self, row: u32) -> Range<usize> {
+        let row_start = if row > 0 {
+            (nth_set_bit(self.newlines, row as usize) + 1) as usize
+        } else {
+            0
+        };
+        let row_len = if row_start == 64 {
+            0
+        } else {
+            cmp::min(
+                (self.newlines >> row_start).trailing_zeros(),
+                (self.text.len() - row_start) as u32,
+            )
+        };
+        row_start..row_start + row_len as usize
     }
 }
 
