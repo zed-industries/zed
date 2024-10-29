@@ -1,32 +1,22 @@
-#![allow(unused)]
-use std::{
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 
-use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
-use futures::{future::Shared, FutureExt};
+use futures::FutureExt;
 use gpui::{
     actions, list, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView,
-    ListScrollEvent, ListState, Model, Task, View, WeakView,
+    ListScrollEvent, ListState, Model, Task,
 };
-use language::{Language, LanguageRegistry};
+use language::LanguageRegistry;
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
-use util::ResultExt;
-use uuid::Uuid;
-use workspace::{FollowableItem, Item, ItemHandle, Pane, ProjectItem, SerializableItem, Workspace};
+use workspace::{Item, ProjectItem};
 
-use super::{Cell, RenderableCell};
+use super::{Cell, CellPosition, RenderableCell};
 
 use nbformat::v4::CellId;
 use nbformat::v4::Metadata as NotebookMetadata;
-
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
@@ -153,10 +143,11 @@ impl NotebookEditor {
         let cell_list = ListState::new(
             cell_count,
             gpui::ListAlignment::Top,
+            // TODO: This is a totally random number,
+            // not sure what this should be
             px(3000.),
             move |ix, cx| {
                 let cell_order_for_list = cell_order_for_list.clone();
-                let cell_map = cell_map_for_list.clone();
                 let cell_id = cell_order_for_list[ix].clone();
                 if let Some(view) = view.upgrade() {
                     let cell_id = cell_id.clone();
@@ -173,16 +164,6 @@ impl NotebookEditor {
             },
         );
 
-        cell_list.set_scroll_handler(cx.listener(|this, event: &ListScrollEvent, cx| {
-            // TODO: Do we need to do anything with the scroll handler?
-
-            // Example from chat panel:
-            // if event.visible_range.start < MESSAGE_LOADING_THRESHOLD {
-            //     this.load_more_messages(cx);
-            // }
-            // this.is_scrolled_to_bottom = !event.is_scrolled;
-        }));
-
         Self {
             languages: languages.clone(),
             focus_handle,
@@ -197,46 +178,6 @@ impl NotebookEditor {
             cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
         }
-    }
-
-    fn build_list_state(&mut self, cx: &mut ViewContext<Self>) -> ListState {
-        let cell_count = self.cell_order.len();
-        let selected_cell_index = self.selected_cell_index;
-        let cell_order = self.cell_order.clone();
-        let cell_map = self.cell_map.clone();
-
-        ListState::new(
-            cell_count,
-            gpui::ListAlignment::Top,
-            px(1000.),
-            move |ix, cx| {
-                if let Some(cell) = cell_map.get(&cell_order[ix]) {
-                    let is_selected = ix == selected_cell_index;
-                    match cell {
-                        Cell::Code(cell) => {
-                            cell.update(cx, |cell, cx| {
-                                cell.set_selected(is_selected);
-                            });
-                            cell.clone().into_any_element()
-                        }
-                        Cell::Markdown(cell) => {
-                            cell.update(cx, |cell, cx| {
-                                cell.set_selected(is_selected);
-                            });
-                            cell.clone().into_any_element()
-                        }
-                        Cell::Raw(cell) => {
-                            cell.update(cx, |cell, cx| {
-                                cell.set_selected(is_selected);
-                            });
-                            cell.clone().into_any_element()
-                        }
-                    }
-                } else {
-                    div().into_any_element()
-                }
-            },
-        )
     }
 
     fn cells(&self) -> impl Iterator<Item = &Cell> {
@@ -258,7 +199,7 @@ impl NotebookEditor {
     fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
         for cell in self.cell_map.values() {
             if let Cell::Code(code_cell) = cell {
-                code_cell.update(cx, |cell, cx| {
+                code_cell.update(cx, |cell, _cx| {
                     cell.clear_outputs();
                 });
             }
@@ -303,7 +244,7 @@ impl NotebookEditor {
         jump_to_index: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let previous_index = self.selected_cell_index;
+        // let previous_index = self.selected_cell_index;
         self.selected_cell_index = index;
         let current_index = self.selected_cell_index;
 
@@ -390,6 +331,7 @@ impl NotebookEditor {
             .justify_between()
             .flex_none()
             .h_full()
+            .py(Spacing::XLarge.px(cx))
             .child(
                 v_flex()
                     .gap(Spacing::Large.rems(cx))
@@ -499,29 +441,43 @@ impl NotebookEditor {
             .child(list(self.cell_list.clone()).size_full())
     }
 
+    fn cell_position(&self, index: usize) -> CellPosition {
+        match index {
+            0 => CellPosition::First,
+            index if index == self.cell_count() - 1 => CellPosition::Last,
+            _ => CellPosition::Middle,
+        }
+    }
+
     fn render_cell(
         &self,
         index: usize,
         cell: &Cell,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let cell_position = self.cell_position(index);
+
         let is_selected = index == self.selected_cell_index;
+
         match cell {
             Cell::Code(cell) => {
-                cell.update(cx, |cell, cx| {
-                    cell.set_selected(is_selected);
+                cell.update(cx, |cell, _cx| {
+                    cell.set_selected(is_selected)
+                        .set_cell_position(cell_position);
                 });
                 cell.clone().into_any_element()
             }
             Cell::Markdown(cell) => {
-                cell.update(cx, |cell, cx| {
-                    cell.set_selected(is_selected);
+                cell.update(cx, |cell, _cx| {
+                    cell.set_selected(is_selected)
+                        .set_cell_position(cell_position);
                 });
                 cell.clone().into_any_element()
             }
             Cell::Raw(cell) => {
-                cell.update(cx, |cell, cx| {
-                    cell.set_selected(is_selected);
+                cell.update(cx, |cell, _cx| {
+                    cell.set_selected(is_selected)
+                        .set_cell_position(cell_position);
                 });
                 cell.clone().into_any_element()
             }
@@ -531,9 +487,6 @@ impl NotebookEditor {
 
 impl Render for NotebookEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let large_gap = Spacing::XLarge.px(cx);
-        let gap = Spacing::Large.px(cx);
-
         div()
             .key_context("notebook")
             .track_focus(&self.focus_handle)
@@ -552,11 +505,11 @@ impl Render for NotebookEditor {
             .items_start()
             .size_full()
             .overflow_hidden()
-            .p(large_gap)
-            .gap(large_gap)
+            .px(Spacing::XLarge.px(cx))
+            .gap(Spacing::XLarge.px(cx))
             .bg(cx.theme().colors().tab_bar_background)
-            .child(self.render_notebook_controls(cx))
             .child(self.render_cells(cx))
+            .child(self.render_notebook_controls(cx))
     }
 }
 

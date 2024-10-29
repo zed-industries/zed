@@ -1,27 +1,26 @@
-#![allow(unused, dead_code)]
-use core::fmt;
-use std::{
-    fmt::{Display, Formatter},
-    sync::Arc,
-};
+use std::sync::Arc;
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, CursorStyle, Hsla, Task, TextStyleRefinement, View, WeakView};
+use gpui::{prelude::*, Hsla, Task, TextStyleRefinement, View};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use settings::Settings as _;
 use theme::ThemeSettings;
 use ui::{prelude::*, IconButtonShape};
-use uuid::Uuid;
+use util::ResultExt;
 
 use crate::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
     outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
 };
+
+pub enum CellPosition {
+    First,
+    Middle,
+    Last,
+}
 
 pub enum CellControlType {
     RunCell,
@@ -46,16 +45,7 @@ impl CellControlType {
 }
 
 pub struct CellControl {
-    control_type: CellControlType,
     button: IconButton,
-}
-
-impl Into<CellControl> for CellControlType {
-    fn into(self) -> CellControl {
-        let id = Uuid::new_v4().to_string();
-        let icon = self.icon_name();
-        CellControl::new(id, self)
-    }
 }
 
 impl CellControl {
@@ -65,10 +55,7 @@ impl CellControl {
         let button = IconButton::new(id, icon_name)
             .icon_size(IconSize::Small)
             .shape(IconButtonShape::Square);
-        Self {
-            control_type,
-            button,
-        }
+        Self { button }
     }
 }
 
@@ -78,7 +65,7 @@ impl Clickable for CellControl {
         Self { button, ..self }
     }
 
-    fn cursor_style(self, cursor_style: gpui::CursorStyle) -> Self {
+    fn cursor_style(self, _cursor_style: gpui::CursorStyle) -> Self {
         self
     }
 }
@@ -95,7 +82,7 @@ fn convert_outputs(outputs: &Vec<nbformat::v4::Output>, cx: &mut WindowContext) 
     outputs
         .into_iter()
         .map(|output| match output {
-            nbformat::v4::Output::Stream { name, text } => Output::Stream {
+            nbformat::v4::Output::Stream { text, .. } => Output::Stream {
                 content: cx.new_view(|cx| TerminalOutput::from(&text.0, cx)),
             },
             nbformat::v4::Output::DisplayData(display_data) => {
@@ -125,7 +112,7 @@ impl Cell {
                 id,
                 metadata,
                 source,
-                attachments,
+                attachments: _,
             } => {
                 let source = source.join("");
 
@@ -144,7 +131,8 @@ impl Cell {
 
                             this.update(&mut cx, |cell: &mut MarkdownCell, _| {
                                 cell.parsed_markdown = Some(parsed_markdown);
-                            });
+                            })
+                            .log_err();
                         })
                     };
 
@@ -156,6 +144,7 @@ impl Cell {
                         source: source.clone(),
                         parsed_markdown: None,
                         selected: false,
+                        cell_position: None,
                     }
                 });
 
@@ -217,7 +206,8 @@ impl Cell {
                     editor: editor_view,
                     outputs: convert_outputs(outputs, cx),
                     selected: false,
-                    language_task,
+                    // language_task,
+                    cell_position: None,
                 }
             })),
             nbformat::v4::Cell::Raw {
@@ -229,6 +219,7 @@ impl Cell {
                 metadata: metadata.clone(),
                 source: source.join(""),
                 selected: false,
+                cell_position: None,
             })),
         }
     }
@@ -237,7 +228,6 @@ impl Cell {
 pub trait RenderableCell: Render {
     const CELL_TYPE: CellType;
 
-    // fn new(cx: &mut WindowContext) -> View<Self>;
     fn id(&self) -> &CellId;
     fn cell_type(&self) -> CellType;
     fn metadata(&self) -> &CellMetadata;
@@ -254,7 +244,7 @@ pub trait RenderableCell: Render {
             cx.theme().colors().tab_bar_background
         }
     }
-    fn control(&self, cx: &ViewContext<Self>) -> Option<CellControl> {
+    fn control(&self, _cx: &ViewContext<Self>) -> Option<CellControl> {
         None
     }
     fn gutter(&self, cx: &ViewContext<Self>) -> impl IntoElement {
@@ -297,6 +287,9 @@ pub trait RenderableCell: Render {
                 )
             })
     }
+
+    fn cell_position(&self) -> Option<&CellPosition>;
+    fn set_cell_position(&mut self, position: CellPosition) -> &mut Self;
 }
 
 pub trait RunnableCell: RenderableCell {
@@ -312,15 +305,12 @@ pub struct MarkdownCell {
     parsed_markdown: Option<markdown_preview::markdown_elements::ParsedMarkdown>,
     markdown_parsing_task: Task<()>,
     selected: bool,
+    cell_position: Option<CellPosition>,
     languages: Arc<LanguageRegistry>,
 }
 
 impl RenderableCell for MarkdownCell {
     const CELL_TYPE: CellType = CellType::Markdown;
-
-    // fn new(cx: &mut WindowContext) -> View<Self> {
-    //     cx.new_view(|cx| MarkdownCell::default())
-    // }
 
     fn id(&self) -> &CellId {
         &self.id
@@ -349,6 +339,15 @@ impl RenderableCell for MarkdownCell {
 
     fn control(&self, _: &ViewContext<Self>) -> Option<CellControl> {
         None
+    }
+
+    fn cell_position(&self) -> Option<&CellPosition> {
+        self.cell_position.as_ref()
+    }
+
+    fn set_cell_position(&mut self, cell_position: CellPosition) -> &mut Self {
+        self.cell_position = Some(cell_position);
+        self
     }
 }
 
@@ -396,7 +395,8 @@ pub struct CodeCell {
     editor: View<editor::Editor>,
     outputs: Vec<Output>,
     selected: bool,
-    language_task: Task<()>,
+    cell_position: Option<CellPosition>,
+    // language_task: Task<()>,
 }
 
 impl CodeCell {
@@ -494,6 +494,15 @@ impl RenderableCell for CodeCell {
 
     fn set_selected(&mut self, selected: bool) -> &mut Self {
         self.selected = selected;
+        self
+    }
+
+    fn cell_position(&self) -> Option<&CellPosition> {
+        self.cell_position.as_ref()
+    }
+
+    fn set_cell_position(&mut self, cell_position: CellPosition) -> &mut Self {
+        self.cell_position = Some(cell_position);
         self
     }
 }
@@ -619,6 +628,7 @@ pub struct RawCell {
     metadata: CellMetadata,
     source: String,
     selected: bool,
+    cell_position: Option<CellPosition>,
 }
 
 impl RenderableCell for RawCell {
@@ -646,6 +656,15 @@ impl RenderableCell for RawCell {
 
     fn set_selected(&mut self, selected: bool) -> &mut Self {
         self.selected = selected;
+        self
+    }
+
+    fn cell_position(&self) -> Option<&CellPosition> {
+        self.cell_position.as_ref()
+    }
+
+    fn set_cell_position(&mut self, cell_position: CellPosition) -> &mut Self {
+        self.cell_position = Some(cell_position);
         self
     }
 }
