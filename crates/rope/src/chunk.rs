@@ -5,16 +5,24 @@ use sum_tree::Bias;
 use unicode_segmentation::GraphemeCursor;
 use util::debug_panic;
 
+#[cfg(test)]
+pub(crate) const MIN_BASE: usize = 6;
+
+#[cfg(not(test))]
+pub(crate) const MIN_BASE: usize = 32;
+
+pub(crate) const MAX_BASE: usize = MIN_BASE * 2;
+
 #[derive(Clone, Debug, Default)]
-pub struct Chunk<const CAPACITY: usize> {
+pub struct Chunk {
     chars: usize,
     chars_utf16: usize,
     tabs: usize,
     newlines: usize,
-    pub text: ArrayString<CAPACITY>,
+    pub text: ArrayString<MAX_BASE>,
 }
 
-impl<const CAPACITY: usize> Chunk<CAPACITY> {
+impl Chunk {
     #[inline(always)]
     pub fn new(text: &str) -> Self {
         let mut this = Chunk::default();
@@ -36,8 +44,22 @@ impl<const CAPACITY: usize> Chunk<CAPACITY> {
     }
 
     #[inline(always)]
-    pub fn as_slice(&self) -> ChunkRef {
-        ChunkRef {
+    pub fn append(&mut self, slice: ChunkSlice) {
+        if slice.is_empty() {
+            return;
+        };
+
+        let base_ix = self.text.len();
+        self.chars |= slice.chars << base_ix;
+        self.chars_utf16 |= slice.chars_utf16 << base_ix;
+        self.tabs |= slice.tabs << base_ix;
+        self.newlines |= slice.newlines << base_ix;
+        self.text.push_str(&slice.text);
+    }
+
+    #[inline(always)]
+    pub fn as_slice(&self) -> ChunkSlice {
+        ChunkSlice {
             chars: self.chars,
             chars_utf16: self.chars_utf16,
             tabs: self.tabs,
@@ -47,13 +69,13 @@ impl<const CAPACITY: usize> Chunk<CAPACITY> {
     }
 
     #[inline(always)]
-    pub fn slice(&self, range: Range<usize>) -> ChunkRef {
+    pub fn slice(&self, range: Range<usize>) -> ChunkSlice {
         self.as_slice().slice(range)
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct ChunkRef<'a> {
+pub struct ChunkSlice<'a> {
     chars: usize,
     chars_utf16: usize,
     tabs: usize,
@@ -61,7 +83,62 @@ pub struct ChunkRef<'a> {
     text: &'a str,
 }
 
-impl<'a> ChunkRef<'a> {
+impl<'a> Into<Chunk> for ChunkSlice<'a> {
+    fn into(self) -> Chunk {
+        Chunk {
+            chars: self.chars,
+            chars_utf16: self.chars_utf16,
+            tabs: self.tabs,
+            newlines: self.newlines,
+            text: self.text.try_into().unwrap(),
+        }
+    }
+}
+
+impl<'a> ChunkSlice<'a> {
+    #[inline(always)]
+    pub fn is_empty(self) -> bool {
+        self.text.is_empty()
+    }
+
+    #[inline(always)]
+    pub fn is_char_boundary(self, offset: usize) -> bool {
+        self.text.is_char_boundary(offset)
+    }
+
+    #[inline(always)]
+    pub fn split_at(self, mid: usize) -> (ChunkSlice<'a>, ChunkSlice<'a>) {
+        if mid == 64 {
+            let left = self;
+            let right = ChunkSlice {
+                chars: 0,
+                chars_utf16: 0,
+                tabs: 0,
+                newlines: 0,
+                text: "",
+            };
+            (left, right)
+        } else {
+            let mask = ((1u128 << mid) - 1) as usize;
+            let (left_text, right_text) = self.text.split_at(mid);
+            let left = ChunkSlice {
+                chars: self.chars & mask,
+                chars_utf16: self.chars_utf16 & mask,
+                tabs: self.tabs & mask,
+                newlines: self.newlines & mask,
+                text: left_text,
+            };
+            let right = ChunkSlice {
+                chars: self.chars >> mid,
+                chars_utf16: self.chars_utf16 >> mid,
+                tabs: self.tabs >> mid,
+                newlines: self.newlines >> mid,
+                text: right_text,
+            };
+            (left, right)
+        }
+    }
+
     #[inline(always)]
     pub fn slice(self, range: Range<usize>) -> Self {
         let mask = ((1u128 << range.end) - 1) as usize;
@@ -507,7 +584,7 @@ mod tests {
         let text = &text[..ix];
 
         log::info!("Chunk: {:?}", text);
-        let chunk = Chunk::<64>::new(&text);
+        let chunk = Chunk::new(&text);
         verify_chunk(chunk.as_slice(), text);
 
         for _ in 0..10 {
@@ -608,7 +685,7 @@ mod tests {
         );
     }
 
-    fn verify_chunk(chunk: ChunkRef<'_>, text: &str) {
+    fn verify_chunk(chunk: ChunkSlice<'_>, text: &str) {
         let mut offset = 0;
         let mut offset_utf16 = OffsetUtf16(0);
         let mut point = Point::zero();
