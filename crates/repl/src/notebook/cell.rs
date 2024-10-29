@@ -7,7 +7,7 @@ use std::{
 
 use editor::{Editor, EditorMode, MultiBuffer};
 use futures::future::Shared;
-use gpui::{prelude::*, Hsla, Task, TextStyleRefinement, View, WeakView};
+use gpui::{prelude::*, CursorStyle, Hsla, Task, TextStyleRefinement, View, WeakView};
 use language::{Buffer, Language, LanguageRegistry};
 use markdown_preview::{markdown_parser::parse_markdown, markdown_renderer::render_markdown_block};
 use nbformat::v4::{CellId, CellMetadata, CellType};
@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, IconButtonShape};
 use uuid::Uuid;
 
 use crate::{
@@ -23,22 +23,63 @@ use crate::{
     outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
 };
 
-#[derive(IntoElement)]
-pub enum CellControl {
+pub enum CellControlType {
     RunCell,
+    RerunCell,
+    ClearCell,
+    CellOptions,
+    CollapseCell,
+    ExpandCell,
 }
 
-impl CellControl {
+impl CellControlType {
     fn icon_name(&self) -> IconName {
         match self {
-            CellControl::RunCell => IconName::Play,
+            CellControlType::RunCell => IconName::Play,
+            CellControlType::RerunCell => IconName::ArrowCircle,
+            CellControlType::ClearCell => IconName::ListX,
+            CellControlType::CellOptions => IconName::Ellipsis,
+            CellControlType::CollapseCell => IconName::ChevronDown,
+            CellControlType::ExpandCell => IconName::ChevronRight,
         }
     }
 }
 
-impl RenderOnce for CellControl {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div()
+pub struct CellControl {
+    control_type: CellControlType,
+    button: IconButton,
+}
+
+impl Into<CellControl> for CellControlType {
+    fn into(self) -> CellControl {
+        let id = Uuid::new_v4().to_string();
+        let icon = self.icon_name();
+        CellControl::new(id, self)
+    }
+}
+
+impl CellControl {
+    fn new(id: impl Into<SharedString>, control_type: CellControlType) -> Self {
+        let icon_name = control_type.icon_name();
+        let id = id.into();
+        let button = IconButton::new(id, icon_name)
+            .icon_size(IconSize::Small)
+            .shape(IconButtonShape::Square);
+        Self {
+            control_type,
+            button,
+        }
+    }
+}
+
+impl Clickable for CellControl {
+    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static) -> Self {
+        let button = self.button.on_click(handler);
+        Self { button, ..self }
+    }
+
+    fn cursor_style(self, cursor_style: gpui::CursorStyle) -> Self {
+        self
     }
 }
 
@@ -213,10 +254,9 @@ pub trait RenderableCell: Render {
             cx.theme().colors().tab_bar_background
         }
     }
-    fn control(&self) -> Option<CellControl> {
+    fn control(&self, cx: &ViewContext<Self>) -> Option<CellControl> {
         None
     }
-    // fn language_registry(&self, language_registry: &Arc<LanguageRegistry>) -> &LanguageRegistry;
     fn gutter(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let is_selected = self.selected();
 
@@ -240,7 +280,7 @@ pub trait RenderableCell: Render {
                             .when(!is_selected, |this| this.bg(cx.theme().colors().border)),
                     ),
             )
-            .when_some(self.control(), |this, control| {
+            .when_some(self.control(cx), |this, control| {
                 this.child(
                     div()
                         .absolute()
@@ -253,15 +293,16 @@ pub trait RenderableCell: Render {
                         .items_center()
                         .justify_center()
                         .bg(cx.theme().colors().tab_bar_background)
-                        .child(IconButton::new("control", control.icon_name())),
+                        .child(control.button),
                 )
             })
     }
+}
 
-    // fn cell_placeholder(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-    //     // TODO: render placeholder
-    //     div().into_element()
-    // }
+pub trait RunnableCell: RenderableCell {
+    fn execution_count(&self) -> Option<i32>;
+    fn set_execution_count(&mut self, count: i32) -> &mut Self;
+    fn run(&mut self, cx: &mut ViewContext<Self>) -> ();
 }
 
 pub struct MarkdownCell {
@@ -306,7 +347,7 @@ impl RenderableCell for MarkdownCell {
         self
     }
 
-    fn control(&self) -> Option<CellControl> {
+    fn control(&self, _: &ViewContext<Self>) -> Option<CellControl> {
         None
     }
 }
@@ -367,6 +408,14 @@ impl CodeCell {
         self.outputs.clear();
     }
 
+    fn output_control(&self) -> Option<CellControlType> {
+        if self.has_outputs() {
+            Some(CellControlType::ClearCell)
+        } else {
+            None
+        }
+    }
+
     pub fn gutter_output(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let is_selected = self.selected();
 
@@ -403,7 +452,7 @@ impl CodeCell {
                         .items_center()
                         .justify_center()
                         .bg(cx.theme().colors().tab_bar_background)
-                        .child(IconButton::new("control", IconName::MailOpen)),
+                        .child(IconButton::new("control", IconName::Ellipsis)),
                 )
             })
     }
@@ -428,8 +477,15 @@ impl RenderableCell for CodeCell {
         &self.source
     }
 
-    fn control(&self) -> Option<CellControl> {
-        Some(CellControl::RunCell)
+    fn control(&self, cx: &ViewContext<Self>) -> Option<CellControl> {
+        let cell_control = if self.has_outputs() {
+            CellControl::new("rerun-cell", CellControlType::RerunCell)
+        } else {
+            CellControl::new("run-cell", CellControlType::RunCell)
+                .on_click((cx.listener(move |this, _, cx| this.run(cx))))
+        };
+
+        Some(cell_control)
     }
 
     fn selected(&self) -> bool {
@@ -438,6 +494,22 @@ impl RenderableCell for CodeCell {
 
     fn set_selected(&mut self, selected: bool) -> &mut Self {
         self.selected = selected;
+        self
+    }
+}
+
+impl RunnableCell for CodeCell {
+    fn run(&mut self, cx: &mut ViewContext<Self>) {
+        println!("Running code cell: {}", self.id);
+    }
+
+    fn execution_count(&self) -> Option<i32> {
+        self.execution_count
+            .and_then(|count| if count > 0 { Some(count) } else { None })
+    }
+
+    fn set_execution_count(&mut self, count: i32) -> &mut Self {
+        self.execution_count = Some(count);
         self
     }
 }
@@ -566,10 +638,6 @@ impl RenderableCell for RawCell {
 
     fn source(&self) -> &String {
         &self.source
-    }
-
-    fn control(&self) -> Option<CellControl> {
-        None
     }
 
     fn selected(&self) -> bool {
