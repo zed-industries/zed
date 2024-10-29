@@ -1153,7 +1153,7 @@ impl BufferStore {
                     };
                     repo.blame(&relative_path, content)
                         .with_context(|| format!("Failed to blame {:?}", relative_path.0))
-                        .map(|blame| Some(blame))
+                        .map(Some)
                 })
             }
             Worktree::Remote(worktree) => {
