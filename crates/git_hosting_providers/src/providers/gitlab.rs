@@ -1,16 +1,55 @@
+use anyhow::{anyhow, bail, Result};
 use url::Url;
+use util::maybe;
 
 use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
 
-pub struct Gitlab;
+#[derive(Debug)]
+pub struct Gitlab {
+    name: String,
+    base_url: Url,
+}
+
+impl Gitlab {
+    pub fn new() -> Self {
+        Self {
+            name: "GitLab".to_string(),
+            base_url: Url::parse("https://gitlab.com").unwrap(),
+        }
+    }
+
+    pub fn from_remote_url(remote_url: &str) -> Result<Self> {
+        let host = maybe!({
+            if let Some(remote_url) = remote_url.strip_prefix("git@") {
+                if let Some((host, _)) = remote_url.trim_start_matches("git@").split_once(':') {
+                    return Some(host.to_string());
+                }
+            }
+
+            Url::parse(&remote_url)
+                .ok()
+                .and_then(|remote_url| remote_url.host_str().map(|host| host.to_string()))
+        })
+        .ok_or_else(|| anyhow!("URL has no host"))?;
+
+        if !host.contains("gitlab") {
+            bail!("not a GitLab URL");
+        }
+
+        Ok(Self {
+            name: "GitLab Self-Hosted".to_string(),
+            base_url: Url::parse(&format!("https://{}", host))?,
+        })
+    }
+}
 
 impl GitHostingProvider for Gitlab {
     fn name(&self) -> String {
-        "GitLab".to_string()
+        self.name.clone()
     }
 
     fn base_url(&self) -> Url {
-        Url::parse("https://gitlab.com").unwrap()
+        self.base_url.clone()
     }
 
     fn supports_avatars(&self) -> bool {
@@ -26,10 +65,12 @@ impl GitHostingProvider for Gitlab {
     }
 
     fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        if url.starts_with("git@gitlab.com:") || url.starts_with("https://gitlab.com/") {
+        let host = self.base_url.host_str()?;
+
+        if url.starts_with(&format!("git@{host}")) || url.starts_with(&format!("https://{host}/")) {
             let repo_with_owner = url
-                .trim_start_matches("git@gitlab.com:")
-                .trim_start_matches("https://gitlab.com/")
+                .trim_start_matches(&format!("git@{host}:"))
+                .trim_start_matches(&format!("https://{host}/"))
                 .trim_end_matches(".git");
 
             let (owner, repo) = repo_with_owner.split_once('/')?;
@@ -79,6 +120,8 @@ impl GitHostingProvider for Gitlab {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use super::*;
 
     #[test]
@@ -87,7 +130,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = Gitlab::new().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -106,7 +149,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = Gitlab::new().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -125,7 +168,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = Gitlab::new().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
@@ -144,7 +187,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = Gitlab::new().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
@@ -163,7 +206,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = Gitlab::new().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
@@ -182,7 +225,7 @@ mod tests {
             owner: "zed-industries",
             repo: "zed",
         };
-        let permalink = Gitlab.build_permalink(
+        let permalink = Gitlab::new().build_permalink(
             remote,
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
@@ -192,6 +235,50 @@ mod tests {
         );
 
         let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-48";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_gitlab_self_hosted_permalink_from_ssh_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let gitlab =
+            Gitlab::from_remote_url("git@gitlab.some-enterprise.com:zed-industries/zed.git")
+                .unwrap();
+        let permalink = gitlab.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
+                path: "crates/editor/src/git/permalink.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://gitlab.some-enterprise.com/zed-industries/zed/-/blob/e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7/crates/editor/src/git/permalink.rs";
+        assert_eq!(permalink.to_string(), expected_url.to_string())
+    }
+
+    #[test]
+    fn test_build_gitlab_self_hosted_permalink_from_https_url() {
+        let remote = ParsedGitRemote {
+            owner: "zed-industries",
+            repo: "zed",
+        };
+        let gitlab =
+            Gitlab::from_remote_url("https://gitlab-instance.big-co.com/zed-industries/zed.git")
+                .unwrap();
+        let permalink = gitlab.build_permalink(
+            remote,
+            BuildPermalinkParams {
+                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
+                path: "crates/zed/src/main.rs",
+                selection: None,
+            },
+        );
+
+        let expected_url = "https://gitlab-instance.big-co.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
         assert_eq!(permalink.to_string(), expected_url.to_string())
     }
 }
