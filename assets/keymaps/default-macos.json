@@ -349,6 +349,7 @@
       "alt-cmd-]": "editor::UnfoldLines",
       "cmd-k cmd-l": "editor::ToggleFold",
       "cmd-k cmd-[": "editor::FoldRecursive",
+      "cmd-k cmd-]": "editor::UnfoldRecursive",
       "cmd-k cmd-1": ["editor::FoldAtLevel", { "level": 1 }],
       "cmd-k cmd-2": ["editor::FoldAtLevel", { "level": 2 }],
       "cmd-k cmd-3": ["editor::FoldAtLevel", { "level": 3 }],
