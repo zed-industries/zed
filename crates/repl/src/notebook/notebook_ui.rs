@@ -20,61 +20,16 @@ use util::ResultExt;
 use uuid::Uuid;
 use workspace::{FollowableItem, Item, ItemHandle, Pane, ProjectItem, SerializableItem, Workspace};
 
-use super::{deserialize_cells, Cell, CellId, DeserializedCell, RenderableCell};
+use super::{Cell, RenderableCell};
+
+use nbformat::v4::CellId;
+use nbformat::v4::Metadata as NotebookMetadata;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
 pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
-
-#[derive(Deserialize, Debug)]
-pub struct DeserializedNotebook {
-    pub metadata: DeserializedMetadata,
-    pub nbformat: i32,
-    pub nbformat_minor: i32,
-    #[serde(deserialize_with = "deserialize_cells")]
-    pub cells: Vec<DeserializedCell>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct DeserializedMetadata {
-    pub kernelspec: Option<DeserializedKernelSpec>,
-    pub language_info: Option<DeserializedLanguageInfo>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct DeserializedKernelSpec {
-    pub name: String,
-    pub language: Option<String>,
-}
-
-#[derive(Deserialize, Debug)]
-pub struct DeserializedLanguageInfo {
-    pub name: String,
-    pub version: Option<String>,
-    #[serde(default)]
-    pub codemirror_mode: Option<CodemirrorMode>,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(untagged)]
-pub enum CodemirrorMode {
-    String(String),
-    Object(Value),
-}
-
-impl Default for CodemirrorMode {
-    fn default() -> Self {
-        CodemirrorMode::String(String::new())
-    }
-}
-
-pub fn deserialize_notebook(notebook: &str) -> Result<DeserializedNotebook> {
-    let deserialized: DeserializedNotebook =
-        serde_json::from_str(notebook).context("Failed to deserialize notebook")?;
-    Ok(deserialized)
-}
 
 actions!(
     notebook,
@@ -123,7 +78,7 @@ pub struct NotebookEditor {
     project: Model<Project>,
     remote_id: Option<ViewId>,
 
-    metadata: DeserializedMetadata,
+    metadata: NotebookMetadata,
     nbformat: i32,
     nbformat_minor: i32,
     selected_cell_index: usize,
@@ -134,10 +89,12 @@ pub struct NotebookEditor {
 impl NotebookEditor {
     pub fn new(
         project: Model<Project>,
-        notebook: DeserializedNotebook,
+        notebook_item: Model<NotebookItem>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
+
+        let notebook = notebook_item.read(cx).notebook.clone();
 
         let languages = project.read(cx).languages().clone();
 
@@ -177,13 +134,11 @@ impl NotebookEditor {
         let mut cell_order = vec![];
         let mut cell_map = HashMap::default();
 
-        for (index, cell) in notebook.cells.into_iter().enumerate() {
+        for (index, cell) in notebook.cells.iter().enumerate() {
             let id = match &cell {
-                DeserializedCell::Markdown { id, .. }
-                | DeserializedCell::Code { id, .. }
-                | DeserializedCell::Raw { id, .. } => {
-                    id.clone().unwrap_or_else(|| Uuid::new_v4().to_string())
-                }
+                nbformat::v4::Cell::Markdown { id, .. }
+                | nbformat::v4::Cell::Code { id, .. }
+                | nbformat::v4::Cell::Raw { id, .. } => id,
             };
             let cell_id = CellId::from(id.clone());
             cell_order.push(cell_id.clone());
@@ -542,6 +497,7 @@ impl FocusableView for NotebookEditor {
 pub struct NotebookItem {
     path: PathBuf,
     project_path: ProjectPath,
+    notebook: nbformat::v4::Notebook,
 }
 
 impl project::Item for NotebookItem {
@@ -561,9 +517,23 @@ impl project::Item for NotebookItem {
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
                     .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
 
+                let file_content = std::fs::read_to_string(abs_path.clone())?;
+                let notebook = nbformat::parse_notebook(&file_content);
+
+                let notebook = match notebook {
+                    Ok(nbformat::Notebook::V4(notebook)) => notebook,
+                    Ok(nbformat::Notebook::Legacy(_)) => {
+                        anyhow::bail!("Legacy notebook encountered");
+                    }
+                    Err(e) => {
+                        anyhow::bail!("Failed to parse notebook: {:?}", e);
+                    }
+                };
+
                 cx.new_model(|_| NotebookItem {
                     path: abs_path,
                     project_path: path,
+                    notebook,
                 })
             }))
         } else {
@@ -578,11 +548,6 @@ impl project::Item for NotebookItem {
     fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
         Some(self.project_path.clone())
     }
-}
-
-fn deserialize_notebook_from_path(path: &Path) -> Result<DeserializedNotebook> {
-    let file_content = std::fs::read_to_string(path)?;
-    deserialize_notebook(&file_content)
 }
 
 impl EventEmitter<()> for NotebookEditor {}
@@ -615,14 +580,9 @@ impl ProjectItem for NotebookEditor {
         item: Model<Self::Item>,
         cx: &mut ViewContext<Self>,
     ) -> Self
-    // todo... no workspace (?)
     where
         Self: Sized,
     {
-        let path = item.read(cx).path.clone();
-        let notebook =
-            deserialize_notebook_from_path(&path).expect("Failed to deserialize notebook");
-        // todo... no workspace (?)
-        Self::new(project, notebook, cx)
+        Self::new(project, item, cx)
     }
 }
