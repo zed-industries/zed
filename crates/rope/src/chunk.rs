@@ -526,7 +526,7 @@ fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
 
     // Parallel bit count intermediates
     let a = v - ((v >> 1) & (u64::MAX / 3));
-    let b = (a & u64::MAX / 5) + ((a >> 2) & (u64::MAX / 5));
+    let b = (a & (u64::MAX / 5)) + ((a >> 2) & (u64::MAX / 5));
     let c = (b + (b >> 4)) & (u64::MAX / 0x11);
     let d = (c + (c >> 8)) & (u64::MAX / 0x101);
     t = (d >> 32) + (d >> 48);
