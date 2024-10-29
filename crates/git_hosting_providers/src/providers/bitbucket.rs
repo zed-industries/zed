@@ -1,6 +1,11 @@
+use std::str::FromStr;
+
 use url::Url;
 
-use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
+};
 
 pub struct Bitbucket;
 
@@ -26,20 +31,21 @@ impl GitHostingProvider for Bitbucket {
     }
 
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
-        if url.contains("bitbucket.org") {
-            let (_, repo_with_owner) = url.trim_end_matches(".git").split_once("bitbucket.org")?;
-            let (owner, repo) = repo_with_owner
-                .trim_start_matches('/')
-                .trim_start_matches(':')
-                .split_once('/')?;
+        let url = RemoteUrl::from_str(url).ok()?;
 
-            return Some(ParsedGitRemote {
-                owner: owner.into(),
-                repo: repo.into(),
-            });
+        let host = url.host_str()?;
+        if host != "bitbucket.org" {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?;
+        let repo = path_segments.next()?.trim_end_matches(".git");
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(

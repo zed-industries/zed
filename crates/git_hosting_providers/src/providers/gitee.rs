@@ -1,6 +1,11 @@
+use std::str::FromStr;
+
 use url::Url;
 
-use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
+};
 
 pub struct Gitee;
 
@@ -26,21 +31,21 @@ impl GitHostingProvider for Gitee {
     }
 
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
-        if url.starts_with("git@gitee.com:") || url.starts_with("https://gitee.com/") {
-            let repo_with_owner = url
-                .trim_start_matches("git@gitee.com:")
-                .trim_start_matches("https://gitee.com/")
-                .trim_end_matches(".git");
+        let url = RemoteUrl::from_str(url).ok()?;
 
-            let (owner, repo) = repo_with_owner.split_once('/')?;
-
-            return Some(ParsedGitRemote {
-                owner: owner.into(),
-                repo: repo.into(),
-            });
+        let host = url.host_str()?;
+        if host != "gitee.com" {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?;
+        let repo = path_segments.next()?.trim_end_matches(".git");
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(

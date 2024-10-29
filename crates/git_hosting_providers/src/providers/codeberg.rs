@@ -1,3 +1,4 @@
+use std::str::FromStr;
 use std::sync::Arc;
 
 use anyhow::{bail, Context, Result};
@@ -9,6 +10,7 @@ use url::Url;
 
 use git::{
     BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, Oid, ParsedGitRemote,
+    RemoteUrl,
 };
 
 #[derive(Debug, Deserialize)]
@@ -104,21 +106,21 @@ impl GitHostingProvider for Codeberg {
     }
 
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
-        if url.starts_with("git@codeberg.org:") || url.starts_with("https://codeberg.org/") {
-            let repo_with_owner = url
-                .trim_start_matches("git@codeberg.org:")
-                .trim_start_matches("https://codeberg.org/")
-                .trim_end_matches(".git");
+        let url = RemoteUrl::from_str(url).ok()?;
 
-            let (owner, repo) = repo_with_owner.split_once('/')?;
-
-            return Some(ParsedGitRemote {
-                owner: owner.into(),
-                repo: repo.into(),
-            });
+        let host = url.host_str()?;
+        if host != "codeberg.org" {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?;
+        let repo = path_segments.next()?.trim_end_matches(".git");
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(

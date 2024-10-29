@@ -1,8 +1,13 @@
+use std::str::FromStr;
+
 use anyhow::{anyhow, bail, Result};
 use url::Url;
 use util::maybe;
 
-use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
+};
 
 #[derive(Debug)]
 pub struct Gitlab {
@@ -65,23 +70,21 @@ impl GitHostingProvider for Gitlab {
     }
 
     fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
-        let host = self.base_url.host_str()?;
+        let url = RemoteUrl::from_str(url).ok()?;
 
-        if url.starts_with(&format!("git@{host}")) || url.starts_with(&format!("https://{host}/")) {
-            let repo_with_owner = url
-                .trim_start_matches(&format!("git@{host}:"))
-                .trim_start_matches(&format!("https://{host}/"))
-                .trim_end_matches(".git");
-
-            let (owner, repo) = repo_with_owner.split_once('/')?;
-
-            return Some(ParsedGitRemote {
-                owner: owner.into(),
-                repo: repo.into(),
-            });
+        let host = url.host_str()?;
+        if host != self.base_url.host_str()? {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?;
+        let owner = path_segments.next()?;
+        let repo = path_segments.next()?.trim_end_matches(".git");
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(
