@@ -2500,7 +2500,7 @@ impl Context {
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;
-                    while let Some(message) = messages.next().await {
+                    while let Some(message) = messages.stream.next().await {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {

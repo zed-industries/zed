@@ -315,7 +315,7 @@ impl TerminalInlineAssistant {
                     AssistantEvent {
                         conversation_id: None,
                         kind: AssistantKind::InlineTerminal,
-                        message_id: codegen.message_id,
+                        message_id: codegen.message_id.clone(),
                         phase: if undo {
                             AssistantPhase::Rejected
                         } else {
@@ -327,7 +327,7 @@ impl TerminalInlineAssistant {
                         error_message: None,
                         language_name: None,
                     },
-                    codegen.telemetry,
+                    codegen.telemetry.clone(),
                     cx.http_client(),
                     model.api_key(cx),
                     &executor,
@@ -1075,56 +1075,61 @@ impl Codegen {
             let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
             let generate = async {
+                let message_id = response
+                    .as_ref()
+                    .ok()
+                    .and_then(|response| response.message_id.clone());
+
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let executor = cx.background_executor().clone();
-                let task = cx.background_executor().spawn(async move {
-                    let mut response_latency = None;
-                    let request_start = Instant::now();
-                    let message_id = response
-                        .as_ref()
-                        .and_then(|response| response.message_id.clone());
-                    let task = async {
-                        let mut chunks = response?.stream;
-                        while let Some(chunk) = chunks.next().await {
-                            if response_latency.is_none() {
-                                response_latency = Some(request_start.elapsed());
+                let task = cx.background_executor().spawn({
+                    let message_id = message_id.clone();
+                    let executor = cx.background_executor().clone();
+                    async move {
+                        let mut response_latency = None;
+                        let request_start = Instant::now();
+                        let task = async {
+                            let mut chunks = response?.stream;
+                            while let Some(chunk) = chunks.next().await {
+                                if response_latency.is_none() {
+                                    response_latency = Some(request_start.elapsed());
+                                }
+                                let chunk = chunk?;
+                                hunks_tx.send(chunk).await?;
                             }
-                            let chunk = chunk?;
-                            hunks_tx.send(chunk).await?;
-                        }
 
+                            anyhow::Ok(())
+                        };
+
+                        let result = task.await;
+
+                        let error_message = result.as_ref().err().map(|error| error.to_string());
+                        report_assistant_event(
+                            AssistantEvent {
+                                conversation_id: None,
+                                kind: AssistantKind::InlineTerminal,
+                                message_id,
+                                phase: AssistantPhase::Response,
+                                model: model_telemetry_id,
+                                model_provider: model_provider_id.to_string(),
+                                response_latency,
+                                error_message,
+                                language_name: None,
+                            },
+                            telemetry,
+                            http_client,
+                            model_api_key,
+                            &executor,
+                        );
+
+                        result?;
                         anyhow::Ok(())
-                    };
-
-                    let result = task.await;
-
-                    let error_message = result.as_ref().err().map(|error| error.to_string());
-                    report_assistant_event(
-                        AssistantEvent {
-                            conversation_id: None,
-                            kind: AssistantKind::InlineTerminal,
-                            message_id,
-                            phase: AssistantPhase::Response,
-                            model: model_telemetry_id,
-                            model_provider: model_provider_id.to_string(),
-                            response_latency,
-                            error_message,
-                            language_name: None,
-                        },
-                        telemetry,
-                        http_client,
-                        model_api_key,
-                        &executor,
-                    );
-
-                    result?;
-                    anyhow::Ok(())
+                    }
                 });
 
-                this.update(&mut cx, |this, cx| {
+                this.update(&mut cx, |this, _| {
                     this.message_id = message_id;
-                });
+                })?;
 
                 while let Some(hunk) = hunks_rx.next().await {
                     this.update(&mut cx, |this, cx| {

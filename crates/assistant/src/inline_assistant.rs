@@ -21,9 +21,7 @@ use fs::Fs;
 use futures::{
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
-    join,
-    stream::{self, BoxStream},
-    SinkExt, Stream, StreamExt,
+    join, SinkExt, Stream, StreamExt,
 };
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle,
@@ -32,9 +30,8 @@ use gpui::{
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    logging::report_assistant_event, LanguageModel, LanguageModelCompletionEvent,
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
-    LanguageModelTextStream, Role,
+    logging::report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -2650,14 +2647,14 @@ impl CodegenAlternative {
         let provider_id = model.provider_id();
         let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
             if user_prompt.trim().to_lowercase() == "delete" {
-                async { Ok(stream::empty().boxed()) }.boxed_local()
+                async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
                 let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
                 self.request = Some(request.clone());
 
                 let stream = cx
                     .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
-                async move { Ok(stream.await?.boxed()) }.boxed_local()
+                async move { Ok(stream.await?) }.boxed_local()
             };
         self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
         Ok(())
@@ -2779,6 +2776,7 @@ impl CodegenAlternative {
                 let generate = async {
                     let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
                     let executor = cx.background_executor().clone();
+                    let message_id = message_id.clone();
                     let line_based_stream_diff: Task<anyhow::Result<()>> =
                         cx.background_executor().spawn(async move {
                             let mut response_latency = None;
@@ -3512,15 +3510,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
+        let chunks_tx = simulate_response_stream(codegen, cx);
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -3584,15 +3574,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
+        let chunks_tx = simulate_response_stream(codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -3659,15 +3641,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
+        let chunks_tx = simulate_response_stream(codegen, cx);
 
         cx.background_executor.run_until_parked();
 
@@ -3733,16 +3707,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
-
+        let chunks_tx = simulate_response_stream(codegen, cx);
         let new_text = concat!(
             "func main() {\n",
             "\tx := 0\n",
@@ -3797,16 +3762,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
-
+        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
         chunks_tx
             .unbounded_send("let mut x = 0;\nx += 1;".to_string())
             .unwrap();
@@ -3878,6 +3834,26 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    fn simulate_response_stream(
+        codegen: Model<CodegenAlternative>,
+        cx: &mut TestAppContext,
+    ) -> mpsc::UnboundedSender<String> {
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        codegen.update(cx, |codegen, cx| {
+            codegen.handle_stream(
+                String::new(),
+                String::new(),
+                None,
+                future::ready(Ok(LanguageModelTextStream {
+                    message_id: None,
+                    stream: chunks_rx.map(Ok).boxed(),
+                })),
+                cx,
+            );
+        });
+        chunks_tx
     }
 
     fn rust_lang() -> Language {
