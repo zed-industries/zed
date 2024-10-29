@@ -34,12 +34,17 @@ pub fn is_invisible(c: char) -> bool {
     if c <= '\u{1f}' {
         c != '\t' && c != '\n' && c != '\r'
     } else if c >= '\u{7f}' {
-        c <= '\u{9f}' || c.is_whitespace() || contains(c, &FORMAT) || contains(c, &OTHER)
+        c <= '\u{9f}'
+            || (c.is_whitespace() && c != IDEOGRAPHIC_SPACE)
+            || contains(c, &FORMAT)
+            || contains(c, &OTHER)
     } else {
         false
     }
 }
-
+// ASCII control characters have fancy unicode glyphs, everything else
+// is replaced by a space - unless it is used in combining characters in
+// which case we need to leave it in the string.
 pub(crate) fn replacement(c: char) -> Option<&'static str> {
     if c <= '\x1f' {
         Some(C0_SYMBOLS[c as usize])
@@ -48,9 +53,13 @@ pub(crate) fn replacement(c: char) -> Option<&'static str> {
     } else if contains(c, &PRESERVE) {
         None
     } else {
-        Some(" ")
+        Some("\u{2007}") // fixed width space
     }
 }
+// IDEOGRAPHIC SPACE is common alongside Chinese and other wide character sets.
+// We don't highlight this for now (as it already shows up wide in the editor),
+// but could if we tracked state in the classifier.
+const IDEOGRAPHIC_SPACE: char = '\u{3000}';
 
 const C0_SYMBOLS: &'static [&'static str] = &[
     "␀", "␁", "␂", "␃", "␄", "␅", "␆", "␇", "␈", "␉", "␊", "␋", "␌", "␍", "␎", "␏", "␐", "␑", "␒",

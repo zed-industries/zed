@@ -66,7 +66,7 @@ use std::{
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
 use text::LineIndent;
-use ui::{px, WindowContext};
+use ui::{div, px, IntoElement, ParentElement, Styled, WindowContext};
 use wrap_map::{WrapMap, WrapSnapshot};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -495,27 +495,49 @@ impl<'a> HighlightedChunk<'a> {
                 chars.next();
                 let (prefix, suffix) = text.split_at(ch.len_utf8());
                 text = suffix;
-                let invisible_highlight = HighlightStyle {
-                    background_color: Some(editor_style.status.hint_background),
-                    underline: Some(UnderlineStyle {
-                        color: Some(editor_style.status.hint),
-                        thickness: px(1.),
-                        wavy: false,
-                    }),
-                    ..Default::default()
-                };
-                let invisible_style = if let Some(mut style) = style {
-                    style.highlight(invisible_highlight);
-                    style
+                if let Some(replacement) = replacement(ch) {
+                    let background = editor_style.status.hint_background;
+                    let underline = editor_style.status.hint;
+                    return Some(HighlightedChunk {
+                        text: prefix,
+                        style: None,
+                        is_tab: false,
+                        renderer: Some(ChunkRenderer {
+                            render: Arc::new(move |_| {
+                                div()
+                                    .child(replacement)
+                                    .bg(background)
+                                    .text_decoration_1()
+                                    .text_decoration_color(underline)
+                                    .into_any_element()
+                            }),
+                            constrain_width: false,
+                        }),
+                    });
                 } else {
-                    invisible_highlight
-                };
-                return Some(HighlightedChunk {
-                    text: replacement(ch).unwrap_or(prefix),
-                    style: Some(invisible_style),
-                    is_tab: false,
-                    renderer: renderer.clone(),
-                });
+                    let invisible_highlight = HighlightStyle {
+                        background_color: Some(editor_style.status.hint_background),
+                        underline: Some(UnderlineStyle {
+                            color: Some(editor_style.status.hint),
+                            thickness: px(1.),
+                            wavy: false,
+                        }),
+                        ..Default::default()
+                    };
+                    let invisible_style = if let Some(mut style) = style {
+                        style.highlight(invisible_highlight);
+                        style
+                    } else {
+                        invisible_highlight
+                    };
+
+                    return Some(HighlightedChunk {
+                        text: prefix,
+                        style: Some(invisible_style),
+                        is_tab: false,
+                        renderer: renderer.clone(),
+                    });
+                }
             }
 
             if !text.is_empty() {

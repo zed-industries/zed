@@ -63,7 +63,6 @@ use std::{
     ops::{Deref, Range},
     rc::Rc,
     sync::Arc,
-    time::Instant,
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, Appearance, PlayerColor};
@@ -2014,9 +2013,8 @@ impl EditorElement {
                 })
                 .collect()
         } else {
-            let instant = Instant::now();
             let chunks = snapshot.highlighted_chunks(rows.clone(), true, style);
-            let ret = LineWithInvisibles::from_chunks(
+            LineWithInvisibles::from_chunks(
                 chunks,
                 &style.text,
                 MAX_LINE_LEN,
@@ -2025,9 +2023,7 @@ impl EditorElement {
                 snapshot.mode,
                 editor_width,
                 cx,
-            );
-            eprint!("{:?}\n", instant.elapsed());
-            ret
+            )
         }
     }
 
