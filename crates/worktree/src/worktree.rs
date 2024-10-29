@@ -19,6 +19,7 @@ use futures::{
     FutureExt as _, Stream, StreamExt,
 };
 use fuzzy::CharBag;
+use git::GitHostingProviderRegistry;
 use git::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     status::GitStatus,
@@ -36,7 +37,10 @@ use postage::{
     prelude::{Sink as _, Stream as _},
     watch,
 };
-use rpc::{proto, AnyProtoClient};
+use rpc::{
+    proto::{self, split_worktree_update},
+    AnyProtoClient,
+};
 pub use settings::WorktreeId;
 use settings::{Settings, SettingsLocation, SettingsStore};
 use smallvec::{smallvec, SmallVec};
@@ -296,6 +300,7 @@ struct BackgroundScannerState {
     removed_entries: HashMap<u64, Entry>,
     changed_paths: Vec<Arc<Path>>,
     prev_snapshot: Snapshot,
+    git_hosting_provider_registry: Option<Arc<GitHostingProviderRegistry>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1001,6 +1006,7 @@ impl LocalWorktree {
         let share_private_files = self.share_private_files;
         let next_entry_id = self.next_entry_id.clone();
         let fs = self.fs.clone();
+        let git_hosting_provider_registry = GitHostingProviderRegistry::try_global(cx);
         let settings = self.settings.clone();
         let (scan_states_tx, mut scan_states_rx) = mpsc::unbounded();
         let background_scanner = cx.background_executor().spawn({
@@ -1036,6 +1042,7 @@ impl LocalWorktree {
                         paths_to_scan: Default::default(),
                         removed_entries: Default::default(),
                         changed_paths: Default::default(),
+                        git_hosting_provider_registry,
                     }),
                     phase: BackgroundScannerPhase::InitialScan,
                     share_private_files,
@@ -1721,11 +1728,6 @@ impl LocalWorktree {
         F: 'static + Send + Fn(proto::UpdateWorktree) -> Fut,
         Fut: Send + Future<Output = bool>,
     {
-        #[cfg(any(test, feature = "test-support"))]
-        const MAX_CHUNK_SIZE: usize = 2;
-        #[cfg(not(any(test, feature = "test-support")))]
-        const MAX_CHUNK_SIZE: usize = 256;
-
         if let Some(observer) = self.update_observer.as_mut() {
             *observer.resume_updates.borrow_mut() = ();
             return;
@@ -1751,7 +1753,7 @@ impl LocalWorktree {
                         snapshot.build_update(project_id, worktree_id, entry_changes, repo_changes);
                 }
 
-                for update in proto::split_worktree_update(update, MAX_CHUNK_SIZE) {
+                for update in proto::split_worktree_update(update) {
                     let _ = resume_updates_rx.try_recv();
                     loop {
                         let result = callback(update.clone());
@@ -1817,13 +1819,17 @@ impl RemoteWorktree {
         self.update_observer = Some(tx);
         cx.spawn(|this, mut cx| async move {
             let mut update = initial_update;
-            loop {
+            'outer: loop {
                 // SSH projects use a special project ID of 0, and we need to
                 // remap it to the correct one here.
                 update.project_id = project_id;
-                if !callback(update).await {
-                    break;
+
+                for chunk in split_worktree_update(update) {
+                    if !callback(chunk).await {
+                        break 'outer;
+                    }
                 }
+
                 if let Some(next_update) = rx.next().await {
                     update = next_update;
                 } else {
@@ -2383,6 +2389,12 @@ impl Snapshot {
             .map(|entry| entry.to_owned())
     }
 
+    pub fn git_entry(&self, work_directory_path: Arc<Path>) -> Option<RepositoryEntry> {
+        self.repository_entries
+            .get(&RepositoryWorkDirectory(work_directory_path))
+            .map(|entry| entry.to_owned())
+    }
+
     pub fn git_entries(&self) -> impl Iterator<Item = &RepositoryEntry> {
         self.repository_entries.values()
     }
@@ -2939,6 +2951,13 @@ impl BackgroundScannerState {
         let repository = fs.open_repo(&abs_path)?;
         log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
         let work_directory = RepositoryWorkDirectory(work_dir_path.clone());
+
+        if let Some(git_hosting_provider_registry) = self.git_hosting_provider_registry.clone() {
+            git_hosting_providers::register_additional_providers(
+                git_hosting_provider_registry,
+                repository.clone(),
+            );
+        }
 
         self.snapshot.repository_entries.insert(
             work_directory.clone(),

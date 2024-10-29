@@ -14,7 +14,7 @@ use gpui::{AppContext, Model};
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
 use release_channel::{AppVersion, ReleaseChannel};
-use remote::ssh_session::ServerBinary;
+use remote::ssh_session::{ServerBinary, ServerVersion};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -26,15 +26,9 @@ use ui::{
 };
 use workspace::{AppState, ModalView, Workspace};
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-pub struct RemoteServerSettings {
-    pub download_on_host: Option<bool>,
-}
-
 #[derive(Deserialize)]
 pub struct SshSettings {
     pub ssh_connections: Option<Vec<SshConnection>>,
-    pub remote_server: Option<RemoteServerSettings>,
 }
 
 impl SshSettings {
@@ -42,39 +36,31 @@ impl SshSettings {
         self.ssh_connections.clone().into_iter().flatten()
     }
 
-    pub fn args_for(
+    pub fn connection_options_for(
         &self,
-        host: &str,
+        host: String,
         port: Option<u16>,
-        user: &Option<String>,
-    ) -> Option<Vec<String>> {
-        self.ssh_connections()
-            .filter_map(|conn| {
-                if conn.host == host && &conn.username == user && conn.port == port {
-                    Some(conn.args)
-                } else {
-                    None
-                }
-            })
-            .next()
-    }
-
-    pub fn nickname_for(
-        &self,
-        host: &str,
-        port: Option<u16>,
-        user: &Option<String>,
-    ) -> Option<SharedString> {
-        self.ssh_connections()
-            .filter_map(|conn| {
-                if conn.host == host && &conn.username == user && conn.port == port {
-                    Some(conn.nickname)
-                } else {
-                    None
-                }
-            })
-            .next()
-            .flatten()
+        username: Option<String>,
+    ) -> SshConnectionOptions {
+        for conn in self.ssh_connections() {
+            if conn.host == host && conn.username == username && conn.port == port {
+                return SshConnectionOptions {
+                    nickname: conn.nickname,
+                    upload_binary_over_ssh: conn.upload_binary_over_ssh.unwrap_or_default(),
+                    args: Some(conn.args),
+                    host,
+                    port,
+                    username,
+                    password: None,
+                };
+            }
+        }
+        SshConnectionOptions {
+            host,
+            port,
+            username,
+            ..Default::default()
+        }
     }
 }
 
@@ -85,13 +71,20 @@ pub struct SshConnection {
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub port: Option<u16>,
-    pub projects: Vec<SshProject>,
-    /// Name to use for this server in UI.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub nickname: Option<SharedString>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     #[serde(default)]
     pub args: Vec<String>,
+    #[serde(default)]
+    pub projects: Vec<SshProject>,
+    /// Name to use for this server in UI.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+    // By default Zed will download the binary to the host directly.
+    // If this is set to true, Zed will download the binary to your local machine,
+    // and then upload it over the SSH connection. Useful if your SSH server has
+    // limited outbound internet access.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upload_binary_over_ssh: Option<bool>,
 }
 
 impl From<SshConnection> for SshConnectionOptions {
@@ -102,6 +95,8 @@ impl From<SshConnection> for SshConnectionOptions {
             port: val.port,
             password: None,
             args: Some(val.args),
+            nickname: val.nickname,
+            upload_binary_over_ssh: val.upload_binary_over_ssh.unwrap_or_default(),
         }
     }
 }
@@ -114,7 +109,6 @@ pub struct SshProject {
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct RemoteSettingsContent {
     pub ssh_connections: Option<Vec<SshConnection>>,
-    pub remote_server: Option<RemoteServerSettings>,
 }
 
 impl Settings for SshSettings {
@@ -153,10 +147,10 @@ pub struct SshConnectionModal {
 impl SshPrompt {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
-        nickname: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let connection_string = connection_options.connection_string().into();
+        let nickname = connection_options.nickname.clone().map(|s| s.into());
 
         Self {
             connection_string,
@@ -276,11 +270,10 @@ impl SshConnectionModal {
     pub(crate) fn new(
         connection_options: &SshConnectionOptions,
         paths: Vec<PathBuf>,
-        nickname: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
-            prompt: cx.new_view(|cx| SshPrompt::new(connection_options, nickname, cx)),
+            prompt: cx.new_view(|cx| SshPrompt::new(connection_options, cx)),
             finished: false,
             paths,
         }
@@ -451,13 +444,17 @@ impl remote::SshClientDelegate for SshClientDelegate {
     fn get_server_binary(
         &self,
         platform: SshPlatform,
+        upload_binary_over_ssh: bool,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
+    ) -> oneshot::Receiver<Result<(ServerBinary, ServerVersion)>> {
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
         cx.spawn(|mut cx| async move {
-            tx.send(this.get_server_binary_impl(platform, &mut cx).await)
-                .ok();
+            tx.send(
+                this.get_server_binary_impl(platform, upload_binary_over_ssh, &mut cx)
+                    .await,
+            )
+            .ok();
         })
         .detach();
         rx
@@ -492,19 +489,14 @@ impl SshClientDelegate {
     async fn get_server_binary_impl(
         &self,
         platform: SshPlatform,
+        upload_binary_via_ssh: bool,
         cx: &mut AsyncAppContext,
-    ) -> Result<(ServerBinary, SemanticVersion)> {
-        let (version, release_channel, download_binary_on_host) = cx.update(|cx| {
+    ) -> Result<(ServerBinary, ServerVersion)> {
+        let (version, release_channel) = cx.update(|cx| {
             let version = AppVersion::global(cx);
             let channel = ReleaseChannel::global(cx);
 
-            let ssh_settings = SshSettings::get_global(cx);
-            let download_binary_on_host = ssh_settings
-                .remote_server
-                .as_ref()
-                .and_then(|server| server.download_on_host)
-                .unwrap_or(false);
-            (version, channel, download_binary_on_host)
+            (version, channel)
         })?;
 
         // In dev mode, build the remote server binary from source
@@ -513,21 +505,38 @@ impl SshClientDelegate {
             let result = self.build_local(cx, platform, version).await?;
             // Fall through to a remote binary if we're not able to compile a local binary
             if let Some((path, version)) = result {
-                return Ok((ServerBinary::LocalBinary(path), version));
+                return Ok((
+                    ServerBinary::LocalBinary(path),
+                    ServerVersion::Semantic(version),
+                ));
             }
         }
 
-        if download_binary_on_host {
-            let (request_url, request_body) = AutoUpdater::get_latest_remote_server_release_url(
+        // For nightly channel, always get latest
+        let current_version = if release_channel == ReleaseChannel::Nightly {
+            None
+        } else {
+            Some(version)
+        };
+
+        self.update_status(
+            Some(&format!("Checking remote server release {}", version)),
+            cx,
+        );
+
+        if upload_binary_via_ssh {
+            let binary_path = AutoUpdater::download_remote_server_release(
                 platform.os,
                 platform.arch,
                 release_channel,
+                current_version,
                 cx,
             )
             .await
             .map_err(|e| {
                 anyhow!(
-                    "failed to get remote server binary download url (os: {}, arch: {}): {}",
+                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
+                    version,
                     platform.os,
                     platform.arch,
                     e
@@ -535,31 +544,40 @@ impl SshClientDelegate {
             })?;
 
             Ok((
+                ServerBinary::LocalBinary(binary_path),
+                ServerVersion::Semantic(version),
+            ))
+        } else {
+            let (release, request_body) = AutoUpdater::get_remote_server_release_url(
+                    platform.os,
+                    platform.arch,
+                    release_channel,
+                    current_version,
+                    cx,
+                )
+                .await
+                .map_err(|e| {
+                    anyhow!(
+                        "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
+                        version,
+                        platform.os,
+                        platform.arch,
+                        e
+                    )
+                })?;
+
+            let version = release
+                .version
+                .parse::<SemanticVersion>()
+                .map(ServerVersion::Semantic)
+                .unwrap_or_else(|_| ServerVersion::Commit(release.version));
+            Ok((
                 ServerBinary::ReleaseUrl {
-                    url: request_url,
+                    url: release.url,
                     body: request_body,
                 },
                 version,
             ))
-        } else {
-            self.update_status(Some("checking for latest version of remote server"), cx);
-            let binary_path = AutoUpdater::get_latest_remote_server_release(
-                platform.os,
-                platform.arch,
-                release_channel,
-                cx,
-            )
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "failed to download remote server binary (os: {}, arch: {}): {}",
-                    platform.os,
-                    platform.arch,
-                    e
-                )
-            })?;
-
-            Ok((ServerBinary::LocalBinary(binary_path), version))
         }
     }
 
@@ -579,7 +597,7 @@ impl SshClientDelegate {
                 .output()
                 .await?;
             if !output.status.success() {
-                Err(anyhow!("failed to run command: {:?}", command))?;
+                Err(anyhow!("Failed to run command: {:?}", command))?;
             }
             Ok(())
         }
@@ -624,7 +642,7 @@ impl SshClientDelegate {
 
             self.update_status(
                 Some(&format!(
-                    "Building remote server binary from source for {}",
+                    "Building remote server binary from source for {} with Docker",
                     &triple
                 )),
                 cx,
@@ -671,6 +689,10 @@ impl SshClientDelegate {
     }
 }
 
+pub fn is_connecting_over_ssh(workspace: &Workspace, cx: &AppContext) -> bool {
+    workspace.active_modal::<SshConnectionModal>(cx).is_some()
+}
+
 pub fn connect_over_ssh(
     unique_identifier: String,
     connection_options: SshConnectionOptions,
@@ -700,7 +722,6 @@ pub async fn open_ssh_project(
     paths: Vec<PathBuf>,
     app_state: Arc<AppState>,
     open_options: workspace::OpenOptions,
-    nickname: Option<SharedString>,
     cx: &mut AsyncAppContext,
 ) -> Result<()> {
     let window = if let Some(window) = open_options.replace_window {
@@ -725,12 +746,11 @@ pub async fn open_ssh_project(
         let (cancel_tx, cancel_rx) = oneshot::channel();
         let delegate = window.update(cx, {
             let connection_options = connection_options.clone();
-            let nickname = nickname.clone();
             let paths = paths.clone();
             move |workspace, cx| {
                 cx.activate_window();
                 workspace.toggle_modal(cx, |cx| {
-                    SshConnectionModal::new(&connection_options, paths, nickname.clone(), cx)
+                    SshConnectionModal::new(&connection_options, paths, cx)
                 });
 
                 let ui = workspace

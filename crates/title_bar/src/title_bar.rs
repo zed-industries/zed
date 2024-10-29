@@ -18,10 +18,8 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::{OpenRemote, RecentProjects, SshSettings};
-use remote::SshConnectionOptions;
-use rpc::proto::{self, DevServerStatus};
-use settings::Settings;
+use recent_projects::{OpenRemote, RecentProjects};
+use rpc::proto;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -29,7 +27,7 @@ use ui::{
     h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
-use util::{maybe, ResultExt};
+use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -268,15 +266,11 @@ impl TitleBar {
         let options = self.project.read(cx).ssh_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
-        let nickname = maybe!({
-            SshSettings::get_global(cx)
-                .ssh_connections
-                .as_ref()?
-                .into_iter()
-                .find(|connection| SshConnectionOptions::from((*connection).clone()) == options)
-                .and_then(|connection| connection.nickname.clone())
-        })
-        .unwrap_or_else(|| host.clone());
+        let nickname = options
+            .nickname
+            .clone()
+            .map(|nick| nick.into())
+            .unwrap_or_else(|| host.clone());
 
         let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
             remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
@@ -334,39 +328,6 @@ impl TitleBar {
     }
 
     pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        if let Some(dev_server) =
-            self.project
-                .read(cx)
-                .dev_server_project_id()
-                .and_then(|dev_server_project_id| {
-                    dev_server_projects::Store::global(cx)
-                        .read(cx)
-                        .dev_server_for_project(dev_server_project_id)
-                })
-        {
-            return Some(
-                ButtonLike::new("dev_server_trigger")
-                    .child(Indicator::dot().color(
-                        if dev_server.status == DevServerStatus::Online {
-                            Color::Created
-                        } else {
-                            Color::Disabled
-                        },
-                    ))
-                    .child(
-                        Label::new(dev_server.name.clone())
-                            .size(LabelSize::Small)
-                            .line_height_style(LineHeightStyle::UiLabel),
-                    )
-                    .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
-                    .on_click(cx.listener(|this, _, cx| {
-                        if let Some(workspace) = this.workspace.upgrade() {
-                            recent_projects::RemoteServerProjects::open(workspace, cx)
-                        }
-                    }))
-                    .into_any_element(),
-            );
-        }
         if self.project.read(cx).is_via_ssh() {
             return self.render_ssh_project_host(cx);
         }
@@ -486,7 +447,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, cx| {
                     let _ = workspace.update(cx, |this, cx| {
-                        BranchList::open(this, &Default::default(), cx)
+                        BranchList::open(this, &Default::default(), cx);
                     });
                 }),
         )

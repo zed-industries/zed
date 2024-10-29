@@ -369,6 +369,17 @@
       /// 5. Never show the scrollbar:
       ///    "never"
       "show": null
+    },
+    // Settings related to indent guides in the project panel.
+    "indent_guides": {
+      // When to show indent guides in the project panel.
+      // This setting can take two values:
+      //
+      // 1. Always show indent guides:
+      //    "always"
+      // 2. Never show indent guides:
+      //    "never"
+      "show": "always"
     }
   },
   "outline_panel": {
@@ -392,7 +403,18 @@
     "auto_reveal_entries": true,
     /// Whether to fold directories automatically
     /// when a directory has only one directory inside.
-    "auto_fold_dirs": true
+    "auto_fold_dirs": true,
+    // Settings related to indent guides in the outline panel.
+    "indent_guides": {
+      // When to show indent guides in the outline panel.
+      // This setting can take two values:
+      //
+      // 1. Always show indent guides:
+      //    "always"
+      // 2. Never show indent guides:
+      //    "never"
+      "show": "always"
+    }
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -775,6 +797,7 @@
   "tasks": {
     "variables": {}
   },
+  "toolchain": { "name": "default", "path": "default" },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.

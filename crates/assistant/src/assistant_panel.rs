@@ -13,10 +13,11 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
-    Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
-    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
+    InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate,
+    ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -26,8 +27,8 @@ use collections::{BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, Crease,
-        CreaseMetadata, CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
+        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, Crease, CreaseMetadata,
+        CustomBlockId, FoldId, RenderBlock, ToDisplayPoint,
     },
     scroll::{Autoscroll, AutoscrollStrategy},
     Anchor, Editor, EditorEvent, ProposedChangeLocation, ProposedChangesEditor, RowExt,
@@ -963,7 +964,7 @@ impl AssistantPanel {
 
     fn new_context(&mut self, cx: &mut ViewContext<Self>) -> Option<View<ContextEditor>> {
         let project = self.project.read(cx);
-        if project.is_via_collab() && project.dev_server_project_id().is_none() {
+        if project.is_via_collab() {
             let task = self
                 .context_store
                 .update(cx, |store, cx| store.create_remote_context(cx));
@@ -1588,23 +1589,11 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        if provider
-            .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
-        {
-            self.show_accept_terms = true;
-            cx.notify();
-            return;
-        }
+        self.send_to_model(RequestType::Chat, cx);
+    }
 
-        if self.focus_active_patch(cx) {
-            return;
-        }
-
-        self.last_error = None;
-        self.send_to_model(cx);
-        cx.notify();
+    fn edit(&mut self, _: &Edit, cx: &mut ViewContext<Self>) {
+        self.send_to_model(RequestType::SuggestEdits, cx);
     }
 
     fn focus_active_patch(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -1622,8 +1611,27 @@ impl ContextEditor {
         false
     }
 
-    fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
+    fn send_to_model(&mut self, request_type: RequestType, cx: &mut ViewContext<Self>) {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        if provider
+            .as_ref()
+            .map_or(false, |provider| provider.must_accept_terms(cx))
+        {
+            self.show_accept_terms = true;
+            cx.notify();
+            return;
+        }
+
+        if self.focus_active_patch(cx) {
+            return;
+        }
+
+        self.last_error = None;
+
+        if let Some(user_message) = self
+            .context
+            .update(cx, |context, cx| context.assist(request_type, cx))
+        {
             let new_selection = {
                 let cursor = user_message
                     .start
@@ -1640,6 +1648,8 @@ impl ContextEditor {
             // Avoid scrolling to the new cursor position so the assistant's output is stable.
             cx.defer(|this, _| this.scroll_position = None);
         }
+
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
@@ -2009,13 +2019,12 @@ impl ContextEditor {
                             })
                             .map(|(command, error_message)| BlockProperties {
                                 style: BlockStyle::Fixed,
-                                position: Anchor {
+                                height: 1,
+                                placement: BlockPlacement::Below(Anchor {
                                     buffer_id: Some(buffer_id),
                                     excerpt_id,
                                     text_anchor: command.source_range.start,
-                                },
-                                height: 1,
-                                disposition: BlockDisposition::Below,
+                                }),
                                 render: slash_command_error_block_renderer(error_message),
                                 priority: 0,
                             }),
@@ -2242,11 +2251,10 @@ impl ContextEditor {
                 } else {
                     let block_ids = editor.insert_blocks(
                         [BlockProperties {
-                            position: patch_start,
                             height: path_count as u32 + 1,
                             style: BlockStyle::Flex,
                             render: render_block,
-                            disposition: BlockDisposition::Below,
+                            placement: BlockPlacement::Below(patch_start),
                             priority: 0,
                         }],
                         None,
@@ -2731,12 +2739,13 @@ impl ContextEditor {
                 })
             };
             let create_block_properties = |message: &Message| BlockProperties {
-                position: buffer
-                    .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
-                    .unwrap(),
                 height: 2,
                 style: BlockStyle::Sticky,
-                disposition: BlockDisposition::Above,
+                placement: BlockPlacement::Above(
+                    buffer
+                        .anchor_in_excerpt(excerpt_id, message.anchor_range.start)
+                        .unwrap(),
+                ),
                 priority: usize::MAX,
                 render: render_block(MessageMetadata::from(message)),
             };
@@ -3372,7 +3381,7 @@ impl ContextEditor {
                     let anchor = buffer.anchor_in_excerpt(excerpt_id, anchor).unwrap();
                     let image = render_image.clone();
                     anchor.is_valid(&buffer).then(|| BlockProperties {
-                        position: anchor,
+                        placement: BlockPlacement::Above(anchor),
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
                         render: Box::new(move |cx| {
@@ -3393,8 +3402,6 @@ impl ContextEditor {
                                 )
                                 .into_any_element()
                         }),
-
-                        disposition: BlockDisposition::Above,
                         priority: 0,
                     })
                 })
@@ -3647,13 +3654,70 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Send"))
+            .child(Label::new(
+                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
+                    "Chat"
+                } else {
+                    "Send"
+                },
+            ))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, cx| {
                 focus_handle.dispatch_action(&Assist, cx);
+            })
+    }
+
+    fn render_edit_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx).clone();
+
+        let (style, tooltip) = match token_state(&self.context, cx) {
+            Some(TokenState::NoTokensLeft { .. }) => (
+                ButtonStyle::Tinted(TintColor::Negative),
+                Some(Tooltip::text("Token limit reached", cx)),
+            ),
+            Some(TokenState::HasMoreTokens {
+                over_warn_threshold,
+                ..
+            }) => {
+                let (style, tooltip) = if over_warn_threshold {
+                    (
+                        ButtonStyle::Tinted(TintColor::Warning),
+                        Some(Tooltip::text("Token limit is close to exhaustion", cx)),
+                    )
+                } else {
+                    (ButtonStyle::Filled, None)
+                };
+                (style, tooltip)
+            }
+            None => (ButtonStyle::Filled, None),
+        };
+
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+
+        let has_configuration_error = configuration_error(cx).is_some();
+        let needs_to_accept_terms = self.show_accept_terms
+            && provider
+                .as_ref()
+                .map_or(false, |provider| provider.must_accept_terms(cx));
+        let disabled = has_configuration_error || needs_to_accept_terms;
+
+        ButtonLike::new("edit_button")
+            .disabled(disabled)
+            .style(style)
+            .when_some(tooltip, |button, tooltip| {
+                button.tooltip(move |_| tooltip.clone())
+            })
+            .layer(ElevationIndex::ModalSurface)
+            .child(Label::new("Suggest Edits"))
+            .children(
+                KeyBinding::for_action_in(&Edit, &focus_handle, cx)
+                    .map(|binding| binding.into_any_element()),
+            )
+            .on_click(move |_event, cx| {
+                focus_handle.dispatch_action(&Edit, cx);
             })
     }
 
@@ -3913,6 +3977,7 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
+            .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .size_full()
@@ -3949,7 +4014,7 @@ impl Render for ContextEditor {
                         .bg(cx.theme().colors().editor_background)
                         .child(
                             h_flex()
-                                .gap_2()
+                                .gap_1()
                                 .child(render_inject_context_menu(cx.view().downgrade(), cx))
                                 .child(
                                     IconButton::new("quote-button", IconName::Quote)
@@ -3977,7 +4042,21 @@ impl Render for ContextEditor {
                             h_flex()
                                 .w_full()
                                 .justify_end()
-                                .child(div().child(self.render_send_button(cx))),
+                                .when(
+                                    AssistantSettings::get_global(cx).are_live_diffs_enabled(cx),
+                                    |buttons| {
+                                        buttons
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(self.render_edit_button(cx))
+                                            .child(
+                                                Label::new("or")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                    },
+                                )
+                                .child(self.render_send_button(cx)),
                         ),
                 ),
             )
@@ -4249,11 +4328,11 @@ fn render_inject_context_menu(
     slash_command_picker::SlashCommandSelector::new(
         commands.clone(),
         active_context_editor,
-        IconButton::new("trigger", IconName::SlashSquare)
+        Button::new("trigger", "Add Context")
+            .icon(IconName::Plus)
             .icon_size(IconSize::Small)
-            .tooltip(|cx| {
-                Tooltip::with_meta("Insert Context", None, "Type / to insert via keyboard", cx)
-            }),
+            .icon_position(IconPosition::Start)
+            .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
     )
 }
 
@@ -4710,7 +4789,7 @@ impl Render for ConfigurationView {
 
         let mut element = v_flex()
             .id("assistant-configuration-view")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .bg(cx.theme().colors().editor_background)
             .size_full()
             .overflow_y_scroll()

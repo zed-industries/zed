@@ -501,8 +501,6 @@ pub struct Chunk<'a> {
     pub is_unnecessary: bool,
     /// Whether this chunk of text was originally a tab character.
     pub is_tab: bool,
-    /// Whether this chunk of text is an invisible character.
-    pub is_invisible: bool,
     /// An optional recipe for how the chunk should be presented.
     pub renderer: Option<ChunkRenderer>,
 }
@@ -1969,18 +1967,27 @@ impl Buffer {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
+                    let range_len = range.end - range.start;
+                    delta += new_text_length as isize - range_len as isize;
 
+                    // Decide what range of the insertion to auto-indent, and whether
+                    // the first line of the insertion should be considered a newly-inserted line
+                    // or an edit to an existing line.
                     let mut range_of_insertion_to_indent = 0..new_text_length;
-                    let mut first_line_is_new = false;
-                    let mut original_indent_column = None;
+                    let mut first_line_is_new = true;
 
-                    // When inserting an entire line at the beginning of an existing line,
-                    // treat the insertion as new.
-                    if new_text.contains('\n')
-                        && old_start.column <= before_edit.indent_size_for_line(old_start.row).len
+                    let old_line_start = before_edit.indent_size_for_line(old_start.row).len;
+                    let old_line_end = before_edit.line_len(old_start.row);
+
+                    if old_start.column > old_line_start {
+                        first_line_is_new = false;
+                    }
+
+                    if !new_text.contains('\n')
+                        && (old_start.column + (range_len as u32) < old_line_end
+                            || old_line_end == old_line_start)
                     {
-                        first_line_is_new = true;
+                        first_line_is_new = false;
                     }
 
                     // When inserting text starting with a newline, avoid auto-indenting the
@@ -1990,7 +1997,7 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    // Avoid auto-indenting after the insertion.
+                    let mut original_indent_column = None;
                     if let AutoindentMode::Block {
                         original_indent_columns,
                     } = &mode
@@ -2002,6 +2009,8 @@ impl Buffer {
                                 )
                                 .len
                             }));
+
+                        // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
@@ -4037,7 +4046,7 @@ impl<'a> BufferChunks<'a> {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack
@@ -4213,6 +4222,7 @@ impl<'a> Iterator for BufferChunks<'a> {
             if self.range.start == self.chunks.offset() + chunk.len() {
                 self.chunks.next().unwrap();
             }
+
             Some(Chunk {
                 text: slice,
                 syntax_highlight_id: highlight_id,

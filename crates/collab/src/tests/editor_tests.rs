@@ -1978,6 +1978,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
         enabled: false,
         delay_ms: None,
         min_column: None,
+        show_commit_summary: false,
     });
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
