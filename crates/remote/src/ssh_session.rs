@@ -2251,7 +2251,7 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AsyncAppContext, SemanticVersion, Task};
+    use gpui::{AsyncAppContext, Task};
     use rpc::proto::Envelope;
 
     use super::{
