@@ -9,10 +9,6 @@ impl GitHostingProvider for Bitbucket {
         "Bitbucket".to_string()
     }
 
-    fn base_url(&self) -> Url {
-        Url::parse("https://bitbucket.org").unwrap()
-    }
-
     fn supports_avatars(&self) -> bool {
         false
     }
@@ -33,7 +29,11 @@ impl GitHostingProvider for Bitbucket {
                 .trim_start_matches(':')
                 .split_once('/')?;
 
-            return Some(ParsedGitRemote { owner, repo });
+            return Some(ParsedGitRemote {
+                base_url: Url::parse("https://bitbucket.org").unwrap(),
+                owner,
+                repo,
+            });
         }
 
         None
@@ -45,23 +45,30 @@ impl GitHostingProvider for Bitbucket {
         params: BuildCommitPermalinkParams,
     ) -> Url {
         let BuildCommitPermalinkParams { sha } = params;
-        let ParsedGitRemote { owner, repo } = remote;
+        let ParsedGitRemote {
+            base_url,
+            owner,
+            repo,
+        } = remote;
 
-        self.base_url()
+        base_url
             .join(&format!("{owner}/{repo}/commits/{sha}"))
             .unwrap()
     }
 
     fn build_permalink(&self, remote: ParsedGitRemote, params: BuildPermalinkParams) -> Url {
-        let ParsedGitRemote { owner, repo } = remote;
+        let ParsedGitRemote {
+            base_url,
+            owner,
+            repo,
+        } = remote;
         let BuildPermalinkParams {
             sha,
             path,
             selection,
         } = params;
 
-        let mut permalink = self
-            .base_url()
+        let mut permalink = base_url
             .join(&format!("{owner}/{repo}/src/{sha}/{path}"))
             .unwrap();
         permalink.set_fragment(
@@ -117,6 +124,7 @@ mod tests {
     #[test]
     fn test_build_bitbucket_permalink_from_ssh_url() {
         let remote = ParsedGitRemote {
+            base_url: Url::parse("https://bitbucket.org").unwrap(),
             owner: "thorstenzed",
             repo: "testingrepo",
         };
@@ -136,6 +144,7 @@ mod tests {
     #[test]
     fn test_build_bitbucket_permalink_from_ssh_url_single_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: Url::parse("https://bitbucket.org").unwrap(),
             owner: "thorstenzed",
             repo: "testingrepo",
         };
@@ -156,6 +165,7 @@ mod tests {
     #[test]
     fn test_build_bitbucket_permalink_from_ssh_url_multi_line_selection() {
         let remote = ParsedGitRemote {
+            base_url: Url::parse("https://bitbucket.org").unwrap(),
             owner: "thorstenzed",
             repo: "testingrepo",
         };

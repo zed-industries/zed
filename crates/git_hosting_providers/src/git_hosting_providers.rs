@@ -15,7 +15,7 @@ pub fn init(cx: &AppContext) {
     // GitHub comes first.
     provider_registry.register_hosting_provider(Arc::new(Github));
 
-    // Then GitLab.
+    // Then GitLab (includes self-hosted instances).
     provider_registry.register_hosting_provider(Arc::new(Gitlab));
 
     // Then the other providers, in the order they were added.
