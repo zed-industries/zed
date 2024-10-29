@@ -675,6 +675,7 @@ impl LocalLspStore {
     }
 }
 
+#[derive(Debug)]
 pub struct FormattableBuffer {
     handle: Model<Buffer>,
     abs_path: Option<PathBuf>,
@@ -5342,7 +5343,7 @@ impl LspStore {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
-            Ok::<_, anyhow::Error>(this.format(buffers, false, trigger, FormatTarget::Buffer, cx))
+            anyhow::Ok(this.format(buffers, false, trigger, FormatTarget::Buffer, cx))
         })??;
 
         let project_transaction = format.await?;

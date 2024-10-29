@@ -14,14 +14,14 @@ use std::{
 };
 use util::paths::PathMatcher;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Prettier {
     Real(RealPrettier),
     #[cfg(any(test, feature = "test-support"))]
     Test(TestPrettier),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RealPrettier {
     default: bool,
     prettier_dir: PathBuf,
@@ -29,7 +29,7 @@ pub struct RealPrettier {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TestPrettier {
     prettier_dir: PathBuf,
     default: bool,

@@ -43,7 +43,7 @@ async fn test_sharing_an_ssh_remote_project(
     let remote_fs = FakeFs::new(server_cx.executor());
     remote_fs
         .insert_tree(
-            "/w",
+            "/code",
             json!({
                 "project1": {
                     ".zed": {
@@ -378,7 +378,6 @@ async fn test_ssh_collaboration_formatting_with_prettier(
                 session: server_ssh,
                 fs: remote_fs.clone(),
                 http_client: remote_http_client,
-                // TODO kb is this right?
                 node_runtime: NodeRuntime::unavailable(),
                 languages,
             },
