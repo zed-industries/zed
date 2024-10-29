@@ -368,15 +368,7 @@ impl<'a> ChunkSlice<'a> {
 
         let mut offset = row_offset_range.start;
         if point.column > 0 {
-            let offset_within_row = nth_set_bit(line.chars_utf16, point.column as usize) + 1;
-            offset += offset_within_row;
-            if offset < 64 {
-                offset += cmp::min(
-                    (self.chars_utf16 >> offset).trailing_zeros() as usize,
-                    self.text.len() - offset,
-                );
-            }
-
+            offset += line.offset_utf16_to_offset(OffsetUtf16(point.column as usize));
             if !self.text.is_char_boundary(offset) {
                 offset -= 1;
                 while !self.text.is_char_boundary(offset) {
@@ -395,32 +387,25 @@ impl<'a> ChunkSlice<'a> {
     }
 
     #[inline(always)]
-    // todo!("use bitsets")
-    pub fn unclipped_point_utf16_to_point(&self, target: Unclipped<PointUtf16>) -> Point {
-        let mut point = Point::zero();
-        let mut point_utf16 = PointUtf16::zero();
-
-        for ch in self.text.chars() {
-            if point_utf16 == target.0 {
-                break;
-            }
-
-            if point_utf16 > target.0 {
-                // If the point is past the end of a line or inside of a code point,
-                // return the last valid point before the target.
-                return point;
-            }
-
-            if ch == '\n' {
-                point_utf16 += PointUtf16::new(1, 0);
-                point += Point::new(1, 0);
-            } else {
-                point_utf16 += PointUtf16::new(0, ch.len_utf16() as u32);
-                point += Point::new(0, ch.len_utf8() as u32);
-            }
+    pub fn unclipped_point_utf16_to_point(&self, point: Unclipped<PointUtf16>) -> Point {
+        let max_point = self.lines();
+        if point.0.row > max_point.row {
+            return max_point;
         }
 
-        point
+        let row_offset_range = self.offset_range_for_row(point.0.row);
+        let line = self.slice(row_offset_range.clone());
+        if point.0.column == 0 {
+            Point::new(point.0.row, 0)
+        } else if point.0.column >= line.len_utf16().0 as u32 {
+            Point::new(point.0.row, line.len() as u32)
+        } else {
+            let mut column = line.offset_utf16_to_offset(OffsetUtf16(point.0.column as usize));
+            while !line.text.is_char_boundary(column) {
+                column -= 1;
+            }
+            Point::new(point.0.row, column as u32)
+        }
     }
 
     #[inline(always)]
@@ -714,6 +699,12 @@ mod tests {
                 "mismatch at point_utf16 {:?}",
                 point_utf16
             );
+            assert_eq!(
+                chunk.unclipped_point_utf16_to_point(Unclipped(point_utf16)),
+                point,
+                "mismatch for unclipped_point_utf16_to_point at {:?}",
+                point_utf16
+            );
 
             assert_eq!(
                 chunk.clip_point(point, Bias::Left),
@@ -727,6 +718,7 @@ mod tests {
                 "incorrect right clip at {:?}",
                 point
             );
+
             for i in 1..c.len_utf8() {
                 let test_point = Point::new(point.row, point.column + i as u32);
                 assert_eq!(
@@ -739,6 +731,19 @@ mod tests {
                     chunk.clip_point(test_point, Bias::Right),
                     Point::new(point.row, point.column + c.len_utf8() as u32),
                     "incorrect right clip within multi-byte char at {:?}",
+                    test_point
+                );
+            }
+
+            for i in 1..c.len_utf16() {
+                let test_point = Unclipped(PointUtf16::new(
+                    point_utf16.row,
+                    point_utf16.column + i as u32,
+                ));
+                assert_eq!(
+                    chunk.unclipped_point_utf16_to_point(test_point),
+                    point,
+                    "incorrect unclipped_point_utf16_to_point within multi-byte char at {:?}",
                     test_point
                 );
             }
@@ -787,6 +792,12 @@ mod tests {
             chunk.point_utf16_to_offset(point_utf16, false),
             offset,
             "mismatch at final point_utf16 {:?}",
+            point_utf16
+        );
+        assert_eq!(
+            chunk.unclipped_point_utf16_to_point(Unclipped(point_utf16)),
+            point,
+            "mismatch for unclipped_point_utf16_to_point at final point {:?}",
             point_utf16
         );
         assert_eq!(
