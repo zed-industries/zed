@@ -5506,7 +5506,7 @@ impl Editor {
                     .buffer()
                     .offset_to_point(cursor.node().start_byte())
                     .row;
-                if self.tasks.get(&(buffer_id, symbol_start_row)).is_some() {
+                if self.tasks.contains_key(&(buffer_id, symbol_start_row)) {
                     return Some(symbol_start_row);
                 }
                 if !cursor.goto_parent() {
