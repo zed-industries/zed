@@ -14,7 +14,7 @@ use gpui::{AppContext, Model};
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
 use release_channel::{AppVersion, ReleaseChannel};
-use remote::ssh_session::ServerBinary;
+use remote::ssh_session::{ServerBinary, ServerVersion};
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -446,7 +446,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
         platform: SshPlatform,
         upload_binary_over_ssh: bool,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(ServerBinary, SemanticVersion)>> {
+    ) -> oneshot::Receiver<Result<(ServerBinary, ServerVersion)>> {
         let (tx, rx) = oneshot::channel();
         let this = self.clone();
         cx.spawn(|mut cx| async move {
@@ -491,7 +491,7 @@ impl SshClientDelegate {
         platform: SshPlatform,
         upload_binary_via_ssh: bool,
         cx: &mut AsyncAppContext,
-    ) -> Result<(ServerBinary, SemanticVersion)> {
+    ) -> Result<(ServerBinary, ServerVersion)> {
         let (version, release_channel) = cx.update(|cx| {
             let version = AppVersion::global(cx);
             let channel = ReleaseChannel::global(cx);
@@ -505,7 +505,10 @@ impl SshClientDelegate {
             let result = self.build_local(cx, platform, version).await?;
             // Fall through to a remote binary if we're not able to compile a local binary
             if let Some((path, version)) = result {
-                return Ok((ServerBinary::LocalBinary(path), version));
+                return Ok((
+                    ServerBinary::LocalBinary(path),
+                    ServerVersion::Semantic(version),
+                ));
             }
         }
 
@@ -540,9 +543,12 @@ impl SshClientDelegate {
                 )
             })?;
 
-            Ok((ServerBinary::LocalBinary(binary_path), version))
+            Ok((
+                ServerBinary::LocalBinary(binary_path),
+                ServerVersion::Semantic(version),
+            ))
         } else {
-            let (request_url, request_body) = AutoUpdater::get_remote_server_release_url(
+            let (release, request_body) = AutoUpdater::get_remote_server_release_url(
                     platform.os,
                     platform.arch,
                     release_channel,
@@ -560,9 +566,14 @@ impl SshClientDelegate {
                     )
                 })?;
 
+            let version = release
+                .version
+                .parse::<SemanticVersion>()
+                .map(ServerVersion::Semantic)
+                .unwrap_or_else(|_| ServerVersion::Commit(release.version));
             Ok((
                 ServerBinary::ReleaseUrl {
-                    url: request_url,
+                    url: release.url,
                     body: request_body,
                 },
                 version,
