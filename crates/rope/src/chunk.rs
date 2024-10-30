@@ -513,37 +513,36 @@ fn nth_set_bit(v: u128, n: usize) -> usize {
 fn nth_set_bit_u64(v: u64, mut n: u64) -> u64 {
     let v = v.reverse_bits();
     let mut s: u64 = 64;
-    let mut t: u64;
 
     // Parallel bit count intermediates
     let a = v - ((v >> 1) & (u64::MAX / 3));
     let b = (a & (u64::MAX / 5)) + ((a >> 2) & (u64::MAX / 5));
     let c = (b + (b >> 4)) & (u64::MAX / 0x11);
     let d = (c + (c >> 8)) & (u64::MAX / 0x101);
-    t = (d >> 32) + (d >> 48);
 
     // Branchless select
-    s -= ((t.wrapping_sub(n)) & 256) >> 3;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
+    let t = (d >> 32) + (d >> 48);
+    s -= (t.wrapping_sub(n) & 256) >> 3;
+    n -= t & (t.wrapping_sub(n) >> 8);
 
-    t = (d >> (s - 16)) & 0xff;
-    s -= ((t.wrapping_sub(n)) & 256) >> 4;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
+    let t = (d >> (s - 16)) & 0xff;
+    s -= (t.wrapping_sub(n) & 256) >> 4;
+    n -= t & (t.wrapping_sub(n) >> 8);
 
-    t = (c >> (s - 8)) & 0xf;
-    s -= ((t.wrapping_sub(n)) & 256) >> 5;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
+    let t = (c >> (s - 8)) & 0xf;
+    s -= (t.wrapping_sub(n) & 256) >> 5;
+    n -= t & (t.wrapping_sub(n) >> 8);
 
-    t = (b >> (s - 4)) & 0x7;
-    s -= ((t.wrapping_sub(n)) & 256) >> 6;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
+    let t = (b >> (s - 4)) & 0x7;
+    s -= (t.wrapping_sub(n) & 256) >> 6;
+    n -= t & (t.wrapping_sub(n) >> 8);
 
-    t = (a >> (s - 2)) & 0x3;
-    s -= ((t.wrapping_sub(n)) & 256) >> 7;
-    n -= t & ((t.wrapping_sub(n)) >> 8);
+    let t = (a >> (s - 2)) & 0x3;
+    s -= (t.wrapping_sub(n) & 256) >> 7;
+    n -= t & (t.wrapping_sub(n) >> 8);
 
-    t = (v >> (s - 1)) & 0x1;
-    s -= ((t.wrapping_sub(n)) & 256) >> 8;
+    let t = (v >> (s - 1)) & 0x1;
+    s -= (t.wrapping_sub(n) & 256) >> 8;
 
     65 - s - 1
 }
@@ -587,7 +586,7 @@ mod tests {
         }
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 1000)]
     fn test_nth_set_bit_random(mut rng: StdRng) {
         let set_count = rng.gen_range(0..=128);
         let mut set_bits = (0..128).choose_multiple(&mut rng, set_count);
