@@ -571,10 +571,13 @@ impl InlineAssistant {
             return;
         };
 
-        let editor = editor.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+        if editor.read(cx).selections.count() == 1 {
+            let (selection, buffer) = editor.update(cx, |editor, cx| {
+                (
+                    editor.selections.newest::<usize>(cx),
+                    editor.buffer().read(cx).snapshot(cx),
+                )
+            });
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
                 let assist_range = assist.range.to_offset(&buffer);
@@ -599,10 +602,13 @@ impl InlineAssistant {
             return;
         };
 
-        let editor = editor.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+        if editor.read(cx).selections.count() == 1 {
+            let (selection, buffer) = editor.update(cx, |editor, cx| {
+                (
+                    editor.selections.newest::<usize>(cx),
+                    editor.buffer().read(cx).snapshot(cx),
+                )
+            });
             let mut closest_assist_fallback = None;
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];

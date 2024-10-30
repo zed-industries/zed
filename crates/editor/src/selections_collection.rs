@@ -96,7 +96,7 @@ impl SelectionsCollection {
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Option<Selection<D>> {
         self.pending_anchor()
             .as_ref()
@@ -194,7 +194,7 @@ impl SelectionsCollection {
     pub fn disjoint_in_range<'a, D>(
         &self,
         range: Range<Anchor>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
@@ -239,9 +239,10 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
-        resolve(self.newest_anchor(), &self.buffer(cx))
+        let buffer = self.buffer(cx);
+        self.newest_anchor().map(|p| p.summary::<D>(&buffer))
     }
 
     pub fn newest_display(&self, cx: &mut AppContext) -> Selection<DisplayPoint> {
@@ -262,9 +263,10 @@ impl SelectionsCollection {
 
     pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
-        resolve(self.oldest_anchor(), &self.buffer(cx))
+        let buffer = self.buffer(cx);
+        self.oldest_anchor().map(|p| p.summary::<D>(&buffer))
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
@@ -870,11 +872,4 @@ where
         reversed: s.reversed,
         goal: s.goal,
     })
-}
-
-fn resolve<D: TextDimension + Ord + Sub<D, Output = D>>(
-    selection: &Selection<Anchor>,
-    buffer: &MultiBufferSnapshot,
-) -> Selection<D> {
-    selection.map(|p| p.summary::<D>(buffer))
 }
