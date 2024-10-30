@@ -145,7 +145,6 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Model<PrettierStore>,
     current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
-    last_formatting_failure: Option<String>,
     _subscription: gpui::Subscription,
 }
 
@@ -704,6 +703,7 @@ impl LspStoreMode {
 
 pub struct LspStore {
     mode: LspStoreMode,
+    last_formatting_failure: Option<String>,
     downstream_client: Option<(AnyProtoClient, u64)>,
     nonce: u128,
     buffer_store: Model<BufferStore>,
@@ -905,7 +905,6 @@ impl LspStore {
                 language_server_watcher_registrations: Default::default(),
                 current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 buffers_being_formatted: Default::default(),
-                last_formatting_failure: None,
                 prettier_store,
                 environment,
                 http_client,
@@ -915,6 +914,7 @@ impl LspStore {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
             }),
+            last_formatting_failure: None,
             downstream_client: None,
             buffer_store,
             worktree_store,
@@ -975,6 +975,7 @@ impl LspStore {
                 upstream_project_id: project_id,
             }),
             downstream_client: None,
+            last_formatting_failure: None,
             buffer_store,
             worktree_store,
             languages: languages.clone(),
@@ -5228,9 +5229,9 @@ impl LspStore {
                 .map(language::proto::serialize_transaction),
         })
     }
+
     pub fn last_formatting_failure(&self) -> Option<&str> {
-        self.as_local()
-            .and_then(|local| local.last_formatting_failure.as_deref())
+        self.last_formatting_failure.as_deref()
     }
 
     pub fn environment_for_buffer(
@@ -5301,28 +5302,16 @@ impl LspStore {
                     cx.clone(),
                 )
                 .await;
-
                 lsp_store.update(&mut cx, |lsp_store, _| {
-                    // TODO kb propagate error to the ssh client
-                    let local = lsp_store.as_local_mut().unwrap();
-                    match &result {
-                        Ok(_) => local.last_formatting_failure = None,
-                        Err(error) => {
-                            let error_string = format!("{error:#}");
-                            log::error!("Formatting failed: {error_string}");
-                            local
-                                .last_formatting_failure
-                                .replace(error_string.lines().join(" "));
-                        }
-                    }
+                    lsp_store.update_last_formatting_failure(&result);
                 })?;
 
                 result
             })
         } else if let Some((client, project_id)) = self.upstream_client() {
             let buffer_store = self.buffer_store();
-            cx.spawn(move |_, mut cx| async move {
-                let response = client
+            cx.spawn(move |lsp_store, mut cx| async move {
+                let result = client
                     .request(proto::FormatBuffers {
                         project_id,
                         trigger: trigger as i32,
@@ -5333,13 +5322,21 @@ impl LspStore {
                             })
                             .collect::<Result<_>>()?,
                     })
-                    .await?
-                    .transaction
-                    .ok_or_else(|| anyhow!("missing transaction"))?;
+                    .await
+                    .and_then(|result| result.transaction.context("missing transaction"));
 
+                lsp_store.update(&mut cx, |lsp_store, _| {
+                    lsp_store.update_last_formatting_failure(&result);
+                })?;
+
+                let transaction_response = result?;
                 buffer_store
                     .update(&mut cx, |buffer_store, cx| {
-                        buffer_store.deserialize_project_transaction(response, push_to_history, cx)
+                        buffer_store.deserialize_project_transaction(
+                            transaction_response,
+                            push_to_history,
+                            cx,
+                        )
                     })?
                     .await
             })
@@ -7301,6 +7298,18 @@ impl LspStore {
             range: start..end,
             lsp_action,
         })
+    }
+
+    fn update_last_formatting_failure<T>(&mut self, formatting_result: &anyhow::Result<T>) {
+        match &formatting_result {
+            Ok(_) => self.last_formatting_failure = None,
+            Err(error) => {
+                let error_string = format!("{error:#}");
+                log::error!("Formatting failed: {error_string}");
+                self.last_formatting_failure
+                    .replace(error_string.lines().join(" "));
+            }
+        }
     }
 }
 
