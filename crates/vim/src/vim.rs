@@ -620,9 +620,11 @@ impl Vim {
         let Some(editor) = self.editor() else {
             return;
         };
+        let newest_selection_empty = editor.update(cx, |editor, cx| {
+            editor.selections.newest::<usize>(cx).is_empty()
+        });
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
-        let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
 
         if editor_mode == EditorMode::Full
                 && !newest_selection_empty
@@ -717,11 +719,12 @@ impl Vim {
                 globals.recorded_count = None;
 
                 let selections = self.editor().map(|editor| {
-                    let editor = editor.read(cx);
-                    (
-                        editor.selections.oldest::<Point>(cx),
-                        editor.selections.newest::<Point>(cx),
-                    )
+                    editor.update(cx, |editor, cx| {
+                        (
+                            editor.selections.oldest::<Point>(cx),
+                            editor.selections.newest::<Point>(cx),
+                        )
+                    })
                 });
 
                 if let Some((oldest, newest)) = selections {

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use editor::Editor;
-use gpui::{prelude::*, AppContext, Entity, View, WeakView, WindowContext};
+use gpui::{prelude::*, Entity, View, WeakView, WindowContext};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 
 use crate::repl_store::ReplStore;
@@ -103,7 +103,7 @@ pub enum SessionSupport {
     Unsupported,
 }
 
-pub fn session(editor: WeakView<Editor>, cx: &mut AppContext) -> SessionSupport {
+pub fn session(editor: WeakView<Editor>, cx: &mut WindowContext) -> SessionSupport {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
 
@@ -311,17 +311,21 @@ fn language_supported(language: &Arc<Language>) -> bool {
     }
 }
 
-fn get_language(editor: WeakView<Editor>, cx: &mut AppContext) -> Option<Arc<Language>> {
-    let editor = editor.upgrade()?;
-    let selection = editor.read(cx).selections.newest::<usize>(cx);
-    let buffer = editor.read(cx).buffer().read(cx).snapshot(cx);
-    buffer.language_at(selection.head()).cloned()
+fn get_language(editor: WeakView<Editor>, cx: &mut WindowContext) -> Option<Arc<Language>> {
+    editor
+        .update(cx, |editor, cx| {
+            let selection = editor.selections.newest::<usize>(cx);
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            buffer.language_at(selection.head()).cloned()
+        })
+        .ok()
+        .flatten()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::Context;
+    use gpui::{AppContext, Context};
     use indoc::indoc;
     use language::{Buffer, Language, LanguageConfig, LanguageRegistry};
 

@@ -281,7 +281,7 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &ViewContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;

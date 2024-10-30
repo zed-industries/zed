@@ -1677,8 +1677,10 @@ impl ContextEditor {
         });
     }
 
-    fn cursors(&self, cx: &AppContext) -> Vec<usize> {
-        let selections = self.editor.read(cx).selections.all::<usize>(cx);
+    fn cursors(&self, cx: &mut WindowContext) -> Vec<usize> {
+        let selections = self
+            .editor
+            .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
         selections
             .into_iter()
             .map(|selection| selection.head())
@@ -2385,7 +2387,9 @@ impl ContextEditor {
     }
 
     fn update_active_patch(&mut self, cx: &mut ViewContext<Self>) {
-        let newest_cursor = self.editor.read(cx).selections.newest::<Point>(cx).head();
+        let newest_cursor = self.editor.update(cx, |editor, cx| {
+            editor.selections.newest::<Point>(cx).head()
+        });
         let context = self.context.read(cx);
 
         let new_patch = context.patch_containing(newest_cursor, cx).cloned();
@@ -2792,39 +2796,40 @@ impl ContextEditor {
     ) -> Option<(String, bool)> {
         const CODE_FENCE_DELIMITER: &'static str = "```";
 
-        let context_editor = context_editor_view.read(cx).editor.read(cx);
+        let context_editor = context_editor_view.read(cx).editor.clone();
+        context_editor.update(cx, |context_editor, cx| {
+            if context_editor.selections.newest::<Point>(cx).is_empty() {
+                let snapshot = context_editor.buffer().read(cx).snapshot(cx);
+                let (_, _, snapshot) = snapshot.as_singleton()?;
 
-        if context_editor.selections.newest::<Point>(cx).is_empty() {
-            let snapshot = context_editor.buffer().read(cx).snapshot(cx);
-            let (_, _, snapshot) = snapshot.as_singleton()?;
+                let head = context_editor.selections.newest::<Point>(cx).head();
+                let offset = snapshot.point_to_offset(head);
 
-            let head = context_editor.selections.newest::<Point>(cx).head();
-            let offset = snapshot.point_to_offset(head);
+                let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
+                let mut text = snapshot
+                    .text_for_range(surrounding_code_block_range)
+                    .collect::<String>();
 
-            let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
-            let mut text = snapshot
-                .text_for_range(surrounding_code_block_range)
-                .collect::<String>();
+                // If there is no newline trailing the closing three-backticks, then
+                // tree-sitter-md extends the range of the content node to include
+                // the backticks.
+                if text.ends_with(CODE_FENCE_DELIMITER) {
+                    text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+                }
 
-            // If there is no newline trailing the closing three-backticks, then
-            // tree-sitter-md extends the range of the content node to include
-            // the backticks.
-            if text.ends_with(CODE_FENCE_DELIMITER) {
-                text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+                (!text.is_empty()).then_some((text, true))
+            } else {
+                let anchor = context_editor.selections.newest_anchor();
+                let text = context_editor
+                    .buffer()
+                    .read(cx)
+                    .read(cx)
+                    .text_for_range(anchor.range())
+                    .collect::<String>();
+
+                (!text.is_empty()).then_some((text, false))
             }
-
-            (!text.is_empty()).then_some((text, true))
-        } else {
-            let anchor = context_editor.selections.newest_anchor();
-            let text = context_editor
-                .buffer()
-                .read(cx)
-                .read(cx)
-                .text_for_range(anchor.range())
-                .collect::<String>();
-
-            (!text.is_empty()).then_some((text, false))
-        }
+        })
     }
 
     fn insert_selection(
