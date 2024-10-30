@@ -15174,13 +15174,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "zed_dart"
-version = "0.1.2"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
 name = "zed_deno"
 version = "0.0.2"
 dependencies = [
