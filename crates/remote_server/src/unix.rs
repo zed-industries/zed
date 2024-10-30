@@ -153,9 +153,9 @@ fn init_panic_hook() {
                 line: location.line(),
             }),
             app_version: if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
-                build_sha.to_string()
+                format!("remote-server ({})", build_sha.to_string())
             } else {
-                env!("ZED_PKG_VERSION").to_string()
+                format!("remote-server ({})", env!("ZED_PKG_VERSION").to_string())
             },
             release_channel: release_channel::RELEASE_CHANNEL.display_name().into(),
             os_name: telemetry::os_name(),
