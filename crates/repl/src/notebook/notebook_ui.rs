@@ -8,12 +8,13 @@ use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::FutureExt;
 use gpui::{
     actions, list, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    ListScrollEvent, ListState, Model, Task, View,
+    ListScrollEvent, ListState, Model, Point, Task, View,
 };
 use language::LanguageRegistry;
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
 use workspace::item::{ItemEvent, TabContentParams};
+use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
 
@@ -127,8 +128,8 @@ impl NotebookEditor {
             })
             .shared();
 
-        let mut cell_order = vec![];
-        let mut cell_map = HashMap::default();
+        let mut cell_order = vec![]; // Vec<CellId>
+        let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
 
         for (index, cell) in notebook.cells.iter().enumerate() {
             let cell_id = cell.id();
@@ -141,30 +142,24 @@ impl NotebookEditor {
 
         let view = cx.view().downgrade();
         let cell_count = cell_order.len();
-        let cell_order_for_list = cell_order.clone();
-        let cell_map_for_list = cell_map.clone();
 
+        let this = cx.view();
         let cell_list = ListState::new(
             cell_count,
             gpui::ListAlignment::Top,
-            // TODO: This is a totally random number,
-            // not sure what this should be
-            px(3000.),
+            px(1000.),
             move |ix, cx| {
-                let cell_order_for_list = cell_order_for_list.clone();
-                let cell_id = cell_order_for_list[ix].clone();
-                if let Some(view) = view.upgrade() {
-                    let cell_id = cell_id.clone();
-                    if let Some(cell) = cell_map_for_list.clone().get(&cell_id) {
-                        view.update(cx, |view, cx| {
-                            view.render_cell(ix, cell, cx).into_any_element()
+                view.upgrade()
+                    .and_then(|notebook_handle| {
+                        notebook_handle.update(cx, |notebook, cx| {
+                            notebook
+                                .cell_order
+                                .get(ix)
+                                .and_then(|cell_id| notebook.cell_map.get(cell_id))
+                                .map(|cell| notebook.render_cell(ix, cell, cx).into_any_element())
                         })
-                    } else {
-                        div().into_any()
-                    }
-                } else {
-                    div().into_any()
-                }
+                    })
+                    .unwrap_or_else(|| div().into_any())
             },
         );
 
@@ -547,7 +542,36 @@ impl project::Item for NotebookItem {
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
                     .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
 
+                // Read into a buffer (?)
                 let file_content = std::fs::read_to_string(abs_path.clone())?;
+                // todo: watch for changes to the file
+
+                //The model in my head:
+                // NotebookItem: <source> <- Useless JSON (watched from file system)
+                // <Buffer>,  (<Buffer>, Output), <Buffer>, (<Buffer>, Output), <Buffer>, <Buffer>
+                // ^Markdown  ^Python             ^Markdown  ^Python
+                //
+                // Logically, the python buffers are one file?
+
+                // pub struct CodeCell {
+                //     id: CellId,
+                //     metadata: CellMetadata,
+                //     execution_count: Option<i32>,
+                //     source: String,
+                //     editor: View<editor::Editor>,
+                //     outputs: Vec<Output>,
+                //     selected: bool,
+                //     cell_position: Option<CellPosition>,
+                //     language_task: Task<()>,
+                // }
+                //
+                //
+                // Which LSPs actually use the LSP NotebookDocumentSync Capability?
+                //
+                // * Does VS Code _actually_ use this?
+                // * Does Pyright?
+                // * Do we possibly need to create a large buffer
+
                 let notebook = nbformat::parse_notebook(&file_content);
 
                 let notebook = match notebook {
