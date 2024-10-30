@@ -9898,6 +9898,7 @@ dependencies = [
  "gpui",
  "log",
  "rand 0.8.5",
+ "rayon",
  "smallvec",
  "sum_tree",
  "unicode-segmentation",
