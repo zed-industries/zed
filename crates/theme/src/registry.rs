@@ -6,16 +6,11 @@ use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString};
+use gpui::{AppContext, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
-use refineable::Refineable;
 use util::ResultExt;
 
-use crate::{
-    refine_theme_family, try_parse_color, AccentColors, Appearance, AppearanceContent,
-    PlayerColors, StatusColors, SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent,
-    ThemeFamily, ThemeFamilyContent, ThemeStyles,
-};
+use crate::{refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent};
 
 /// The metadata for a theme.
 #[derive(Debug, Clone)]
