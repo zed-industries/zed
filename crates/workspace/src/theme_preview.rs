@@ -1,5 +1,5 @@
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
-use ui::{prelude::*, ElevationIndex};
+use ui::{prelude::*, utils::calculate_contrast_ratio, ElevationIndex};
 
 use crate::{Item, Workspace};
 
@@ -68,6 +68,13 @@ impl ThemePreview {
         layer: ElevationIndex,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
+        let bg = layer.bg(cx);
+
+        let label_with_contrast = |label: &str, fg: Hsla| {
+            let contrast = calculate_contrast_ratio(fg, bg);
+            format!("{} ({:.2})", label, contrast)
+        };
+
         v_flex()
             .gap_2()
             .child(Headline::new(layer.to_string()).size(HeadlineSize::Medium))
@@ -102,10 +109,26 @@ impl ThemePreview {
                                             .size(HeadlineSize::Small)
                                             .color(Color::Muted),
                                     )
-                                    .child(Label::new("Default Text").color(Color::Default))
-                                    .child(Label::new("Muted Text").color(Color::Muted))
                                     .child(
-                                        Label::new("Placeholder Text").color(Color::Placeholder),
+                                        Label::new(label_with_contrast(
+                                            "Default Text",
+                                            Color::Default.color(cx),
+                                        ))
+                                        .color(Color::Default),
+                                    )
+                                    .child(
+                                        Label::new(label_with_contrast(
+                                            "Muted Text",
+                                            Color::Muted.color(cx),
+                                        ))
+                                        .color(Color::Muted),
+                                    )
+                                    .child(
+                                        Label::new(label_with_contrast(
+                                            "Placeholder Text",
+                                            Color::Placeholder.color(cx),
+                                        ))
+                                        .color(Color::Placeholder),
                                     ),
                             ),
                     ),
