@@ -4266,12 +4266,10 @@ impl Render for OutlinePanel {
             .when_some(search_query, |outline_panel, search_state| {
                 outline_panel.child(
                     v_flex()
-                        .w_full()
-                        .flex_none()
-                        .mx_2()
                         .child(
                             Label::new(format!("Searching: '{}'", search_state.query))
-                                .color(Color::Muted),
+                                .color(Color::Muted)
+                                .mx_2(),
                         )
                         .child(horizontal_separator(cx)),
                 )
