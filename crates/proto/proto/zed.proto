@@ -289,7 +289,10 @@ message Envelope {
         ActiveToolchainResponse active_toolchain_response = 277;
 
         GetPathMetadata get_path_metadata = 278;
-        GetPathMetadataResponse get_path_metadata_response = 279; // current max
+        GetPathMetadataResponse get_path_metadata_response = 279;
+
+        GetPanicFiles get_panic_files = 280;
+        GetPanicFilesResponse get_panic_files_response = 281; // current max
     }
 
     reserved 87 to 88;
@@ -2489,5 +2492,11 @@ message UpdateGitBranch {
     uint64 project_id = 1;
     string branch_name = 2;
     ProjectPath repository = 3;
+}
 
+message GetPanicFiles {
+}
+
+message GetPanicFilesResponse {
+    repeated string file_contents = 2;
 }
