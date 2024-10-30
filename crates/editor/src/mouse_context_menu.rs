@@ -1,5 +1,4 @@
-use std::ops::Range;
-
+use crate::actions::FormatSelections;
 use crate::{
     actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
     DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
@@ -8,6 +7,8 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
+use std::ops::Range;
+use text::PointUtf16;
 use workspace::OpenInTerminal;
 
 #[derive(Debug)]
@@ -164,6 +165,12 @@ pub fn deploy_context_menu(
         } else {
             "Reveal in File Manager"
         };
+        let has_selections = editor
+            .selections
+            .all::<PointUtf16>(cx)
+            .into_iter()
+            .any(|s| !s.is_empty());
+
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
@@ -175,6 +182,9 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
+                .when(has_selections, |cx| {
+                    cx.action("Format Selections", Box::new(FormatSelections))
+                })
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {

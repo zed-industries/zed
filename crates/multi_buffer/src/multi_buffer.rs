@@ -94,6 +94,7 @@ pub enum Event {
         transaction_id: TransactionId,
     },
     Reloaded,
+    ReloadNeeded,
     DiffBaseChanged,
     DiffUpdated {
         buffer: Model<Buffer>,
@@ -189,6 +190,7 @@ pub struct MultiBufferSnapshot {
     show_headers: bool,
 }
 
+#[derive(Clone)]
 pub struct ExcerptInfo {
     pub id: ExcerptId,
     pub buffer: BufferSnapshot,
@@ -201,6 +203,7 @@ impl std::fmt::Debug for ExcerptInfo {
         f.debug_struct(type_name::<Self>())
             .field("id", &self.id)
             .field("buffer_id", &self.buffer_id)
+            .field("path", &self.buffer.file().map(|f| f.path()))
             .field("range", &self.range)
             .finish()
     }
@@ -515,7 +518,7 @@ impl MultiBuffer {
     }
 
     pub fn edit<I, S, T>(
-        &mut self,
+        &self,
         edits: I,
         mut autoindent_mode: Option<AutoindentMode>,
         cx: &mut ModelContext<Self>,
@@ -664,7 +667,7 @@ impl MultiBuffer {
         drop(snapshot);
         // Non-generic part of edit, hoisted out to avoid blowing up LLVM IR.
         fn tail(
-            this: &mut MultiBuffer,
+            this: &MultiBuffer,
             buffer_edits: HashMap<BufferId, Vec<BufferEdit>>,
             autoindent_mode: Option<AutoindentMode>,
             edited_excerpt_ids: Vec<ExcerptId>,
@@ -724,7 +727,7 @@ impl MultiBuffer {
                                     original_indent_columns: Default::default(),
                                 })
                             } else {
-                                None
+                                autoindent_mode.clone()
                             };
                         let insertion_autoindent_mode =
                             if let Some(AutoindentMode::Block { .. }) = autoindent_mode {
@@ -732,7 +735,7 @@ impl MultiBuffer {
                                     original_indent_columns,
                                 })
                             } else {
-                                None
+                                autoindent_mode.clone()
                             };
 
                         buffer.edit(deletions, deletion_autoindent_mode, cx);
@@ -928,7 +931,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &mut ModelContext<Self>)
+    pub fn push_transaction<'a, T>(&mut self, buffer_transactions: T, cx: &ModelContext<Self>)
     where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {
@@ -952,7 +955,7 @@ impl MultiBuffer {
     }
 
     pub fn set_active_selections(
-        &mut self,
+        &self,
         selections: &[Selection<Anchor>],
         line_mode: bool,
         cursor_shape: CursorShape,
@@ -1028,7 +1031,7 @@ impl MultiBuffer {
         }
     }
 
-    pub fn remove_active_selections(&mut self, cx: &mut ModelContext<Self>) {
+    pub fn remove_active_selections(&self, cx: &mut ModelContext<Self>) {
         for buffer in self.buffers.borrow().values() {
             buffer
                 .buffer
@@ -1180,7 +1183,7 @@ impl MultiBuffer {
     }
 
     pub fn push_multiple_excerpts_with_context_lines(
-        &mut self,
+        &self,
         buffers_with_ranges: Vec<(Model<Buffer>, Vec<Range<text::Anchor>>)>,
         context_line_count: u32,
         cx: &mut ModelContext<Self>,
@@ -1733,6 +1736,7 @@ impl MultiBuffer {
             language::BufferEvent::Saved => Event::Saved,
             language::BufferEvent::FileHandleChanged => Event::FileHandleChanged,
             language::BufferEvent::Reloaded => Event::Reloaded,
+            language::BufferEvent::ReloadNeeded => Event::ReloadNeeded,
             language::BufferEvent::DiffBaseChanged => Event::DiffBaseChanged,
             language::BufferEvent::DiffUpdated => Event::DiffUpdated { buffer },
             language::BufferEvent::LanguageChanged => {
@@ -1746,7 +1750,6 @@ impl MultiBuffer {
                 self.capability = buffer.read(cx).capability();
                 Event::CapabilityChanged
             }
-
             //
             language::BufferEvent::Operation { .. } => return,
         });
@@ -1776,7 +1779,7 @@ impl MultiBuffer {
         &self,
         point: T,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset, _)) = self.point_to_buffer_offset(point, cx) {
@@ -1784,7 +1787,7 @@ impl MultiBuffer {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
-        language_settings(language.as_ref(), file, cx)
+        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn for_each_buffer(&self, mut f: impl FnMut(&Model<Buffer>)) {
@@ -2859,6 +2862,30 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn indent_and_comment_for_line(&self, row: MultiBufferRow, cx: &AppContext) -> String {
+        let mut indent = self.indent_size_for_line(row).chars().collect::<String>();
+
+        if self.settings_at(0, cx).extend_comment_on_newline {
+            if let Some(language_scope) = self.language_scope_at(Point::new(row.0, 0)) {
+                let delimiters = language_scope.line_comment_prefixes();
+                for delimiter in delimiters {
+                    if *self
+                        .chars_at(Point::new(row.0, indent.len() as u32))
+                        .take(delimiter.chars().count())
+                        .collect::<String>()
+                        .as_str()
+                        == **delimiter
+                    {
+                        indent.push_str(&delimiter);
+                        break;
+                    }
+                }
+            }
+        }
+
+        indent
+    }
+
     pub fn prev_non_blank_row(&self, mut row: MultiBufferRow) -> Option<MultiBufferRow> {
         while row.0 > 0 {
             row.0 -= 1;
@@ -3578,14 +3605,14 @@ impl MultiBufferSnapshot {
         &'a self,
         point: T,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
+    ) -> Cow<'a, LanguageSettings> {
         let mut language = None;
         let mut file = None;
         if let Some((buffer, offset)) = self.point_to_buffer_offset(point) {
             language = buffer.language_at(offset);
             file = buffer.file();
         }
-        language_settings(language, file, cx)
+        language_settings(language.map(|l| l.name()), file, cx)
     }
 
     pub fn language_scope_at<T: ToOffset>(&self, point: T) -> Option<LanguageScope> {
@@ -4208,7 +4235,7 @@ impl History {
         &mut self,
         buffer_transactions: T,
         now: Instant,
-        cx: &mut ModelContext<MultiBuffer>,
+        cx: &ModelContext<MultiBuffer>,
     ) where
         T: IntoIterator<Item = (&'a Model<Buffer>, &'a language::Transaction)>,
     {

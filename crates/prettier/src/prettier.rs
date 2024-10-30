@@ -14,14 +14,14 @@ use std::{
 };
 use util::paths::PathMatcher;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Prettier {
     Real(RealPrettier),
     #[cfg(any(test, feature = "test-support"))]
     Test(TestPrettier),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RealPrettier {
     default: bool,
     prettier_dir: PathBuf,
@@ -29,7 +29,7 @@ pub struct RealPrettier {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TestPrettier {
     prettier_dir: PathBuf,
     default: bool,
@@ -205,7 +205,7 @@ impl Prettier {
                 let params = buffer
                     .update(cx, |buffer, cx| {
                         let buffer_language = buffer.language();
-                        let language_settings = language_settings(buffer_language, buffer.file(), cx);
+                        let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
                         let prettier_settings = &language_settings.prettier;
                         anyhow::ensure!(
                             prettier_settings.allowed,
@@ -329,11 +329,7 @@ impl Prettier {
                     })?
                     .context("prettier params calculation")?;
 
-                let response = local
-                    .server
-                    .request::<Format>(params)
-                    .await
-                    .context("prettier format request")?;
+                let response = local.server.request::<Format>(params).await?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }

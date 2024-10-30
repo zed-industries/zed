@@ -15,6 +15,7 @@ mod outline;
 pub mod proto;
 mod syntax_map;
 mod task_context;
+mod toolchain;
 
 #[cfg(test)]
 pub mod buffer_tests;
@@ -28,7 +29,7 @@ use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
-pub use language_registry::LanguageName;
+pub use language_registry::{LanguageName, LoadedLanguage};
 use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
 use parking_lot::Mutex;
 use regex::Regex;
@@ -61,6 +62,7 @@ use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
 use theme::SyntaxTheme;
+pub use toolchain::{LanguageToolchainStore, Toolchain, ToolchainList, ToolchainLister};
 use tree_sitter::{self, wasmtime, Query, QueryCursor, WasmStore};
 use util::serde::default_true;
 
@@ -367,7 +369,7 @@ pub trait LspAdapter: 'static + Send + Sync {
             }
 
             let Some(container_dir) = delegate.language_server_download_dir(&self.name()).await else {
-                anyhow::bail!("cannot download language servers for remotes (yet)")
+                anyhow::bail!("no language server download dir defined")
             };
 
             let mut binary = try_fetch_server_binary(self.as_ref(), &delegate, container_dir.to_path_buf(), cx).await;
@@ -502,6 +504,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         Ok(serde_json::json!({}))
@@ -855,6 +858,7 @@ pub struct Language {
     pub(crate) config: LanguageConfig,
     pub(crate) grammar: Option<Arc<Grammar>>,
     pub(crate) context_provider: Option<Arc<dyn ContextProvider>>,
+    pub(crate) toolchain: Option<Arc<dyn ToolchainLister>>,
 }
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -983,11 +987,17 @@ impl Language {
                 })
             }),
             context_provider: None,
+            toolchain: None,
         }
     }
 
     pub fn with_context_provider(mut self, provider: Option<Arc<dyn ContextProvider>>) -> Self {
         self.context_provider = provider;
+        self
+    }
+
+    pub fn with_toolchain_lister(mut self, provider: Option<Arc<dyn ToolchainLister>>) -> Self {
+        self.toolchain = provider;
         self
     }
 
@@ -1359,6 +1369,10 @@ impl Language {
 
     pub fn context_provider(&self) -> Option<Arc<dyn ContextProvider>> {
         self.context_provider.clone()
+    }
+
+    pub fn toolchain_lister(&self) -> Option<Arc<dyn ToolchainLister>> {
+        self.toolchain.clone()
     }
 
     pub fn highlight_text<'a>(

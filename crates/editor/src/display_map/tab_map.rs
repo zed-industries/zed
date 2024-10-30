@@ -251,6 +251,7 @@ impl TabSnapshot {
         };
 
         TabChunks {
+            snapshot: self,
             fold_chunks: self.fold_snapshot.chunks(
                 input_start..input_end,
                 language_aware,
@@ -485,6 +486,7 @@ impl<'a> std::ops::AddAssign<&'a Self> for TextSummary {
 const SPACES: &str = "                ";
 
 pub struct TabChunks<'a> {
+    snapshot: &'a TabSnapshot,
     fold_chunks: FoldChunks<'a>,
     chunk: Chunk<'a>,
     column: u32,
@@ -494,6 +496,37 @@ pub struct TabChunks<'a> {
     max_output_position: Point,
     tab_size: NonZeroU32,
     inside_leading_tab: bool,
+}
+
+impl<'a> TabChunks<'a> {
+    pub(crate) fn seek(&mut self, range: Range<TabPoint>) {
+        let (input_start, expanded_char_column, to_next_stop) =
+            self.snapshot.to_fold_point(range.start, Bias::Left);
+        let input_column = input_start.column();
+        let input_start = input_start.to_offset(&self.snapshot.fold_snapshot);
+        let input_end = self
+            .snapshot
+            .to_fold_point(range.end, Bias::Right)
+            .0
+            .to_offset(&self.snapshot.fold_snapshot);
+        let to_next_stop = if range.start.0 + Point::new(0, to_next_stop) > range.end.0 {
+            range.end.column() - range.start.column()
+        } else {
+            to_next_stop
+        };
+
+        self.fold_chunks.seek(input_start..input_end);
+        self.input_column = input_column;
+        self.column = expanded_char_column;
+        self.output_position = range.start.0;
+        self.max_output_position = range.end.0;
+        self.chunk = Chunk {
+            text: &SPACES[0..(to_next_stop as usize)],
+            is_tab: true,
+            ..Default::default()
+        };
+        self.inside_leading_tab = to_next_stop > 0;
+    }
 }
 
 impl<'a> Iterator for TabChunks<'a> {

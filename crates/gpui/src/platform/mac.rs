@@ -19,9 +19,14 @@ use metal_renderer as renderer;
 use crate::platform::blade as renderer;
 
 mod attributed_string;
+
+#[cfg(feature = "font-kit")]
 mod open_type;
-mod platform;
+
+#[cfg(feature = "font-kit")]
 mod text_system;
+
+mod platform;
 mod window;
 mod window_appearance;
 
@@ -41,8 +46,10 @@ pub(crate) use dispatcher::*;
 pub(crate) use display::*;
 pub(crate) use display_link::*;
 pub(crate) use platform::*;
-pub(crate) use text_system::*;
 pub(crate) use window::*;
+
+#[cfg(feature = "font-kit")]
+pub(crate) use text_system::*;
 
 /// A frame of video captured from a screen.
 pub(crate) type PlatformScreenCaptureFrame = CVImageBuffer;

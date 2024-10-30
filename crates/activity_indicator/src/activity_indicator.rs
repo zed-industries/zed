@@ -10,10 +10,11 @@ use gpui::{
 use language::{
     LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId, LanguageServerName,
 };
-use project::{LanguageServerProgress, Project};
+use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
-use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
+use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
+use util::truncate_and_trailoff;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 actions!(activity_indicator, [ShowErrorMessage]);
@@ -101,6 +102,7 @@ impl ActivityIndicator {
                             None,
                             cx,
                         );
+                        buffer.set_capability(language::Capability::ReadOnly, cx);
                     })?;
                     workspace.update(&mut cx, |workspace, cx| {
                         workspace.add_item_to_active_pane(
@@ -175,7 +177,31 @@ impl ActivityIndicator {
             .flatten()
     }
 
+    fn pending_environment_errors<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = (&'a WorktreeId, &'a EnvironmentErrorMessage)> {
+        self.project.read(cx).shell_environment_errors(cx)
+    }
+
     fn content_to_render(&mut self, cx: &mut ViewContext<Self>) -> Option<Content> {
+        // Show if any direnv calls failed
+        if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
+            return Some(Content {
+                icon: Some(
+                    Icon::new(IconName::Warning)
+                        .size(IconSize::Small)
+                        .into_any_element(),
+                ),
+                message: error.0.clone(),
+                on_click: Some(Arc::new(move |this, cx| {
+                    this.project.update(cx, |project, cx| {
+                        project.remove_environment_error(cx, worktree_id);
+                    });
+                    cx.dispatch_action(Box::new(workspace::OpenLog));
+                })),
+            });
+        }
         // Show any language server has pending activity.
         let mut pending_work = self.pending_language_server_work(cx);
         if let Some(PendingWork {
@@ -421,6 +447,8 @@ impl ActivityIndicator {
 
 impl EventEmitter<Event> for ActivityIndicator {}
 
+const MAX_MESSAGE_LEN: usize = 50;
+
 impl Render for ActivityIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let result = h_flex()
@@ -431,6 +459,7 @@ impl Render for ActivityIndicator {
             return result;
         };
         let this = cx.view().downgrade();
+        let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
         result.gap_2().child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
@@ -439,7 +468,21 @@ impl Render for ActivityIndicator {
                             .id("activity-indicator-status")
                             .gap_2()
                             .children(content.icon)
-                            .child(Label::new(content.message).size(LabelSize::Small))
+                            .map(|button| {
+                                if truncate_content {
+                                    button
+                                        .child(
+                                            Label::new(truncate_and_trailoff(
+                                                &content.message,
+                                                MAX_MESSAGE_LEN,
+                                            ))
+                                            .size(LabelSize::Small),
+                                        )
+                                        .tooltip(move |cx| Tooltip::text(&content.message, cx))
+                                } else {
+                                    button.child(Label::new(content.message).size(LabelSize::Small))
+                                }
+                            })
                             .when_some(content.on_click, |this, handler| {
                                 this.on_click(cx.listener(move |this, _, cx| {
                                     handler(this, cx);

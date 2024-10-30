@@ -217,6 +217,7 @@ pub(crate) type KeystrokeObserver =
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
+type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
@@ -237,6 +238,7 @@ pub struct AppContext {
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
+    pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
@@ -256,6 +258,9 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
+
+    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    pub(crate) name: Option<&'static str>,
 }
 
 impl AppContext {
@@ -293,6 +298,7 @@ impl AppContext {
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
+                new_model_observers: SubscriberSet::new(),
                 window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
@@ -309,6 +315,9 @@ impl AppContext {
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+
+                #[cfg(any(test, feature = "test-support", debug_assertions))]
+                name: None,
             }),
         });
 
@@ -348,7 +357,7 @@ impl AppContext {
     }
 
     /// Gracefully quit the application via the platform's standard routine.
-    pub fn quit(&mut self) {
+    pub fn quit(&self) {
         self.platform.quit();
     }
 
@@ -995,6 +1004,7 @@ impl AppContext {
     }
 
     /// Move the global of the given type to the stack.
+    #[track_caller]
     pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(
             self.globals_by_type
@@ -1011,19 +1021,16 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    pub(crate) fn new_view_observer(
-        &mut self,
-        key: TypeId,
-        value: NewViewListener,
-    ) -> Subscription {
+    pub(crate) fn new_view_observer(&self, key: TypeId, value: NewViewListener) -> Subscription {
         let (subscription, activate) = self.new_view_observers.insert(key, value);
         activate();
         subscription
     }
+
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
-        &mut self,
+        &self,
         on_new: impl 'static + Fn(&mut V, &mut ViewContext<V>),
     ) -> Subscription {
         self.new_view_observer(
@@ -1039,10 +1046,35 @@ impl AppContext {
         )
     }
 
+    pub(crate) fn new_model_observer(&self, key: TypeId, value: NewModelListener) -> Subscription {
+        let (subscription, activate) = self.new_model_observers.insert(key, value);
+        activate();
+        subscription
+    }
+
+    /// Arrange for the given function to be invoked whenever a view of the specified type is created.
+    /// The function will be passed a mutable reference to the view along with an appropriate context.
+    pub fn observe_new_models<T: 'static>(
+        &self,
+        on_new: impl 'static + Fn(&mut T, &mut ModelContext<T>),
+    ) -> Subscription {
+        self.new_model_observer(
+            TypeId::of::<T>(),
+            Box::new(move |any_model: AnyModel, cx: &mut AppContext| {
+                any_model
+                    .downcast::<T>()
+                    .unwrap()
+                    .update(cx, |model_state, cx| {
+                        on_new(model_state, cx);
+                    })
+            }),
+        )
+    }
+
     /// Observe the release of a model or view. The callback is invoked after the model or view
     /// has no more strong references but before it has been dropped.
     pub fn observe_release<E, T>(
-        &mut self,
+        &self,
         handle: &E,
         on_release: impl FnOnce(&mut T, &mut AppContext) + 'static,
     ) -> Subscription
@@ -1069,7 +1101,7 @@ impl AppContext {
         mut f: impl FnMut(&KeystrokeEvent, &mut WindowContext) + 'static,
     ) -> Subscription {
         fn inner(
-            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
             handler: KeystrokeObserver,
         ) -> Subscription {
             let (subscription, activate) = keystroke_observers.insert((), handler);
@@ -1147,7 +1179,7 @@ impl AppContext {
     /// Register a callback to be invoked when the application is about to quit.
     /// It is not possible to cancel the quit event at this point.
     pub fn on_app_quit<Fut>(
-        &mut self,
+        &self,
         mut on_quit: impl FnMut(&mut AppContext) -> Fut + 'static,
     ) -> Subscription
     where
@@ -1193,7 +1225,7 @@ impl AppContext {
     }
 
     /// Sets the menu bar for this application. This will replace any existing menu bar.
-    pub fn set_menus(&mut self, menus: Vec<Menu>) {
+    pub fn set_menus(&self, menus: Vec<Menu>) {
         self.platform.set_menus(menus, &self.keymap.borrow());
     }
 
@@ -1203,7 +1235,7 @@ impl AppContext {
     }
 
     /// Sets the right click menu for the app icon in the dock
-    pub fn set_dock_menu(&mut self, menus: Vec<MenuItem>) {
+    pub fn set_dock_menu(&self, menus: Vec<MenuItem>) {
         self.platform.set_dock_menu(menus, &self.keymap.borrow());
     }
 
@@ -1211,7 +1243,7 @@ impl AppContext {
     /// The list is usually shown on the application icon's context menu in the dock,
     /// and allows to open the recent files via that context menu.
     /// If the path is already in the list, it will be moved to the bottom of the list.
-    pub fn add_recent_document(&mut self, path: &Path) {
+    pub fn add_recent_document(&self, path: &Path) {
         self.platform.add_recent_document(path);
     }
 
@@ -1330,6 +1362,12 @@ impl AppContext {
 
         (task, is_first)
     }
+
+    /// Get the name for this App.
+    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    pub fn get_name(&self) -> &'static str {
+        self.name.as_ref().unwrap()
+    }
 }
 
 impl Context for AppContext {
@@ -1344,8 +1382,21 @@ impl Context for AppContext {
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
+            let model = slot.clone();
             let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
-            cx.entities.insert(slot, entity)
+            cx.entities.insert(slot, entity);
+
+            // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
+            fn notify_observers(cx: &mut AppContext, tid: TypeId, model: AnyModel) {
+                cx.new_model_observers.clone().retain(&tid, |observer| {
+                    let any_model = model.clone();
+                    (observer)(any_model, cx);
+                    true
+                });
+            }
+            notify_observers(cx, TypeId::of::<T>(), AnyModel::from(model.clone()));
+
+            model
         })
     }
 
@@ -1543,5 +1594,9 @@ impl HttpClient for NullHttpClient {
 
     fn proxy(&self) -> Option<&http_client::Uri> {
         None
+    }
+
+    fn type_name(&self) -> &'static str {
+        type_name::<Self>()
     }
 }

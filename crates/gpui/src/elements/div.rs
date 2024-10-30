@@ -1418,7 +1418,7 @@ impl Interactivity {
     }
 
     fn clamp_scroll_position(
-        &mut self,
+        &self,
         bounds: Bounds<Pixels>,
         style: &Style,
         cx: &mut WindowContext,
@@ -1547,7 +1547,7 @@ impl Interactivity {
 
     #[cfg(debug_assertions)]
     fn paint_debug_info(
-        &mut self,
+        &self,
         global_id: Option<&GlobalElementId>,
         hitbox: &Hitbox,
         style: &Style,
@@ -2574,5 +2574,10 @@ impl ScrollHandle {
     /// Set the logical scroll top, based on a child index and a pixel offset.
     pub fn set_logical_scroll_top(&self, ix: usize, px: Pixels) {
         self.0.borrow_mut().requested_scroll_top = Some((ix, px));
+    }
+
+    /// Get the count of children for scrollable item.
+    pub fn children_count(&self) -> usize {
+        self.0.borrow().child_bounds.len()
     }
 }

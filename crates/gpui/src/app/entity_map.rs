@@ -434,12 +434,10 @@ impl<T> Clone for Model<T> {
 
 impl<T> std::fmt::Debug for Model<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "Model {{ entity_id: {:?}, entity_type: {:?} }}",
-            self.any_model.entity_id,
-            type_name::<T>()
-        )
+        f.debug_struct("Model")
+            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_type", &type_name::<T>())
+            .finish()
     }
 }
 
@@ -538,6 +536,15 @@ impl AnyWeakModel {
     }
 }
 
+impl std::fmt::Debug for AnyWeakModel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(type_name::<Self>())
+            .field("entity_id", &self.entity_id)
+            .field("entity_type", &self.entity_type)
+            .finish()
+    }
+}
+
 impl<T> From<WeakModel<T>> for AnyWeakModel {
     fn from(model: WeakModel<T>) -> Self {
         model.any_model
@@ -565,6 +572,15 @@ pub struct WeakModel<T> {
     #[deref_mut]
     any_model: AnyWeakModel,
     entity_type: PhantomData<T>,
+}
+
+impl<T> std::fmt::Debug for WeakModel<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct(&type_name::<Self>())
+            .field("entity_id", &self.any_model.entity_id)
+            .field("entity_type", &type_name::<T>())
+            .finish()
+    }
 }
 
 unsafe impl<T> Send for WeakModel<T> {}

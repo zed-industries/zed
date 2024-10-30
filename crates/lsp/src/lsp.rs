@@ -626,12 +626,9 @@ impl LanguageServer {
                                 properties: vec![
                                     "additionalTextEdits".to_string(),
                                     "command".to_string(),
-                                    "detail".to_string(),
                                     "documentation".to_string(),
-                                    "filterText".to_string(),
-                                    "labelDetails".to_string(),
-                                    "tags".to_string(),
-                                    "textEdit".to_string(),
+                                    // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
+                                    // "textEdit".to_string(),
                                 ],
                             }),
                             insert_replace_support: Some(true),
@@ -1180,6 +1177,8 @@ impl FakeLanguageServer {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
+        let root = Self::root_path();
+
         let mut server = LanguageServer::new_internal(
             server_id,
             stdin_writer,
@@ -1187,8 +1186,8 @@ impl FakeLanguageServer {
             None::<async_pipe::PipeReader>,
             Arc::new(Mutex::new(None)),
             None,
-            Path::new("/"),
-            Path::new("/"),
+            root,
+            root,
             None,
             cx.clone(),
             |_| {},
@@ -1204,8 +1203,8 @@ impl FakeLanguageServer {
                     None::<async_pipe::PipeReader>,
                     Arc::new(Mutex::new(None)),
                     None,
-                    Path::new("/"),
-                    Path::new("/"),
+                    root,
+                    root,
                     None,
                     cx,
                     move |msg| {
@@ -1240,6 +1239,16 @@ impl FakeLanguageServer {
         });
 
         (server, fake)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn root_path() -> &'static Path {
+        Path::new("C:\\")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn root_path() -> &'static Path {
+        Path::new("/")
     }
 }
 

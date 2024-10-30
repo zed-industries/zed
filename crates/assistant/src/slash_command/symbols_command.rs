@@ -1,6 +1,8 @@
-use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use editor::Editor;
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
@@ -46,7 +48,7 @@ impl SlashCommand for OutlineSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {
             let Some(active_item) = workspace.active_item(cx) else {
                 return Task::ready(Err(anyhow!("no active tab")));
@@ -83,7 +85,8 @@ impl SlashCommand for OutlineSlashCommand {
                     }],
                     text: outline_text,
                     run_commands_in_text: false,
-                })
+                }
+                .to_event_stream())
             })
         });
 

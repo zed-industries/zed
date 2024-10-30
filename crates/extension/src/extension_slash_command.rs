@@ -3,6 +3,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use futures::FutureExt;
 use gpui::{Task, WeakView, WindowContext};
@@ -87,7 +88,7 @@ impl SlashCommand for ExtensionSlashCommand {
         _workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let arguments = arguments.to_owned();
         let output = cx.background_executor().spawn(async move {
             self.extension
@@ -127,7 +128,8 @@ impl SlashCommand for ExtensionSlashCommand {
                     })
                     .collect(),
                 run_commands_in_text: false,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

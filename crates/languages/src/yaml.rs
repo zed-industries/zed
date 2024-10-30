@@ -3,7 +3,8 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
 use language::{
-    language_settings::AllLanguageSettings, LanguageServerName, LspAdapter, LspAdapterDelegate,
+    language_settings::AllLanguageSettings, LanguageServerName, LanguageToolchainStore, LspAdapter,
+    LspAdapterDelegate,
 };
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
@@ -92,6 +93,7 @@ impl LspAdapter for YamlLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let location = SettingsLocation {
@@ -101,7 +103,7 @@ impl LspAdapter for YamlLspAdapter {
 
         let tab_size = cx.update(|cx| {
             AllLanguageSettings::get(Some(location), cx)
-                .language(Some(&"YAML".into()))
+                .language(Some(location), Some(&"YAML".into()), cx)
                 .tab_size
         })?;
         let mut options = serde_json::json!({"[yaml]": {"editor.tabSize": tab_size}});

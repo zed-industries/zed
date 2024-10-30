@@ -118,8 +118,8 @@
   //     "bar"
   //  2. A block that surrounds the following character
   //     "block"
-  //  3. An underline that runs along the following character
-  //     "underscore"
+  //  3. An underline / underscore that runs along the following character
+  //     "underline"
   //  4. A box drawn around the following character
   //     "hollow"
   //
@@ -369,6 +369,17 @@
       /// 5. Never show the scrollbar:
       ///    "never"
       "show": null
+    },
+    // Settings related to indent guides in the project panel.
+    "indent_guides": {
+      // When to show indent guides in the project panel.
+      // This setting can take two values:
+      //
+      // 1. Always show indent guides:
+      //    "always"
+      // 2. Never show indent guides:
+      //    "never"
+      "show": "always"
     }
   },
   "outline_panel": {
@@ -392,7 +403,35 @@
     "auto_reveal_entries": true,
     /// Whether to fold directories automatically
     /// when a directory has only one directory inside.
-    "auto_fold_dirs": true
+    "auto_fold_dirs": true,
+    // Settings related to indent guides in the outline panel.
+    "indent_guides": {
+      // When to show indent guides in the outline panel.
+      // This setting can take two values:
+      //
+      // 1. Always show indent guides:
+      //    "always"
+      // 2. Never show indent guides:
+      //    "never"
+      "show": "always"
+    },
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      /// This setting can take four values:
+      ///
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
+    }
   },
   "collaboration_panel": {
     // Whether to show the collaboration panel button in the status bar.
@@ -494,7 +533,14 @@
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.
-    "file_icons": false
+    "file_icons": false,
+    // What to do after closing the current tab.
+    //
+    // 1. Activate the tab that was open previously (default)
+    //     "History"
+    // 2. Activate the neighbour tab (prefers the right one, if present)
+    //     "Neighbour"
+    "activate_on_close": "history"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -684,8 +730,8 @@
     //     "block"
     //  2. A vertical bar
     //     "bar"
-    //  3. An underline that runs along the following character
-    //     "underscore"
+    //  3. An underline / underscore that runs along the following character
+    //     "underline"
     //  4. A box drawn around the following character
     //     "hollow"
     //
@@ -705,10 +751,10 @@
     // May take 2 values:
     //  1. Rely on default platform handling of option key, on macOS
     //     this means generating certain unicode characters
-    //         "option_to_meta": false,
+    //         "option_as_meta": false,
     //  2. Make the option keys behave as a 'meta' key, e.g. for emacs
-    //         "option_to_meta": true,
-    "option_as_meta": true,
+    //         "option_as_meta": true,
+    "option_as_meta": false,
     // Whether or not selecting text in the terminal will automatically
     // copy to the system clipboard.
     "copy_on_select": false,
@@ -768,6 +814,7 @@
   "tasks": {
     "variables": {}
   },
+  "toolchain": { "name": "default", "path": "default" },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.
@@ -796,7 +843,7 @@
   /// You can override this to use a version of node that is not in $PATH with:
   /// {
   ///   "node": {
-  ///     "node_path": "/path/to/node"
+  ///     "path": "/path/to/node"
   ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
   ///   }
   /// }
@@ -817,6 +864,7 @@
   // Different settings for specific languages.
   "languages": {
     "Astro": {
+      "language_servers": ["astro-language-server", "..."],
       "prettier": {
         "allowed": true,
         "plugins": ["prettier-plugin-astro"]
@@ -839,6 +887,13 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "Dart": {
+      "tab_size": 2
+    },
+    "Diff": {
+      "remove_trailing_whitespace_on_save": false,
+      "ensure_final_newline_on_save": false
     },
     "Elixir": {
       "language_servers": ["elixir-ls", "!next-ls", "!lexical", "..."]
@@ -1084,13 +1139,13 @@
   // }
   "command_aliases": {},
   // ssh_connections is an array of ssh connections.
-  // By default this setting is null, which disables the direct ssh connection support.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.
   // Examples:
   // [
   //   {
   //     "host": "example-box",
+  //     // "port": 22, "username": "test", "args": ["-i", "/home/user/.ssh/id_rsa"]
   //     "projects": [
   //       {
   //         "paths": ["/home/user/code/zed"]
@@ -1098,7 +1153,7 @@
   //     ]
   //   }
   // ]
-  "ssh_connections": null,
+  "ssh_connections": [],
   // Configures the Context Server Protocol binaries
   //
   // Examples:

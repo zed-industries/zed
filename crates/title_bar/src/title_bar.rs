@@ -18,14 +18,14 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
-use recent_projects::RecentProjects;
-use rpc::proto::{self, DevServerStatus};
+use recent_projects::{OpenRemote, RecentProjects};
+use rpc::proto;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
     h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
-    Indicator, PopoverMenu, Tooltip,
+    IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
@@ -262,42 +262,77 @@ impl TitleBar {
         self
     }
 
-    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
-        if let Some(dev_server) =
-            self.project
-                .read(cx)
-                .dev_server_project_id()
-                .and_then(|dev_server_project_id| {
-                    dev_server_projects::Store::global(cx)
-                        .read(cx)
-                        .dev_server_for_project(dev_server_project_id)
-                })
-        {
-            return Some(
-                ButtonLike::new("dev_server_trigger")
-                    .child(Indicator::dot().color(
-                        if dev_server.status == DevServerStatus::Online {
-                            Color::Created
-                        } else {
-                            Color::Disabled
-                        },
-                    ))
-                    .child(
-                        Label::new(dev_server.name.clone())
-                            .size(LabelSize::Small)
-                            .line_height_style(LineHeightStyle::UiLabel),
+    fn render_ssh_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        let options = self.project.read(cx).ssh_connection_options(cx)?;
+        let host: SharedString = options.connection_string().into();
+
+        let nickname = options
+            .nickname
+            .clone()
+            .map(|nick| nick.into())
+            .unwrap_or_else(|| host.clone());
+
+        let (indicator_color, meta) = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => (Color::Info, format!("Connecting to: {host}")),
+            remote::ConnectionState::Connected => (Color::Success, format!("Connected to: {host}")),
+            remote::ConnectionState::HeartbeatMissed => (
+                Color::Warning,
+                format!("Connection attempt to {host} missed. Retrying..."),
+            ),
+            remote::ConnectionState::Reconnecting => (
+                Color::Warning,
+                format!("Lost connection to {host}. Reconnecting..."),
+            ),
+            remote::ConnectionState::Disconnected => {
+                (Color::Error, format!("Disconnected from {host}"))
+            }
+        };
+
+        let icon_color = match self.project.read(cx).ssh_connection_state(cx)? {
+            remote::ConnectionState::Connecting => Color::Info,
+            remote::ConnectionState::Connected => Color::Default,
+            remote::ConnectionState::HeartbeatMissed => Color::Warning,
+            remote::ConnectionState::Reconnecting => Color::Warning,
+            remote::ConnectionState::Disconnected => Color::Error,
+        };
+
+        let meta = SharedString::from(meta);
+
+        Some(
+            ButtonLike::new("ssh-server-icon")
+                .child(
+                    IconWithIndicator::new(
+                        Icon::new(IconName::Server)
+                            .size(IconSize::XSmall)
+                            .color(icon_color),
+                        Some(Indicator::dot().color(indicator_color)),
                     )
-                    .tooltip(move |cx| Tooltip::text("Project is hosted on a dev server", cx))
-                    .on_click(cx.listener(|this, _, cx| {
-                        if let Some(workspace) = this.workspace.upgrade() {
-                            recent_projects::DevServerProjects::open(workspace, cx)
-                        }
-                    }))
+                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
                     .into_any_element(),
-            );
+                )
+                .child(
+                    div()
+                        .max_w_32()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
+                )
+                .tooltip(move |cx| {
+                    Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
+                })
+                .on_click(|_, cx| {
+                    cx.dispatch_action(OpenRemote.boxed_clone());
+                })
+                .into_any_element(),
+        )
+    }
+
+    pub fn render_project_host(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+        if self.project.read(cx).is_via_ssh() {
+            return self.render_ssh_project_host(cx);
         }
 
-        if self.project.read(cx).is_disconnected() {
+        if self.project.read(cx).is_disconnected(cx) {
             return Some(
                 Button::new("disconnected", "Disconnected")
                     .disabled(true)
@@ -412,7 +447,7 @@ impl TitleBar {
                 })
                 .on_click(move |_, cx| {
                     let _ = workspace.update(cx, |this, cx| {
-                        BranchList::open(this, &Default::default(), cx)
+                        BranchList::open(this, &Default::default(), cx);
                     });
                 }),
         )

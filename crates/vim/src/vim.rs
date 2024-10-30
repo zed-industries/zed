@@ -545,10 +545,10 @@ impl Vim {
                 if self.operator_stack.is_empty() {
                     CursorShape::Block
                 } else {
-                    CursorShape::Underscore
+                    CursorShape::Underline
                 }
             }
-            Mode::Replace => CursorShape::Underscore,
+            Mode::Replace => CursorShape::Underline,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
@@ -620,9 +620,11 @@ impl Vim {
         let Some(editor) = self.editor() else {
             return;
         };
+        let newest_selection_empty = editor.update(cx, |editor, cx| {
+            editor.selections.newest::<usize>(cx).is_empty()
+        });
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
-        let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
 
         if editor_mode == EditorMode::Full
                 && !newest_selection_empty
@@ -717,11 +719,12 @@ impl Vim {
                 globals.recorded_count = None;
 
                 let selections = self.editor().map(|editor| {
-                    let editor = editor.read(cx);
-                    (
-                        editor.selections.oldest::<Point>(cx),
-                        editor.selections.newest::<Point>(cx),
-                    )
+                    editor.update(cx, |editor, cx| {
+                        (
+                            editor.selections.oldest::<Point>(cx),
+                            editor.selections.newest::<Point>(cx),
+                        )
+                    })
                 });
 
                 if let Some((oldest, newest)) = selections {
@@ -1080,9 +1083,14 @@ impl Settings for VimModeSetting {
     type FileContent = Option<bool>;
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
-        Ok(Self(sources.user.copied().flatten().unwrap_or(
-            sources.default.ok_or_else(Self::missing_default)?,
-        )))
+        Ok(Self(
+            sources
+                .user
+                .or(sources.server)
+                .copied()
+                .flatten()
+                .unwrap_or(sources.default.ok_or_else(Self::missing_default)?),
+        ))
     }
 }
 

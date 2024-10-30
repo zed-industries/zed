@@ -42,12 +42,14 @@ if [[ -n $apt ]]; then
     gettext-base
     elfutils
     libsqlite3-dev
+    musl-tools
+    musl-dev
   )
-  if (grep -qP 'PRETTY_NAME="(.+24\.04)' /etc/os-release); then
+  if (grep -qP 'PRETTY_NAME="(Linux Mint 22|.+24\.04)' /etc/os-release); then
     deps+=( mold libstdc++-14-dev )
-  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|.+22\.04)' /etc/os-release); then
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+12|Linux Mint 21|.+22\.04)' /etc/os-release); then
     deps+=( mold libstdc++-12-dev )
-  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|.+20\.04)' /etc/os-release); then
+  elif (grep -qP 'PRETTY_NAME="((Debian|Raspbian).+11|Linux Mint 20|.+20\.04)' /etc/os-release); then
     deps+=( libstdc++-10-dev )
   fi
 
@@ -89,7 +91,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
       perl-File-Copy
       mold
     )
-  elif grep grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release; then
+  elif grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release; then
     deps+=( perl-interpreter )
   fi
 
@@ -102,7 +104,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
   fi
 
   # libxkbcommon-x11-devel is in a non-default repo on RHEL 8.x/9.x (except on AmazonLinux)
-  if grep -qP '^VERSION_ID="(8|9)' && grep -qP '^ID="(rhel|rocky|centos|alma|ol)' /etc/os-release; then
+  if grep -qP '^VERSION_ID="(8|9)' /etc/os-release && grep -qP '^ID="(rhel|rocky|centos|alma|ol)' /etc/os-release; then
     $maysudo dnf install -y 'dnf-command(config-manager)'
     if grep -qP '^PRETTY_NAME="(AlmaLinux 8|Rocky Linux 8)' /etc/os-release; then
       $maysudo dnf config-manager --set-enabled powertools
