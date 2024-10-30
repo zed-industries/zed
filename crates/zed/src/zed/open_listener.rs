@@ -47,6 +47,9 @@ impl OpenRequest {
                 this.parse_file_path(file)
             } else if let Some(file) = url.strip_prefix("zed://file") {
                 this.parse_file_path(file)
+            } else if let Some(file) = url.strip_prefix("zed://ssh") {
+                let ssh_url = "ssh:/".to_string() + file;
+                this.parse_ssh_file_path(&ssh_url, cx)?
             } else if url.starts_with("ssh://") {
                 this.parse_ssh_file_path(&url, cx)?
             } else if let Some(request_path) = parse_zed_link(&url, cx) {
