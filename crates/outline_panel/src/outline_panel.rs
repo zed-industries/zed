@@ -3822,172 +3822,15 @@ impl OutlinePanel {
 
         (item_text_chars + depth) as u64
     }
-}
 
-fn workspace_active_editor(
-    workspace: &Workspace,
-    cx: &AppContext,
-) -> Option<(Box<dyn ItemHandle>, View<Editor>)> {
-    let active_item = workspace.active_item(cx)?;
-    let active_editor = active_item
-        .act_as::<Editor>(cx)
-        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
-    Some((active_item, active_editor))
-}
-
-fn back_to_common_visited_parent(
-    visited_dirs: &mut Vec<(ProjectEntryId, Arc<Path>)>,
-    worktree_id: &WorktreeId,
-    new_entry: &Entry,
-) -> Option<(WorktreeId, ProjectEntryId)> {
-    while let Some((visited_dir_id, visited_path)) = visited_dirs.last() {
-        match new_entry.path.parent() {
-            Some(parent_path) => {
-                if parent_path == visited_path.as_ref() {
-                    return Some((*worktree_id, *visited_dir_id));
-                }
-            }
-            None => {
-                break;
-            }
-        }
-        visited_dirs.pop();
-    }
-    None
-}
-
-fn file_name(path: &Path) -> String {
-    let mut current_path = path;
-    loop {
-        if let Some(file_name) = current_path.file_name() {
-            return file_name.to_string_lossy().into_owned();
-        }
-        match current_path.parent() {
-            Some(parent) => current_path = parent,
-            None => return path.to_string_lossy().into_owned(),
-        }
-    }
-}
-
-impl Panel for OutlinePanel {
-    fn persistent_name() -> &'static str {
-        "Outline Panel"
-    }
-
-    fn position(&self, cx: &WindowContext) -> DockPosition {
-        match OutlinePanelSettings::get_global(cx).dock {
-            OutlinePanelDockPosition::Left => DockPosition::Left,
-            OutlinePanelDockPosition::Right => DockPosition::Right,
-        }
-    }
-
-    fn position_is_valid(&self, position: DockPosition) -> bool {
-        matches!(position, DockPosition::Left | DockPosition::Right)
-    }
-
-    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
-        settings::update_settings_file::<OutlinePanelSettings>(
-            self.fs.clone(),
-            cx,
-            move |settings, _| {
-                let dock = match position {
-                    DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
-                    DockPosition::Right => OutlinePanelDockPosition::Right,
-                };
-                settings.dock = Some(dock);
-            },
-        );
-    }
-
-    fn size(&self, cx: &WindowContext) -> Pixels {
-        self.width
-            .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
-    }
-
-    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
-        self.width = size;
-        self.serialize(cx);
-        cx.notify();
-    }
-
-    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
-        OutlinePanelSettings::get_global(cx)
-            .button
-            .then_some(IconName::ListTree)
-    }
-
-    fn icon_tooltip(&self, _: &WindowContext) -> Option<&'static str> {
-        Some("Outline Panel")
-    }
-
-    fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
-    }
-
-    fn starts_open(&self, _: &WindowContext) -> bool {
-        self.active
-    }
-
-    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        cx.spawn(|outline_panel, mut cx| async move {
-            outline_panel
-                .update(&mut cx, |outline_panel, cx| {
-                    let old_active = outline_panel.active;
-                    outline_panel.active = active;
-                    if active && old_active != active {
-                        if let Some((active_item, active_editor)) = outline_panel
-                            .workspace
-                            .upgrade()
-                            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
-                        {
-                            if outline_panel.should_replace_active_item(active_item.as_ref()) {
-                                outline_panel.replace_active_editor(active_item, active_editor, cx);
-                            } else {
-                                outline_panel.update_fs_entries(
-                                    &active_editor,
-                                    HashSet::default(),
-                                    None,
-                                    cx,
-                                )
-                            }
-                        } else if !outline_panel.pinned {
-                            outline_panel.clear_previous(cx);
-                        }
-                    }
-                    outline_panel.serialize(cx);
-                })
-                .ok();
-        })
-        .detach()
-    }
-}
-
-impl FocusableView for OutlinePanel {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.filter_editor.focus_handle(cx).clone()
-    }
-}
-
-impl EventEmitter<Event> for OutlinePanel {}
-
-impl EventEmitter<PanelEvent> for OutlinePanel {}
-
-impl Render for OutlinePanel {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let (is_local, is_via_ssh) = self
-            .project
-            .read_with(cx, |project, _| (project.is_local(), project.is_via_ssh()));
-        let query = self.query(cx);
-        let pinned = self.pinned;
-        let settings = OutlinePanelSettings::get_global(cx);
-        let indent_size = settings.indent_size;
-        let show_indent_guides = settings.indent_guides.show == ShowIndentGuides::Always;
-
-        let search_query = match &self.mode {
-            ItemsDisplayMode::Search(search_query) => Some(search_query),
-            _ => None,
-        };
-        let panel_contents = if self.cached_entries.is_empty() {
+    fn render_main_contents(
+        &mut self,
+        query: Option<String>,
+        show_indent_guides: bool,
+        indent_size: f32,
+        cx: &mut ViewContext<'_, Self>,
+    ) -> Div {
+        let contents = if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries {
                 "Loading outlines"
             } else if query.is_some() {
@@ -4169,6 +4012,209 @@ impl Render for OutlinePanel {
             .with_priority(1)
         }));
 
+        v_flex().w_full().flex_1().overflow_hidden().child(contents)
+    }
+
+    fn render_filter_footer(&mut self, pinned: bool, cx: &mut ViewContext<'_, Self>) -> Div {
+        v_flex().flex_none().child(horizontal_separator(cx)).child(
+            h_flex()
+                .p_2()
+                .w_full()
+                .child(self.filter_editor.clone())
+                .child(
+                    div().child(
+                        IconButton::new(
+                            "outline-panel-menu",
+                            if pinned {
+                                IconName::Unpin
+                            } else {
+                                IconName::Pin
+                            },
+                        )
+                        .tooltip(move |cx| {
+                            Tooltip::text(
+                                if pinned {
+                                    "Unpin Outline"
+                                } else {
+                                    "Pin Active Outline"
+                                },
+                                cx,
+                            )
+                        })
+                        .shape(IconButtonShape::Square)
+                        .on_click(cx.listener(|outline_panel, _, cx| {
+                            outline_panel.toggle_active_editor_pin(&ToggleActiveEditorPin, cx);
+                        })),
+                    ),
+                ),
+        )
+    }
+}
+
+fn workspace_active_editor(
+    workspace: &Workspace,
+    cx: &AppContext,
+) -> Option<(Box<dyn ItemHandle>, View<Editor>)> {
+    let active_item = workspace.active_item(cx)?;
+    let active_editor = active_item
+        .act_as::<Editor>(cx)
+        .filter(|editor| editor.read(cx).mode() == EditorMode::Full)?;
+    Some((active_item, active_editor))
+}
+
+fn back_to_common_visited_parent(
+    visited_dirs: &mut Vec<(ProjectEntryId, Arc<Path>)>,
+    worktree_id: &WorktreeId,
+    new_entry: &Entry,
+) -> Option<(WorktreeId, ProjectEntryId)> {
+    while let Some((visited_dir_id, visited_path)) = visited_dirs.last() {
+        match new_entry.path.parent() {
+            Some(parent_path) => {
+                if parent_path == visited_path.as_ref() {
+                    return Some((*worktree_id, *visited_dir_id));
+                }
+            }
+            None => {
+                break;
+            }
+        }
+        visited_dirs.pop();
+    }
+    None
+}
+
+fn file_name(path: &Path) -> String {
+    let mut current_path = path;
+    loop {
+        if let Some(file_name) = current_path.file_name() {
+            return file_name.to_string_lossy().into_owned();
+        }
+        match current_path.parent() {
+            Some(parent) => current_path = parent,
+            None => return path.to_string_lossy().into_owned(),
+        }
+    }
+}
+
+impl Panel for OutlinePanel {
+    fn persistent_name() -> &'static str {
+        "Outline Panel"
+    }
+
+    fn position(&self, cx: &WindowContext) -> DockPosition {
+        match OutlinePanelSettings::get_global(cx).dock {
+            OutlinePanelDockPosition::Left => DockPosition::Left,
+            OutlinePanelDockPosition::Right => DockPosition::Right,
+        }
+    }
+
+    fn position_is_valid(&self, position: DockPosition) -> bool {
+        matches!(position, DockPosition::Left | DockPosition::Right)
+    }
+
+    fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>) {
+        settings::update_settings_file::<OutlinePanelSettings>(
+            self.fs.clone(),
+            cx,
+            move |settings, _| {
+                let dock = match position {
+                    DockPosition::Left | DockPosition::Bottom => OutlinePanelDockPosition::Left,
+                    DockPosition::Right => OutlinePanelDockPosition::Right,
+                };
+                settings.dock = Some(dock);
+            },
+        );
+    }
+
+    fn size(&self, cx: &WindowContext) -> Pixels {
+        self.width
+            .unwrap_or_else(|| OutlinePanelSettings::get_global(cx).default_width)
+    }
+
+    fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>) {
+        self.width = size;
+        self.serialize(cx);
+        cx.notify();
+    }
+
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        OutlinePanelSettings::get_global(cx)
+            .button
+            .then_some(IconName::ListTree)
+    }
+
+    fn icon_tooltip(&self, _: &WindowContext) -> Option<&'static str> {
+        Some("Outline Panel")
+    }
+
+    fn toggle_action(&self) -> Box<dyn Action> {
+        Box::new(ToggleFocus)
+    }
+
+    fn starts_open(&self, _: &WindowContext) -> bool {
+        self.active
+    }
+
+    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        cx.spawn(|outline_panel, mut cx| async move {
+            outline_panel
+                .update(&mut cx, |outline_panel, cx| {
+                    let old_active = outline_panel.active;
+                    outline_panel.active = active;
+                    if active && old_active != active {
+                        if let Some((active_item, active_editor)) = outline_panel
+                            .workspace
+                            .upgrade()
+                            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
+                        {
+                            if outline_panel.should_replace_active_item(active_item.as_ref()) {
+                                outline_panel.replace_active_editor(active_item, active_editor, cx);
+                            } else {
+                                outline_panel.update_fs_entries(
+                                    &active_editor,
+                                    HashSet::default(),
+                                    None,
+                                    cx,
+                                )
+                            }
+                        } else if !outline_panel.pinned {
+                            outline_panel.clear_previous(cx);
+                        }
+                    }
+                    outline_panel.serialize(cx);
+                })
+                .ok();
+        })
+        .detach()
+    }
+}
+
+impl FocusableView for OutlinePanel {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.filter_editor.focus_handle(cx).clone()
+    }
+}
+
+impl EventEmitter<Event> for OutlinePanel {}
+
+impl EventEmitter<PanelEvent> for OutlinePanel {}
+
+impl Render for OutlinePanel {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let (is_local, is_via_ssh) = self
+            .project
+            .read_with(cx, |project, _| (project.is_local(), project.is_via_ssh()));
+        let query = self.query(cx);
+        let pinned = self.pinned;
+        let settings = OutlinePanelSettings::get_global(cx);
+        let indent_size = settings.indent_size;
+        let show_indent_guides = settings.indent_guides.show == ShowIndentGuides::Always;
+
+        let search_query = match &self.mode {
+            ItemsDisplayMode::Search(search_query) => Some(search_query),
+            _ => None,
+        };
+
         v_flex()
             .id("outline-panel")
             .size_full()
@@ -4230,56 +4276,8 @@ impl Render for OutlinePanel {
                         .child(horizontal_separator(cx)),
                 )
             })
-            .child(
-                v_flex()
-                    .w_full()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(panel_contents),
-            )
-            .child(
-                v_flex()
-                    .w_full()
-                    .flex_none()
-                    .child(horizontal_separator(cx))
-                    .child(
-                        h_flex()
-                            .p_2()
-                            .w_full()
-                            .child(self.filter_editor.clone())
-                            .child(
-                                div().child(
-                                    IconButton::new(
-                                        "outline-panel-menu",
-                                        if pinned {
-                                            IconName::Unpin
-                                        } else {
-                                            IconName::Pin
-                                        },
-                                    )
-                                    .tooltip(move |cx| {
-                                        Tooltip::text(
-                                            if pinned {
-                                                "Unpin Outline"
-                                            } else {
-                                                "Pin Active Outline"
-                                            },
-                                            cx,
-                                        )
-                                    })
-                                    .shape(IconButtonShape::Square)
-                                    .on_click(cx.listener(
-                                        |outline_panel, _, cx| {
-                                            outline_panel.toggle_active_editor_pin(
-                                                &ToggleActiveEditorPin,
-                                                cx,
-                                            );
-                                        },
-                                    )),
-                                ),
-                            ),
-                    ),
-            )
+            .child(self.render_main_contents(query, show_indent_guides, indent_size, cx))
+            .child(self.render_filter_footer(pinned, cx))
     }
 }
 
