@@ -20,6 +20,7 @@ use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
 use settings::update_settings_file;
 use settings::Settings;
+use settings::SettingsStore;
 use ui::Navigable;
 use ui::NavigableEntry;
 use ui::{
@@ -551,6 +552,7 @@ impl RemoteServerProjects {
             Mode::EditNickname(state) => {
                 let text = Some(state.editor.read(cx).text(cx)).filter(|text| !text.is_empty());
                 let index = state.index;
+
                 self.update_settings_file(cx, move |setting, _| {
                     if let Some(connections) = setting.ssh_connections.as_mut() {
                         if let Some(connection) = connections.get_mut(index) {
@@ -558,8 +560,24 @@ impl RemoteServerProjects {
                         }
                     }
                 });
-                self.mode = Mode::default_mode(cx);
-                self.focus_handle.focus(cx);
+                let (tx, rx) = oneshot::channel();
+                let mut tx = Some(tx);
+                let sub = cx.observe_global::<SettingsStore>(move |_, _| {
+                    if let Some(tx) = tx.take() {
+                        let _ = tx.send(());
+                    }
+                });
+
+                cx.spawn(|this, mut cx| async move {
+                    let _sub = sub;
+                    let _ = rx.await;
+                    this.update(&mut cx, |this, cx| {
+                        this.mode = Mode::default_mode(cx);
+                        this.focus_handle.focus(cx);
+                    })
+                    .ok();
+                })
+                .detach();
             }
         }
     }
@@ -1079,6 +1097,21 @@ impl RemoteServerProjects {
                                                 this.delete_ssh_server(index, cx);
                                             })
                                             .ok();
+                                        let (tx, rx) = oneshot::channel();
+                                        let mut tx = Some(tx);
+
+                                        let sub = cx
+                                            .update(move |cx| {
+                                                cx.observe_global::<SettingsStore>(move |_| {
+                                                    if let Some(tx) = tx.take() {
+                                                        let _ = tx.send(());
+                                                    }
+                                                })
+                                            })
+                                            .ok();
+
+                                        let _ = rx.await;
+
                                         remote_servers
                                             .update(&mut cx, |this, cx| {
                                                 this.mode = Mode::default_mode(cx);
