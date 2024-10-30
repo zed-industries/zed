@@ -6346,6 +6346,7 @@ dependencies = [
  "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
+ "itertools 0.13.0",
  "language",
  "lsp",
  "project",
@@ -6357,6 +6358,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
