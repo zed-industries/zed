@@ -1260,16 +1260,21 @@ pub mod tests {
     use super::*;
     use crate::{movement, test::marked_display_snapshot};
     use block_map::BlockPlacement;
-    use gpui::{div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla};
+    use gpui::{
+        div, font, observe, px, AppContext, BorrowAppContext, Context, Element, Hsla, Rgba,
+    };
     use language::{
         language_settings::{AllLanguageSettings, AllLanguageSettingsContent},
-        Buffer, Language, LanguageConfig, LanguageMatcher,
+        Buffer, Diagnostic, DiagnosticEntry, DiagnosticSet, Language, LanguageConfig,
+        LanguageMatcher,
     };
+    use lsp::LanguageServerId;
     use project::Project;
     use rand::{prelude::*, Rng};
     use settings::SettingsStore;
     use smol::stream::StreamExt;
     use std::{env, sync::Arc};
+    use text::PointUtf16;
     use theme::{LoadThemes, SyntaxTheme};
     use unindent::Unindent as _;
     use util::test::{marked_text_ranges, sample_text};
@@ -1920,6 +1925,125 @@ pub mod tests {
                 ("\"four\"".into(), Some(Hsla::red())),
                 (";".into(), Some(Hsla::blue())),
                 ("\n".into(), None),
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_chunks_with_diagnostics_across_blocks(cx: &mut gpui::TestAppContext) {
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        let text = r#"
+            struct A {
+                b: usize;
+            }
+            const c: usize = 1;
+        "#
+        .unindent();
+
+        cx.update(|cx| init_test(cx, |_| {}));
+
+        let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+
+        buffer.update(cx, |buffer, cx| {
+            buffer.update_diagnostics(
+                LanguageServerId(0),
+                DiagnosticSet::new(
+                    [DiagnosticEntry {
+                        range: PointUtf16::new(0, 0)..PointUtf16::new(2, 1),
+                        diagnostic: Diagnostic {
+                            severity: DiagnosticSeverity::ERROR,
+                            group_id: 1,
+                            message: "hi".into(),
+                            ..Default::default()
+                        },
+                    }],
+                    buffer,
+                ),
+                cx,
+            )
+        });
+
+        let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer,
+                font("Courier"),
+                px(16.0),
+                None,
+                true,
+                1,
+                1,
+                0,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
+
+        let black = gpui::black().to_rgb();
+        let red = gpui::red().to_rgb();
+
+        // Insert a block in the middle of a multi-line diagnostic.
+        map.update(cx, |map, cx| {
+            map.highlight_text(
+                TypeId::of::<usize>(),
+                vec![
+                    buffer_snapshot.anchor_before(Point::new(3, 9))
+                        ..buffer_snapshot.anchor_after(Point::new(3, 14)),
+                    buffer_snapshot.anchor_before(Point::new(3, 17))
+                        ..buffer_snapshot.anchor_after(Point::new(3, 18)),
+                ],
+                red.into(),
+            );
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Below(
+                        buffer_snapshot.anchor_before(Point::new(1, 0)),
+                    ),
+                    height: 1,
+                    style: BlockStyle::Sticky,
+                    render: Box::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            )
+        });
+
+        let snapshot = map.update(cx, |map, cx| map.snapshot(cx));
+        let mut chunks = Vec::<(String, Option<DiagnosticSeverity>, Rgba)>::new();
+        for chunk in snapshot.chunks(DisplayRow(0)..DisplayRow(5), true, Default::default()) {
+            let color = chunk
+                .highlight_style
+                .and_then(|style| style.color)
+                .map_or(black, |color| color.to_rgb());
+            if let Some((last_chunk, last_severity, last_color)) = chunks.last_mut() {
+                if *last_severity == chunk.diagnostic_severity && *last_color == color {
+                    last_chunk.push_str(chunk.text);
+                    continue;
+                }
+            }
+
+            chunks.push((chunk.text.to_string(), chunk.diagnostic_severity, color));
+        }
+
+        assert_eq!(
+            chunks,
+            [
+                (
+                    "struct A {\n    b: usize;\n".into(),
+                    Some(DiagnosticSeverity::ERROR),
+                    black
+                ),
+                ("\n".into(), None, black),
+                ("}".into(), Some(DiagnosticSeverity::ERROR), black),
+                ("\nconst c: ".into(), None, black),
+                ("usize".into(), None, red),
+                (" = ".into(), None, black),
+                ("1".into(), None, red),
+                (";\n".into(), None, black),
             ]
         );
     }

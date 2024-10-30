@@ -1,8 +1,13 @@
+use std::str::FromStr;
+
 use anyhow::{anyhow, bail, Result};
 use url::Url;
 use util::maybe;
 
-use git::{BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote};
+use git::{
+    BuildCommitPermalinkParams, BuildPermalinkParams, GitHostingProvider, ParsedGitRemote,
+    RemoteUrl,
+};
 
 #[derive(Debug)]
 pub struct Gitlab {
@@ -64,21 +69,22 @@ impl GitHostingProvider for Gitlab {
         format!("L{start_line}-{end_line}")
     }
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>> {
-        let host = self.base_url.host_str()?;
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote> {
+        let url = RemoteUrl::from_str(url).ok()?;
 
-        if url.starts_with(&format!("git@{host}")) || url.starts_with(&format!("https://{host}/")) {
-            let repo_with_owner = url
-                .trim_start_matches(&format!("git@{host}:"))
-                .trim_start_matches(&format!("https://{host}/"))
-                .trim_end_matches(".git");
-
-            let (owner, repo) = repo_with_owner.split_once('/')?;
-
-            return Some(ParsedGitRemote { owner, repo });
+        let host = url.host_str()?;
+        if host != self.base_url.host_str()? {
+            return None;
         }
 
-        None
+        let mut path_segments = url.path_segments()?.collect::<Vec<_>>();
+        let repo = path_segments.pop()?.trim_end_matches(".git");
+        let owner = path_segments.join("/");
+
+        Some(ParsedGitRemote {
+            owner: owner.into(),
+            repo: repo.into(),
+        })
     }
 
     fn build_commit_permalink(
@@ -125,13 +131,77 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_build_gitlab_permalink_from_ssh_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
+    fn test_parse_remote_url_given_ssh_url() {
+        let parsed_remote = Gitlab::new()
+            .parse_remote_url("git@gitlab.com:zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_https_url() {
+        let parsed_remote = Gitlab::new()
+            .parse_remote_url("https://gitlab.com/zed-industries/zed.git")
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_self_hosted_ssh_url() {
+        let remote_url = "git@gitlab.my-enterprise.com:zed-industries/zed.git";
+
+        let parsed_remote = Gitlab::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_self_hosted_https_url_with_subgroup() {
+        let remote_url = "https://gitlab.my-enterprise.com/group/subgroup/zed.git";
+        let parsed_remote = Gitlab::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "group/subgroup".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_build_gitlab_permalink() {
         let permalink = Gitlab::new().build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
@@ -144,13 +214,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_gitlab_permalink_from_ssh_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
+    fn test_build_gitlab_permalink_with_single_line_selection() {
         let permalink = Gitlab::new().build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
@@ -163,13 +232,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_gitlab_permalink_from_ssh_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
+    fn test_build_gitlab_permalink_with_multi_line_selection() {
         let permalink = Gitlab::new().build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
@@ -182,73 +250,15 @@ mod tests {
     }
 
     #[test]
-    fn test_build_gitlab_permalink_from_https_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
-        let permalink = Gitlab::new().build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
-                selection: None,
-            },
-        );
-
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_gitlab_permalink_from_https_url_single_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
-        let permalink = Gitlab::new().build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
-                selection: Some(6..6),
-            },
-        );
-
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L7";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
-    fn test_build_gitlab_permalink_from_https_url_multi_line_selection() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
-        let permalink = Gitlab::new().build_permalink(
-            remote,
-            BuildPermalinkParams {
-                sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
-                path: "crates/zed/src/main.rs",
-                selection: Some(23..47),
-            },
-        );
-
-        let expected_url = "https://gitlab.com/zed-industries/zed/-/blob/b2efec9824c45fcc90c9a7eb107a50d1772a60aa/crates/zed/src/main.rs#L24-48";
-        assert_eq!(permalink.to_string(), expected_url.to_string())
-    }
-
-    #[test]
     fn test_build_gitlab_self_hosted_permalink_from_ssh_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
         let gitlab =
             Gitlab::from_remote_url("git@gitlab.some-enterprise.com:zed-industries/zed.git")
                 .unwrap();
         let permalink = gitlab.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "e6ebe7974deb6bb6cc0e2595c8ec31f0c71084b7",
                 path: "crates/editor/src/git/permalink.rs",
@@ -262,15 +272,14 @@ mod tests {
 
     #[test]
     fn test_build_gitlab_self_hosted_permalink_from_https_url() {
-        let remote = ParsedGitRemote {
-            owner: "zed-industries",
-            repo: "zed",
-        };
         let gitlab =
             Gitlab::from_remote_url("https://gitlab-instance.big-co.com/zed-industries/zed.git")
                 .unwrap();
         let permalink = gitlab.build_permalink(
-            remote,
+            ParsedGitRemote {
+                owner: "zed-industries".into(),
+                repo: "zed".into(),
+            },
             BuildPermalinkParams {
                 sha: "b2efec9824c45fcc90c9a7eb107a50d1772a60aa",
                 path: "crates/zed/src/main.rs",

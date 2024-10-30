@@ -22,9 +22,10 @@ debug-embed = ["dep:rust-embed"]
 test-support = ["fs/test-support"]
 
 [dependencies]
-async-watch.workspace = true
 anyhow.workspace = true
+async-watch.workspace = true
 backtrace = "0.3"
+chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 env_logger.workspace = true
@@ -39,8 +40,10 @@ languages.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
-project.workspace = true
 paths = { workspace = true }
+project.workspace = true
+proto.workspace = true
+release_channel.workspace = true
 remote.workspace = true
 reqwest_client.workspace = true
 rpc.workspace = true
@@ -50,6 +53,7 @@ serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
+telemetry_events.workspace = true
 util.workspace = true
 worktree.workspace = true
 

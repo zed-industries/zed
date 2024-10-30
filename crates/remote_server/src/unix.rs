@@ -1,12 +1,13 @@
 use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
-use client::ProxySettings;
+use chrono::Utc;
+use client::{telemetry, ProxySettings};
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use git::GitHostingProviderRegistry;
-use gpui::{AppContext, Context as _, ModelContext, UpdateGlobal as _};
+use gpui::{AppContext, Context as _, Model, ModelContext, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
@@ -21,19 +22,23 @@ use remote::{
 };
 use reqwest_client::ReqwestClient;
 use rpc::proto::{self, Envelope, SSH_PROJECT_ID};
+use rpc::{AnyProtoClient, TypedEnvelope};
 use settings::{watch_config_file, Settings, SettingsStore};
 use smol::channel::{Receiver, Sender};
 use smol::io::AsyncReadExt;
 
 use smol::Async;
 use smol::{net::unix::UnixListener, stream::StreamExt as _};
+use std::ffi::OsStr;
 use std::ops::ControlFlow;
+use std::{env, thread};
 use std::{
     io::Write,
     mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
+use telemetry_events::LocationData;
 use util::ResultExt;
 
 fn init_logging_proxy() {
@@ -131,14 +136,95 @@ fn init_panic_hook() {
             backtrace.drain(0..=ix);
         }
 
+        let thread = thread::current();
+        let thread_name = thread.name().unwrap_or("<unnamed>");
+
         log::error!(
             "panic occurred: {}\nBacktrace:\n{}",
-            payload,
-            backtrace.join("\n")
+            &payload,
+            (&backtrace).join("\n")
         );
+
+        let panic_data = telemetry_events::Panic {
+            thread: thread_name.into(),
+            payload: payload.clone(),
+            location_data: info.location().map(|location| LocationData {
+                file: location.file().into(),
+                line: location.line(),
+            }),
+            app_version: format!(
+                "remote-server-{}",
+                option_env!("ZED_COMMIT_SHA").unwrap_or(&env!("ZED_PKG_VERSION"))
+            ),
+            release_channel: release_channel::RELEASE_CHANNEL.display_name().into(),
+            os_name: telemetry::os_name(),
+            os_version: Some(telemetry::os_version()),
+            architecture: env::consts::ARCH.into(),
+            panicked_on: Utc::now().timestamp_millis(),
+            backtrace,
+            system_id: None,            // Set on SSH client
+            installation_id: None,      // Set on SSH client
+            session_id: "".to_string(), // Set on SSH client
+        };
+
+        if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {
+            let timestamp = chrono::Utc::now().format("%Y_%m_%d %H_%M_%S").to_string();
+            let panic_file_path = paths::logs_dir().join(format!("zed-{timestamp}.panic"));
+            let panic_file = std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&panic_file_path)
+                .log_err();
+            if let Some(mut panic_file) = panic_file {
+                writeln!(&mut panic_file, "{panic_data_json}").log_err();
+                panic_file.flush().log_err();
+            }
+        }
 
         std::process::abort();
     }));
+}
+
+fn handle_panic_requests(project: &Model<HeadlessProject>, client: &Arc<ChannelClient>) {
+    let client: AnyProtoClient = client.clone().into();
+    client.add_request_handler(
+        project.downgrade(),
+        |_, _: TypedEnvelope<proto::GetPanicFiles>, _cx| async move {
+            let mut children = smol::fs::read_dir(paths::logs_dir()).await?;
+            let mut panic_files = Vec::new();
+            while let Some(child) = children.next().await {
+                let child = child?;
+                let child_path = child.path();
+
+                if child_path.extension() != Some(OsStr::new("panic")) {
+                    continue;
+                }
+                let filename = if let Some(filename) = child_path.file_name() {
+                    filename.to_string_lossy()
+                } else {
+                    continue;
+                };
+
+                if !filename.starts_with("zed") {
+                    continue;
+                }
+
+                let file_contents = smol::fs::read_to_string(&child_path)
+                    .await
+                    .context("error reading panic file")?;
+
+                panic_files.push(file_contents);
+
+                // We've done what we can, delete the file
+                std::fs::remove_file(child_path)
+                    .context("error removing panic")
+                    .log_err();
+            }
+            anyhow::Ok(proto::GetPanicFilesResponse {
+                file_contents: panic_files,
+            })
+        },
+    );
 }
 
 struct ServerListeners {
@@ -368,7 +454,7 @@ pub fn execute_run(
 
             HeadlessProject::new(
                 HeadlessAppState {
-                    session,
+                    session: session.clone(),
                     fs,
                     http_client,
                     node_runtime,
@@ -377,6 +463,8 @@ pub fn execute_run(
                 cx,
             )
         });
+
+        handle_panic_requests(&project, &session);
 
         mem::forget(project);
     });

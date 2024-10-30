@@ -25,6 +25,6 @@ url.workspace = true
 util.workspace = true
 
 [dev-dependencies]
-unindent.workspace = true
+indoc.workspace = true
 serde_json.workspace = true
 pretty_assertions.workspace = true

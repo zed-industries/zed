@@ -1288,6 +1288,7 @@ impl SshRemoteConnection {
     ) -> Result<Self> {
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
+        use smol::net::unix::UnixStream;
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
 
@@ -1303,6 +1304,9 @@ impl SshRemoteConnection {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+
+        let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
+        let mut kill_tx = Some(askpass_kill_master_tx);
 
         let askpass_task = cx.spawn({
             let delegate = delegate.clone();
@@ -1327,6 +1331,11 @@ impl SshRemoteConnection {
                         .log_err()
                     {
                         stream.write_all(password.as_bytes()).await.log_err();
+                    } else {
+                        if let Some(kill_tx) = kill_tx.take() {
+                            kill_tx.send(stream).log_err();
+                            break;
+                        }
                     }
                 }
             }
@@ -1347,6 +1356,7 @@ impl SshRemoteConnection {
         // the connection and keep it open, allowing other ssh commands to reuse it
         // via a control socket.
         let socket_path = temp_dir.path().join("ssh.sock");
+
         let mut master_process = process::Command::new("ssh")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -1369,20 +1379,28 @@ impl SshRemoteConnection {
 
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
-        let stdout = master_process.stdout.as_mut().unwrap();
+        let mut stdout = master_process.stdout.take().unwrap();
         let mut output = Vec::new();
         let connection_timeout = Duration::from_secs(10);
 
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {
-                // If the askpass script has opened, that means the user is typing
-                // their password, in which case we don't want to timeout anymore,
-                // since we know a connection has been established.
-                stdout.read_to_end(&mut output).await?;
-                Ok(())
+                select_biased! {
+                    stream = askpass_kill_master_rx.fuse() => {
+                        master_process.kill().ok();
+                        drop(stream);
+                        Err(anyhow!("SSH connection canceled"))
+                    }
+                    // If the askpass script has opened, that means the user is typing
+                    // their password, in which case we don't want to timeout anymore,
+                    // since we know a connection has been established.
+                    result = stdout.read_to_end(&mut output).fuse() => {
+                        result?;
+                        Ok(())
+                    }
+                }
             }
-            result = stdout.read_to_end(&mut output).fuse() => {
-                result?;
+            _ = stdout.read_to_end(&mut output).fuse() => {
                 Ok(())
             }
             _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
@@ -1718,13 +1736,19 @@ impl SshRemoteConnection {
             }
         }
 
-        if self.is_binary_in_use(dst_path).await? {
-            log::info!("server binary is opened by another process. not updating");
-            delegate.set_status(
-                Some("Skipping update of remote development server, since it's still in use"),
-                cx,
-            );
-            return Ok(());
+        if cfg!(not(debug_assertions)) {
+            // When we're not in dev mode, we don't want to switch out the binary if it's
+            // still open.
+            // In dev mode, that's fine, since we often kill Zed processes with Ctrl-C and want
+            // to still replace the binary.
+            if self.is_binary_in_use(dst_path).await? {
+                log::info!("server binary is opened by another process. not updating");
+                delegate.set_status(
+                    Some("Skipping update of remote development server, since it's still in use"),
+                    cx,
+                );
+                return Ok(());
+            }
         }
 
         let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
@@ -1993,77 +2017,97 @@ impl ChannelClient {
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         cx: &AsyncAppContext,
     ) -> Task<Result<()>> {
-        cx.spawn(|cx| {
-            async move {
-                let peer_id = PeerId { owner_id: 0, id: 0 };
-                while let Some(incoming) = incoming_rx.next().await {
-                    let Some(this) = this.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-                    if let Some(ack_id) = incoming.ack_id {
-                        let mut buffer = this.buffer.lock();
-                        while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
-                            buffer.pop_front();
+        cx.spawn(|cx| async move {
+            let peer_id = PeerId { owner_id: 0, id: 0 };
+            while let Some(incoming) = incoming_rx.next().await {
+                let Some(this) = this.upgrade() else {
+                    return anyhow::Ok(());
+                };
+                if let Some(ack_id) = incoming.ack_id {
+                    let mut buffer = this.buffer.lock();
+                    while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
+                        buffer.pop_front();
+                    }
+                }
+                if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload
+                {
+                    log::debug!(
+                        "{}:ssh message received. name:FlushBufferedMessages",
+                        this.name
+                    );
+                    {
+                        let buffer = this.buffer.lock();
+                        for envelope in buffer.iter() {
+                            this.outgoing_tx
+                                .lock()
+                                .unbounded_send(envelope.clone())
+                                .ok();
                         }
                     }
-                    if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) =
-                        &incoming.payload
-                    {
-                        log::debug!("{}:ssh message received. name:FlushBufferedMessages", this.name);
-                        {
-                            let buffer = this.buffer.lock();
-                            for envelope in buffer.iter() {
-                                this.outgoing_tx.lock().unbounded_send(envelope.clone()).ok();
-                            }
+                    let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
+                    envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+                    this.outgoing_tx.lock().unbounded_send(envelope).ok();
+                    continue;
+                }
+
+                this.max_received.store(incoming.id, SeqCst);
+
+                if let Some(request_id) = incoming.responding_to {
+                    let request_id = MessageId(request_id);
+                    let sender = this.response_channels.lock().remove(&request_id);
+                    if let Some(sender) = sender {
+                        let (tx, rx) = oneshot::channel();
+                        if incoming.payload.is_some() {
+                            sender.send((incoming, tx)).ok();
                         }
-                        let mut envelope = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
-                        envelope.id = this.next_message_id.fetch_add(1, SeqCst);
-                        this.outgoing_tx.lock().unbounded_send(envelope).ok();
-                        continue;
+                        rx.await.ok();
                     }
-
-                    this.max_received.store(incoming.id, SeqCst);
-
-                    if let Some(request_id) = incoming.responding_to {
-                        let request_id = MessageId(request_id);
-                        let sender = this.response_channels.lock().remove(&request_id);
-                        if let Some(sender) = sender {
-                            let (tx, rx) = oneshot::channel();
-                            if incoming.payload.is_some() {
-                                sender.send((incoming, tx)).ok();
-                            }
-                            rx.await.ok();
-                        }
-                    } else if let Some(envelope) =
-                        build_typed_envelope(peer_id, Instant::now(), incoming)
-                    {
-                        let type_name = envelope.payload_type_name();
-                        if let Some(future) = ProtoMessageHandlerSet::handle_message(
-                            &this.message_handlers,
-                            envelope,
-                            this.clone().into(),
-                            cx.clone(),
-                        ) {
-                            log::debug!("{}:ssh message received. name:{type_name}", this.name);
-                            cx.foreground_executor().spawn(async move {
+                } else if let Some(envelope) =
+                    build_typed_envelope(peer_id, Instant::now(), incoming)
+                {
+                    let type_name = envelope.payload_type_name();
+                    if let Some(future) = ProtoMessageHandlerSet::handle_message(
+                        &this.message_handlers,
+                        envelope,
+                        this.clone().into(),
+                        cx.clone(),
+                    ) {
+                        log::debug!("{}:ssh message received. name:{type_name}", this.name);
+                        cx.foreground_executor()
+                            .spawn(async move {
                                 match future.await {
                                     Ok(_) => {
-                                        log::debug!("{}:ssh message handled. name:{type_name}", this.name);
+                                        log::debug!(
+                                            "{}:ssh message handled. name:{type_name}",
+                                            this.name
+                                        );
                                     }
                                     Err(error) => {
                                         log::error!(
-                                            "{}:error handling message. type:{type_name}, error:{error}", this.name,
+                                            "{}:error handling message. type:{}, error:{}",
+                                            this.name,
+                                            type_name,
+                                            format!("{error:#}").lines().fold(
+                                                String::new(),
+                                                |mut message, line| {
+                                                    if !message.is_empty() {
+                                                        message.push(' ');
+                                                    }
+                                                    message.push_str(line);
+                                                    message
+                                                }
+                                            )
                                         );
                                     }
                                 }
-                            }).detach()
-                        } else {
-                            log::error!("{}:unhandled ssh message name:{type_name}", this.name);
-                        }
+                            })
+                            .detach()
+                    } else {
+                        log::error!("{}:unhandled ssh message name:{type_name}", this.name);
                     }
                 }
-                anyhow::Ok(())
             }
+            anyhow::Ok(())
         })
     }
 

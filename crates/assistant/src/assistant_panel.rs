@@ -1462,6 +1462,7 @@ type MessageHeader = MessageMetadata;
 
 #[derive(Clone)]
 enum AssistError {
+    FileRequired,
     PaymentRequired,
     MaxMonthlySpendReached,
     Message(SharedString),
@@ -1628,7 +1629,10 @@ impl ContextEditor {
 
         self.last_error = None;
 
-        if let Some(user_message) = self
+        if request_type == RequestType::SuggestEdits && !self.context.read(cx).contains_files(cx) {
+            self.last_error = Some(AssistError::FileRequired);
+            cx.notify();
+        } else if let Some(user_message) = self
             .context
             .update(cx, |context, cx| context.assist(request_type, cx))
         {
@@ -1677,8 +1681,10 @@ impl ContextEditor {
         });
     }
 
-    fn cursors(&self, cx: &AppContext) -> Vec<usize> {
-        let selections = self.editor.read(cx).selections.all::<usize>(cx);
+    fn cursors(&self, cx: &mut WindowContext) -> Vec<usize> {
+        let selections = self
+            .editor
+            .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
         selections
             .into_iter()
             .map(|selection| selection.head())
@@ -2431,7 +2437,9 @@ impl ContextEditor {
     }
 
     fn update_active_patch(&mut self, cx: &mut ViewContext<Self>) {
-        let newest_cursor = self.editor.read(cx).selections.newest::<Point>(cx).head();
+        let newest_cursor = self.editor.update(cx, |editor, cx| {
+            editor.selections.newest::<Point>(cx).head()
+        });
         let context = self.context.read(cx);
 
         let new_patch = context.patch_containing(newest_cursor, cx).cloned();
@@ -2838,39 +2846,40 @@ impl ContextEditor {
     ) -> Option<(String, bool)> {
         const CODE_FENCE_DELIMITER: &'static str = "```";
 
-        let context_editor = context_editor_view.read(cx).editor.read(cx);
+        let context_editor = context_editor_view.read(cx).editor.clone();
+        context_editor.update(cx, |context_editor, cx| {
+            if context_editor.selections.newest::<Point>(cx).is_empty() {
+                let snapshot = context_editor.buffer().read(cx).snapshot(cx);
+                let (_, _, snapshot) = snapshot.as_singleton()?;
 
-        if context_editor.selections.newest::<Point>(cx).is_empty() {
-            let snapshot = context_editor.buffer().read(cx).snapshot(cx);
-            let (_, _, snapshot) = snapshot.as_singleton()?;
+                let head = context_editor.selections.newest::<Point>(cx).head();
+                let offset = snapshot.point_to_offset(head);
 
-            let head = context_editor.selections.newest::<Point>(cx).head();
-            let offset = snapshot.point_to_offset(head);
+                let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
+                let mut text = snapshot
+                    .text_for_range(surrounding_code_block_range)
+                    .collect::<String>();
 
-            let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
-            let mut text = snapshot
-                .text_for_range(surrounding_code_block_range)
-                .collect::<String>();
+                // If there is no newline trailing the closing three-backticks, then
+                // tree-sitter-md extends the range of the content node to include
+                // the backticks.
+                if text.ends_with(CODE_FENCE_DELIMITER) {
+                    text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+                }
 
-            // If there is no newline trailing the closing three-backticks, then
-            // tree-sitter-md extends the range of the content node to include
-            // the backticks.
-            if text.ends_with(CODE_FENCE_DELIMITER) {
-                text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+                (!text.is_empty()).then_some((text, true))
+            } else {
+                let anchor = context_editor.selections.newest_anchor();
+                let text = context_editor
+                    .buffer()
+                    .read(cx)
+                    .read(cx)
+                    .text_for_range(anchor.range())
+                    .collect::<String>();
+
+                (!text.is_empty()).then_some((text, false))
             }
-
-            (!text.is_empty()).then_some((text, true))
-        } else {
-            let anchor = context_editor.selections.newest_anchor();
-            let text = context_editor
-                .buffer()
-                .read(cx)
-                .read(cx)
-                .text_for_range(anchor.range())
-                .collect::<String>();
-
-            (!text.is_empty()).then_some((text, false))
-        }
+        })
     }
 
     fn insert_selection(
@@ -3781,6 +3790,7 @@ impl ContextEditor {
                 .elevation_2(cx)
                 .occlude()
                 .child(match last_error {
+                    AssistError::FileRequired => self.render_file_required_error(cx),
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
                     AssistError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
@@ -3791,6 +3801,41 @@ impl ContextEditor {
                 })
                 .into_any(),
         )
+    }
+
+    fn render_file_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::Warning).color(Color::Warning))
+                    .child(
+                        Label::new("Suggest Edits needs a file to edit").weight(FontWeight::MEDIUM),
+                    ),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(
+                        "To include files, type /file or /tab in your prompt.",
+                    )),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
     }
 
     fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {

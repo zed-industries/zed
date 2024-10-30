@@ -289,7 +289,12 @@ message Envelope {
         ActiveToolchainResponse active_toolchain_response = 277;
 
         GetPathMetadata get_path_metadata = 278;
-        GetPathMetadataResponse get_path_metadata_response = 279; // current max
+        GetPathMetadataResponse get_path_metadata_response = 279;
+
+        GetPanicFiles get_panic_files = 280;
+        GetPanicFilesResponse get_panic_files_response = 281;
+
+        CancelLanguageServerWork cancel_language_server_work = 282; // current max
     }
 
     reserved 87 to 88;
@@ -1254,12 +1259,14 @@ message LspWorkStart {
     optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 5;
 }
 
 message LspWorkProgress {
     string token = 1;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 4;
 }
 
 message LspWorkEnd {
@@ -2117,10 +2124,16 @@ message CommitPermalink {
 }
 
 message BlameBufferResponse {
-    repeated BlameEntry entries = 1;
-    repeated CommitMessage messages = 2;
-    repeated CommitPermalink permalinks = 3;
-    optional string remote_url = 4;
+    message BlameResponse {
+        repeated BlameEntry entries = 1;
+        repeated CommitMessage messages = 2;
+        repeated CommitPermalink permalinks = 3;
+        optional string remote_url = 4;
+    }
+
+    optional BlameResponse blame_response = 5;
+
+    reserved 1 to 4;
 }
 
 message MultiLspQuery {
@@ -2483,5 +2496,29 @@ message UpdateGitBranch {
     uint64 project_id = 1;
     string branch_name = 2;
     ProjectPath repository = 3;
+}
 
+message GetPanicFiles {
+}
+
+message GetPanicFilesResponse {
+    repeated string file_contents = 2;
+}
+
+message CancelLanguageServerWork {
+    uint64 project_id = 1;
+
+    oneof work {
+        Buffers buffers = 2;
+        LanguageServerWork language_server_work = 3;
+    }
+
+    message Buffers {
+        repeated uint64 buffer_ids = 2;
+    }
+
+    message LanguageServerWork {
+        uint64 language_server_id = 1;
+        optional string token = 2;
+    }
 }
