@@ -265,6 +265,7 @@ pub struct BlockContext<'a, 'b> {
     pub em_width: Pixels,
     pub line_height: Pixels,
     pub block_id: BlockId,
+    pub selected: bool,
     pub editor_style: &'b EditorStyle,
 }
 
