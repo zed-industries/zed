@@ -3841,6 +3841,7 @@ impl OutlinePanel {
 
             v_flex()
                 .flex_1()
+                .justify_center()
                 .size_full()
                 .child(h_flex().justify_center().child(Label::new(header)))
                 .when_some(query.clone(), |panel, query| {

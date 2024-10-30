@@ -105,7 +105,6 @@ pub struct OutlinePanelSettingsContent {
     pub indent_guides: Option<IndentGuidesSettingsContent>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
-
 }
 
 impl Settings for OutlinePanelSettings {
