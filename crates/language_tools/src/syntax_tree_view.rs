@@ -130,13 +130,11 @@ impl SyntaxTreeView {
         let editor_state = self.editor.as_mut()?;
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor.selections.last::<usize>(cx).range();
-            Some(
-                editor
-                    .buffer()
-                    .read(cx)
-                    .range_to_buffer_ranges(selection_range, cx)
-                    .pop()?,
-            )
+            editor
+                .buffer()
+                .read(cx)
+                .range_to_buffer_ranges(selection_range, cx)
+                .pop()
         })?;
 
         // If the cursor has moved into a different excerpt, retrieve a new syntax layer
