@@ -38,6 +38,10 @@ impl SlashCommand for SearchSlashCommand {
         "Search your project semantically".into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::SearchCode
+    }
+
     fn menu_text(&self) -> String {
         self.description()
     }
