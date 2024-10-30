@@ -366,6 +366,7 @@ messages!(
     (GetPathMetadataResponse, Background),
     (GetPanicFiles, Background),
     (GetPanicFilesResponse, Background),
+    (CancelLanguageServerWork, Foreground),
 );
 
 request_messages!(
@@ -486,7 +487,8 @@ request_messages!(
     (ActivateToolchain, Ack),
     (ActiveToolchain, ActiveToolchainResponse),
     (GetPathMetadata, GetPathMetadataResponse),
-    (GetPanicFiles, GetPanicFilesResponse)
+    (GetPanicFiles, GetPanicFilesResponse),
+    (CancelLanguageServerWork, Ack),
 );
 
 entity_messages!(
@@ -570,6 +572,7 @@ entity_messages!(
     ActivateToolchain,
     ActiveToolchain,
     GetPathMetadata,
+    CancelLanguageServerWork,
 );
 
 entity_messages!(
