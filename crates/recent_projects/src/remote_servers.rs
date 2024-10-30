@@ -871,6 +871,7 @@ impl RemoteServerProjects {
         let theme = cx.theme();
 
         v_flex()
+            .track_focus(&self.focus_handle(cx))
             .id("create-remote-server")
             .overflow_hidden()
             .size_full()
@@ -965,6 +966,13 @@ impl RemoteServerProjects {
                             div()
                                 .id("ssh-options-add-nickname")
                                 .track_focus(&entries[0].focus_handle)
+                                .on_action(cx.listener(move |this, _: &menu::Confirm, cx| {
+                                    this.mode = Mode::EditNickname(EditNicknameState::new(
+                                        server_index,
+                                        cx,
+                                    ));
+                                    cx.notify();
+                                }))
                                 .child(
                                     ListItem::new("add-nickname")
                                         .selected(entries[0].focus_handle.contains_focused(cx))
@@ -1017,6 +1025,13 @@ impl RemoteServerProjects {
                             div()
                                 .id("ssh-options-copy-server-address")
                                 .track_focus(&entries[1].focus_handle)
+                                .on_action({
+                                    let connection_string = connection_string.clone();
+                                    let workspace = self.workspace.clone();
+                                    move |_: &menu::Confirm, cx| {
+                                        callback(workspace.clone(), connection_string.clone(), cx);
+                                    }
+                                })
                                 .child(
                                     ListItem::new("copy-server-address")
                                         .selected(entries[1].focus_handle.contains_focused(cx))
@@ -1062,6 +1077,10 @@ impl RemoteServerProjects {
                                         remote_servers
                                             .update(&mut cx, |this, cx| {
                                                 this.delete_ssh_server(index, cx);
+                                            })
+                                            .ok();
+                                        remote_servers
+                                            .update(&mut cx, |this, cx| {
                                                 this.mode = Mode::default_mode(cx);
                                                 cx.notify();
                                             })
@@ -1074,6 +1093,18 @@ impl RemoteServerProjects {
                             div()
                                 .id("ssh-options-copy-server-address")
                                 .track_focus(&entries[2].focus_handle)
+                                .on_action(cx.listener({
+                                    let connection_string = connection_string.clone();
+                                    move |_, _: &menu::Confirm, cx| {
+                                        remove_ssh_server(
+                                            cx.view().clone(),
+                                            server_index,
+                                            connection_string.clone(),
+                                            cx,
+                                        );
+                                        cx.focus_self();
+                                    }
+                                }))
                                 .child(
                                     ListItem::new("remove-server")
                                         .selected(entries[2].focus_handle.contains_focused(cx))
@@ -1088,6 +1119,7 @@ impl RemoteServerProjects {
                                                 connection_string.clone(),
                                                 cx,
                                             );
+                                            cx.focus_self();
                                         })),
                                 )
                         })
@@ -1096,6 +1128,11 @@ impl RemoteServerProjects {
                             div()
                                 .id("ssh-options-copy-server-address")
                                 .track_focus(&entries[3].focus_handle)
+                                .on_action(cx.listener(|this, _: &menu::Confirm, cx| {
+                                    this.mode = Mode::default_mode(cx);
+                                    cx.focus_self();
+                                    cx.notify();
+                                }))
                                 .child(
                                     ListItem::new("go-back")
                                         .selected(entries[3].focus_handle.contains_focused(cx))
@@ -1107,6 +1144,7 @@ impl RemoteServerProjects {
                                         .child(Label::new("Go Back"))
                                         .on_click(cx.listener(|this, _, cx| {
                                             this.mode = Mode::default_mode(cx);
+                                            cx.focus_self();
                                             cx.notify()
                                         })),
                                 )
@@ -1130,13 +1168,17 @@ impl RemoteServerProjects {
             .ssh_connections()
             .nth(state.index)
         else {
-            return v_flex();
+            return v_flex()
+                .id("ssh-edit-nickname")
+                .track_focus(&self.focus_handle(cx));
         };
 
         let connection_string = connection.host.clone();
         let nickname = connection.nickname.clone().map(|s| s.into());
 
         v_flex()
+            .id("ssh-edit-nickname")
+            .track_focus(&self.focus_handle(cx))
             .child(
                 SshConnectionHeader {
                     connection_string,
@@ -1177,7 +1219,13 @@ impl RemoteServerProjects {
 
                         cx.notify();
                     })),
-            );
+            )
+            .on_action(cx.listener(|this, _: &menu::Confirm, cx| {
+                let state = CreateRemoteServer::new(cx);
+                this.mode = Mode::CreateRemoteServer(state);
+
+                cx.notify();
+            }));
 
         let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() else {
             unreachable!()
@@ -1210,15 +1258,15 @@ impl RemoteServerProjects {
                 )
                 .into_any_element(),
         )
-        .entry(state.add_new_server.clone().into());
+        .entry(state.add_new_server.clone());
 
         for server in &state.servers {
             for (navigation_state, _) in &server.projects {
-                modal_section = modal_section.entry(navigation_state.clone().into());
+                modal_section = modal_section.entry(navigation_state.clone());
             }
             modal_section = modal_section
-                .entry(server.open_folder.clone().into())
-                .entry(server.configure.clone().into());
+                .entry(server.open_folder.clone())
+                .entry(server.configure.clone());
         }
         let mut modal_section = modal_section.render(cx).into_any_element();
 
