@@ -2,8 +2,9 @@
 mod context_tests;
 
 use crate::{
-    prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantEdit, AssistantPatch,
-    AssistantPatchStatus, MessageId, MessageStatus,
+    prompts::PromptBuilder,
+    slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
+    AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
