@@ -1462,6 +1462,7 @@ type MessageHeader = MessageMetadata;
 
 #[derive(Clone)]
 enum AssistError {
+    FileRequired,
     PaymentRequired,
     MaxMonthlySpendReached,
     Message(SharedString),
@@ -1628,7 +1629,10 @@ impl ContextEditor {
 
         self.last_error = None;
 
-        if let Some(user_message) = self
+        if request_type == RequestType::SuggestEdits && !self.context.read(cx).contains_files(cx) {
+            self.last_error = Some(AssistError::FileRequired);
+            cx.notify();
+        } else if let Some(user_message) = self
             .context
             .update(cx, |context, cx| context.assist(request_type, cx))
         {
@@ -3740,6 +3744,7 @@ impl ContextEditor {
                 .elevation_2(cx)
                 .occlude()
                 .child(match last_error {
+                    AssistError::FileRequired => self.render_file_required_error(cx),
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
                     AssistError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
@@ -3750,6 +3755,41 @@ impl ContextEditor {
                 })
                 .into_any(),
         )
+    }
+
+    fn render_file_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::Warning).color(Color::Warning))
+                    .child(
+                        Label::new("Suggest Edits needs a file to edit").weight(FontWeight::MEDIUM),
+                    ),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(
+                        "To include files, type /file or /tab in your prompt.",
+                    )),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
     }
 
     fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
