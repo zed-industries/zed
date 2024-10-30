@@ -1,5 +1,5 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
-use ::http_client::AsyncBody;
+use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
@@ -8,11 +8,10 @@ use async_trait::async_trait;
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use indexed_docs::IndexedDocsDatabase;
-use isahc::config::{Configurable, RedirectPolicy};
-use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
+use language::{LanguageName, LanguageServerName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -55,16 +54,7 @@ pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBo
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
-    LINKER.get_or_init(|| {
-        super::new_linker(|linker, f| {
-            Extension::add_to_linker(linker, f)?;
-            latest::zed::extension::github::add_to_linker(linker, f)?;
-            latest::zed::extension::nodejs::add_to_linker(linker, f)?;
-            latest::zed::extension::platform::add_to_linker(linker, f)?;
-            latest::zed::extension::slash_command::add_to_linker(linker, f)?;
-            Ok(())
-        })
-    })
+    LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
 }
 
 impl From<Command> for latest::Command {
@@ -306,10 +296,12 @@ fn convert_request(
     let mut request = ::http_client::Request::builder()
         .method(::http_client::Method::from(extension_request.method))
         .uri(&extension_request.url)
-        .redirect_policy(match extension_request.redirect_policy {
-            http_client::RedirectPolicy::NoFollow => RedirectPolicy::None,
-            http_client::RedirectPolicy::FollowLimit(limit) => RedirectPolicy::Limit(limit),
-            http_client::RedirectPolicy::FollowAll => RedirectPolicy::Follow,
+        .follow_redirects(match extension_request.redirect_policy {
+            http_client::RedirectPolicy::NoFollow => ::http_client::RedirectPolicy::NoFollow,
+            http_client::RedirectPolicy::FollowLimit(limit) => {
+                ::http_client::RedirectPolicy::FollowLimit(limit)
+            }
+            http_client::RedirectPolicy::FollowAll => ::http_client::RedirectPolicy::FollowAll,
         });
     for (key, value) in &extension_request.headers {
         request = request.header(key, value);
@@ -364,8 +356,11 @@ impl ExtensionImports for WasmState {
                 cx.update(|cx| match category.as_str() {
                     "language" => {
                         let key = key.map(|k| LanguageName::new(&k));
-                        let settings =
-                            AllLanguageSettings::get(location, cx).language(key.as_ref());
+                        let settings = AllLanguageSettings::get(location, cx).language(
+                            location,
+                            key.as_ref(),
+                            cx,
+                        );
                         Ok(serde_json::to_string(&settings::LanguageSettings {
                             tab_size: settings.tab_size,
                         })?)
@@ -375,7 +370,7 @@ impl ExtensionImports for WasmState {
                             .and_then(|key| {
                                 ProjectSettings::get(location, cx)
                                     .lsp
-                                    .get(&Arc::<str>::from(key))
+                                    .get(&LanguageServerName(key.into()))
                             })
                             .cloned()
                             .unwrap_or_default();

@@ -15,7 +15,7 @@ TBD: Add settings documentation about how settings are merged as overlays. E.g. 
 
 Your settings file can be opened with {#kb zed::OpenSettings}. By default it is located at `~/.config/zed/settings.json`, though if you have XDG_CONFIG_HOME in your environment on Linux it will be at `$XDG_CONFIG_HOME/zed/settings.json` instead.
 
-This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenLocalSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
+This configuration is merged with any local configuration inside your projects. You can open the project settings by running {#action zed::OpenProjectSettings} from the command palette. This will create a `.zed` directory containing`.zed/settings.json`.
 
 Although most projects will only need one settings file at the root, you can add more local settings files for subdirectories as needed. Not all settings can be set in local files, just those that impact the behavior of the editor and language tooling. For example you can set `tab_size`, `formatter` etc. but not `theme`, `vim_mode` and similar.
 
@@ -38,6 +38,40 @@ Extensions that provide language servers may also provide default settings for t
 **Options**
 
 `float` values
+
+## Auto Install extensions
+
+- Description: Define extensions to be autoinstalled or never be installed.
+- Setting: `auto_install_extension`
+- Default: `{"html": true}`
+
+**Options**
+
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+
+On MacOS:
+
+```sh
+ls ~/Library/Application\ Support/Zed/extensions/installed/
+```
+
+On Linux:
+
+```sh
+ls ~/.local/share/zed/extensions/installed
+```
+
+Define extensions which should be installed (`true`) or never installed (`false`).
+
+```json
+{
+  "auto_install_extensions": {
+    "html": true,
+    "dockerfile": true,
+    "docker-compose": false
+  }
+}
+```
 
 ## Autosave
 
@@ -92,6 +126,62 @@ Extensions that provide language servers may also provide default settings for t
 **Options**
 
 `boolean` values
+
+## Base Keymap
+
+- Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
+- Setting: `base_keymap`
+- Default: `VSCode`
+
+**Options**
+
+1. VSCode
+
+```json
+{
+  "base_keymap": "VSCode"
+}
+```
+
+2. Atom
+
+```json
+{
+  "base_keymap": "Atom"
+}
+```
+
+3. JetBrains
+
+```json
+{
+  "base_keymap": "JetBrains"
+}
+```
+
+4. None
+
+```json
+{
+  "base_keymap": "None"
+}
+```
+
+5. SublimeText
+
+```json
+{
+  "base_keymap": "SublimeText"
+}
+```
+
+6. TextMate
+
+```json
+{
+  "base_keymap": "TextMate"
+}
+```
 
 ## Buffer Font Family
 
@@ -159,7 +249,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 **Options**
 
-`integer` values
+`integer` values from `6` to `100` pixels (inclusive)
 
 ## Buffer Font Weight
 
@@ -211,12 +301,14 @@ left and right padding of the central pane from the workspace when the centered 
 
 ## Direnv Integration
 
-- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed. `direnv` integration currently only means that the environment variables set by a `direnv` configuration can be used to detect some language servers in `$PATH` instead of installing them.
+- Description: Settings for [direnv](https://direnv.net/) integration. Requires `direnv` to be installed.
+  `direnv` integration make it possible to use the environment variables set by a `direnv` configuration to detect some language servers in `$PATH` instead of installing them.
+  It also allows for those environment variables to be used in tasks.
 - Setting: `load_direnv`
 - Default:
 
 ```json
-"load_direnv": "shell_hook"
+"load_direnv": "direct"
 ```
 
 **Options**
@@ -293,11 +385,37 @@ List of `string` values
 
 `boolean` values
 
-## Default Dock Anchor
+## Cursor Shape
 
-- Description: The default anchor for new docks.
-- Setting: `default_dock_anchor`
-- Default: `bottom`
+- Description: Cursor shape for the default editor.
+- Setting: `cursor_shape`
+- Default: `bar`
+
+**Options**
+
+1. A vertical bar:
+
+```json
+"cursor_shape": "bar"
+```
+
+2. A block that surrounds the following character:
+
+```json
+"cursor_shape": "block"
+```
+
+3. An underline / underscore that runs along the following character:
+
+```json
+"cursor_shape": "underline"
+```
+
+4. An box drawn around the following character:
+
+```json
+"cursor_shape": "hollow"
+```
 
 **Options**
 
@@ -455,7 +573,8 @@ List of `string` values
 "tabs": {
   "close_position": "right",
   "file_icons": false,
-  "git_status": false
+  "git_status": false,
+  "activate_on_close": "history"
 },
 ```
 
@@ -494,6 +613,30 @@ List of `string` values
 - Description: Whether or not to show Git file status in tab.
 - Setting: `git_status`
 - Default: `false`
+
+### Activate on close
+
+- Description: What to do after closing the current tab.
+- Setting: `activate_on_close`
+- Default: `history`
+
+**Options**
+
+1.  Activate the tab that was open previously:
+
+```json
+{
+  "activate_on_close": "history"
+}
+```
+
+2. Activate the neighbour tab (prefers the right one, if present):
+
+```json
+{
+  "activate_on_close": "neighbour"
+}
+```
 
 ## Editor Toolbar
 
@@ -543,8 +686,13 @@ Each option controls displaying of a particular toolbar element. If all elements
 The following settings can be overridden for specific language servers:
 
 - `initialization_options`
+- `settings`
 
-To override settings for a language, add an entry for that language server's name to the `lsp` value. Example:
+To override configuration for a language server, add an entry for that language server's name to the `lsp` value.
+
+Some options are passed via `initialization_options` to the language server. These are for options which must be specified at language server startup and when changed will require restarting the language server.
+
+For example to pass the `check` option to `rust-analyzer`, use the following configuration:
 
 ```json
 "lsp": {
@@ -552,6 +700,20 @@ To override settings for a language, add an entry for that language server's nam
     "initialization_options": {
       "check": {
         "command": "clippy" // rust-analyzer.check.command (default: "check")
+      }
+    }
+  }
+}
+```
+
+While other options may be changed at a runtime and should be placed under `settings`:
+
+```json
+"lsp": {
+  "yaml-language-server": {
+    "settings": {
+      "yaml": {
+        "keyOrdering": true // Enforces alphabetical ordering of keys in maps
       }
     }
   }
@@ -611,7 +773,18 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
-3. Or to use code actions provided by the connected language servers, use `"code_actions"`:
+3. External formatters may optionally include a `{buffer_path}` placeholder which at runtime will include the path of the buffer being formatted. Formatters operate by receiving file content via standard input, reformatting it and then outputting it to standard output and so normally don't know the filename of what they are formatting. Tools like prettier support receiving the file path via a command line argument which can then used to impact formatting decisions.
+
+```json
+  "formatter": {
+    "external": {
+      "command": "prettier",
+      "arguments": ["--stdin-filepath", "{buffer_path}"]
+    }
+  }
+```
+
+4. Or to use code actions provided by the connected language servers, use `"code_actions"`:
 
 ```json
 {
@@ -626,7 +799,7 @@ To override settings for a language, add an entry for that language server's nam
 }
 ```
 
-4. Or to use multiple formatters consecutively, use an array of formatters:
+5. Or to use multiple formatters consecutively, use an array of formatters:
 
 ```json
 {
@@ -741,6 +914,27 @@ If the setting is set to `true`:
 
 The result is still `)))` and not `))))))`, which is what it would be by default.
 
+## File Scan Exclusions
+
+- Setting: `file_scan_exclusions`
+- Description: Configure how Add filename or directory globs that will be excluded by Zed entirely. They will be skipped during file scans, file searches and hidden from project file tree.
+- Default:
+
+```json
+"file_scan_exclusions": [
+  "**/.git",
+  "**/.svn",
+  "**/.hg",
+  "**/CVS",
+  "**/.DS_Store",
+  "**/Thumbs.db",
+  "**/.classpath",
+  "**/.settings"
+],
+```
+
+Note, specifying `file_scan_exclusions` in settings.json will override the defaults (shown above). If you are looking to exclude additional items you will need to include all the default values in your settings.
+
 ## File Types
 
 - Setting: `file_types`
@@ -806,7 +1000,50 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-### Indent Guides
+### Inline Git Blame
+
+- Description: Whether or not to show git blame information inline, on the currently focused line.
+- Setting: `inline_blame`
+- Default:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true
+    }
+  }
+}
+```
+
+**Options**
+
+1. Disable inline git blame:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": false
+    }
+  }
+}
+```
+
+2. Only show inline git blame after a delay (that starts after cursor stops moving):
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "delay_ms": 500
+    }
+  }
+}
+```
+
+## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
 - Setting: `indent_guides`
@@ -875,49 +1112,6 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-### Inline Git Blame
-
-- Description: Whether or not to show git blame information inline, on the currently focused line.
-- Setting: `inline_blame`
-- Default:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true
-    }
-  }
-}
-```
-
-**Options**
-
-1. Disable inline git blame:
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": false
-    }
-  }
-}
-```
-
-2. Only show inline git blame after a delay (that starts after cursor stops moving):
-
-```json
-{
-  "git": {
-    "inline_blame": {
-      "enabled": true,
-      "delay_ms": 500
-    }
-  }
-}
-```
-
 ## Hard Tabs
 
 - Description: Whether to indent lines using tab characters or multiple spaces.
@@ -950,6 +1144,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
   "show_type_hints": true,
   "show_parameter_hints": true,
   "show_other_hints": true,
+  "show_background": false,
   "edit_debounce_ms": 700,
   "scroll_debounce_ms": 50
 }
@@ -1075,10 +1270,10 @@ The following URI schemes are supported:
 
 - `http`
 - `https`
-- `socks4`
-- `socks4a`
-- `socks5`
-- `socks5h`
+- `socks4` - SOCKS4 proxy with local DNS
+- `socks4a` - SOCKS4 proxy with remote DNS
+- `socks5` - SOCKS5 proxy with local DNS
+- `socks5h` - SOCKS5 proxy with remote DNS
 
 `http` will be used when no scheme is specified.
 
@@ -1096,7 +1291,7 @@ Or to set a `socks5` proxy:
 
 ```json
 {
-  "proxy": "socks5://localhost:10808"
+  "proxy": "socks5h://localhost:10808"
 }
 ```
 
@@ -1255,12 +1450,12 @@ Or to set a `socks5` proxy:
 
 - Description: Whether or not to automatically wrap lines of text to fit editor / preferred width.
 - Setting: `soft_wrap`
-- Default: `prefer_line`
+- Default: `none`
 
 **Options**
 
-1. `none` to stop the soft-wrapping
-2. `prefer_line` to avoid wrapping generally, unless the line is too long
+1. `none` to avoid wrapping generally, unless the line is too long
+2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
 4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
 
@@ -1337,13 +1532,13 @@ List of `integer` column numbers
         "directories": [".env", "env", ".venv", "venv"],
         "activate_script": "default"
       }
-    }
+    },
     "env": {},
     "font_family": null,
     "font_features": null,
     "font_size": null,
     "line_height": "comfortable",
-    "option_as_meta": true,
+    "option_as_meta": false,
     "button": false,
     "shell": {},
     "toolbar": {
@@ -1571,7 +1766,7 @@ See Buffer Font Features
 
 - Description: Re-interprets the option keys to act like a 'meta' key, like in Emacs.
 - Setting: `option_as_meta`
-- Default: `true`
+- Default: `false`
 
 **Options**
 
@@ -1632,13 +1827,13 @@ See Buffer Font Features
 
 ## Terminal: Detect Virtual Environments {#terminal-detect_venv}
 
-- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environemtn
+- Description: Activate the [Python Virtual Environment](https://docs.python.org/3/library/venv.html), if one is found, in the terminal's working directory (as resolved by the working_directory and automatically activating the virtual environment.
 - Setting: `detect_venv`
 - Default:
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": {
       "on": {
         // Default directories to search for virtual environments, relative
@@ -1657,7 +1852,7 @@ Disable with:
 
 ```json
 {
-  "terminal":
+  "terminal": {
     "detect_venv": "off"
   }
 }
@@ -1847,9 +2042,13 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
+    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
+      "show": null
+    },
+    "indent_guides": {
       "show": "always"
     }
   }
@@ -1968,21 +2167,54 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `indent_size`
 - Default: `20`
 
-### Scrollbar
+### Indent Guides: Show
 
-- Description: Scrollbar related settings. Possible values: "always", "never".
-- Setting: `scrollbar`
-- Default:
+- Description: Whether to show indent guides in the project panel. Possible values: "always", "never".
+- Setting: `indent_guides`
 
 ```json
-"scrollbar": {
-    "show": "always"
+"indent_guides": {
+  "show": "always"
 }
 ```
 
 **Options**
 
-1. Show scrollbar in project panel
+1. Show indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "always"
+  }
+}
+```
+
+2. Hide indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "never"
+  }
+}
+```
+
+### Scrollbar: Show
+
+- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Setting: `scrollbar`
+- Default:
+
+```json
+"scrollbar": {
+  "show": null
+}
+```
+
+**Options**
+
+1. Show scrollbar in the project panel
 
 ```json
 {
@@ -1992,7 +2224,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-2. Hide scrollbar in project panel
+2. Hide scrollbar in the project panel
 
 ```json
 {
@@ -2037,6 +2269,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "indent_size": 20,
   "auto_reveal_entries": true,
   "auto_fold_dirs": true,
+  "indent_guides": {
+    "show": "always"
+  }
 }
 ```
 
@@ -2075,6 +2310,84 @@ Float values between `0.0` and `0.9`, where:
   "unnecessary_code_fade": 0.5
 }
 ```
+
+## UI Font Family
+
+- Description: The name of the font to use for text in the UI.
+- Setting: `ui_font_family`
+- Default: `Zed Plex Sans`
+
+**Options**
+
+The name of any font family installed on the system.
+
+## UI Font Features
+
+- Description: The OpenType features to enable for text in the UI.
+- Setting: `ui_font_features`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+Zed supports all OpenType features that can be enabled or disabled for a given UI font, as well as setting values for font features.
+
+For example, to disable font ligatures, add the following to your settings:
+
+```json
+{
+  "ui_font_features": {
+    "calt": false
+  }
+}
+```
+
+You can also set other OpenType features, like setting `cv01` to `7`:
+
+```json
+{
+  "ui_font_features": {
+    "cv01": 7
+  }
+}
+```
+
+## UI Font Fallbacks
+
+- Description: The font fallbacks to use for text in the UI.
+- Setting: `ui_font_fallbacks`
+- Default: `null`
+- Platform: macOS and Windows.
+
+**Options**
+
+For example, to use `Nerd Font` as a fallback, add the following to your settings:
+
+```json
+{
+  "ui_font_fallbacks": ["Nerd Font"]
+}
+```
+
+## UI Font Size
+
+- Description: The default font size for text in the UI.
+- Setting: `ui_font_size`
+- Default: `16`
+
+**Options**
+
+`integer` values from `6` to `100` pixels (inclusive)
+
+## UI Font Weight
+
+- Description: The default font weight for text in the UI.
+- Setting: `ui_font_weight`
+- Default: `400`
+
+**Options**
+
+`integer` values between `100` and `900`
 
 ## An example configuration:
 

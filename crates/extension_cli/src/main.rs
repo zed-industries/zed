@@ -7,7 +7,6 @@ use std::{
 };
 
 use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
-use ::http_client::HttpClientWithProxy;
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
 use extension::{
@@ -15,6 +14,7 @@ use extension::{
     ExtensionManifest,
 };
 use language::LanguageConfig;
+use reqwest_client::ReqwestClient;
 use theme::ThemeRegistry;
 use tree_sitter::{Language, Query, WasmStore};
 
@@ -39,7 +39,7 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let fs = Arc::new(RealFs::default());
     let engine = wasmtime::Engine::default();
-    let mut wasm_store = WasmStore::new(engine)?;
+    let mut wasm_store = WasmStore::new(&engine)?;
 
     let extension_path = args
         .source_dir
@@ -66,7 +66,8 @@ async fn main() -> Result<()> {
         std::env::consts::OS,
         std::env::consts::ARCH
     );
-    let http_client = Arc::new(HttpClientWithProxy::new(Some(user_agent), None));
+    let http_client = Arc::new(ReqwestClient::user_agent(&user_agent)?);
+
     let builder = ExtensionBuilder::new(http_client, scratch_dir);
     builder
         .compile_extension(

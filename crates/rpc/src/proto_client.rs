@@ -10,10 +10,28 @@ use proto::{
     error::ErrorExt as _, AnyTypedEnvelope, EntityMessage, Envelope, EnvelopedMessage,
     RequestMessage, TypedEnvelope,
 };
-use std::{any::TypeId, sync::Arc};
+use std::{
+    any::TypeId,
+    sync::{Arc, Weak},
+};
 
 #[derive(Clone)]
 pub struct AnyProtoClient(Arc<dyn ProtoClient>);
+
+impl AnyProtoClient {
+    pub fn downgrade(&self) -> AnyWeakProtoClient {
+        AnyWeakProtoClient(Arc::downgrade(&self.0))
+    }
+}
+
+#[derive(Clone)]
+pub struct AnyWeakProtoClient(Weak<dyn ProtoClient>);
+
+impl AnyWeakProtoClient {
+    pub fn upgrade(&self) -> Option<AnyProtoClient> {
+        self.0.upgrade().map(AnyProtoClient)
+    }
+}
 
 pub trait ProtoClient: Send + Sync {
     fn request(
@@ -27,6 +45,8 @@ pub trait ProtoClient: Send + Sync {
     fn send_response(&self, envelope: Envelope, message_type: &'static str) -> anyhow::Result<()>;
 
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet>;
+
+    fn is_via_collab(&self) -> bool;
 }
 
 #[derive(Default)]
@@ -103,7 +123,6 @@ impl ProtoMessageHandlerSet {
             let extract_entity_id = *this.entity_id_extractors.get(&payload_type_id)?;
             let entity_type_id = *this.entity_types_by_message_type.get(&payload_type_id)?;
             let entity_id = (extract_entity_id)(message.as_ref());
-
             match this
                 .entities_by_type_and_remote_id
                 .get_mut(&(entity_type_id, entity_id))?
@@ -125,6 +144,26 @@ pub enum EntityMessageSubscriber {
     Pending(Vec<Box<dyn AnyTypedEnvelope>>),
 }
 
+impl std::fmt::Debug for EntityMessageSubscriber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            EntityMessageSubscriber::Entity { handle } => f
+                .debug_struct("EntityMessageSubscriber::Entity")
+                .field("handle", handle)
+                .finish(),
+            EntityMessageSubscriber::Pending(vec) => f
+                .debug_struct("EntityMessageSubscriber::Pending")
+                .field(
+                    "envelopes",
+                    &vec.iter()
+                        .map(|envelope| envelope.payload_type_name())
+                        .collect::<Vec<_>>(),
+                )
+                .finish(),
+        }
+    }
+}
+
 impl<T> From<Arc<T>> for AnyProtoClient
 where
     T: ProtoClient + 'static,
@@ -137,6 +176,10 @@ where
 impl AnyProtoClient {
     pub fn new<T: ProtoClient + 'static>(client: Arc<T>) -> Self {
         Self(client)
+    }
+
+    pub fn is_via_collab(&self) -> bool {
+        self.0.is_via_collab()
     }
 
     pub fn request<T: RequestMessage>(

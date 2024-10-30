@@ -32,7 +32,7 @@ pub fn refresh_matching_bracket_highlights(editor: &mut Editor, cx: &mut ViewCon
                 opening_range.to_anchors(&snapshot.buffer_snapshot),
                 closing_range.to_anchors(&snapshot.buffer_snapshot),
             ],
-            |theme| theme.editor_document_highlight_read_background,
+            |theme| theme.editor_document_highlight_bracket_background,
             cx,
         )
     }
@@ -78,7 +78,7 @@ mod tests {
                     },
                     ..Default::default()
                 },
-                Some(tree_sitter_rust::language()),
+                Some(tree_sitter_rust::LANGUAGE.into()),
             )
             .with_brackets_query(indoc! {r#"
                 ("{" @open "}" @close)

@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.154.0"
+version = "0.160.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -19,6 +19,7 @@ activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
+async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 backtrace = "0.3"
@@ -35,7 +36,6 @@ command_palette.workspace = true
 command_palette_hooks.workspace = true
 copilot.workspace = true
 db.workspace = true
-dev_server_projects.workspace = true
 diagnostics.workspace = true
 editor.workspace = true
 env_logger.workspace = true
@@ -50,19 +50,17 @@ futures.workspace = true
 git.workspace = true
 git_hosting_providers.workspace = true
 go_to_line.workspace = true
-gpui.workspace = true
-headless.workspace = true
+gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 http_client.workspace = true
 image_viewer.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
-isahc.workspace = true
 journal.workspace = true
 language.workspace = true
 language_model.workspace = true
 language_selector.workspace = true
 language_tools.workspace = true
-languages.workspace = true
+languages = { workspace = true, features = ["load-grammars"] }
 libc.workspace = true
 log.workspace = true
 markdown_preview.workspace = true
@@ -91,9 +89,11 @@ serde_json.workspace = true
 session.workspace = true
 settings.workspace = true
 settings_ui.workspace = true
+shellexpand.workspace = true
 simplelog.workspace = true
 smol.workspace = true
 snippet_provider.workspace = true
+snippets_ui.workspace = true
 supermaven.workspace = true
 sysinfo.workspace = true
 tab_switcher.workspace = true
@@ -104,7 +104,9 @@ terminal_view.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 time.workspace = true
+toolchain_selector.workspace = true
 ui.workspace = true
+reqwest_client.workspace = true
 url.workspace = true
 urlencoding = "2.1.2"
 util.workspace = true
@@ -134,7 +136,7 @@ tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 
 [package.metadata.bundle-dev]
-icon = ["resources/app-icon-preview@2x.png", "resources/app-icon-preview.png"]
+icon = ["resources/app-icon-dev@2x.png", "resources/app-icon-dev.png"]
 identifier = "dev.zed.Zed-Dev"
 name = "Zed Dev"
 osx_minimum_system_version = "10.15.7"
@@ -166,4 +168,4 @@ osx_info_plist_exts = ["resources/info/*"]
 osx_url_schemes = ["zed"]
 
 [package.metadata.cargo-machete]
-ignored = ["profiling"]
+ignored = ["profiling", "zstd"]

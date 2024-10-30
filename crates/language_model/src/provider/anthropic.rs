@@ -40,7 +40,7 @@ pub struct AnthropicSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-20240620
+    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
     pub name: String,
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
@@ -51,6 +51,7 @@ pub struct AvailableModel {
     /// Configuration of Anthropic's caching API.
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
+    pub default_temperature: Option<f32>,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -200,6 +201,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                         }
                     }),
                     max_output_tokens: model.max_output_tokens,
+                    default_temperature: model.default_temperature,
                 },
             );
         }
@@ -375,8 +377,11 @@ impl LanguageModel for AnthropicModel {
         request: LanguageModelRequest,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<LanguageModelCompletionEvent>>>> {
-        let request =
-            request.into_anthropic(self.model.id().into(), self.model.max_output_tokens());
+        let request = request.into_anthropic(
+            self.model.id().into(),
+            self.model.default_temperature(),
+            self.model.max_output_tokens(),
+        );
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
             let response = request.await.map_err(|err| anyhow!(err))?;
@@ -405,6 +410,7 @@ impl LanguageModel for AnthropicModel {
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
         let mut request = request.into_anthropic(
             self.model.tool_model_id().into(),
+            self.model.default_temperature(),
             self.model.max_output_tokens(),
         );
         request.tool_choice = Some(anthropic::ToolChoice::Tool {
@@ -499,10 +505,14 @@ pub fn map_to_language_model_completion_events(
                                             LanguageModelToolUse {
                                                 id: tool_use.id,
                                                 name: tool_use.name,
-                                                input: serde_json::Value::from_str(
-                                                    &tool_use.input_json,
-                                                )
-                                                .map_err(|err| anyhow!(err))?,
+                                                input: if tool_use.input_json.is_empty() {
+                                                    serde_json::Value::Null
+                                                } else {
+                                                    serde_json::Value::from_str(
+                                                        &tool_use.input_json,
+                                                    )
+                                                    .map_err(|err| anyhow!(err))?
+                                                },
                                             },
                                         ))
                                     })),

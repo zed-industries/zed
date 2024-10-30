@@ -75,7 +75,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         font_size: theme::get_buffer_font_size(cx).into(),
         font_style: FontStyle::Normal,
         line_height: cx.line_height().into(),
-        background_color: Some(theme.colors().terminal_background),
+        background_color: Some(theme.colors().terminal_ansi_background),
         white_space: WhiteSpace::Normal,
         truncate: None,
         // These are going to be overridden per-cell

@@ -178,13 +178,13 @@ impl PickerDelegate for SlashCommandDelegate {
             SlashCommandEntry::Info(info) => Some(
                 ListItem::new(ix)
                     .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
+                    .spacing(ListItemSpacing::Dense)
                     .selected(selected)
                     .child(
                         h_flex()
                             .group(format!("command-entry-label-{ix}"))
                             .w_full()
-                            .min_w(px(220.))
+                            .min_w(px(250.))
                             .child(
                                 v_flex()
                                     .child(
@@ -203,7 +203,9 @@ impl PickerDelegate for SlashCommandDelegate {
                                                     div()
                                                         .font_buffer(cx)
                                                         .child(
-                                                            Label::new(args).size(LabelSize::Small),
+                                                            Label::new(args)
+                                                                .size(LabelSize::Small)
+                                                                .color(Color::Muted),
                                                         )
                                                         .visible_on_hover(format!(
                                                             "command-entry-label-{ix}"
@@ -222,7 +224,7 @@ impl PickerDelegate for SlashCommandDelegate {
             SlashCommandEntry::Advert { renderer, .. } => Some(
                 ListItem::new(ix)
                     .inset(true)
-                    .spacing(ListItemSpacing::Sparse)
+                    .spacing(ListItemSpacing::Dense)
                     .selected(selected)
                     .child(renderer(cx)),
             ),

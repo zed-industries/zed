@@ -30,6 +30,7 @@ async-trait.workspace = true
 async-watch.workspace = true
 clock.workspace = true
 collections.workspace = true
+ec4rs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 git.workspace = true
@@ -70,6 +71,7 @@ env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 indoc.workspace = true
 lsp = { workspace = true, features = ["test-support"] }
+pretty_assertions.workspace = true
 rand.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }

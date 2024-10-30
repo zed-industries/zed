@@ -239,7 +239,7 @@ impl SummaryIndex {
                 persist
             )?;
 
-            log::info!("Summarizing updated entries took {:?}", start.elapsed());
+            log::debug!("Summarizing updated entries took {:?}", start.elapsed());
 
             Ok(())
         }
@@ -562,7 +562,7 @@ impl SummaryIndex {
             }],
             tools: Vec::new(),
             stop: Vec::new(),
-            temperature: 1.0,
+            temperature: None,
         };
 
         let code_len = code.len();

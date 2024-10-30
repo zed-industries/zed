@@ -13,7 +13,10 @@ pub use editable_setting_control::*;
 pub use json_schema::*;
 pub use keymap_file::KeymapFile;
 pub use settings_file::*;
-pub use settings_store::{Settings, SettingsLocation, SettingsSources, SettingsStore};
+pub use settings_store::{
+    parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
+    SettingsSources, SettingsStore,
+};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]
 pub struct WorktreeId(usize);
@@ -85,7 +88,11 @@ pub fn initial_user_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_user_settings.json")
 }
 
-pub fn initial_local_settings_content() -> Cow<'static, str> {
+pub fn initial_server_settings_content() -> Cow<'static, str> {
+    asset_str::<SettingsAssets>("settings/initial_server_settings.json")
+}
+
+pub fn initial_project_settings_content() -> Cow<'static, str> {
     asset_str::<SettingsAssets>("settings/initial_local_settings.json")
 }
 

@@ -1,4 +1,5 @@
 use gpui::AppContext;
+use language::CursorShape;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -6,12 +7,12 @@ use settings::{Settings, SettingsSources};
 #[derive(Deserialize, Clone)]
 pub struct EditorSettings {
     pub cursor_blink: bool,
+    pub cursor_shape: Option<CursorShape>,
     pub current_line_highlight: CurrentLineHighlight,
     pub hover_popover_enabled: bool,
     pub show_completions_on_input: bool,
     pub show_completion_documentation: bool,
     pub completion_documentation_secondary_query_debounce: u64,
-    pub use_on_type_format: bool,
     pub toolbar: Toolbar,
     pub scrollbar: Scrollbar,
     pub gutter: Gutter,
@@ -177,6 +178,11 @@ pub struct EditorSettingsContent {
     ///
     /// Default: true
     pub cursor_blink: Option<bool>,
+    /// Cursor shape for the default editor.
+    /// Can be "bar", "block", "underline", or "hollow".
+    ///
+    /// Default: None
+    pub cursor_shape: Option<CursorShape>,
     /// How to highlight the current line in the editor.
     ///
     /// Default: all
@@ -202,11 +208,6 @@ pub struct EditorSettingsContent {
     ///
     /// Default: 300 ms
     pub completion_documentation_secondary_query_debounce: Option<u64>,
-    /// Whether to use additional LSP queries to format (and amend) the code after
-    /// every "trigger" symbol input, defined by LSP server capabilities.
-    ///
-    /// Default: true
-    pub use_on_type_format: Option<bool>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
     /// Scrollbar related settings

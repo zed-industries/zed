@@ -14,14 +14,14 @@ use std::{
 };
 use util::paths::PathMatcher;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum Prettier {
     Real(RealPrettier),
     #[cfg(any(test, feature = "test-support"))]
     Test(TestPrettier),
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct RealPrettier {
     default: bool,
     prettier_dir: PathBuf,
@@ -29,7 +29,7 @@ pub struct RealPrettier {
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct TestPrettier {
     prettier_dir: PathBuf,
     default: bool,
@@ -138,7 +138,7 @@ impl Prettier {
     pub async fn start(
         _: LanguageServerId,
         prettier_dir: PathBuf,
-        _: Arc<dyn NodeRuntime>,
+        _: NodeRuntime,
         _: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         Ok(Self::Test(TestPrettier {
@@ -151,7 +151,7 @@ impl Prettier {
     pub async fn start(
         server_id: LanguageServerId,
         prettier_dir: PathBuf,
-        node: Arc<dyn NodeRuntime>,
+        node: NodeRuntime,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
         use lsp::LanguageServerBinary;
@@ -205,7 +205,7 @@ impl Prettier {
                 let params = buffer
                     .update(cx, |buffer, cx| {
                         let buffer_language = buffer.language();
-                        let language_settings = language_settings(buffer_language, buffer.file(), cx);
+                        let language_settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
                         let prettier_settings = &language_settings.prettier;
                         anyhow::ensure!(
                             prettier_settings.allowed,

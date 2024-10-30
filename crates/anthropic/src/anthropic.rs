@@ -6,9 +6,8 @@ use std::{pin::Pin, str::FromStr};
 use anyhow::{anyhow, Context, Result};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
-use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
-use isahc::config::Configurable;
-use isahc::http::{HeaderMap, HeaderValue};
+use http_client::http::{HeaderMap, HeaderValue};
+use http_client::{AsyncBody, HttpClient, HttpRequestExt, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
@@ -30,13 +29,13 @@ pub struct AnthropicModelCacheConfiguration {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
-    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-20240620")]
+    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
-    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-20240229")]
+    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
     Claude3Opus,
-    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-20240229")]
+    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-latest")]
     Claude3Sonnet,
-    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-20240307")]
+    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-latest")]
     Claude3Haiku,
     #[serde(rename = "custom")]
     Custom {
@@ -49,6 +48,7 @@ pub enum Model {
         /// Indicates whether this custom model supports caching.
         cache_configuration: Option<AnthropicModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
+        default_temperature: Option<f32>,
     },
 }
 
@@ -69,10 +69,10 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::Claude3_5Sonnet => "claude-3-5-sonnet-20240620",
-            Model::Claude3Opus => "claude-3-opus-20240229",
-            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
-            Model::Claude3Haiku => "claude-3-haiku-20240307",
+            Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Model::Claude3Opus => "claude-3-opus-latest",
+            Model::Claude3Sonnet => "claude-3-sonnet-latest",
+            Model::Claude3Haiku => "claude-3-haiku-latest",
             Self::Custom { name, .. } => name,
         }
     }
@@ -121,6 +121,19 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
+        }
+    }
+
+    pub fn default_temperature(&self) -> f32 {
+        match self {
+            Self::Claude3_5Sonnet
+            | Self::Claude3Opus
+            | Self::Claude3Sonnet
+            | Self::Claude3Haiku => 1.0,
+            Self::Custom {
+                default_temperature,
+                ..
+            } => default_temperature.unwrap_or(1.0),
         }
     }
 
@@ -275,7 +288,7 @@ pub async fn stream_completion_with_rate_limit_info(
         .header("X-Api-Key", api_key)
         .header("Content-Type", "application/json");
     if let Some(low_speed_timeout) = low_speed_timeout {
-        request_builder = request_builder.low_speed_timeout(100, low_speed_timeout);
+        request_builder = request_builder.read_timeout(low_speed_timeout);
     }
     let serialized_request =
         serde_json::to_string(&request).context("failed to serialize request")?;
@@ -508,6 +521,10 @@ pub struct Usage {
     pub input_tokens: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u32>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -3,51 +3,39 @@ use std::{
     time::Duration,
 };
 
+use anyhow::Context;
 use async_task::Runnable;
+use flume::Sender;
 use parking::Parker;
 use parking_lot::Mutex;
 use util::ResultExt;
 use windows::{
     Foundation::TimeSpan,
-    System::{
-        DispatcherQueue, DispatcherQueueController, DispatcherQueueHandler,
-        Threading::{
-            ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemOptions,
-            WorkItemPriority,
-        },
+    System::Threading::{
+        ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemOptions,
+        WorkItemPriority,
     },
-    Win32::System::WinRT::{
-        CreateDispatcherQueueController, DispatcherQueueOptions, DQTAT_COM_NONE,
-        DQTYPE_THREAD_CURRENT,
-    },
+    Win32::{Foundation::HANDLE, System::Threading::SetEvent},
 };
 
-use crate::{PlatformDispatcher, TaskLabel};
+use crate::{PlatformDispatcher, SafeHandle, TaskLabel};
 
 pub(crate) struct WindowsDispatcher {
-    controller: DispatcherQueueController,
-    main_queue: DispatcherQueue,
+    main_sender: Sender<Runnable>,
+    dispatch_event: SafeHandle,
     parker: Mutex<Parker>,
     main_thread_id: ThreadId,
 }
 
 impl WindowsDispatcher {
-    pub(crate) fn new() -> Self {
-        let controller = unsafe {
-            let options = DispatcherQueueOptions {
-                dwSize: std::mem::size_of::<DispatcherQueueOptions>() as u32,
-                threadType: DQTYPE_THREAD_CURRENT,
-                apartmentType: DQTAT_COM_NONE,
-            };
-            CreateDispatcherQueueController(options).unwrap()
-        };
-        let main_queue = controller.DispatcherQueue().unwrap();
+    pub(crate) fn new(main_sender: Sender<Runnable>, dispatch_event: HANDLE) -> Self {
+        let dispatch_event = dispatch_event.into();
         let parker = Mutex::new(Parker::new());
         let main_thread_id = current().id();
 
         WindowsDispatcher {
-            controller,
-            main_queue,
+            main_sender,
+            dispatch_event,
             parker,
             main_thread_id,
         }
@@ -86,12 +74,6 @@ impl WindowsDispatcher {
     }
 }
 
-impl Drop for WindowsDispatcher {
-    fn drop(&mut self) {
-        self.controller.ShutdownQueueAsync().log_err();
-    }
-}
-
 impl PlatformDispatcher for WindowsDispatcher {
     fn is_main_thread(&self) -> bool {
         current().id() == self.main_thread_id
@@ -105,14 +87,11 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        let handler = {
-            let mut task_wrapper = Some(runnable);
-            DispatcherQueueHandler::new(move || {
-                task_wrapper.take().unwrap().run();
-                Ok(())
-            })
-        };
-        self.main_queue.TryEnqueue(&handler).log_err();
+        self.main_sender
+            .send(runnable)
+            .context("Dispatch on main thread failed")
+            .log_err();
+        unsafe { SetEvent(*self.dispatch_event).log_err() };
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {

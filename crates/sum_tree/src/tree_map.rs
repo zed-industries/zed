@@ -5,8 +5,8 @@ use crate::{Bias, Dimension, Edit, Item, KeyedItem, SeekTarget, SumTree, Summary
 #[derive(Clone, PartialEq, Eq)]
 pub struct TreeMap<K, V>(SumTree<MapEntry<K, V>>)
 where
-    K: Clone + Debug + Ord,
-    V: Clone + Debug;
+    K: Clone + Ord,
+    V: Clone;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MapEntry<K, V> {
@@ -35,9 +35,9 @@ impl<'a, K> Default for MapKeyRef<'a, K> {
 #[derive(Clone)]
 pub struct TreeSet<K>(TreeMap<K, ()>)
 where
-    K: Clone + Debug + Ord;
+    K: Clone + Ord;
 
-impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
+impl<K: Clone + Ord, V: Clone> TreeMap<K, V> {
     pub fn from_ordered_entries(entries: impl IntoIterator<Item = (K, V)>) -> Self {
         let tree = SumTree::from_iter(
             entries
@@ -53,7 +53,7 @@ impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
     }
 
     pub fn get(&self, key: &K) -> Option<&V> {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         cursor.seek(&MapKeyRef(Some(key)), Bias::Left, &());
         if let Some(item) = cursor.item() {
             if Some(key) == item.key().0.as_ref() {
@@ -72,7 +72,7 @@ impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
 
     pub fn remove(&mut self, key: &K) -> Option<V> {
         let mut removed = None;
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
         let mut new_tree = cursor.slice(&key, Bias::Left, &());
         if key.cmp(&cursor.end(&()), &()) == Ordering::Equal {
@@ -88,7 +88,7 @@ impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
     pub fn remove_range(&mut self, start: &impl MapSeekTarget<K>, end: &impl MapSeekTarget<K>) {
         let start = MapSeekTargetAdaptor(start);
         let end = MapSeekTargetAdaptor(end);
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let mut new_tree = cursor.slice(&start, Bias::Left, &());
         cursor.seek(&end, Bias::Left, &());
         new_tree.append(cursor.suffix(&()), &());
@@ -98,15 +98,15 @@ impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
 
     /// Returns the key-value pair with the greatest key less than or equal to the given key.
     pub fn closest(&self, key: &K) -> Option<(&K, &V)> {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
         cursor.seek(&key, Bias::Right, &());
         cursor.prev(&());
         cursor.item().map(|item| (&item.key, &item.value))
     }
 
-    pub fn iter_from<'a>(&'a self, from: &'a K) -> impl Iterator<Item = (&K, &V)> + '_ {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+    pub fn iter_from<'a>(&'a self, from: &'a K) -> impl Iterator<Item = (&'a K, &'a V)> + 'a {
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let from_key = MapKeyRef(Some(from));
         cursor.seek(&from_key, Bias::Left, &());
 
@@ -117,7 +117,7 @@ impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
     where
         F: FnOnce(&mut V) -> T,
     {
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         let key = MapKeyRef(Some(key));
         let mut new_tree = cursor.slice(&key, Bias::Left, &());
         let mut result = None;
@@ -136,7 +136,7 @@ impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
     pub fn retain<F: FnMut(&K, &V) -> bool>(&mut self, mut predicate: F) {
         let mut new_map = SumTree::<MapEntry<K, V>>::default();
 
-        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>();
+        let mut cursor = self.0.cursor::<MapKeyRef<'_, K>>(&());
         cursor.next(&());
         while let Some(item) = cursor.item() {
             if predicate(&item.key, &item.value) {
@@ -172,7 +172,7 @@ impl<K: Clone + Debug + Ord, V: Clone + Debug> TreeMap<K, V> {
     }
 }
 
-impl<K: Debug, V: Debug> Debug for TreeMap<K, V>
+impl<K, V> Debug for TreeMap<K, V>
 where
     K: Clone + Debug + Ord,
     V: Clone + Debug,
@@ -185,7 +185,7 @@ where
 #[derive(Debug)]
 struct MapSeekTargetAdaptor<'a, T>(&'a T);
 
-impl<'a, K: Debug + Clone + Ord, T: MapSeekTarget<K>> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>>
+impl<'a, K: Clone + Ord, T: MapSeekTarget<K>> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>>
     for MapSeekTargetAdaptor<'_, T>
 {
     fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
@@ -197,11 +197,11 @@ impl<'a, K: Debug + Clone + Ord, T: MapSeekTarget<K>> SeekTarget<'a, MapKey<K>, 
     }
 }
 
-pub trait MapSeekTarget<K>: Debug {
+pub trait MapSeekTarget<K> {
     fn cmp_cursor(&self, cursor_location: &K) -> Ordering;
 }
 
-impl<K: Debug + Ord> MapSeekTarget<K> for K {
+impl<K: Ord> MapSeekTarget<K> for K {
     fn cmp_cursor(&self, cursor_location: &K) -> Ordering {
         self.cmp(cursor_location)
     }
@@ -209,8 +209,8 @@ impl<K: Debug + Ord> MapSeekTarget<K> for K {
 
 impl<K, V> Default for TreeMap<K, V>
 where
-    K: Clone + Debug + Ord,
-    V: Clone + Debug,
+    K: Clone + Ord,
+    V: Clone,
 {
     fn default() -> Self {
         Self(Default::default())
@@ -219,19 +219,19 @@ where
 
 impl<K, V> Item for MapEntry<K, V>
 where
-    K: Clone + Debug + Ord,
+    K: Clone + Ord,
     V: Clone,
 {
     type Summary = MapKey<K>;
 
-    fn summary(&self) -> Self::Summary {
+    fn summary(&self, _cx: &()) -> Self::Summary {
         self.key()
     }
 }
 
 impl<K, V> KeyedItem for MapEntry<K, V>
 where
-    K: Clone + Debug + Ord,
+    K: Clone + Ord,
     V: Clone,
 {
     type Key = MapKey<K>;
@@ -243,9 +243,13 @@ where
 
 impl<K> Summary for MapKey<K>
 where
-    K: Clone + Debug,
+    K: Clone,
 {
     type Context = ();
+
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
 
     fn add_summary(&mut self, summary: &Self, _: &()) {
         *self = summary.clone()
@@ -254,8 +258,12 @@ where
 
 impl<'a, K> Dimension<'a, MapKey<K>> for MapKeyRef<'a, K>
 where
-    K: Clone + Debug + Ord,
+    K: Clone + Ord,
 {
+    fn zero(_cx: &()) -> Self {
+        Default::default()
+    }
+
     fn add_summary(&mut self, summary: &'a MapKey<K>, _: &()) {
         self.0 = summary.0.as_ref();
     }
@@ -263,7 +271,7 @@ where
 
 impl<'a, K> SeekTarget<'a, MapKey<K>, MapKeyRef<'a, K>> for MapKeyRef<'_, K>
 where
-    K: Clone + Debug + Ord,
+    K: Clone + Ord,
 {
     fn cmp(&self, cursor_location: &MapKeyRef<K>, _: &()) -> Ordering {
         Ord::cmp(&self.0, &cursor_location.0)
@@ -272,7 +280,7 @@ where
 
 impl<K> Default for TreeSet<K>
 where
-    K: Clone + Debug + Ord,
+    K: Clone + Ord,
 {
     fn default() -> Self {
         Self(Default::default())
@@ -281,7 +289,7 @@ where
 
 impl<K> TreeSet<K>
 where
-    K: Clone + Debug + Ord,
+    K: Clone + Ord,
 {
     pub fn from_ordered_entries(entries: impl IntoIterator<Item = K>) -> Self {
         Self(TreeMap::from_ordered_entries(

@@ -662,7 +662,7 @@ impl Element for TerminalElement {
                     font_size: font_size.into(),
                     font_style: FontStyle::Normal,
                     line_height: line_height.into(),
-                    background_color: Some(theme.colors().terminal_background),
+                    background_color: Some(theme.colors().terminal_ansi_background),
                     white_space: WhiteSpace::Normal,
                     truncate: None,
                     // These are going to be overridden per-cell
@@ -778,7 +778,7 @@ impl Element for TerminalElement {
                                 &[TextRun {
                                     len,
                                     font: text_style.font(),
-                                    color: theme.colors().terminal_background,
+                                    color: theme.colors().terminal_ansi_background,
                                     background_color: None,
                                     underline: Default::default(),
                                     strikethrough: None,
@@ -793,7 +793,7 @@ impl Element for TerminalElement {
                             let (shape, text) = match cursor.shape {
                                 AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                                 AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
-                                AlacCursorShape::Underline => (CursorShape::Underscore, None),
+                                AlacCursorShape::Underline => (CursorShape::Underline, None),
                                 AlacCursorShape::Beam => (CursorShape::Bar, None),
                                 AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                                 //This case is handled in the if wrapping the whole cursor layout
@@ -1019,9 +1019,9 @@ impl InputHandler for TerminalInputHandler {
         self.workspace
             .update(cx, |this, cx| {
                 cx.invalidate_character_coordinates();
-
-                let telemetry = this.project().read(cx).client().telemetry().clone();
-                telemetry.log_edit_event("terminal");
+                let project = this.project().read(cx);
+                let telemetry = project.client().telemetry().clone();
+                telemetry.log_edit_event("terminal", project.is_via_ssh());
             })
             .ok();
     }
@@ -1158,7 +1158,7 @@ pub fn convert_color(fg: &terminal::alacritty_terminal::vte::ansi::Color, theme:
             NamedColor::BrightCyan => colors.terminal_ansi_bright_cyan,
             NamedColor::BrightWhite => colors.terminal_ansi_bright_white,
             NamedColor::Foreground => colors.terminal_foreground,
-            NamedColor::Background => colors.terminal_background,
+            NamedColor::Background => colors.terminal_ansi_background,
             NamedColor::Cursor => theme.players().local().cursor,
             NamedColor::DimBlack => colors.terminal_ansi_dim_black,
             NamedColor::DimRed => colors.terminal_ansi_dim_red,

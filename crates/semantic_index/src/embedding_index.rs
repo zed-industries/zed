@@ -5,6 +5,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use futures::stream::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
@@ -15,6 +16,7 @@ use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
+use smol::future::FutureExt;
 use std::{
     cmp::Ordering,
     future::Future,
@@ -65,6 +67,10 @@ impl EmbeddingIndex {
         &self,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        if !cx.is_staff() {
+            return async move { Ok(()) }.boxed();
+        }
+
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
@@ -75,6 +81,7 @@ impl EmbeddingIndex {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
             Ok(())
         }
+        .boxed()
     }
 
     pub fn index_updated_entries(
@@ -82,6 +89,10 @@ impl EmbeddingIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        if !cx.is_staff() {
+            return async move { Ok(()) }.boxed();
+        }
+
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
@@ -92,6 +103,7 @@ impl EmbeddingIndex {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
             Ok(())
         }
+        .boxed()
     }
 
     fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
@@ -234,30 +246,25 @@ impl EmbeddingIndex {
                         cx.spawn(async {
                             while let Ok((entry, handle)) = entries.recv().await {
                                 let entry_abs_path = worktree_abs_path.join(&entry.path);
-                                match fs.load(&entry_abs_path).await {
-                                    Ok(text) => {
-                                        let language = language_registry
-                                            .language_for_file_path(&entry.path)
-                                            .await
-                                            .ok();
-                                        let chunked_file = ChunkedFile {
-                                            chunks: chunking::chunk_text(
-                                                &text,
-                                                language.as_ref(),
-                                                &entry.path,
-                                            ),
-                                            handle,
-                                            path: entry.path,
-                                            mtime: entry.mtime,
-                                            text,
-                                        };
+                                if let Some(text) = fs.load(&entry_abs_path).await.ok() {
+                                    let language = language_registry
+                                        .language_for_file_path(&entry.path)
+                                        .await
+                                        .ok();
+                                    let chunked_file = ChunkedFile {
+                                        chunks: chunking::chunk_text(
+                                            &text,
+                                            language.as_ref(),
+                                            &entry.path,
+                                        ),
+                                        handle,
+                                        path: entry.path,
+                                        mtime: entry.mtime,
+                                        text,
+                                    };
 
-                                        if chunked_files_tx.send(chunked_file).await.is_err() {
-                                            return;
-                                        }
-                                    }
-                                    Err(_)=> {
-                                        log::error!("Failed to read contents into a UTF-8 string: {entry_abs_path:?}");
+                                    if chunked_files_tx.send(chunked_file).await.is_err() {
+                                        return;
                                     }
                                 }
                             }
@@ -358,33 +365,37 @@ impl EmbeddingIndex {
     fn persist_embeddings(
         &self,
         mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
-        embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
+        mut embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
         let db = self.db;
+
         cx.background_executor().spawn(async move {
-            while let Some(deletion_range) = deleted_entry_ranges.next().await {
-                let mut txn = db_connection.write_txn()?;
-                let start = deletion_range.0.as_ref().map(|start| start.as_str());
-                let end = deletion_range.1.as_ref().map(|end| end.as_str());
-                log::debug!("deleting embeddings in range {:?}", &(start, end));
-                db.delete_range(&mut txn, &(start, end))?;
-                txn.commit()?;
-            }
-
-            let mut embedded_files = embedded_files.chunks_timeout(4096, Duration::from_secs(2));
-            while let Some(embedded_files) = embedded_files.next().await {
-                let mut txn = db_connection.write_txn()?;
-                for (file, _) in &embedded_files {
-                    log::debug!("saving embedding for file {:?}", file.path);
-                    let key = db_key_for_path(&file.path);
-                    db.put(&mut txn, &key, file)?;
+            loop {
+                // Interleave deletions and persists of embedded files
+                futures::select_biased! {
+                    deletion_range = deleted_entry_ranges.next() => {
+                        if let Some(deletion_range) = deletion_range {
+                            let mut txn = db_connection.write_txn()?;
+                            let start = deletion_range.0.as_ref().map(|start| start.as_str());
+                            let end = deletion_range.1.as_ref().map(|end| end.as_str());
+                            log::debug!("deleting embeddings in range {:?}", &(start, end));
+                            db.delete_range(&mut txn, &(start, end))?;
+                            txn.commit()?;
+                        }
+                    },
+                    file = embedded_files.next() => {
+                        if let Some((file, _)) = file {
+                            let mut txn = db_connection.write_txn()?;
+                            log::debug!("saving embedding for file {:?}", file.path);
+                            let key = db_key_for_path(&file.path);
+                            db.put(&mut txn, &key, &file)?;
+                            txn.commit()?;
+                        }
+                    },
+                    complete => break,
                 }
-                txn.commit()?;
-
-                drop(embedded_files);
-                log::debug!("committed");
             }
 
             Ok(())

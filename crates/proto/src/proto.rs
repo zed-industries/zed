@@ -228,7 +228,6 @@ messages!(
     (JoinChannelChat, Foreground),
     (JoinChannelChatResponse, Foreground),
     (JoinProject, Foreground),
-    (JoinHostedProject, Foreground),
     (JoinProjectResponse, Foreground),
     (JoinRoom, Foreground),
     (JoinRoomResponse, Foreground),
@@ -253,6 +252,7 @@ messages!(
     (ProjectEntryResponse, Foreground),
     (CountLanguageModelTokens, Background),
     (CountLanguageModelTokensResponse, Background),
+    (RefreshLlmToken, Background),
     (RefreshInlayHints, Foreground),
     (RejoinChannelBuffers, Foreground),
     (RejoinChannelBuffersResponse, Foreground),
@@ -279,8 +279,6 @@ messages!(
     (SaveBuffer, Foreground),
     (SetChannelMemberRole, Foreground),
     (SetChannelVisibility, Foreground),
-    (SearchProject, Background),
-    (SearchProjectResponse, Background),
     (SendChannelMessage, Background),
     (SendChannelMessageResponse, Background),
     (ShareProject, Foreground),
@@ -292,8 +290,6 @@ messages!(
     (SynchronizeBuffersResponse, Foreground),
     (TaskContextForLocation, Background),
     (TaskContext, Background),
-    (TaskTemplates, Background),
-    (TaskTemplatesResponse, Background),
     (Test, Foreground),
     (Unfollow, Foreground),
     (UnshareProject, Foreground),
@@ -321,30 +317,12 @@ messages!(
     (SetRoomParticipantRole, Foreground),
     (BlameBuffer, Foreground),
     (BlameBufferResponse, Foreground),
-    (CreateDevServerProject, Background),
-    (CreateDevServerProjectResponse, Foreground),
-    (CreateDevServer, Foreground),
-    (CreateDevServerResponse, Foreground),
-    (DevServerInstructions, Foreground),
-    (ShutdownDevServer, Foreground),
-    (ReconnectDevServer, Foreground),
-    (ReconnectDevServerResponse, Foreground),
-    (ShareDevServerProject, Foreground),
-    (JoinDevServerProject, Foreground),
     (RejoinRemoteProjects, Foreground),
     (RejoinRemoteProjectsResponse, Foreground),
     (MultiLspQuery, Background),
     (MultiLspQueryResponse, Background),
-    (DevServerProjectsUpdate, Foreground),
-    (ValidateDevServerProjectRequest, Background),
     (ListRemoteDirectory, Background),
     (ListRemoteDirectoryResponse, Background),
-    (UpdateDevServerProject, Background),
-    (DeleteDevServer, Foreground),
-    (DeleteDevServerProject, Foreground),
-    (RegenerateDevServerToken, Foreground),
-    (RegenerateDevServerTokenResponse, Foreground),
-    (RenameDevServer, Foreground),
     (OpenNewBuffer, Foreground),
     (RestartLanguageServers, Foreground),
     (LinkedEditingRange, Background),
@@ -365,11 +343,27 @@ messages!(
     (FindSearchCandidatesResponse, Background),
     (CloseBuffer, Foreground),
     (UpdateUserSettings, Foreground),
-    (CreateLanguageServer, Foreground),
-    (WhichCommand, Foreground),
-    (WhichCommandResponse, Foreground),
-    (ShellEnv, Foreground),
-    (ShellEnvResponse, Foreground),
+    (ShutdownRemoteServer, Foreground),
+    (RemoveWorktree, Foreground),
+    (LanguageServerLog, Foreground),
+    (Toast, Background),
+    (HideToast, Background),
+    (OpenServerSettings, Foreground),
+    (GetPermalinkToLine, Foreground),
+    (GetPermalinkToLineResponse, Foreground),
+    (FlushBufferedMessages, Foreground),
+    (LanguageServerPromptRequest, Foreground),
+    (LanguageServerPromptResponse, Foreground),
+    (GitBranches, Background),
+    (GitBranchesResponse, Background),
+    (UpdateGitBranch, Background),
+    (ListToolchains, Foreground),
+    (ListToolchainsResponse, Foreground),
+    (ActivateToolchain, Foreground),
+    (ActiveToolchain, Foreground),
+    (ActiveToolchainResponse, Foreground),
+    (GetPathMetadata, Background),
+    (GetPathMetadataResponse, Background)
 );
 
 request_messages!(
@@ -414,7 +408,6 @@ request_messages!(
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
     (ListRemoteDirectory, ListRemoteDirectoryResponse),
-    (UpdateDevServerProject, Ack),
     (GetUsers, UsersResponse),
     (IncomingCall, Ack),
     (InlayHints, InlayHintsResponse),
@@ -422,7 +415,6 @@ request_messages!(
     (JoinChannel, JoinRoomResponse),
     (JoinChannelBuffer, JoinChannelBufferResponse),
     (JoinChannelChat, JoinChannelChatResponse),
-    (JoinHostedProject, JoinProjectResponse),
     (JoinProject, JoinProjectResponse),
     (JoinRoom, JoinRoomResponse),
     (LeaveChannelBuffer, Ack),
@@ -457,7 +449,6 @@ request_messages!(
     (RespondToChannelInvite, Ack),
     (RespondToContactRequest, Ack),
     (SaveBuffer, BufferSaved),
-    (SearchProject, SearchProjectResponse),
     (FindSearchCandidates, FindSearchCandidatesResponse),
     (SendChannelMessage, SendChannelMessageResponse),
     (SetChannelMemberRole, Ack),
@@ -465,7 +456,6 @@ request_messages!(
     (ShareProject, ShareProjectResponse),
     (SynchronizeBuffers, SynchronizeBuffersResponse),
     (TaskContextForLocation, TaskContext),
-    (TaskTemplates, TaskTemplatesResponse),
     (Test, Test),
     (UpdateBuffer, Ack),
     (UpdateParticipantLocation, Ack),
@@ -474,28 +464,26 @@ request_messages!(
     (LspExtExpandMacro, LspExtExpandMacroResponse),
     (SetRoomParticipantRole, Ack),
     (BlameBuffer, BlameBufferResponse),
-    (CreateDevServerProject, CreateDevServerProjectResponse),
-    (CreateDevServer, CreateDevServerResponse),
-    (ShutdownDevServer, Ack),
-    (ShareDevServerProject, ShareProjectResponse),
-    (JoinDevServerProject, JoinProjectResponse),
     (RejoinRemoteProjects, RejoinRemoteProjectsResponse),
-    (ReconnectDevServer, ReconnectDevServerResponse),
-    (ValidateDevServerProjectRequest, Ack),
     (MultiLspQuery, MultiLspQueryResponse),
-    (DeleteDevServer, Ack),
-    (DeleteDevServerProject, Ack),
-    (RegenerateDevServerToken, RegenerateDevServerTokenResponse),
-    (RenameDevServer, Ack),
     (RestartLanguageServers, Ack),
     (OpenContext, OpenContextResponse),
     (CreateContext, CreateContextResponse),
     (SynchronizeContexts, SynchronizeContextsResponse),
     (LspExtSwitchSourceHeader, LspExtSwitchSourceHeaderResponse),
     (AddWorktree, AddWorktreeResponse),
-    (CreateLanguageServer, Ack),
-    (WhichCommand, WhichCommandResponse),
-    (ShellEnv, ShellEnvResponse)
+    (ShutdownRemoteServer, Ack),
+    (RemoveWorktree, Ack),
+    (OpenServerSettings, OpenBufferResponse),
+    (GetPermalinkToLine, GetPermalinkToLineResponse),
+    (FlushBufferedMessages, Ack),
+    (LanguageServerPromptRequest, LanguageServerPromptResponse),
+    (GitBranches, GitBranchesResponse),
+    (UpdateGitBranch, Ack),
+    (ListToolchains, ListToolchainsResponse),
+    (ActivateToolchain, Ack),
+    (ActiveToolchain, ActiveToolchainResponse),
+    (GetPathMetadata, GetPathMetadataResponse)
 );
 
 entity_messages!(
@@ -546,11 +534,9 @@ entity_messages!(
     ResolveCompletionDocumentation,
     ResolveInlayHint,
     SaveBuffer,
-    SearchProject,
     StartLanguageServer,
     SynchronizeBuffers,
     TaskContextForLocation,
-    TaskTemplates,
     UnshareProject,
     UpdateBuffer,
     UpdateBufferFile,
@@ -569,9 +555,18 @@ entity_messages!(
     SynchronizeContexts,
     LspExtSwitchSourceHeader,
     UpdateUserSettings,
-    CreateLanguageServer,
-    WhichCommand,
-    ShellEnv
+    LanguageServerLog,
+    Toast,
+    HideToast,
+    OpenServerSettings,
+    GetPermalinkToLine,
+    LanguageServerPromptRequest,
+    GitBranches,
+    UpdateGitBranch,
+    ListToolchains,
+    ActivateToolchain,
+    ActiveToolchain,
+    GetPathMetadata
 );
 
 entity_messages!(
@@ -621,10 +616,12 @@ impl From<Nonce> for u128 {
     }
 }
 
-pub fn split_worktree_update(
-    mut message: UpdateWorktree,
-    max_chunk_size: usize,
-) -> impl Iterator<Item = UpdateWorktree> {
+#[cfg(any(test, feature = "test-support"))]
+pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 2;
+#[cfg(not(any(test, feature = "test-support")))]
+pub const MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE: usize = 256;
+
+pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item = UpdateWorktree> {
     let mut done_files = false;
 
     let mut repository_map = message
@@ -638,13 +635,19 @@ pub fn split_worktree_update(
             return None;
         }
 
-        let updated_entries_chunk_size = cmp::min(message.updated_entries.len(), max_chunk_size);
+        let updated_entries_chunk_size = cmp::min(
+            message.updated_entries.len(),
+            MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE,
+        );
         let updated_entries: Vec<_> = message
             .updated_entries
             .drain(..updated_entries_chunk_size)
             .collect();
 
-        let removed_entries_chunk_size = cmp::min(message.removed_entries.len(), max_chunk_size);
+        let removed_entries_chunk_size = cmp::min(
+            message.removed_entries.len(),
+            MAX_WORKTREE_UPDATE_MAX_CHUNK_SIZE,
+        );
         let removed_entries = message
             .removed_entries
             .drain(..removed_entries_chunk_size)

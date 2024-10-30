@@ -1,9 +1,11 @@
-use super::{SlashCommand, SlashCommandOutput};
 use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use gpui::{Task, WeakView};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
 use workspace::Workspace;
@@ -16,11 +18,11 @@ impl SlashCommand for PromptSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert prompt from library".into()
+        "Insert prompt from library".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert Prompt from Library".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -56,10 +58,12 @@ impl SlashCommand for PromptSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let title = arguments.to_owned().join(" ");
         if title.trim().is_empty() {
             return Task::ready(Err(anyhow!("missing prompt name")));
@@ -95,9 +99,11 @@ impl SlashCommand for PromptSlashCommand {
                     range,
                     icon: IconName::Library,
                     label: title,
+                    metadata: None,
                 }],
                 run_commands_in_text: true,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

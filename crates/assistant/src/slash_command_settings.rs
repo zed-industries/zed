@@ -10,9 +10,9 @@ pub struct SlashCommandSettings {
     /// Settings for the `/docs` slash command.
     #[serde(default)]
     pub docs: DocsCommandSettings,
-    /// Settings for the `/project` slash command.
+    /// Settings for the `/cargo-workspace` slash command.
     #[serde(default)]
-    pub project: ProjectCommandSettings,
+    pub cargo_workspace: CargoWorkspaceCommandSettings,
 }
 
 /// Settings for the `/docs` slash command.
@@ -23,10 +23,10 @@ pub struct DocsCommandSettings {
     pub enabled: bool,
 }
 
-/// Settings for the `/project` slash command.
+/// Settings for the `/cargo-workspace` slash command.
 #[derive(Deserialize, Serialize, Debug, Default, Clone, JsonSchema)]
-pub struct ProjectCommandSettings {
-    /// Whether `/project` is enabled.
+pub struct CargoWorkspaceCommandSettings {
+    /// Whether `/cargo-workspace` is enabled.
     #[serde(default)]
     pub enabled: bool,
 }
@@ -38,7 +38,10 @@ impl Settings for SlashCommandSettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _cx: &mut AppContext) -> Result<Self> {
         SettingsSources::<Self::FileContent>::json_merge_with(
-            [sources.default].into_iter().chain(sources.user),
+            [sources.default]
+                .into_iter()
+                .chain(sources.user)
+                .chain(sources.server),
         )
     }
 }

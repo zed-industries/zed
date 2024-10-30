@@ -1,8 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{btree_map, hash_map, BTreeMap, HashMap};
+use ec4rs::{ConfigParser, PropertiesSource, Section};
 use fs::Fs;
 use futures::{channel::mpsc, future::LocalBoxFuture, FutureExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Global, Task, UpdateGlobal};
+use paths::{local_settings_file_relative_path, EDITORCONFIG_NAME};
 use schemars::{gen::SchemaGenerator, schema::RootSchema, JsonSchema};
 use serde::{de::DeserializeOwned, Deserialize as _, Serialize};
 use smallvec::SmallVec;
@@ -10,13 +12,14 @@ use std::{
     any::{type_name, Any, TypeId},
     fmt::Debug,
     ops::Range,
-    path::Path,
-    str,
+    path::{Path, PathBuf},
+    str::{self, FromStr},
     sync::{Arc, LazyLock},
 };
 use tree_sitter::Query;
-use tree_sitter_json::language;
 use util::{merge_non_null_json_value_into, RangeExt, ResultExt as _};
+
+pub type EditorconfigProperties = ec4rs::Properties;
 
 use crate::{SettingsJsonSchemaParams, WorktreeId};
 
@@ -58,6 +61,7 @@ pub trait Settings: 'static + Send + Sync {
         anyhow::anyhow!("missing default")
     }
 
+    #[track_caller]
     fn register(cx: &mut AppContext)
     where
         Self: Sized,
@@ -110,6 +114,8 @@ pub struct SettingsSources<'a, T> {
     pub user: Option<&'a T>,
     /// The user settings for the current release channel.
     pub release_channel: Option<&'a T>,
+    /// The server's settings.
+    pub server: Option<&'a T>,
     /// The project settings, ordered from least specific to most specific.
     pub project: &'a [&'a T],
 }
@@ -126,6 +132,7 @@ impl<'a, T: Serialize> SettingsSources<'a, T> {
             .into_iter()
             .chain(self.user)
             .chain(self.release_channel)
+            .chain(self.server)
             .chain(self.project.iter().copied())
     }
 
@@ -157,13 +164,15 @@ pub struct SettingsLocation<'a> {
     pub path: &'a Path,
 }
 
-/// A set of strongly-typed setting values defined via multiple JSON files.
+/// A set of strongly-typed setting values defined via multiple config files.
 pub struct SettingsStore {
     setting_values: HashMap<TypeId, Box<dyn AnySettingValue>>,
     raw_default_settings: serde_json::Value,
     raw_user_settings: serde_json::Value,
+    raw_server_settings: Option<serde_json::Value>,
     raw_extension_settings: serde_json::Value,
     raw_local_settings: BTreeMap<(WorktreeId, Arc<Path>), serde_json::Value>,
+    raw_editorconfig_settings: BTreeMap<(WorktreeId, Arc<Path>), (String, Option<Editorconfig>)>,
     tab_size_callback: Option<(
         TypeId,
         Box<dyn Fn(&dyn Any) -> Option<usize> + Send + Sync + 'static>,
@@ -172,6 +181,33 @@ pub struct SettingsStore {
     setting_file_updates_tx: mpsc::UnboundedSender<
         Box<dyn FnOnce(AsyncAppContext) -> LocalBoxFuture<'static, Result<()>>>,
     >,
+}
+
+#[derive(Clone)]
+pub struct Editorconfig {
+    pub is_root: bool,
+    pub sections: SmallVec<[Section; 5]>,
+}
+
+impl FromStr for Editorconfig {
+    type Err = anyhow::Error;
+
+    fn from_str(contents: &str) -> Result<Self, Self::Err> {
+        let parser = ConfigParser::new_buffered(contents.as_bytes())
+            .context("creating editorconfig parser")?;
+        let is_root = parser.is_root;
+        let sections = parser
+            .collect::<Result<SmallVec<_>, _>>()
+            .context("parsing editorconfig sections")?;
+        Ok(Self { is_root, sections })
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+pub enum LocalSettingsKind {
+    Settings,
+    Tasks,
+    Editorconfig,
 }
 
 impl Global for SettingsStore {}
@@ -211,8 +247,10 @@ impl SettingsStore {
             setting_values: Default::default(),
             raw_default_settings: serde_json::json!({}),
             raw_user_settings: serde_json::json!({}),
+            raw_server_settings: None,
             raw_extension_settings: serde_json::json!({}),
             raw_local_settings: Default::default(),
+            raw_editorconfig_settings: BTreeMap::default(),
             tab_size_callback: Default::default(),
             setting_file_updates_tx,
             _setting_file_updates: cx.spawn(|cx| async move {
@@ -234,6 +272,7 @@ impl SettingsStore {
     pub fn register_setting<T: Settings>(&mut self, cx: &mut AppContext) {
         let setting_type_id = TypeId::of::<T>();
         let entry = self.setting_values.entry(setting_type_id);
+
         if matches!(entry, hash_map::Entry::Occupied(_)) {
             return;
         }
@@ -261,6 +300,13 @@ impl SettingsStore {
                     .log_err();
             }
 
+            let server_value = self
+                .raw_server_settings
+                .as_ref()
+                .and_then(|server_setting| {
+                    setting_value.deserialize_setting(server_setting).log_err()
+                });
+
             let extension_value = setting_value
                 .deserialize_setting(&self.raw_extension_settings)
                 .log_err();
@@ -269,9 +315,10 @@ impl SettingsStore {
                 .load_setting(
                     SettingsSources {
                         default: &default_settings,
-                        release_channel: release_channel_value.as_ref(),
                         extensions: extension_value.as_ref(),
                         user: user_value.as_ref(),
+                        release_channel: release_channel_value.as_ref(),
+                        server: server_value.as_ref(),
                         project: &[],
                     },
                     cx,
@@ -507,32 +554,132 @@ impl SettingsStore {
         } else {
             parse_json_with_comments(user_settings_content)?
         };
-        if settings.is_object() {
-            self.raw_user_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
+
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_user_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
+    }
+
+    pub fn set_server_settings(
+        &mut self,
+        server_settings_content: &str,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        let settings: Option<serde_json::Value> = if server_settings_content.is_empty() {
+            None
         } else {
-            Err(anyhow!("settings must be an object"))
-        }
+            parse_json_with_comments(server_settings_content)?
+        };
+
+        anyhow::ensure!(
+            settings
+                .as_ref()
+                .map(|value| value.is_object())
+                .unwrap_or(true),
+            "settings must be an object"
+        );
+        self.raw_server_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Add or remove a set of local settings via a JSON string.
     pub fn set_local_settings(
         &mut self,
         root_id: WorktreeId,
-        path: Arc<Path>,
+        directory_path: Arc<Path>,
+        kind: LocalSettingsKind,
         settings_content: Option<&str>,
         cx: &mut AppContext,
-    ) -> Result<()> {
-        if settings_content.is_some_and(|content| !content.is_empty()) {
-            self.raw_local_settings.insert(
-                (root_id, path.clone()),
-                parse_json_with_comments(settings_content.unwrap())?,
-            );
-        } else {
-            self.raw_local_settings.remove(&(root_id, path.clone()));
+    ) -> std::result::Result<(), InvalidSettingsError> {
+        let mut zed_settings_changed = false;
+        match (
+            kind,
+            settings_content
+                .map(|content| content.trim())
+                .filter(|content| !content.is_empty()),
+        ) {
+            (LocalSettingsKind::Tasks, _) => {
+                return Err(InvalidSettingsError::Tasks {
+                    message: "Attempted to submit tasks into the settings store".to_string(),
+                })
+            }
+            (LocalSettingsKind::Settings, None) => {
+                zed_settings_changed = self
+                    .raw_local_settings
+                    .remove(&(root_id, directory_path.clone()))
+                    .is_some()
+            }
+            (LocalSettingsKind::Editorconfig, None) => {
+                self.raw_editorconfig_settings
+                    .remove(&(root_id, directory_path.clone()));
+            }
+            (LocalSettingsKind::Settings, Some(settings_contents)) => {
+                let new_settings = parse_json_with_comments::<serde_json::Value>(settings_contents)
+                    .map_err(|e| InvalidSettingsError::LocalSettings {
+                        path: directory_path.join(local_settings_file_relative_path()),
+                        message: e.to_string(),
+                    })?;
+                match self
+                    .raw_local_settings
+                    .entry((root_id, directory_path.clone()))
+                {
+                    btree_map::Entry::Vacant(v) => {
+                        v.insert(new_settings);
+                        zed_settings_changed = true;
+                    }
+                    btree_map::Entry::Occupied(mut o) => {
+                        if o.get() != &new_settings {
+                            o.insert(new_settings);
+                            zed_settings_changed = true;
+                        }
+                    }
+                }
+            }
+            (LocalSettingsKind::Editorconfig, Some(editorconfig_contents)) => {
+                match self
+                    .raw_editorconfig_settings
+                    .entry((root_id, directory_path.clone()))
+                {
+                    btree_map::Entry::Vacant(v) => match editorconfig_contents.parse() {
+                        Ok(new_contents) => {
+                            v.insert((editorconfig_contents.to_owned(), Some(new_contents)));
+                        }
+                        Err(e) => {
+                            v.insert((editorconfig_contents.to_owned(), None));
+                            return Err(InvalidSettingsError::Editorconfig {
+                                message: e.to_string(),
+                                path: directory_path.join(EDITORCONFIG_NAME),
+                            });
+                        }
+                    },
+                    btree_map::Entry::Occupied(mut o) => {
+                        if o.get().0 != editorconfig_contents {
+                            match editorconfig_contents.parse() {
+                                Ok(new_contents) => {
+                                    o.insert((
+                                        editorconfig_contents.to_owned(),
+                                        Some(new_contents),
+                                    ));
+                                }
+                                Err(e) => {
+                                    o.insert((editorconfig_contents.to_owned(), None));
+                                    return Err(InvalidSettingsError::Editorconfig {
+                                        message: e.to_string(),
+                                        path: directory_path.join(EDITORCONFIG_NAME),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        if zed_settings_changed {
+            self.recompute_values(Some((root_id, &directory_path)), cx)?;
         }
-        self.recompute_values(Some((root_id, &path)), cx)?;
         Ok(())
     }
 
@@ -542,18 +689,16 @@ impl SettingsStore {
         cx: &mut AppContext,
     ) -> Result<()> {
         let settings: serde_json::Value = serde_json::to_value(content)?;
-        if settings.is_object() {
-            self.raw_extension_settings = settings;
-            self.recompute_values(None, cx)?;
-            Ok(())
-        } else {
-            Err(anyhow!("settings must be an object"))
-        }
+        anyhow::ensure!(settings.is_object(), "settings must be an object");
+        self.raw_extension_settings = settings;
+        self.recompute_values(None, cx)?;
+        Ok(())
     }
 
     /// Add or remove a set of local settings via a JSON string.
     pub fn clear_local_settings(&mut self, root_id: WorktreeId, cx: &mut AppContext) -> Result<()> {
-        self.raw_local_settings.retain(|k, _| k.0 != root_id);
+        self.raw_local_settings
+            .retain(|(worktree_id, _), _| worktree_id != &root_id);
         self.recompute_values(Some((root_id, "".as_ref())), cx)?;
         Ok(())
     }
@@ -571,6 +716,23 @@ impl SettingsStore {
                     ),
             )
             .map(|((_, path), content)| (path.clone(), serde_json::to_string(content).unwrap()))
+    }
+
+    pub fn local_editorconfig_settings(
+        &self,
+        root_id: WorktreeId,
+    ) -> impl '_ + Iterator<Item = (Arc<Path>, String, Option<Editorconfig>)> {
+        self.raw_editorconfig_settings
+            .range(
+                (root_id, Path::new("").into())
+                    ..(
+                        WorktreeId::from_usize(root_id.to_usize() + 1),
+                        Path::new("").into(),
+                    ),
+            )
+            .map(|((_, path), (content, parsed_content))| {
+                (path.clone(), content.clone(), parsed_content.clone())
+            })
     }
 
     pub fn json_schema(
@@ -684,20 +846,34 @@ impl SettingsStore {
         &mut self,
         changed_local_path: Option<(WorktreeId, &Path)>,
         cx: &mut AppContext,
-    ) -> Result<()> {
+    ) -> std::result::Result<(), InvalidSettingsError> {
         // Reload the global and local values for every setting.
         let mut project_settings_stack = Vec::<DeserializedSetting>::new();
         let mut paths_stack = Vec::<Option<(WorktreeId, &Path)>>::new();
         for setting_value in self.setting_values.values_mut() {
-            let default_settings = setting_value.deserialize_setting(&self.raw_default_settings)?;
+            let default_settings = setting_value
+                .deserialize_setting(&self.raw_default_settings)
+                .map_err(|e| InvalidSettingsError::DefaultSettings {
+                    message: e.to_string(),
+                })?;
 
             let extension_settings = setting_value
                 .deserialize_setting(&self.raw_extension_settings)
                 .log_err();
 
-            let user_settings = setting_value
-                .deserialize_setting(&self.raw_user_settings)
-                .log_err();
+            let user_settings = match setting_value.deserialize_setting(&self.raw_user_settings) {
+                Ok(settings) => Some(settings),
+                Err(error) => {
+                    return Err(InvalidSettingsError::UserSettings {
+                        message: error.to_string(),
+                    });
+                }
+            };
+
+            let server_settings = self
+                .raw_server_settings
+                .as_ref()
+                .and_then(|setting| setting_value.deserialize_setting(setting).log_err());
 
             let mut release_channel_settings = None;
             if let Some(release_settings) = &self
@@ -721,6 +897,7 @@ impl SettingsStore {
                             extensions: extension_settings.as_ref(),
                             user: user_settings.as_ref(),
                             release_channel: release_channel_settings.as_ref(),
+                            server: server_settings.as_ref(),
                             project: &[],
                         },
                         cx,
@@ -734,11 +911,11 @@ impl SettingsStore {
             // Reload the local values for the setting.
             paths_stack.clear();
             project_settings_stack.clear();
-            for ((root_id, path), local_settings) in &self.raw_local_settings {
+            for ((root_id, directory_path), local_settings) in &self.raw_local_settings {
                 // Build a stack of all of the local values for that setting.
                 while let Some(prev_entry) = paths_stack.last() {
                     if let Some((prev_root_id, prev_path)) = prev_entry {
-                        if root_id != prev_root_id || !path.starts_with(prev_path) {
+                        if root_id != prev_root_id || !directory_path.starts_with(prev_path) {
                             paths_stack.pop();
                             project_settings_stack.pop();
                             continue;
@@ -747,41 +924,105 @@ impl SettingsStore {
                     break;
                 }
 
-                if let Some(local_settings) =
-                    setting_value.deserialize_setting(local_settings).log_err()
-                {
-                    paths_stack.push(Some((*root_id, path.as_ref())));
-                    project_settings_stack.push(local_settings);
+                match setting_value.deserialize_setting(local_settings) {
+                    Ok(local_settings) => {
+                        paths_stack.push(Some((*root_id, directory_path.as_ref())));
+                        project_settings_stack.push(local_settings);
 
-                    // If a local settings file changed, then avoid recomputing local
-                    // settings for any path outside of that directory.
-                    if changed_local_path.map_or(false, |(changed_root_id, changed_local_path)| {
-                        *root_id != changed_root_id || !path.starts_with(changed_local_path)
-                    }) {
-                        continue;
-                    }
-
-                    if let Some(value) = setting_value
-                        .load_setting(
-                            SettingsSources {
-                                default: &default_settings,
-                                extensions: extension_settings.as_ref(),
-                                user: user_settings.as_ref(),
-                                release_channel: release_channel_settings.as_ref(),
-                                project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                        // If a local settings file changed, then avoid recomputing local
+                        // settings for any path outside of that directory.
+                        if changed_local_path.map_or(
+                            false,
+                            |(changed_root_id, changed_local_path)| {
+                                *root_id != changed_root_id
+                                    || !directory_path.starts_with(changed_local_path)
                             },
-                            cx,
-                        )
-                        .log_err()
-                    {
-                        setting_value.set_local_value(*root_id, path.clone(), value);
+                        ) {
+                            continue;
+                        }
+
+                        if let Some(value) = setting_value
+                            .load_setting(
+                                SettingsSources {
+                                    default: &default_settings,
+                                    extensions: extension_settings.as_ref(),
+                                    user: user_settings.as_ref(),
+                                    release_channel: release_channel_settings.as_ref(),
+                                    server: server_settings.as_ref(),
+                                    project: &project_settings_stack.iter().collect::<Vec<_>>(),
+                                },
+                                cx,
+                            )
+                            .log_err()
+                        {
+                            setting_value.set_local_value(*root_id, directory_path.clone(), value);
+                        }
+                    }
+                    Err(error) => {
+                        return Err(InvalidSettingsError::LocalSettings {
+                            path: directory_path.join(local_settings_file_relative_path()),
+                            message: error.to_string(),
+                        });
                     }
                 }
             }
         }
         Ok(())
     }
+
+    pub fn editorconfig_properties(
+        &self,
+        for_worktree: WorktreeId,
+        for_path: &Path,
+    ) -> Option<EditorconfigProperties> {
+        let mut properties = EditorconfigProperties::new();
+
+        for (directory_with_config, _, parsed_editorconfig) in
+            self.local_editorconfig_settings(for_worktree)
+        {
+            if !for_path.starts_with(&directory_with_config) {
+                properties.use_fallbacks();
+                return Some(properties);
+            }
+            let parsed_editorconfig = parsed_editorconfig?;
+            if parsed_editorconfig.is_root {
+                properties = EditorconfigProperties::new();
+            }
+            for section in parsed_editorconfig.sections {
+                section.apply_to(&mut properties, for_path).log_err()?;
+            }
+        }
+
+        properties.use_fallbacks();
+        Some(properties)
+    }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum InvalidSettingsError {
+    LocalSettings { path: PathBuf, message: String },
+    UserSettings { message: String },
+    ServerSettings { message: String },
+    DefaultSettings { message: String },
+    Editorconfig { path: PathBuf, message: String },
+    Tasks { message: String },
+}
+
+impl std::fmt::Display for InvalidSettingsError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InvalidSettingsError::LocalSettings { message, .. }
+            | InvalidSettingsError::UserSettings { message }
+            | InvalidSettingsError::ServerSettings { message }
+            | InvalidSettingsError::DefaultSettings { message }
+            | InvalidSettingsError::Tasks { message }
+            | InvalidSettingsError::Editorconfig { message, .. } => {
+                write!(f, "{message}")
+            }
+        }
+    }
+}
+impl std::error::Error for InvalidSettingsError {}
 
 impl Debug for SettingsStore {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -826,6 +1067,9 @@ impl<T: Settings> AnySettingValue for SettingValue<T> {
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 release_channel: values
                     .release_channel
+                    .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
+                server: values
+                    .server
                     .map(|value| value.0.downcast_ref::<T::FileContent>().unwrap()),
                 project: values
                     .project
@@ -955,12 +1199,17 @@ fn replace_value_in_json_text(
     new_value: &serde_json::Value,
 ) -> (Range<usize>, String) {
     static PAIR_QUERY: LazyLock<Query> = LazyLock::new(|| {
-        Query::new(&language(), "(pair key: (string) @key value: (_) @value)")
-            .expect("Failed to create PAIR_QUERY")
+        Query::new(
+            &tree_sitter_json::LANGUAGE.into(),
+            "(pair key: (string) @key value: (_) @value)",
+        )
+        .expect("Failed to create PAIR_QUERY")
     });
 
     let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&tree_sitter_json::language()).unwrap();
+    parser
+        .set_language(&tree_sitter_json::LANGUAGE.into())
+        .unwrap();
     let syntax_tree = parser.parse(text, None).unwrap();
 
     let mut cursor = tree_sitter::QueryCursor::new();
@@ -1164,6 +1413,7 @@ mod tests {
             .set_local_settings(
                 WorktreeId::from_usize(1),
                 Path::new("/root1").into(),
+                LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "staff": true } }"#),
                 cx,
             )
@@ -1172,6 +1422,7 @@ mod tests {
             .set_local_settings(
                 WorktreeId::from_usize(1),
                 Path::new("/root1/subdir").into(),
+                LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "name": "Jane Doe" } }"#),
                 cx,
             )
@@ -1181,6 +1432,7 @@ mod tests {
             .set_local_settings(
                 WorktreeId::from_usize(1),
                 Path::new("/root2").into(),
+                LocalSettingsKind::Settings,
                 Some(r#"{ "user": { "age": 42 }, "key2": "b" }"#),
                 cx,
             )

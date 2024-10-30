@@ -11,9 +11,7 @@ use collections::HashMap;
 use crate::client::Client;
 use crate::types;
 
-pub use types::PromptInfo;
-
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: &str = "2024-10-07";
 
 pub struct ModelContextProtocol {
     inner: Client,
@@ -24,12 +22,19 @@ impl ModelContextProtocol {
         Self { inner }
     }
 
+    fn supported_protocols() -> Vec<types::ProtocolVersion> {
+        vec![
+            types::ProtocolVersion::VersionString(PROTOCOL_VERSION.to_string()),
+            types::ProtocolVersion::VersionNumber(1),
+        ]
+    }
+
     pub async fn initialize(
         self,
-        client_info: types::EntityInfo,
+        client_info: types::Implementation,
     ) -> Result<InitializedContextServerProtocol> {
         let params = types::InitializeParams {
-            protocol_version: PROTOCOL_VERSION,
+            protocol_version: types::ProtocolVersion::VersionString(PROTOCOL_VERSION.to_string()),
             capabilities: types::ClientCapabilities {
                 experimental: None,
                 sampling: None,
@@ -41,6 +46,13 @@ impl ModelContextProtocol {
             .inner
             .request(types::RequestType::Initialize.as_str(), params)
             .await?;
+
+        if !Self::supported_protocols().contains(&response.protocol_version) {
+            return Err(anyhow::anyhow!(
+                "Unsupported protocol version: {:?}",
+                response.protocol_version
+            ));
+        }
 
         log::trace!("mcp server info {:?}", response.server_info);
 
@@ -96,7 +108,7 @@ impl InitializedContextServerProtocol {
     }
 
     /// List the MCP prompts.
-    pub async fn list_prompts(&self) -> Result<Vec<types::PromptInfo>> {
+    pub async fn list_prompts(&self) -> Result<Vec<types::Prompt>> {
         self.check_capability(ServerCapability::Prompts)?;
 
         let response: types::PromptsListResponse = self
@@ -105,6 +117,18 @@ impl InitializedContextServerProtocol {
             .await?;
 
         Ok(response.prompts)
+    }
+
+    /// List the MCP resources.
+    pub async fn list_resources(&self) -> Result<types::ResourcesListResponse> {
+        self.check_capability(ServerCapability::Resources)?;
+
+        let response: types::ResourcesListResponse = self
+            .inner
+            .request(types::RequestType::ResourcesList.as_str(), ())
+            .await?;
+
+        Ok(response)
     }
 
     /// Executes a prompt with the given arguments and returns the result.
@@ -155,6 +179,39 @@ impl InitializedContextServerProtocol {
         };
 
         Ok(completion)
+    }
+
+    /// List MCP tools.
+    pub async fn list_tools(&self) -> Result<types::ListToolsResponse> {
+        self.check_capability(ServerCapability::Tools)?;
+
+        let response = self
+            .inner
+            .request::<types::ListToolsResponse>(types::RequestType::ListTools.as_str(), ())
+            .await?;
+
+        Ok(response)
+    }
+
+    /// Executes a tool with the given arguments
+    pub async fn run_tool<P: AsRef<str>>(
+        &self,
+        tool: P,
+        arguments: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<types::CallToolResponse> {
+        self.check_capability(ServerCapability::Tools)?;
+
+        let params = types::CallToolParams {
+            name: tool.as_ref().to_string(),
+            arguments,
+        };
+
+        let response: types::CallToolResponse = self
+            .inner
+            .request(types::RequestType::CallTool.as_str(), params)
+            .await?;
+
+        Ok(response)
     }
 }
 

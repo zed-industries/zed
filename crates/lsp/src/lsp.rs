@@ -64,6 +64,15 @@ pub struct LanguageServerBinary {
     pub env: Option<HashMap<String, String>>,
 }
 
+/// Configures the search (and installation) of language servers.
+#[derive(Debug, Clone, Deserialize)]
+pub struct LanguageServerBinaryOptions {
+    /// Whether the adapter should look at the users system
+    pub allow_path_lookup: bool,
+    /// Whether the adapter should download its own version
+    pub allow_binary_download: bool,
+}
+
 /// A running language server process.
 pub struct LanguageServer {
     server_id: LanguageServerId,
@@ -615,8 +624,11 @@ impl LanguageServer {
                             snippet_support: Some(true),
                             resolve_support: Some(CompletionItemCapabilityResolveSupport {
                                 properties: vec![
-                                    "documentation".to_string(),
                                     "additionalTextEdits".to_string(),
+                                    "command".to_string(),
+                                    "documentation".to_string(),
+                                    // NB: Do not have this resolved, otherwise Zed becomes slow to complete things
+                                    // "textEdit".to_string(),
                                 ],
                             }),
                             insert_replace_support: Some(true),
@@ -1165,6 +1177,8 @@ impl FakeLanguageServer {
         let (stdout_writer, stdout_reader) = async_pipe::pipe();
         let (notifications_tx, notifications_rx) = channel::unbounded();
 
+        let root = Self::root_path();
+
         let mut server = LanguageServer::new_internal(
             server_id,
             stdin_writer,
@@ -1172,8 +1186,8 @@ impl FakeLanguageServer {
             None::<async_pipe::PipeReader>,
             Arc::new(Mutex::new(None)),
             None,
-            Path::new("/"),
-            Path::new("/"),
+            root,
+            root,
             None,
             cx.clone(),
             |_| {},
@@ -1189,8 +1203,8 @@ impl FakeLanguageServer {
                     None::<async_pipe::PipeReader>,
                     Arc::new(Mutex::new(None)),
                     None,
-                    Path::new("/"),
-                    Path::new("/"),
+                    root,
+                    root,
                     None,
                     cx,
                     move |msg| {
@@ -1225,6 +1239,16 @@ impl FakeLanguageServer {
         });
 
         (server, fake)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn root_path() -> &'static Path {
+        Path::new("C:\\")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn root_path() -> &'static Path {
+        Path::new("/")
     }
 }
 

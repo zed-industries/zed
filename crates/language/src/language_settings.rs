@@ -4,6 +4,10 @@ use crate::{File, Language, LanguageName, LanguageServerName};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use core::slice;
+use ec4rs::{
+    property::{FinalNewline, IndentSize, IndentStyle, MaxLineLen, TabWidth, TrimTrailingWs},
+    Properties as EditorconfigProperties,
+};
 use globset::{Glob, GlobMatcher, GlobSet, GlobSetBuilder};
 use gpui::AppContext;
 use itertools::{Either, Itertools};
@@ -16,8 +20,10 @@ use serde::{
     Deserialize, Deserializer, Serialize,
 };
 use serde_json::Value;
-use settings::{add_references_to_properties, Settings, SettingsLocation, SettingsSources};
-use std::{num::NonZeroU32, path::Path, sync::Arc};
+use settings::{
+    add_references_to_properties, Settings, SettingsLocation, SettingsSources, SettingsStore,
+};
+use std::{borrow::Cow, num::NonZeroU32, path::Path, sync::Arc};
 use util::serde::default_true;
 
 /// Initializes the language settings.
@@ -27,17 +33,20 @@ pub fn init(cx: &mut AppContext) {
 
 /// Returns the settings for the specified language from the provided file.
 pub fn language_settings<'a>(
-    language: Option<&Arc<Language>>,
-    file: Option<&Arc<dyn File>>,
+    language: Option<LanguageName>,
+    file: Option<&'a Arc<dyn File>>,
     cx: &'a AppContext,
-) -> &'a LanguageSettings {
-    let language_name = language.map(|l| l.name());
-    all_language_settings(file, cx).language(language_name.as_ref())
+) -> Cow<'a, LanguageSettings> {
+    let location = file.map(|f| SettingsLocation {
+        worktree_id: f.worktree_id(cx),
+        path: f.path().as_ref(),
+    });
+    AllLanguageSettings::get(location, cx).language(location, language.as_ref(), cx)
 }
 
 /// Returns the settings for all languages from the provided file.
 pub fn all_language_settings<'a>(
-    file: Option<&Arc<dyn File>>,
+    file: Option<&'a Arc<dyn File>>,
     cx: &'a AppContext,
 ) -> &'a AllLanguageSettings {
     let location = file.map(|f| SettingsLocation {
@@ -99,7 +108,7 @@ pub struct LanguageSettings {
     /// special tokens:
     /// - `"!<language_server_id>"` - A language server ID prefixed with a `!` will be disabled.
     /// - `"..."` - A placeholder to refer to the **rest** of the registered language servers for this language.
-    pub language_servers: Vec<Arc<str>>,
+    pub language_servers: Vec<String>,
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     pub show_inline_completions: bool,
@@ -113,6 +122,9 @@ pub struct LanguageSettings {
     pub use_autoclose: bool,
     /// Whether to automatically surround text with brackets.
     pub use_auto_surround: bool,
+    /// Whether to use additional LSP queries to format (and amend) the code after
+    /// every "trigger" symbol input, defined by LSP server capabilities.
+    pub use_on_type_format: bool,
     // Controls how the editor handles the autoclosed characters.
     pub always_treat_brackets_as_autoclosed: bool,
     /// Which code actions to run on save
@@ -137,22 +149,24 @@ impl LanguageSettings {
     }
 
     pub(crate) fn resolve_language_servers(
-        configured_language_servers: &[Arc<str>],
+        configured_language_servers: &[String],
         available_language_servers: &[LanguageServerName],
     ) -> Vec<LanguageServerName> {
-        let (disabled_language_servers, enabled_language_servers): (Vec<Arc<str>>, Vec<Arc<str>>) =
-            configured_language_servers.iter().partition_map(
-                |language_server| match language_server.strip_prefix('!') {
-                    Some(disabled) => Either::Left(disabled.into()),
-                    None => Either::Right(language_server.clone()),
-                },
-            );
+        let (disabled_language_servers, enabled_language_servers): (
+            Vec<LanguageServerName>,
+            Vec<LanguageServerName>,
+        ) = configured_language_servers.iter().partition_map(
+            |language_server| match language_server.strip_prefix('!') {
+                Some(disabled) => Either::Left(LanguageServerName(disabled.to_string().into())),
+                None => Either::Right(LanguageServerName(language_server.clone().into())),
+            },
+        );
 
         let rest = available_language_servers
             .iter()
             .filter(|&available_language_server| {
-                !disabled_language_servers.contains(&available_language_server.0)
-                    && !enabled_language_servers.contains(&available_language_server.0)
+                !disabled_language_servers.contains(&available_language_server)
+                    && !enabled_language_servers.contains(&available_language_server)
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -160,10 +174,10 @@ impl LanguageSettings {
         enabled_language_servers
             .into_iter()
             .flat_map(|language_server| {
-                if language_server.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
+                if language_server.0.as_ref() == Self::REST_OF_LANGUAGE_SERVERS {
                     rest.clone()
                 } else {
-                    vec![LanguageServerName(language_server.clone())]
+                    vec![language_server.clone()]
                 }
             })
             .collect::<Vec<_>>()
@@ -295,7 +309,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: ["..."]
     #[serde(default)]
-    pub language_servers: Option<Vec<Arc<str>>>,
+    pub language_servers: Option<Vec<String>>,
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     ///
@@ -323,14 +337,19 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: true
     pub use_auto_surround: Option<bool>,
-    // Controls how the editor handles the autoclosed characters.
-    // When set to `false`(default), skipping over and auto-removing of the closing characters
-    // happen only for auto-inserted characters.
-    // Otherwise(when `true`), the closing characters are always skipped over and auto-removed
-    // no matter how they were inserted.
+    /// Controls how the editor handles the autoclosed characters.
+    /// When set to `false`(default), skipping over and auto-removing of the closing characters
+    /// happen only for auto-inserted characters.
+    /// Otherwise(when `true`), the closing characters are always skipped over and auto-removed
+    /// no matter how they were inserted.
     ///
     /// Default: false
     pub always_treat_brackets_as_autoclosed: Option<bool>,
+    /// Whether to use additional LSP queries to format (and amend) the code after
+    /// every "trigger" symbol input, defined by LSP server capabilities.
+    ///
+    /// Default: true
+    pub use_on_type_format: Option<bool>,
     /// Which code actions to run on save after the formatter.
     /// These are not run if formatting is off.
     ///
@@ -369,15 +388,16 @@ pub struct FeaturesContent {
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SoftWrap {
-    /// Do not soft wrap.
+    /// Prefer a single line generally, unless an overly long line is encountered.
     None,
+    /// Deprecated: use None instead. Left to avoid breaking existing users' configs.
     /// Prefer a single line generally, unless an overly long line is encountered.
     PreferLine,
-    /// Soft wrap lines that exceed the editor width
+    /// Soft wrap lines that exceed the editor width.
     EditorWidth,
-    /// Soft wrap lines at the preferred line length
+    /// Soft wrap lines at the preferred line length.
     PreferredLineLength,
-    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller)
+    /// Soft wrap line at the preferred line length or the editor width (whichever is smaller).
     Bounded,
 }
 
@@ -650,7 +670,7 @@ pub enum Formatter {
         /// The external program to run.
         command: Arc<str>,
         /// The arguments to pass to the program.
-        arguments: Arc<[String]>,
+        arguments: Option<Arc<[String]>>,
     },
     /// Files should be formatted using code actions executed by language servers.
     CodeActions(HashMap<String, bool>),
@@ -741,6 +761,14 @@ pub struct InlayHintSettings {
     /// Default: true
     #[serde(default = "default_true")]
     pub show_other_hints: bool,
+    /// Whether to show a background for inlay hints.
+    ///
+    /// If set to `true`, the background will use the `hint.background` color
+    /// from the current theme.
+    ///
+    /// Default: false
+    #[serde(default)]
+    pub show_background: bool,
     /// Whether or not to debounce inlay hints updates after buffer edits.
     ///
     /// Set to 0 to disable debouncing.
@@ -791,13 +819,27 @@ impl InlayHintSettings {
 
 impl AllLanguageSettings {
     /// Returns the [`LanguageSettings`] for the language with the specified name.
-    pub fn language<'a>(&'a self, language_name: Option<&LanguageName>) -> &'a LanguageSettings {
-        if let Some(name) = language_name {
-            if let Some(overrides) = self.languages.get(name) {
-                return overrides;
-            }
+    pub fn language<'a>(
+        &'a self,
+        location: Option<SettingsLocation<'a>>,
+        language_name: Option<&LanguageName>,
+        cx: &'a AppContext,
+    ) -> Cow<'a, LanguageSettings> {
+        let settings = language_name
+            .and_then(|name| self.languages.get(name))
+            .unwrap_or(&self.defaults);
+
+        let editorconfig_properties = location.and_then(|location| {
+            cx.global::<SettingsStore>()
+                .editorconfig_properties(location.worktree_id, location.path)
+        });
+        if let Some(editorconfig_properties) = editorconfig_properties {
+            let mut settings = settings.clone();
+            merge_with_editorconfig(&mut settings, &editorconfig_properties);
+            Cow::Owned(settings)
+        } else {
+            Cow::Borrowed(settings)
         }
-        &self.defaults
     }
 
     /// Returns whether inline completions are enabled for the given path.
@@ -814,6 +856,7 @@ impl AllLanguageSettings {
         &self,
         language: Option<&Arc<Language>>,
         path: Option<&Path>,
+        cx: &AppContext,
     ) -> bool {
         if let Some(path) = path {
             if !self.inline_completions_enabled_for_path(path) {
@@ -821,9 +864,62 @@ impl AllLanguageSettings {
             }
         }
 
-        self.language(language.map(|l| l.name()).as_ref())
+        self.language(None, language.map(|l| l.name()).as_ref(), cx)
             .show_inline_completions
     }
+}
+
+fn merge_with_editorconfig(settings: &mut LanguageSettings, cfg: &EditorconfigProperties) {
+    let max_line_length = cfg.get::<MaxLineLen>().ok().and_then(|v| match v {
+        MaxLineLen::Value(u) => Some(u as u32),
+        MaxLineLen::Off => None,
+    });
+    let tab_size = cfg.get::<IndentSize>().ok().and_then(|v| match v {
+        IndentSize::Value(u) => NonZeroU32::new(u as u32),
+        IndentSize::UseTabWidth => cfg.get::<TabWidth>().ok().and_then(|w| match w {
+            TabWidth::Value(u) => NonZeroU32::new(u as u32),
+        }),
+    });
+    let hard_tabs = cfg
+        .get::<IndentStyle>()
+        .map(|v| v.eq(&IndentStyle::Tabs))
+        .ok();
+    let ensure_final_newline_on_save = cfg
+        .get::<FinalNewline>()
+        .map(|v| match v {
+            FinalNewline::Value(b) => b,
+        })
+        .ok();
+    let remove_trailing_whitespace_on_save = cfg
+        .get::<TrimTrailingWs>()
+        .map(|v| match v {
+            TrimTrailingWs::Value(b) => b,
+        })
+        .ok();
+    let preferred_line_length = max_line_length;
+    let soft_wrap = if max_line_length.is_some() {
+        Some(SoftWrap::PreferredLineLength)
+    } else {
+        None
+    };
+
+    fn merge<T>(target: &mut T, value: Option<T>) {
+        if let Some(value) = value {
+            *target = value;
+        }
+    }
+    merge(&mut settings.tab_size, tab_size);
+    merge(&mut settings.hard_tabs, hard_tabs);
+    merge(
+        &mut settings.remove_trailing_whitespace_on_save,
+        remove_trailing_whitespace_on_save,
+    );
+    merge(
+        &mut settings.ensure_final_newline_on_save,
+        ensure_final_newline_on_save,
+    );
+    merge(&mut settings.preferred_line_length, preferred_line_length);
+    merge(&mut settings.soft_wrap, soft_wrap);
 }
 
 /// The kind of an inlay hint.
@@ -1035,6 +1131,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
+    merge(&mut settings.use_on_type_format, src.use_on_type_format);
     merge(
         &mut settings.always_treat_brackets_as_autoclosed,
         src.always_treat_brackets_as_autoclosed,
@@ -1145,12 +1242,19 @@ mod tests {
     }
 
     #[test]
+    fn test_formatter_deserialization_invalid() {
+        let raw_auto = "{\"formatter\": {}}";
+        let result: Result<LanguageSettingsContent, _> = serde_json::from_str(raw_auto);
+        assert!(result.is_err());
+    }
+
+    #[test]
     pub fn test_resolve_language_servers() {
         fn language_server_names(names: &[&str]) -> Vec<LanguageServerName> {
             names
                 .iter()
                 .copied()
-                .map(|name| LanguageServerName(name.into()))
+                .map(|name| LanguageServerName(name.to_string().into()))
                 .collect::<Vec<_>>()
         }
 

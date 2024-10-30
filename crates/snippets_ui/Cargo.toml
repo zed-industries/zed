@@ -1,0 +1,22 @@
+[package]
+name = "snippets_ui"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/snippets_ui.rs"
+
+[dependencies]
+fuzzy.workspace = true
+gpui.workspace = true
+language.workspace = true
+paths.workspace = true
+picker.workspace = true
+ui.workspace = true
+util.workspace = true
+workspace.workspace = true

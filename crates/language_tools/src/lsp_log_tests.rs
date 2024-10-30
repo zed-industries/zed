@@ -43,7 +43,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     )));
     let mut fake_rust_servers = language_registry.register_fake_lsp(
         "Rust",
@@ -95,6 +95,9 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
                 rpc_trace_enabled: false,
                 selected_entry: LogKind::Logs,
                 trace_level: lsp::TraceValue::Off,
+                server_kind: lsp_log::LanguageServerKind::Local {
+                    project: project.downgrade()
+                }
             }]
         );
         assert_eq!(view.editor.read(cx).text(cx), "hello from the server\n");

@@ -8,7 +8,6 @@ mod channel_buffer_tests;
 mod channel_guest_tests;
 mod channel_message_tests;
 mod channel_tests;
-mod dev_server_tests;
 mod editor_tests;
 mod following_tests;
 mod integration_tests;
@@ -63,6 +62,6 @@ fn rust_lang() -> Arc<Language> {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::language()),
+        Some(tree_sitter_rust::LANGUAGE.into()),
     ))
 }

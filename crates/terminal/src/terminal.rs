@@ -18,7 +18,10 @@ use alacritty_terminal::{
         Config, RenderableCursor, TermMode,
     },
     tty::{self},
-    vte::ansi::{ClearMode, Handler, NamedPrivateMode, PrivateMode},
+    vi_mode::{ViModeCursor, ViMotion},
+    vte::ansi::{
+        ClearMode, CursorStyle as AlacCursorStyle, Handler, NamedPrivateMode, PrivateMode,
+    },
     Term,
 };
 use anyhow::{bail, Result};
@@ -40,9 +43,9 @@ use serde::{Deserialize, Serialize};
 use settings::Settings;
 use smol::channel::{Receiver, Sender};
 use task::{HideStrategy, Shell, TaskId};
-use terminal_settings::{AlternateScroll, TerminalBlink, TerminalSettings};
+use terminal_settings::{AlternateScroll, CursorShape, TerminalSettings};
 use theme::{ActiveTheme, Theme};
-use util::truncate_and_trailoff;
+use util::{paths::home_dir, truncate_and_trailoff};
 
 use std::{
     cmp::{self, min},
@@ -57,7 +60,7 @@ use thiserror::Error;
 use gpui::{
     actions, black, px, AnyWindowHandle, AppContext, Bounds, ClipboardItem, EventEmitter, Hsla,
     Keystroke, ModelContext, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, Rgba, ScrollWheelEvent, Size, Task, TouchPhase,
+    Pixels, Point, Rgba, ScrollWheelEvent, SharedString, Size, Task, TouchPhase,
 };
 
 use crate::mappings::{colors::to_alac_rgb, keys::to_esc_str};
@@ -76,6 +79,7 @@ actions!(
         ScrollPageDown,
         ScrollToTop,
         ScrollToBottom,
+        ToggleViMode,
     ]
 );
 
@@ -100,7 +104,7 @@ pub enum Event {
     CloseTerminal,
     Bell,
     Wakeup,
-    BlinkChanged,
+    BlinkChanged(bool),
     SelectionsChanged,
     NewNavigationTarget(Option<MaybeNavigationTarget>),
     Open(MaybeNavigationTarget),
@@ -137,6 +141,9 @@ enum InternalEvent {
     // Adjusted mouse position, should open
     FindHyperlink(Point<Pixels>, bool),
     Copy,
+    // Vi mode events
+    ToggleViMode,
+    ViMotion(ViMotion),
 }
 
 ///A translation struct for Alacritty to communicate with us from their event loop
@@ -267,19 +274,21 @@ impl TerminalError {
             })
     }
 
-    pub fn shell_to_string(&self) -> String {
-        match &self.shell {
-            Shell::System => "<system shell>".to_string(),
-            Shell::Program(p) => p.to_string(),
-            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
-        }
-    }
-
     pub fn fmt_shell(&self) -> String {
         match &self.shell {
             Shell::System => "<system defined shell>".to_string(),
             Shell::Program(s) => s.to_string(),
-            Shell::WithArguments { program, args } => format!("{} {}", program, args.join(" ")),
+            Shell::WithArguments {
+                program,
+                args,
+                title_override,
+            } => {
+                if let Some(title_override) = title_override {
+                    format!("{} {} ({})", program, args.join(" "), title_override)
+                } else {
+                    format!("{} {}", program, args.join(" "))
+                }
+            }
         }
     }
 }
@@ -300,6 +309,11 @@ impl Display for TerminalError {
 // https://github.com/alacritty/alacritty/blob/cb3a79dbf6472740daca8440d5166c1d4af5029e/extra/man/alacritty.5.scd?plain=1#L207-L213
 const DEFAULT_SCROLL_HISTORY_LINES: usize = 10_000;
 const MAX_SCROLL_HISTORY_LINES: usize = 100_000;
+const URL_REGEX: &str = r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#;
+// Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
+// https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
+const WORD_REGEX: &str =
+    r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))|[\$\+\w.\[\]:/\\@\-~()]+"#;
 
 pub struct TerminalBuilder {
     terminal: Terminal,
@@ -313,16 +327,22 @@ impl TerminalBuilder {
         task: Option<TaskState>,
         shell: Shell,
         mut env: HashMap<String, String>,
-        blink_settings: Option<TerminalBlink>,
+        cursor_shape: CursorShape,
         alternate_scroll: AlternateScroll,
         max_scroll_history_lines: Option<usize>,
+        is_ssh_terminal: bool,
         window: AnyWindowHandle,
         completion_tx: Sender<()>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Result<TerminalBuilder> {
-        // TODO: Properly set the current locale,
-        env.entry("LC_ALL".to_string())
-            .or_insert_with(|| "en_US.UTF-8".to_string());
+        // If the parent environment doesn't have a locale set
+        // (As is the case when launched from a .app on MacOS),
+        // and the Project doesn't have a locale set, then
+        // set a fallback for our child environment to use.
+        if std::env::var("LANG").is_err() {
+            env.entry("LANG".to_string())
+                .or_insert_with(|| "en_US.UTF-8".to_string());
+        }
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
         env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
@@ -331,20 +351,29 @@ impl TerminalBuilder {
             release_channel::AppVersion::global(cx).to_string(),
         );
 
+        let mut terminal_title_override = None;
+
         let pty_options = {
             let alac_shell = match shell.clone() {
                 Shell::System => None,
                 Shell::Program(program) => {
                     Some(alacritty_terminal::tty::Shell::new(program, Vec::new()))
                 }
-                Shell::WithArguments { program, args } => {
+                Shell::WithArguments {
+                    program,
+                    args,
+                    title_override,
+                } => {
+                    terminal_title_override = title_override;
                     Some(alacritty_terminal::tty::Shell::new(program, args))
                 }
             };
 
             alacritty_terminal::tty::Options {
                 shell: alac_shell,
-                working_directory: working_directory.clone(),
+                working_directory: working_directory
+                    .clone()
+                    .or_else(|| Some(home_dir().to_path_buf())),
                 hold: false,
                 env: env.into_iter().collect(),
             }
@@ -353,6 +382,7 @@ impl TerminalBuilder {
         // Setup Alacritty's env, which modifies the current process's environment
         alacritty_terminal::tty::setup_env();
 
+        let default_cursor_style = AlacCursorStyle::from(cursor_shape);
         let scrolling_history = if task.is_some() {
             // Tasks like `cargo build --all` may produce a lot of output, ergo allow maximum scrolling.
             // After the task finishes, we do not allow appending to that terminal, so small tasks output should not
@@ -365,6 +395,7 @@ impl TerminalBuilder {
         };
         let config = Config {
             scrolling_history,
+            default_cursor_style,
             ..Config::default()
         };
 
@@ -373,15 +404,10 @@ impl TerminalBuilder {
         let (events_tx, events_rx) = unbounded();
         //Set up the terminal...
         let mut term = Term::new(
-            config,
+            config.clone(),
             &TerminalSize::default(),
             ZedListener(events_tx.clone()),
         );
-
-        //Start off blinking if we need to
-        if let Some(TerminalBlink::On) = blink_settings {
-            term.set_private_mode(PrivateMode::Named(NamedPrivateMode::BlinkingCursor));
-        }
 
         //Alacritty defaults to alternate scrolling being on, so we just need to turn it off.
         if let AlternateScroll::Off = alternate_scroll {
@@ -421,17 +447,13 @@ impl TerminalBuilder {
         let pty_tx = event_loop.channel();
         let _io_thread = event_loop.spawn(); // DANGER
 
-        let url_regex = RegexSearch::new(r#"(ipfs:|ipns:|magnet:|mailto:|gemini://|gopher://|https://|http://|news:|file://|git://|ssh:|ftp://)[^\u{0000}-\u{001F}\u{007F}-\u{009F}<>"\s{-}\^⟨⟩`]+"#).unwrap();
-        // Optional suffix matches MSBuild diagnostic suffixes for path parsing in PathLikeWithPosition
-        // https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-diagnostic-format-for-tasks
-        let word_regex =
-            RegexSearch::new(r#"[\$\+\w.\[\]:/\\@\-~()]+(?:\((?:\d+|\d+,\d+)\))?"#).unwrap();
-
         let terminal = Terminal {
             task,
             pty_tx: Notifier(pty_tx),
             completion_tx,
             term,
+            term_config: config,
+            title_override: terminal_title_override,
             events: VecDeque::with_capacity(10), //Should never get this high.
             last_content: Default::default(),
             last_mouse: None,
@@ -445,8 +467,10 @@ impl TerminalBuilder {
             selection_phase: SelectionPhase::Ended,
             secondary_pressed: false,
             hovered_word: false,
-            url_regex,
-            word_regex,
+            url_regex: RegexSearch::new(URL_REGEX).unwrap(),
+            word_regex: RegexSearch::new(WORD_REGEX).unwrap(),
+            vi_mode_enabled: false,
+            is_ssh_terminal,
         };
 
         Ok(TerminalBuilder {
@@ -455,7 +479,7 @@ impl TerminalBuilder {
         })
     }
 
-    pub fn subscribe(mut self, cx: &mut ModelContext<Terminal>) -> Terminal {
+    pub fn subscribe(mut self, cx: &ModelContext<Terminal>) -> Terminal {
         //Event loop
         cx.spawn(|terminal, mut cx| async move {
             while let Some(event) = self.events_rx.next().await {
@@ -583,6 +607,7 @@ pub struct Terminal {
     pty_tx: Notifier,
     completion_tx: Sender<()>,
     term: Arc<FairMutex<Term<ZedListener>>>,
+    term_config: Config,
     events: VecDeque<InternalEvent>,
     /// This is only used for mouse mode cell change detection
     last_mouse: Option<(AlacPoint, AlacDirection)>,
@@ -593,6 +618,7 @@ pub struct Terminal {
     pub selection_head: Option<AlacPoint>,
     pub breadcrumb_text: String,
     pub pty_info: PtyProcessInfo,
+    title_override: Option<SharedString>,
     scroll_px: Pixels,
     next_link_id: usize,
     selection_phase: SelectionPhase,
@@ -601,6 +627,8 @@ pub struct Terminal {
     url_regex: RegexSearch,
     word_regex: RegexSearch,
     task: Option<TaskState>,
+    vi_mode_enabled: bool,
+    is_ssh_terminal: bool,
 }
 
 pub struct TaskState {
@@ -667,7 +695,9 @@ impl Terminal {
                 self.write_to_pty(format(self.last_content.size.into()))
             }
             AlacTermEvent::CursorBlinkingChange => {
-                cx.emit(Event::BlinkChanged);
+                let terminal = self.term.lock();
+                let blinking = terminal.cursor_style().blinking;
+                cx.emit(Event::BlinkChanged(blinking));
             }
             AlacTermEvent::Bell => {
                 cx.emit(Event::Bell);
@@ -705,10 +735,6 @@ impl Terminal {
 
     pub fn selection_started(&self) -> bool {
         self.selection_phase == SelectionPhase::Selecting
-    }
-
-    pub fn get_cwd(&self) -> Option<PathBuf> {
-        self.pty_info.current.as_ref().map(|info| info.cwd.clone())
     }
 
     ///Takes events from Alacritty and translates them to behavior on this view
@@ -764,6 +790,43 @@ impl Terminal {
             InternalEvent::Scroll(scroll) => {
                 term.scroll_display(*scroll);
                 self.refresh_hovered_word();
+
+                if self.vi_mode_enabled {
+                    match *scroll {
+                        AlacScroll::Delta(delta) => {
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, delta);
+                        }
+                        AlacScroll::PageUp => {
+                            let lines = term.screen_lines() as i32;
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                        }
+                        AlacScroll::PageDown => {
+                            let lines = -(term.screen_lines() as i32);
+                            term.vi_mode_cursor = term.vi_mode_cursor.scroll(&term, lines);
+                        }
+                        AlacScroll::Top => {
+                            let point = AlacPoint::new(term.topmost_line(), Column(0));
+                            term.vi_mode_cursor = ViModeCursor::new(point);
+                        }
+                        AlacScroll::Bottom => {
+                            let point = AlacPoint::new(term.bottommost_line(), Column(0));
+                            term.vi_mode_cursor = ViModeCursor::new(point);
+                        }
+                    }
+                    if let Some(mut selection) = term.selection.take() {
+                        let point = term.vi_mode_cursor.point;
+                        selection.update(point, AlacDirection::Right);
+                        term.selection = Some(selection);
+
+                        #[cfg(target_os = "linux")]
+                        if let Some(selection_text) = term.selection_to_string() {
+                            cx.write_to_primary(ClipboardItem::new_string(selection_text));
+                        }
+
+                        self.selection_head = Some(point);
+                        cx.emit(Event::SelectionsChanged)
+                    }
+                }
             }
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
@@ -807,6 +870,13 @@ impl Terminal {
             InternalEvent::ScrollToAlacPoint(point) => {
                 term.scroll_to_point(*point);
                 self.refresh_hovered_word();
+            }
+            InternalEvent::ToggleViMode => {
+                self.vi_mode_enabled = !self.vi_mode_enabled;
+                term.toggle_vi_mode();
+            }
+            InternalEvent::ViMotion(motion) => {
+                term.vi_motion(*motion);
             }
             InternalEvent::FindHyperlink(position, open) => {
                 let prev_hovered_word = self.last_content.last_hovered_word.take();
@@ -880,7 +950,7 @@ impl Terminal {
                             } else {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
                                     maybe_path: maybe_url_or_path,
-                                    terminal_dir: self.get_cwd(),
+                                    terminal_dir: self.working_directory(),
                                 })
                             };
                             cx.emit(Event::Open(target));
@@ -935,7 +1005,7 @@ impl Terminal {
         } else {
             MaybeNavigationTarget::PathLike(PathLikeTarget {
                 maybe_path: word,
-                terminal_dir: self.get_cwd(),
+                terminal_dir: self.working_directory(),
             })
         };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
@@ -949,6 +1019,11 @@ impl Terminal {
 
     pub fn last_content(&self) -> &TerminalContent {
         &self.last_content
+    }
+
+    pub fn set_cursor_shape(&mut self, cursor_shape: CursorShape) {
+        self.term_config.default_cursor_style = cursor_shape.into();
+        self.term.lock().set_options(self.term_config.clone());
     }
 
     pub fn total_lines(&self) -> usize {
@@ -1084,7 +1159,109 @@ impl Terminal {
         self.write_bytes_to_pty(input);
     }
 
+    pub fn toggle_vi_mode(&mut self) {
+        self.events.push_back(InternalEvent::ToggleViMode);
+    }
+
+    pub fn vi_motion(&mut self, keystroke: &Keystroke) {
+        if !self.vi_mode_enabled {
+            return;
+        }
+
+        let mut key = keystroke.key.clone();
+        if keystroke.modifiers.shift {
+            key = key.to_uppercase();
+        }
+
+        let motion: Option<ViMotion> = match key.as_str() {
+            "h" => Some(ViMotion::Left),
+            "j" => Some(ViMotion::Down),
+            "k" => Some(ViMotion::Up),
+            "l" => Some(ViMotion::Right),
+            "w" => Some(ViMotion::WordRight),
+            "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
+            "e" => Some(ViMotion::WordRightEnd),
+            "%" => Some(ViMotion::Bracket),
+            "$" => Some(ViMotion::Last),
+            "0" => Some(ViMotion::First),
+            "^" => Some(ViMotion::FirstOccupied),
+            "H" => Some(ViMotion::High),
+            "M" => Some(ViMotion::Middle),
+            "L" => Some(ViMotion::Low),
+            _ => None,
+        };
+
+        if let Some(motion) = motion {
+            let cursor = self.last_content.cursor.point;
+            let cursor_pos = Point {
+                x: cursor.column.0 as f32 * self.last_content.size.cell_width,
+                y: cursor.line.0 as f32 * self.last_content.size.line_height,
+            };
+            self.events
+                .push_back(InternalEvent::UpdateSelection(cursor_pos));
+            self.events.push_back(InternalEvent::ViMotion(motion));
+            return;
+        }
+
+        let scroll_motion = match key.as_str() {
+            "g" => Some(AlacScroll::Top),
+            "G" => Some(AlacScroll::Bottom),
+            "b" if keystroke.modifiers.control => Some(AlacScroll::PageUp),
+            "f" if keystroke.modifiers.control => Some(AlacScroll::PageDown),
+            "d" if keystroke.modifiers.control => {
+                let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
+                Some(AlacScroll::Delta(-amount))
+            }
+            "u" if keystroke.modifiers.control => {
+                let amount = self.last_content.size.line_height().to_f64() as i32 / 2;
+                Some(AlacScroll::Delta(amount))
+            }
+            _ => None,
+        };
+
+        if let Some(scroll_motion) = scroll_motion {
+            self.events.push_back(InternalEvent::Scroll(scroll_motion));
+            return;
+        }
+
+        match key.as_str() {
+            "v" => {
+                let point = self.last_content.cursor.point;
+                let selection_type = SelectionType::Simple;
+                let side = AlacDirection::Right;
+                let selection = Selection::new(selection_type, point, side);
+                self.events
+                    .push_back(InternalEvent::SetSelection(Some((selection, point))));
+                return;
+            }
+
+            "escape" => {
+                self.events.push_back(InternalEvent::SetSelection(None));
+                return;
+            }
+
+            "y" => {
+                self.events.push_back(InternalEvent::Copy);
+                self.events.push_back(InternalEvent::SetSelection(None));
+                return;
+            }
+
+            "i" => {
+                self.scroll_to_bottom();
+                self.toggle_vi_mode();
+                return;
+            }
+            _ => {}
+        }
+    }
+
     pub fn try_keystroke(&mut self, keystroke: &Keystroke, alt_is_meta: bool) -> bool {
+        if self.vi_mode_enabled {
+            self.vi_motion(keystroke);
+            return true;
+        }
+
+        // Keep default terminal behavior
         let esc = to_esc_str(keystroke, &self.last_content.mode, alt_is_meta);
         if let Some(esc) = esc {
             self.input(esc);
@@ -1272,7 +1449,7 @@ impl Terminal {
         }
     }
 
-    fn drag_line_delta(&mut self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
+    fn drag_line_delta(&self, e: &MouseMoveEvent, region: Bounds<Pixels>) -> Option<Pixels> {
         //TODO: Why do these need to be doubled? Probably the same problem that the IME has
         let top = region.origin.y + (self.last_content.size.line_height * 2.);
         let bottom = region.lower_left().y - (self.last_content.size.line_height * 2.);
@@ -1343,12 +1520,7 @@ impl Terminal {
         }
     }
 
-    pub fn mouse_up(
-        &mut self,
-        e: &MouseUpEvent,
-        origin: Point<Pixels>,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn mouse_up(&mut self, e: &MouseUpEvent, origin: Point<Pixels>, cx: &ModelContext<Self>) {
         let setting = TerminalSettings::get_global(cx);
 
         let position = e.position - origin;
@@ -1450,9 +1622,9 @@ impl Terminal {
     }
 
     pub fn find_matches(
-        &mut self,
+        &self,
         mut searcher: RegexSearch,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Vec<RangeInclusive<AlacPoint>>> {
         let term = self.term.clone();
         cx.background_executor().spawn(async move {
@@ -1463,6 +1635,23 @@ impl Terminal {
     }
 
     pub fn working_directory(&self) -> Option<PathBuf> {
+        if self.is_ssh_terminal {
+            // We can't yet reliably detect the working directory of a shell on the
+            // SSH host. Until we can do that, it doesn't make sense to display
+            // the working directory on the client and persist that.
+            None
+        } else {
+            self.client_side_working_directory()
+        }
+    }
+
+    /// Returns the working directory of the process that's connected to the PTY.
+    /// That means it returns the working directory of the local shell or program
+    /// that's running inside the terminal.
+    ///
+    /// This does *not* return the working directory of the shell that runs on the
+    /// remote host, in case Zed is connected to a remote host.
+    fn client_side_working_directory(&self) -> Option<PathBuf> {
         self.pty_info
             .current
             .as_ref()
@@ -1480,37 +1669,42 @@ impl Terminal {
                 }
             }
             None => self
-                .pty_info
-                .current
+                .title_override
                 .as_ref()
-                .map(|fpi| {
-                    let process_file = fpi
-                        .cwd
-                        .file_name()
-                        .map(|name| name.to_string_lossy().to_string())
-                        .unwrap_or_default();
+                .map(|title_override| title_override.to_string())
+                .unwrap_or_else(|| {
+                    self.pty_info
+                        .current
+                        .as_ref()
+                        .map(|fpi| {
+                            let process_file = fpi
+                                .cwd
+                                .file_name()
+                                .map(|name| name.to_string_lossy().to_string())
+                                .unwrap_or_default();
 
-                    let argv = fpi.argv.clone();
-                    let process_name = format!(
-                        "{}{}",
-                        fpi.name,
-                        if !argv.is_empty() {
-                            format!(" {}", (argv[1..]).join(" "))
-                        } else {
-                            "".to_string()
-                        }
-                    );
-                    let (process_file, process_name) = if truncate {
-                        (
-                            truncate_and_trailoff(&process_file, MAX_CHARS),
-                            truncate_and_trailoff(&process_name, MAX_CHARS),
-                        )
-                    } else {
-                        (process_file, process_name)
-                    };
-                    format!("{process_file} — {process_name}")
-                })
-                .unwrap_or_else(|| "Terminal".to_string()),
+                            let argv = fpi.argv.clone();
+                            let process_name = format!(
+                                "{}{}",
+                                fpi.name,
+                                if !argv.is_empty() {
+                                    format!(" {}", (argv[1..]).join(" "))
+                                } else {
+                                    "".to_string()
+                                }
+                            );
+                            let (process_file, process_name) = if truncate {
+                                (
+                                    truncate_and_trailoff(&process_file, MAX_CHARS),
+                                    truncate_and_trailoff(&process_name, MAX_CHARS),
+                                )
+                            } else {
+                                (process_file, process_name)
+                            };
+                            format!("{process_file} — {process_name}")
+                        })
+                        .unwrap_or_else(|| "Terminal".to_string())
+                }),
         }
     }
 
@@ -1522,7 +1716,7 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn wait_for_completed_task(&self, cx: &mut AppContext) -> Task<()> {
+    pub fn wait_for_completed_task(&self, cx: &AppContext) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
                 let mut completion_receiver = task.completion_rx.clone();
@@ -1596,7 +1790,7 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
         }
     };
     let escaped_command_label = task.command_label.replace("\r\n", "\r").replace('\n', "\r");
-    let command_line = format!("{TASK_DELIMITER}Command: '{escaped_command_label}'");
+    let command_line = format!("{TASK_DELIMITER}Command: {escaped_command_label}");
     (success, task_line, command_line)
 }
 
@@ -1619,7 +1813,7 @@ fn task_summary(task: &TaskState, error_code: Option<i32>) -> (bool, String, Str
 ///   the cursor's `point` is not updated to the new line and column values
 ///
 /// * ??? there could be more consequences, and any further "proper" streaming from the PTY might bug and/or panic.
-///   Still, concequent `append_text_to_term` invocations are possible and display the contents correctly.
+///   Still, subsequent `append_text_to_term` invocations are possible and display the contents correctly.
 ///
 /// Despite the quirks, this is the simplest approach to appending text to the terminal: its alternative, `grid_mut` manipulations,
 /// do not properly set the scrolling state and display odd text after appending; also those manipulations are more tedious and error-prone.
@@ -1909,5 +2103,59 @@ mod tests {
             size,
             ..Default::default()
         }
+    }
+
+    fn re_test(re: &str, hay: &str, expected: Vec<&str>) {
+        let results: Vec<_> = regex::Regex::new(re)
+            .unwrap()
+            .find_iter(hay)
+            .map(|m| m.as_str())
+            .collect();
+        assert_eq!(results, expected);
+    }
+    #[test]
+    fn test_url_regex() {
+        re_test(
+            crate::URL_REGEX,
+            "test http://example.com test mailto:bob@example.com train",
+            vec!["http://example.com", "mailto:bob@example.com"],
+        );
+    }
+    #[test]
+    fn test_word_regex() {
+        re_test(
+            crate::WORD_REGEX,
+            "hello, world! \"What\" is this?",
+            vec!["hello", "world", "What", "is", "this"],
+        );
+    }
+    #[test]
+    fn test_word_regex_with_linenum() {
+        // filename(line) and filename(line,col) as used in MSBuild output
+        // should be considered a single "word", even though comma is
+        // usually a word separator
+        re_test(
+            crate::WORD_REGEX,
+            "a Main.cs(20) b",
+            vec!["a", "Main.cs(20)", "b"],
+        );
+        re_test(
+            crate::WORD_REGEX,
+            "Main.cs(20,5) Error desc",
+            vec!["Main.cs(20,5)", "Error", "desc"],
+        );
+        // filename:line:col is a popular format for unix tools
+        re_test(
+            crate::WORD_REGEX,
+            "a Main.cs:20:5 b",
+            vec!["a", "Main.cs:20:5", "b"],
+        );
+        // Some tools output "filename:line:col:message", which currently isn't
+        // handled correctly, but might be in the future
+        re_test(
+            crate::WORD_REGEX,
+            "Main.cs:20:5:Error desc",
+            vec!["Main.cs:20:5:Error", "desc"],
+        );
     }
 }

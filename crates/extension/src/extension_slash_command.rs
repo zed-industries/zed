@@ -3,10 +3,11 @@ use std::sync::{atomic::AtomicBool, Arc};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use futures::FutureExt;
 use gpui::{Task, WeakView, WindowContext};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
@@ -82,10 +83,12 @@ impl SlashCommand for ExtensionSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let arguments = arguments.to_owned();
         let output = cx.background_executor().spawn(async move {
             self.extension
@@ -121,10 +124,12 @@ impl SlashCommand for ExtensionSlashCommand {
                         range: section.range.into(),
                         icon: IconName::Code,
                         label: section.label.into(),
+                        metadata: None,
                     })
                     .collect(),
                 run_commands_in_text: false,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

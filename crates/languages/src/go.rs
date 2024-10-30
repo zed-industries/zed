@@ -1,11 +1,11 @@
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use collections::HashMap;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use lsp::LanguageServerBinary;
-use project::{lsp_store::language_server_settings, project_settings::BinarySettings};
 use regex::Regex;
 use serde_json::json;
 use smol::{fs, process};
@@ -32,7 +32,7 @@ fn server_binary_arguments() -> Vec<OsString> {
 pub struct GoLspAdapter;
 
 impl GoLspAdapter {
-    const SERVER_NAME: &'static str = "gopls";
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("gopls");
 }
 
 static GOPLS_VERSION_REGEX: LazyLock<Regex> =
@@ -45,7 +45,7 @@ static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
     fn name(&self) -> LanguageServerName {
-        LanguageServerName(Self::SERVER_NAME.into())
+        Self::SERVER_NAME.clone()
     }
 
     async fn fetch_latest_server_version(
@@ -67,40 +67,14 @@ impl super::LspAdapter for GoLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
-        cx: &AsyncAppContext,
+        _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
-        let configured_binary = cx.update(|cx| {
-            language_server_settings(delegate, Self::SERVER_NAME, cx).and_then(|s| s.binary.clone())
-        });
-
-        match configured_binary {
-            Ok(Some(BinarySettings {
-                path: Some(path),
-                arguments,
-                ..
-            })) => Some(LanguageServerBinary {
-                path: path.into(),
-                arguments: arguments
-                    .unwrap_or_default()
-                    .iter()
-                    .map(|arg| arg.into())
-                    .collect(),
-                env: None,
-            }),
-            Ok(Some(BinarySettings {
-                path_lookup: Some(false),
-                ..
-            })) => None,
-            _ => {
-                let env = delegate.shell_env().await;
-                let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
-                Some(LanguageServerBinary {
-                    path,
-                    arguments: server_binary_arguments(),
-                    env: Some(env),
-                })
-            }
-        }
+        let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
+        Some(LanguageServerBinary {
+            path,
+            arguments: server_binary_arguments(),
+            env: None,
+        })
     }
 
     fn will_fetch_server(
@@ -210,18 +184,6 @@ impl super::LspAdapter for GoLspAdapter {
         _: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         get_cached_server_binary(container_dir).await
-    }
-
-    async fn installation_test_binary(
-        &self,
-        container_dir: PathBuf,
-    ) -> Option<LanguageServerBinary> {
-        get_cached_server_binary(container_dir)
-            .await
-            .map(|mut binary| {
-                binary.arguments = vec!["--help".into()];
-                binary
-            })
     }
 
     async fn initialization_options(
@@ -454,6 +416,7 @@ impl ContextProvider for GoContextProvider {
         &self,
         variables: &TaskVariables,
         location: &Location,
+        _: Option<&HashMap<String, String>>,
         cx: &mut gpui::AppContext,
     ) -> Result<TaskVariables> {
         let local_abs_path = location
@@ -517,7 +480,6 @@ impl ContextProvider for GoContextProvider {
                 command: "go".into(),
                 args: vec![
                     "test".into(),
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-run".into(),
                     format!("^{}\\$", VariableName::Symbol.template_value(),),
                 ],
@@ -528,7 +490,7 @@ impl ContextProvider for GoContextProvider {
             TaskTemplate {
                 label: format!("go test {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
                 command: "go".into(),
-                args: vec!["test".into(), GO_PACKAGE_TASK_VARIABLE.template_value()],
+                args: vec!["test".into()],
                 cwd: package_cwd.clone(),
                 ..TaskTemplate::default()
             },
@@ -570,7 +532,6 @@ impl ContextProvider for GoContextProvider {
                 command: "go".into(),
                 args: vec![
                     "test".into(),
-                    GO_PACKAGE_TASK_VARIABLE.template_value(),
                     "-benchmem".into(),
                     "-run=^$".into(),
                     "-bench".into(),
@@ -614,7 +575,7 @@ mod tests {
     #[gpui::test]
     async fn test_go_label_for_completion() {
         let adapter = Arc::new(GoLspAdapter);
-        let language = language("go", tree_sitter_go::language());
+        let language = language("go", tree_sitter_go::LANGUAGE.into());
 
         let theme = SyntaxTheme::new_test([
             ("type", Hsla::default()),

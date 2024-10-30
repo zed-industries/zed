@@ -128,6 +128,7 @@ pub use executor::*;
 pub use geometry::*;
 pub use global::*;
 pub use gpui_macros::{register_action, test, IntoElement, Render};
+pub use http_client;
 pub use input::*;
 pub use interactive::*;
 use key_dispatch::*;
@@ -305,6 +306,7 @@ where
         self.borrow_mut().set_global(global)
     }
 
+    #[track_caller]
     fn update_global<G, R>(&mut self, f: impl FnOnce(&mut G, &mut Self) -> R) -> R
     where
         G: Global,

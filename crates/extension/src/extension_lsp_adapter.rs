@@ -8,18 +8,14 @@ use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageServerName, LspAdapter, LspAdapterDelegate,
+    CodeLabel, HighlightId, Language, LanguageServerName, LanguageToolchainStore, LspAdapter,
+    LspAdapterDelegate,
 };
-use lsp::{CodeActionKind, LanguageServerBinary};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
 use serde::Serialize;
 use serde_json::Value;
 use std::ops::Range;
-use std::{
-    any::Any,
-    path::{Path, PathBuf},
-    pin::Pin,
-    sync::Arc,
-};
+use std::{any::Any, path::PathBuf, pin::Pin, sync::Arc};
 use util::{maybe, ResultExt};
 use wasmtime_wasi::WasiView as _;
 
@@ -38,8 +34,8 @@ impl LspAdapter for ExtensionLspAdapter {
 
     fn get_language_server_command<'a>(
         self: Arc<Self>,
-        _: Arc<Path>,
         delegate: Arc<dyn LspAdapterDelegate>,
+        _: LanguageServerBinaryOptions,
         _: futures::lock::MutexGuard<'a, Option<LanguageServerBinary>>,
         _: &'a mut AsyncAppContext,
     ) -> Pin<Box<dyn 'a + Future<Output = Result<LanguageServerBinary>>>> {
@@ -124,10 +120,6 @@ impl LspAdapter for ExtensionLspAdapter {
         unreachable!("get_language_server_command is overridden")
     }
 
-    async fn installation_test_binary(&self, _: PathBuf) -> Option<LanguageServerBinary> {
-        None
-    }
-
     fn code_action_kinds(&self) -> Option<Vec<CodeActionKind>> {
         let code_action_kinds = self
             .extension
@@ -203,6 +195,7 @@ impl LspAdapter for ExtensionLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         delegate: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         let delegate = delegate.clone();

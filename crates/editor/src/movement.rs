@@ -976,7 +976,7 @@ mod tests {
 
             let buffer = cx.new_model(|cx| Buffer::local("abc\ndefg\nhijkl\nmn", cx));
             let multibuffer = cx.new_model(|cx| {
-                let mut multibuffer = MultiBuffer::new(0, Capability::ReadWrite);
+                let mut multibuffer = MultiBuffer::new(Capability::ReadWrite);
                 multibuffer.push_excerpts(
                     buffer.clone(),
                     [
@@ -1000,7 +1000,7 @@ mod tests {
                     px(14.0),
                     None,
                     true,
-                    2,
+                    0,
                     2,
                     0,
                     FoldPlaceholder::test(),

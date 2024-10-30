@@ -6,13 +6,14 @@ use std::time::Duration;
 use anyhow::{anyhow, bail, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
     ProviderId,
 };
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
 use ui::prelude::*;
 use util::{maybe, ResultExt};
@@ -269,10 +270,12 @@ impl SlashCommand for DocsSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing an argument")));
         };
@@ -349,10 +352,12 @@ impl SlashCommand for DocsSlashCommand {
                         range,
                         icon: IconName::FileDoc,
                         label: format!("docs ({provider}): {key}",).into(),
+                        metadata: None,
                     })
                     .collect(),
                 run_commands_in_text: false,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

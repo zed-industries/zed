@@ -6,12 +6,13 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Context, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
 };
 use futures::AsyncReadExt;
 use gpui::{Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
-use language::LspAdapterDelegate;
+use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
 
@@ -104,11 +105,11 @@ impl SlashCommand for FetchSlashCommand {
     }
 
     fn description(&self) -> String {
-        "insert URL contents".into()
+        "Insert fetched URL contents".into()
     }
 
     fn menu_text(&self) -> String {
-        "Insert fetched URL contents".into()
+        self.description()
     }
 
     fn requires_argument(&self) -> bool {
@@ -128,10 +129,12 @@ impl SlashCommand for FetchSlashCommand {
     fn run(
         self: Arc<Self>,
         arguments: &[String],
+        _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
+        _context_buffer: BufferSnapshot,
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(argument) = arguments.first() else {
             return Task::ready(Err(anyhow!("missing URL")));
         };
@@ -161,9 +164,11 @@ impl SlashCommand for FetchSlashCommand {
                     range,
                     icon: IconName::AtSign,
                     label: format!("fetch {}", url).into(),
+                    metadata: None,
                 }],
                 run_commands_in_text: false,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

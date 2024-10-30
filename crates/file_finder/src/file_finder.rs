@@ -1,11 +1,17 @@
 #[cfg(test)]
 mod file_finder_tests;
 
+mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 
+use futures::future::join_all;
+pub use open_path_prompt::OpenPathDelegate;
+
 use collections::HashMap;
 use editor::{scroll::Autoscroll, Bias, Editor};
+use file_finder_settings::FileFinderSettings;
+use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
@@ -28,7 +34,7 @@ use std::{
 use text::Point;
 use ui::{prelude::*, HighlightedLabel, ListItem, ListItemSpacing};
 use util::{paths::PathWithPosition, post_inc, ResultExt};
-use workspace::{item::PreviewTabsSettings, ModalView, Workspace};
+use workspace::{item::PreviewTabsSettings, notifications::NotifyResultExt, ModalView, Workspace};
 
 actions!(file_finder, [SelectPrev]);
 
@@ -39,7 +45,12 @@ pub struct FileFinder {
     init_modifiers: Option<Modifiers>,
 }
 
+pub fn init_settings(cx: &mut AppContext) {
+    FileFinderSettings::register(cx);
+}
+
 pub fn init(cx: &mut AppContext) {
+    init_settings(cx);
     cx.observe_new_views(FileFinder::register).detach();
     cx.observe_new_views(NewPathPrompt::register).detach();
     cx.observe_new_views(OpenPathPrompt::register).detach();
@@ -49,7 +60,7 @@ impl FileFinder {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
         workspace.register_action(|workspace, action: &workspace::ToggleFileFinder, cx| {
             let Some(file_finder) = workspace.active_modal::<Self>(cx) else {
-                Self::open(workspace, action.separate_history, cx);
+                Self::open(workspace, action.separate_history, cx).detach();
                 return;
             };
 
@@ -62,8 +73,13 @@ impl FileFinder {
         });
     }
 
-    fn open(workspace: &mut Workspace, separate_history: bool, cx: &mut ViewContext<Workspace>) {
+    fn open(
+        workspace: &mut Workspace,
+        separate_history: bool,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<()> {
         let project = workspace.project().read(cx);
+        let fs = project.fs();
 
         let currently_opened_path = workspace
             .active_item(cx)
@@ -78,28 +94,51 @@ impl FileFinder {
         let history_items = workspace
             .recent_navigation_history(Some(MAX_RECENT_SELECTIONS), cx)
             .into_iter()
-            .filter(|(_, history_abs_path)| match history_abs_path {
-                Some(abs_path) => history_file_exists(abs_path),
-                None => true,
+            .filter_map(|(project_path, abs_path)| {
+                if project.entry_for_path(&project_path, cx).is_some() {
+                    return Some(Task::ready(Some(FoundPath::new(project_path, abs_path))));
+                }
+                let abs_path = abs_path?;
+                if project.is_local() {
+                    let fs = fs.clone();
+                    Some(cx.background_executor().spawn(async move {
+                        if fs.is_file(&abs_path).await {
+                            Some(FoundPath::new(project_path, Some(abs_path)))
+                        } else {
+                            None
+                        }
+                    }))
+                } else {
+                    Some(Task::ready(Some(FoundPath::new(
+                        project_path,
+                        Some(abs_path),
+                    ))))
+                }
             })
-            .map(|(history_path, abs_path)| FoundPath::new(history_path, abs_path))
             .collect::<Vec<_>>();
+        cx.spawn(move |workspace, mut cx| async move {
+            let history_items = join_all(history_items).await.into_iter().flatten();
 
-        let project = workspace.project().clone();
-        let weak_workspace = cx.view().downgrade();
-        workspace.toggle_modal(cx, |cx| {
-            let delegate = FileFinderDelegate::new(
-                cx.view().downgrade(),
-                weak_workspace,
-                project,
-                currently_opened_path,
-                history_items,
-                separate_history,
-                cx,
-            );
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    let weak_workspace = cx.view().downgrade();
+                    workspace.toggle_modal(cx, |cx| {
+                        let delegate = FileFinderDelegate::new(
+                            cx.view().downgrade(),
+                            weak_workspace,
+                            project,
+                            currently_opened_path,
+                            history_items.collect(),
+                            separate_history,
+                            cx,
+                        );
 
-            FileFinder::new(delegate, cx)
-        });
+                        FileFinder::new(delegate, cx)
+                    });
+                })
+                .ok();
+        })
     }
 
     fn new(delegate: FileFinderDelegate, cx: &mut ViewContext<Self>) -> Self {
@@ -386,7 +425,7 @@ fn matching_history_items<'a>(
                         .chars(),
                 ),
             };
-            candidates_paths.insert(Arc::clone(&found_path.project.path), found_path);
+            candidates_paths.insert(&found_path.project, found_path);
             Some((found_path.project.worktree_id, candidate))
         })
         .fold(
@@ -411,17 +450,21 @@ fn matching_history_items<'a>(
                 max_results,
             )
             .into_iter()
-            .map(|path_match| {
-                let (_, found_path) = candidates_paths
-                    .remove_entry(&path_match.path)
-                    .expect("candidate info not found");
-                (
-                    Arc::clone(&path_match.path),
-                    Match::History {
-                        path: found_path.clone(),
-                        panel_match: Some(ProjectPanelOrdMatch(path_match)),
-                    },
-                )
+            .filter_map(|path_match| {
+                candidates_paths
+                    .remove_entry(&ProjectPath {
+                        worktree_id: WorktreeId::from_usize(path_match.worktree_id),
+                        path: Arc::clone(&path_match.path),
+                    })
+                    .map(|(_, found_path)| {
+                        (
+                            Arc::clone(&path_match.path),
+                            Match::History {
+                                path: found_path.clone(),
+                                panel_match: Some(ProjectPanelOrdMatch(path_match)),
+                            },
+                        )
+                    })
             }),
         );
     }
@@ -441,16 +484,6 @@ impl FoundPath {
 }
 
 const MAX_RECENT_SELECTIONS: usize = 20;
-
-#[cfg(not(test))]
-fn history_file_exists(abs_path: &PathBuf) -> bool {
-    abs_path.exists()
-}
-
-#[cfg(test)]
-fn history_file_exists(abs_path: &Path) -> bool {
-    !abs_path.ends_with("nonexistent.rs")
-}
 
 pub enum Event {
     Selected(ProjectPath),
@@ -746,11 +779,8 @@ impl FileFinderDelegate {
         cx: &mut ViewContext<'_, Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
-            let Some((project, fs)) = picker
-                .update(&mut cx, |picker, cx| {
-                    let fs = Arc::clone(&picker.delegate.project.read(cx).fs());
-                    (picker.delegate.project.clone(), fs)
-                })
+            let Some(project) = picker
+                .update(&mut cx, |picker, _| picker.delegate.project.clone())
                 .log_err()
             else {
                 return;
@@ -758,31 +788,36 @@ impl FileFinderDelegate {
 
             let query_path = Path::new(query.path_query());
             let mut path_matches = Vec::new();
-            match fs.metadata(query_path).await.log_err() {
-                Some(Some(_metadata)) => {
-                    let update_result = project
-                        .update(&mut cx, |project, cx| {
-                            if let Some((worktree, relative_path)) =
-                                project.find_worktree(query_path, cx)
-                            {
-                                path_matches.push(ProjectPanelOrdMatch(PathMatch {
-                                    score: 1.0,
-                                    positions: Vec::new(),
-                                    worktree_id: worktree.read(cx).id().to_usize(),
-                                    path: Arc::from(relative_path),
-                                    path_prefix: "".into(),
-                                    is_dir: false, // File finder doesn't support directories
-                                    distance_to_relative_ancestor: usize::MAX,
-                                }));
-                            }
-                        })
-                        .log_err();
-                    if update_result.is_none() {
-                        return;
-                    }
+
+            let abs_file_exists = if let Ok(task) = project.update(&mut cx, |this, cx| {
+                this.resolve_abs_file_path(query.path_query(), cx)
+            }) {
+                task.await.is_some()
+            } else {
+                false
+            };
+
+            if abs_file_exists {
+                let update_result = project
+                    .update(&mut cx, |project, cx| {
+                        if let Some((worktree, relative_path)) =
+                            project.find_worktree(query_path, cx)
+                        {
+                            path_matches.push(ProjectPanelOrdMatch(PathMatch {
+                                score: 1.0,
+                                positions: Vec::new(),
+                                worktree_id: worktree.read(cx).id().to_usize(),
+                                path: Arc::from(relative_path),
+                                path_prefix: "".into(),
+                                is_dir: false, // File finder doesn't support directories
+                                distance_to_relative_ancestor: usize::MAX,
+                            }));
+                        }
+                    })
+                    .log_err();
+                if update_result.is_none() {
+                    return;
                 }
-                Some(None) => {}
-                None => return,
             }
 
             picker
@@ -876,7 +911,8 @@ impl PickerDelegate for FileFinderDelegate {
                         project
                             .worktree_for_id(history_item.project.worktree_id, cx)
                             .is_some()
-                            || (project.is_local_or_ssh() && history_item.absolute.is_some())
+                            || ((project.is_local() || project.is_via_ssh())
+                                && history_item.absolute.is_some())
                     }),
                     self.currently_opened_path.as_ref(),
                     None,
@@ -1003,7 +1039,7 @@ impl PickerDelegate for FileFinderDelegate {
                 let finder = self.file_finder.clone();
 
                 cx.spawn(|_, mut cx| async move {
-                    let item = open_task.await.log_err()?;
+                    let item = open_task.await.notify_async_err(&mut cx)?;
                     if let Some(row) = row {
                         if let Some(active_editor) = item.downcast::<Editor>() {
                             active_editor
@@ -1041,12 +1077,14 @@ impl PickerDelegate for FileFinderDelegate {
         selected: bool,
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let settings = FileFinderSettings::get_global(cx);
+
         let path_match = self
             .matches
             .get(ix)
             .expect("Invalid matches state: no element for index {ix}");
 
-        let icon = match &path_match {
+        let history_icon = match &path_match {
             Match::History { .. } => Icon::new(IconName::HistoryRerun)
                 .color(Color::Muted)
                 .size(IconSize::Small)
@@ -1059,10 +1097,19 @@ impl PickerDelegate for FileFinderDelegate {
         let (file_name, file_name_positions, full_path, full_path_positions) =
             self.labels_for_match(path_match, cx, ix);
 
+        let file_icon = if settings.file_icons {
+            FileIcons::get_icon(Path::new(&file_name), cx)
+                .map(Icon::from_path)
+                .map(|icon| icon.color(Color::Muted))
+        } else {
+            None
+        };
+
         Some(
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
-                .end_slot::<AnyElement>(Some(icon))
+                .start_slot::<Icon>(file_icon)
+                .end_slot::<AnyElement>(history_icon)
                 .inset(true)
                 .selected(selected)
                 .child(

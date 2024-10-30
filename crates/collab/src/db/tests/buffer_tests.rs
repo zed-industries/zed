@@ -96,16 +96,14 @@ async fn test_channel_buffers(db: &Arc<Database>) {
         text::BufferId::new(1).unwrap(),
         buffer_response_b.base_text,
     );
-    buffer_b
-        .apply_ops(buffer_response_b.operations.into_iter().map(|operation| {
-            let operation = proto::deserialize_operation(operation).unwrap();
-            if let language::Operation::Buffer(operation) = operation {
-                operation
-            } else {
-                unreachable!()
-            }
-        }))
-        .unwrap();
+    buffer_b.apply_ops(buffer_response_b.operations.into_iter().map(|operation| {
+        let operation = proto::deserialize_operation(operation).unwrap();
+        if let language::Operation::Buffer(operation) = operation {
+            operation
+        } else {
+            unreachable!()
+        }
+    }));
 
     assert_eq!(buffer_b.text(), "hello, cruel world");
 
@@ -123,11 +121,13 @@ async fn test_channel_buffers(db: &Arc<Database>) {
                 user_id: a_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 1, owner_id }),
                 replica_id: 0,
+                is_host: false,
             },
             rpc::proto::Collaborator {
                 user_id: b_id.to_proto(),
                 peer_id: Some(rpc::proto::PeerId { id: 2, owner_id }),
                 replica_id: 1,
+                is_host: false,
             }
         ]
     );

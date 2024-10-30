@@ -108,7 +108,11 @@ pub trait PickerDelegate: Sized + 'static {
     fn should_dismiss(&self) -> bool {
         true
     }
-    fn confirm_completion(&self, _query: String) -> Option<String> {
+    fn confirm_completion(
+        &mut self,
+        _query: String,
+        _: &mut ViewContext<Picker<Self>>,
+    ) -> Option<String> {
         None
     }
 
@@ -370,7 +374,7 @@ impl<D: PickerDelegate> Picker<D> {
     }
 
     fn confirm_completion(&mut self, _: &ConfirmCompletion, cx: &mut ViewContext<Self>) {
-        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx)) {
+        if let Some(new_query) = self.delegate.confirm_completion(self.query(cx), cx) {
             self.set_query(new_query, cx);
         } else {
             cx.propagate()
@@ -476,7 +480,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut ViewContext<Self>) {
+    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut WindowContext<'_>) {
         if let Head::Editor(ref editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, cx);
@@ -509,7 +513,7 @@ impl<D: PickerDelegate> Picker<D> {
             .on_mouse_up(
                 MouseButton::Right,
                 cx.listener(move |this, event: &MouseUpEvent, cx| {
-                    // We specficially want to use the platform key here, as
+                    // We specifically want to use the platform key here, as
                     // ctrl will already be held down for the tab switcher.
                     this.handle_click(ix, event.modifiers.platform, cx)
                 }),

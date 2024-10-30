@@ -2,16 +2,14 @@ use super::*;
 
 pub mod access_tokens;
 pub mod billing_customers;
+pub mod billing_preferences;
 pub mod billing_subscriptions;
 pub mod buffers;
 pub mod channels;
 pub mod contacts;
 pub mod contributors;
-pub mod dev_server_projects;
-pub mod dev_servers;
 pub mod embeddings;
 pub mod extensions;
-pub mod hosted_projects;
 pub mod messages;
 pub mod notifications;
 pub mod processed_stripe_events;

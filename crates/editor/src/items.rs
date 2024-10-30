@@ -20,13 +20,14 @@ use language::{
 };
 use multi_buffer::AnchorRangeExt;
 use project::{
-    project_settings::ProjectSettings, search::SearchQuery, FormatTrigger, Item as _, Project,
-    ProjectPath,
+    lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Item as _,
+    Project, ProjectPath,
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 
+use project::lsp_store::FormatTarget;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -68,7 +69,6 @@ impl FollowableItem for Editor {
             unreachable!()
         };
 
-        let replica_id = project.read(cx).replica_id();
         let buffer_ids = state
             .excerpts
             .iter()
@@ -92,7 +92,7 @@ impl FollowableItem for Editor {
                     if state.singleton && buffers.len() == 1 {
                         multibuffer = MultiBuffer::singleton(buffers.pop().unwrap(), cx)
                     } else {
-                        multibuffer = MultiBuffer::new(replica_id, project.read(cx).capability());
+                        multibuffer = MultiBuffer::new(project.read(cx).capability());
                         let mut excerpts = state.excerpts.into_iter().peekable();
                         while let Some(excerpt) = excerpts.peek() {
                             let Ok(buffer_id) = BufferId::new(excerpt.buffer_id) else {
@@ -720,10 +720,19 @@ impl Item for Editor {
     ) -> Task<Result<()>> {
         self.report_editor_event("save", None, cx);
         let buffers = self.buffer().clone().read(cx).all_buffers();
+        let buffers = buffers
+            .into_iter()
+            .map(|handle| handle.read(cx).diff_base_buffer().unwrap_or(handle.clone()))
+            .collect::<HashSet<_>>();
         cx.spawn(|this, mut cx| async move {
             if format {
                 this.update(&mut cx, |editor, cx| {
-                    editor.perform_format(project.clone(), FormatTrigger::Save, cx)
+                    editor.perform_format(
+                        project.clone(),
+                        FormatTrigger::Save,
+                        FormatTarget::Buffer,
+                        cx,
+                    )
                 })?
                 .await?;
             }
@@ -927,7 +936,7 @@ impl SerializableItem for Editor {
 
     fn deserialize(
         project: Model<Project>,
-        _workspace: WeakView<Workspace>,
+        workspace: WeakView<Workspace>,
         workspace_id: workspace::WorkspaceId,
         item_id: ItemId,
         cx: &mut ViewContext<Pane>,
@@ -944,7 +953,7 @@ impl SerializableItem for Editor {
                     serialized_editor
                 } else {
                     SerializedEditor {
-                        path: serialized_editor.path,
+                        abs_path: serialized_editor.abs_path,
                         contents: None,
                         language: None,
                         mtime: None,
@@ -959,13 +968,13 @@ impl SerializableItem for Editor {
             }
         };
 
-        let buffer_task = match serialized_editor {
+        match serialized_editor {
             SerializedEditor {
-                path: None,
+                abs_path: None,
                 contents: Some(contents),
                 language,
                 ..
-            } => cx.spawn(|_, mut cx| {
+            } => cx.spawn(|pane, mut cx| {
                 let project = project.clone();
                 async move {
                     let language = if let Some(language_name) = language {
@@ -992,30 +1001,34 @@ impl SerializableItem for Editor {
                         buffer.set_text(contents, cx);
                     })?;
 
-                    anyhow::Ok(buffer)
+                    pane.update(&mut cx, |_, cx| {
+                        cx.new_view(|cx| {
+                            let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+
+                            editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                            editor
+                        })
+                    })
                 }
             }),
             SerializedEditor {
-                path: Some(path),
+                abs_path: Some(abs_path),
                 contents,
                 mtime,
                 ..
             } => {
                 let project_item = project.update(cx, |project, cx| {
-                    let (worktree, path) = project
-                        .find_worktree(&path, cx)
-                        .with_context(|| format!("No worktree for path: {path:?}"))?;
+                    let (worktree, path) = project.find_worktree(&abs_path, cx)?;
                     let project_path = ProjectPath {
                         worktree_id: worktree.read(cx).id(),
                         path: path.into(),
                     };
-
-                    Ok(project.open_path(project_path, cx))
+                    Some(project.open_path(project_path, cx))
                 });
 
-                project_item
-                    .map(|project_item| {
-                        cx.spawn(|_, mut cx| async move {
+                match project_item {
+                    Some(project_item) => {
+                        cx.spawn(|pane, mut cx| async move {
                             let (_, project_item) = project_item.await?;
                             let buffer = project_item.downcast::<Buffer>().map_err(|_| {
                                 anyhow!("Project item at stored path was not a buffer")
@@ -1042,26 +1055,36 @@ impl SerializableItem for Editor {
                                 })?;
                             }
 
-                            Ok(buffer)
+                            pane.update(&mut cx, |_, cx| {
+                                cx.new_view(|cx| {
+                                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
+
+                                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                                    editor
+                                })
+                            })
                         })
-                    })
-                    .unwrap_or_else(|error| Task::ready(Err(error)))
+                    }
+                    None => {
+                        let open_by_abs_path = workspace.update(cx, |workspace, cx| {
+                            workspace.open_abs_path(abs_path.clone(), false, cx)
+                        });
+                        cx.spawn(|_, mut cx| async move {
+                            let editor = open_by_abs_path?.await?.downcast::<Editor>().with_context(|| format!("Failed to downcast to Editor after opening abs path {abs_path:?}"))?;
+                            editor.update(&mut cx, |editor, cx| {
+                                editor.read_scroll_position_from_db(item_id, workspace_id, cx);
+                            })?;
+                            Ok(editor)
+                        })
+                    }
+                }
             }
-            _ => return Task::ready(Err(anyhow!("No path or contents found for buffer"))),
-        };
-
-        cx.spawn(|pane, mut cx| async move {
-            let buffer = buffer_task.await?;
-
-            pane.update(&mut cx, |_, cx| {
-                cx.new_view(|cx| {
-                    let mut editor = Editor::for_buffer(buffer, Some(project), cx);
-
-                    editor.read_scroll_position_from_db(item_id, workspace_id, cx);
-                    editor
-                })
-            })
-        })
+            SerializedEditor {
+                abs_path: None,
+                contents: None,
+                ..
+            } => Task::ready(Err(anyhow!("No path or contents found for buffer"))),
+        }
     }
 
     fn serialize(
@@ -1088,9 +1111,20 @@ impl SerializableItem for Editor {
 
         let buffer = self.buffer().read(cx).as_singleton()?;
 
+        let abs_path = buffer.read(cx).file().and_then(|file| {
+            let worktree_id = file.worktree_id(cx);
+            project
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+                .and_then(|worktree| worktree.read(cx).absolutize(&file.path()).ok())
+                .or_else(|| {
+                    let full_path = file.full_path(cx);
+                    let project_path = project.read(cx).find_project_path(&full_path, cx)?;
+                    project.read(cx).absolute_path(&project_path, cx)
+                })
+        });
+
         let is_dirty = buffer.read(cx).is_dirty();
-        let local_file = buffer.read(cx).file().and_then(|file| file.as_local());
-        let path = local_file.map(|file| file.abs_path(cx));
         let mtime = buffer.read(cx).saved_mtime();
 
         let snapshot = buffer.read(cx).snapshot();
@@ -1107,7 +1141,7 @@ impl SerializableItem for Editor {
                     };
 
                     let editor = SerializedEditor {
-                        path,
+                        abs_path,
                         contents,
                         language,
                         mtime,
@@ -1599,7 +1633,7 @@ mod tests {
                 },
                 ..Default::default()
             },
-            Some(tree_sitter_rust::language()),
+            Some(tree_sitter_rust::LANGUAGE.into()),
         ))
     }
 
@@ -1620,7 +1654,7 @@ mod tests {
             let item_id = 1234 as ItemId;
 
             let serialized_editor = SerializedEditor {
-                path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from("/file.rs")),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(now),
@@ -1651,7 +1685,7 @@ mod tests {
 
             let item_id = 5678 as ItemId;
             let serialized_editor = SerializedEditor {
-                path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from("/file.rs")),
                 contents: None,
                 language: None,
                 mtime: None,
@@ -1686,7 +1720,7 @@ mod tests {
 
             let item_id = 9012 as ItemId;
             let serialized_editor = SerializedEditor {
-                path: None,
+                abs_path: None,
                 contents: Some("hello".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: None,
@@ -1724,7 +1758,7 @@ mod tests {
                 .checked_sub(std::time::Duration::from_secs(60 * 60 * 24))
                 .unwrap();
             let serialized_editor = SerializedEditor {
-                path: Some(PathBuf::from("/file.rs")),
+                abs_path: Some(PathBuf::from("/file.rs")),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),

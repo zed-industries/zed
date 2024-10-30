@@ -13,36 +13,28 @@ TBD: Provide explicit examples not just `....`
 
 ## Inlay Hints
 
-The following configuration can be used to enable inlay hints for rust:
+The following configuration can be used to change the inlay hint settings for `rust-analyzer` in Rust:
 
 ```json
-"inlayHints": {
-  "maxLength": null,
-  "lifetimeElisionHints": {
-  "useParameterNames": true,
-    "enable": "skip_trivial"
-  },
-  "closureReturnTypeHints": {
-    "enable": "always"
-  }
-}
-```
-
-to make the language server send back inlay hints when Zed has them enabled in the settings.
-
-Use
-
-```json
-"lsp": {
-  "rust-analyzer": {
-    "initialization_options": {
-      ....
+{
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        "inlayHints": {
+          "maxLength": null,
+          "lifetimeElisionHints": {
+            "enable": "skip_trivial",
+            "useParameterNames": true
+          },
+          "closureReturnTypeHints": {
+            "enable": "always"
+          }
+        }
+      }
     }
   }
 }
 ```
-
-to override these settings.
 
 See [Inlay Hints](https://rust-analyzer.github.io/manual.html#inlay-hints) in the Rust Analyzer Manual for more information.
 
@@ -70,7 +62,23 @@ A `true` setting will set the target directory to `target/rust-analyzer`. You ca
 
 You can configure which `rust-analyzer` binary Zed should use.
 
-To use a binary in a custom location, add the following to your `settings.json`:
+By default, Zed will try to find a `rust-analyzer` in your `$PATH` and try to use that. If that binary successfully executes `rust-analyzer --help`, it's used. Otherwise, Zed will fall back to installing its own `rust-analyzer` version and using that.
+
+If you want to disable Zed looking for a `rust-analyzer` binary, you can set `ignore_system_version` to `true` in your `settings.json`:
+
+```json
+{
+  "lsp": {
+    "rust-analyzer": {
+      "binary": {
+        "ignore_system_version": true
+      }
+    }
+  }
+}
+```
+
+If you want to use a binary in a custom location, you can specify a `path` and optional `args`:
 
 ```json
 {
@@ -85,19 +93,7 @@ To use a binary in a custom location, add the following to your `settings.json`:
 }
 ```
 
-To use a binary that is on your `$PATH`, add the following to your `settings.json`:
-
-```json
-{
-  "lsp": {
-    "rust-analyzer": {
-      "binary": {
-        "path_lookup": true
-      }
-    }
-  }
-}
-```
+This `"path"` has to be an absolute path.
 
 ## More server configuration
 
@@ -138,30 +134,32 @@ Check on save feature is responsible for returning part of the diagnostics based
 Consider more `rust-analyzer.cargo.` and `rust-analyzer.check.` and `rust-analyzer.diagnostics.` settings from the manual for more fine-grained configuration.
 Here's a snippet for Zed settings.json (the language server will restart automatically after the `lsp.rust-analyzer` section is edited and saved):
 
-```json5
-"lsp": {
+```json
+{
+  "lsp": {
     "rust-analyzer": {
-        "initialization_options": {
-            // get more cargo-less diagnostics from rust-analyzer,
-            // which might include false-positives (those can be turned off by their names)
-            "diagnostics": {
-                "experimental": {
-                    "enable": true
-                }
-            },
-            // To disable the checking entirely
-            // (ignores all cargo and check settings below)
-            "checkOnSave": false,
-            // To check the `lib` target only.
-            "cargo": {
-                "allTargets": false
-            },
-            // Use `-p` instead of `--workspace` for cargo check
-            "check": {
-              "workspace": false
-            }
+      "initialization_options": {
+        // get more cargo-less diagnostics from rust-analyzer,
+        // which might include false-positives (those can be turned off by their names)
+        "diagnostics": {
+          "experimental": {
+            "enable": true
+          }
+        },
+        // To disable the checking entirely
+        // (ignores all cargo and check settings below)
+        "checkOnSave": false,
+        // To check the `lib` target only.
+        "cargo": {
+          "allTargets": false
+        },
+        // Use `-p` instead of `--workspace` for cargo check
+        "check": {
+          "workspace": false
         }
+      }
     }
+  }
 }
 ```
 
@@ -170,50 +168,52 @@ Here's a snippet for Zed settings.json (the language server will restart automat
 There's a way get custom completion items from rust-analyzer, that will transform the code according to the snippet body:
 
 ```json
-"lsp": {
+{
+  "lsp": {
     "rust-analyzer": {
-        "initialization_options": {
-            "completion": {
-                "snippets": {
-                    "custom": {
-                        "Arc::new": {
-                            "postfix": "arc",
-                            "body": ["Arc::new(${receiver})"],
-                            "requires": "std::sync::Arc",
-                            "scope": "expr"
-                        },
-                        "Some": {
-                            "postfix": "some",
-                            "body": ["Some(${receiver})"],
-                            "scope": "expr"
-                        },
-                        "Ok": {
-                            "postfix": "ok",
-                            "body": ["Ok(${receiver})"],
-                            "scope": "expr"
-                        },
-                        "Rc::new": {
-                            "postfix": "rc",
-                            "body": ["Rc::new(${receiver})"],
-                            "requires": "std::rc::Rc",
-                            "scope": "expr"
-                        },
-                        "Box::pin": {
-                            "postfix": "boxpin",
-                            "body": ["Box::pin(${receiver})"],
-                            "requires": "std::boxed::Box",
-                            "scope": "expr"
-                        },
-                        "vec!": {
-                            "postfix": "vec",
-                            "body": ["vec![${receiver}]"],
-                            "description": "vec![]",
-                            "scope": "expr"
-                        }
-                    }
-                }
+      "initialization_options": {
+        "completion": {
+          "snippets": {
+            "custom": {
+              "Arc::new": {
+                "postfix": "arc",
+                "body": ["Arc::new(${receiver})"],
+                "requires": "std::sync::Arc",
+                "scope": "expr"
+              },
+              "Some": {
+                "postfix": "some",
+                "body": ["Some(${receiver})"],
+                "scope": "expr"
+              },
+              "Ok": {
+                "postfix": "ok",
+                "body": ["Ok(${receiver})"],
+                "scope": "expr"
+              },
+              "Rc::new": {
+                "postfix": "rc",
+                "body": ["Rc::new(${receiver})"],
+                "requires": "std::rc::Rc",
+                "scope": "expr"
+              },
+              "Box::pin": {
+                "postfix": "boxpin",
+                "body": ["Box::pin(${receiver})"],
+                "requires": "std::boxed::Box",
+                "scope": "expr"
+              },
+              "vec!": {
+                "postfix": "vec",
+                "body": ["vec![${receiver}]"],
+                "description": "vec![]",
+                "scope": "expr"
+              }
             }
+          }
         }
+      }
     }
+  }
 }
 ```

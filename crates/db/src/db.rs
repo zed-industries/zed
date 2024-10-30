@@ -11,16 +11,14 @@ pub use smol;
 pub use sqlez;
 pub use sqlez_macros;
 
-use release_channel::ReleaseChannel;
 pub use release_channel::RELEASE_CHANNEL;
 use sqlez::domain::Migrator;
 use sqlez::thread_safe_connection::ThreadSafeConnection;
 use sqlez_macros::sql;
-use std::env;
 use std::future::Future;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::LazyLock;
+use std::sync::{atomic::Ordering, LazyLock};
+use std::{env, sync::atomic::AtomicBool};
 use util::{maybe, ResultExt};
 
 const CONNECTION_INITIALIZE_QUERY: &str = sql!(
@@ -47,16 +45,12 @@ pub static ALL_FILE_DB_FAILED: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBoo
 /// This will retry a couple times if there are failures. If opening fails once, the db directory
 /// is moved to a backup folder and a new one is created. If that fails, a shared in memory db is created.
 /// In either case, static variables are set so that the user can be notified.
-pub async fn open_db<M: Migrator + 'static>(
-    db_dir: &Path,
-    release_channel: &ReleaseChannel,
-) -> ThreadSafeConnection<M> {
+pub async fn open_db<M: Migrator + 'static>(db_dir: &Path, scope: &str) -> ThreadSafeConnection<M> {
     if *ZED_STATELESS {
         return open_fallback_db().await;
     }
 
-    let release_channel_name = release_channel.dev_name();
-    let main_db_dir = db_dir.join(Path::new(&format!("0-{}", release_channel_name)));
+    let main_db_dir = db_dir.join(format!("0-{}", scope));
 
     let connection = maybe!(async {
         smol::fs::create_dir_all(&main_db_dir)
@@ -118,7 +112,7 @@ pub async fn open_test_db<M: Migrator>(db_name: &str) -> ThreadSafeConnection<M>
 /// Implements a basic DB wrapper for a given domain
 #[macro_export]
 macro_rules! define_connection {
-    (pub static ref $id:ident: $t:ident<()> = $migrations:expr;) => {
+    (pub static ref $id:ident: $t:ident<()> = $migrations:expr; $($global:ident)?) => {
         pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<$t>);
 
         impl ::std::ops::Deref for $t {
@@ -139,18 +133,23 @@ macro_rules! define_connection {
             }
         }
 
-        use std::sync::LazyLock;
         #[cfg(any(test, feature = "test-support"))]
-        pub static $id: LazyLock<$t> = LazyLock::new(|| {
+        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
             $t($crate::smol::block_on($crate::open_test_db(stringify!($id))))
         });
 
         #[cfg(not(any(test, feature = "test-support")))]
-        pub static $id: LazyLock<$t> = LazyLock::new(|| {
-            $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)))
+        pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
+            let db_dir = $crate::database_dir();
+            let scope = if false $(|| stringify!($global) == "global")? {
+                "global"
+            } else {
+                $crate::RELEASE_CHANNEL.dev_name()
+            };
+            $t($crate::smol::block_on($crate::open_db(db_dir, scope)))
         });
     };
-    (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr;) => {
+    (pub static ref $id:ident: $t:ident<$($d:ty),+> = $migrations:expr; $($global:ident)?) => {
         pub struct $t($crate::sqlez::thread_safe_connection::ThreadSafeConnection<( $($d),+, $t )>);
 
         impl ::std::ops::Deref for $t {
@@ -178,12 +177,18 @@ macro_rules! define_connection {
 
         #[cfg(not(any(test, feature = "test-support")))]
         pub static $id: std::sync::LazyLock<$t> = std::sync::LazyLock::new(|| {
-            $t($crate::smol::block_on($crate::open_db($crate::database_dir(), &$crate::RELEASE_CHANNEL)))
+            let db_dir = $crate::database_dir();
+            let scope = if false $(|| stringify!($global) == "global")? {
+                "global"
+            } else {
+                $crate::RELEASE_CHANNEL.dev_name()
+            };
+            $t($crate::smol::block_on($crate::open_db(db_dir, scope)))
         });
     };
 }
 
-pub fn write_and_log<F>(cx: &mut AppContext, db_write: impl FnOnce() -> F + Send + 'static)
+pub fn write_and_log<F>(cx: &AppContext, db_write: impl FnOnce() -> F + Send + 'static)
 where
     F: Future<Output = anyhow::Result<()>> + Send,
 {
@@ -225,7 +230,11 @@ mod tests {
             .prefix("DbTests")
             .tempdir()
             .unwrap();
-        let _bad_db = open_db::<BadDB>(tempdir.path(), &release_channel::ReleaseChannel::Dev).await;
+        let _bad_db = open_db::<BadDB>(
+            tempdir.path(),
+            &release_channel::ReleaseChannel::Dev.dev_name(),
+        )
+        .await;
     }
 
     /// Test that DB exists but corrupted (causing recreate)
@@ -262,13 +271,19 @@ mod tests {
             .tempdir()
             .unwrap();
         {
-            let corrupt_db =
-                open_db::<CorruptedDB>(tempdir.path(), &release_channel::ReleaseChannel::Dev).await;
+            let corrupt_db = open_db::<CorruptedDB>(
+                tempdir.path(),
+                &release_channel::ReleaseChannel::Dev.dev_name(),
+            )
+            .await;
             assert!(corrupt_db.persistent());
         }
 
-        let good_db =
-            open_db::<GoodDB>(tempdir.path(), &release_channel::ReleaseChannel::Dev).await;
+        let good_db = open_db::<GoodDB>(
+            tempdir.path(),
+            &release_channel::ReleaseChannel::Dev.dev_name(),
+        )
+        .await;
         assert!(
             good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()
                 .unwrap()
@@ -311,8 +326,11 @@ mod tests {
             .unwrap();
         {
             // Setup the bad database
-            let corrupt_db =
-                open_db::<CorruptedDB>(tempdir.path(), &release_channel::ReleaseChannel::Dev).await;
+            let corrupt_db = open_db::<CorruptedDB>(
+                tempdir.path(),
+                &release_channel::ReleaseChannel::Dev.dev_name(),
+            )
+            .await;
             assert!(corrupt_db.persistent());
         }
 
@@ -323,7 +341,7 @@ mod tests {
             let guard = thread::spawn(move || {
                 let good_db = smol::block_on(open_db::<GoodDB>(
                     tmp_path.as_path(),
-                    &release_channel::ReleaseChannel::Dev,
+                    &release_channel::ReleaseChannel::Dev.dev_name(),
                 ));
                 assert!(
                     good_db.select_row::<usize>("SELECT * FROM test2").unwrap()()

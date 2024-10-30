@@ -4,6 +4,7 @@ pub mod test;
 mod socks;
 pub mod telemetry;
 pub mod user;
+pub mod zed_urls;
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_recursion::async_recursion;
@@ -29,7 +30,6 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use socks::connect_socks_proxy_stream;
-use std::fmt;
 use std::pin::Pin;
 use std::{
     any::TypeId,
@@ -52,15 +52,6 @@ use util::{ResultExt, TryFutureExt};
 pub use rpc::*;
 pub use telemetry_events::Event;
 pub use user::*;
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-pub struct DevServerToken(pub String);
-
-impl fmt::Display for DevServerToken {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
 
 static ZED_SERVER_URL: LazyLock<Option<String>> =
     LazyLock::new(|| std::env::var("ZED_SERVER_URL").ok());
@@ -141,6 +132,7 @@ impl Settings for ProxySettings {
         Ok(Self {
             proxy: sources
                 .user
+                .or(sources.server)
                 .and_then(|value| value.proxy.clone())
                 .or(sources.default.proxy.clone()),
         })
@@ -240,8 +232,6 @@ pub enum EstablishConnectionError {
     #[error("{0}")]
     Other(#[from] anyhow::Error),
     #[error("{0}")]
-    Http(#[from] http_client::Error),
-    #[error("{0}")]
     InvalidHeaderValue(#[from] async_tungstenite::tungstenite::http::header::InvalidHeaderValue),
     #[error("{0}")]
     Io(#[from] std::io::Error),
@@ -304,20 +294,14 @@ struct ClientState {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Credentials {
-    DevServer { token: DevServerToken },
-    User { user_id: u64, access_token: String },
+pub struct Credentials {
+    pub user_id: u64,
+    pub access_token: String,
 }
 
 impl Credentials {
     pub fn authorization_header(&self) -> String {
-        match self {
-            Credentials::DevServer { token } => format!("dev-server-token {}", token),
-            Credentials::User {
-                user_id,
-                access_token,
-            } => format!("{} {}", user_id, access_token),
-        }
+        format!("{} {}", self.user_id, self.access_token)
     }
 }
 
@@ -396,7 +380,7 @@ pub struct PendingEntitySubscription<T: 'static> {
 }
 
 impl<T: 'static> PendingEntitySubscription<T> {
-    pub fn set_model(mut self, model: &Model<T>, cx: &mut AsyncAppContext) -> Subscription {
+    pub fn set_model(mut self, model: &Model<T>, cx: &AsyncAppContext) -> Subscription {
         self.consumed = true;
         let mut handlers = self.client.handler_set.lock();
         let id = (TypeId::of::<T>(), self.remote_id);
@@ -474,15 +458,21 @@ impl settings::Settings for TelemetrySettings {
 
     fn load(sources: SettingsSources<Self::FileContent>, _: &mut AppContext) -> Result<Self> {
         Ok(Self {
-            diagnostics: sources.user.as_ref().and_then(|v| v.diagnostics).unwrap_or(
-                sources
-                    .default
-                    .diagnostics
-                    .ok_or_else(Self::missing_default)?,
-            ),
+            diagnostics: sources
+                .user
+                .as_ref()
+                .or(sources.server.as_ref())
+                .and_then(|v| v.diagnostics)
+                .unwrap_or(
+                    sources
+                        .default
+                        .diagnostics
+                        .ok_or_else(Self::missing_default)?,
+                ),
             metrics: sources
                 .user
                 .as_ref()
+                .or(sources.server.as_ref())
                 .and_then(|v| v.metrics)
                 .unwrap_or(sources.default.metrics.ok_or_else(Self::missing_default)?),
         })
@@ -529,19 +519,13 @@ impl Client {
     }
 
     pub fn production(cx: &mut AppContext) -> Arc<Self> {
-        let user_agent = format!(
-            "Zed/{} ({}; {})",
-            AppVersion::global(cx),
-            std::env::consts::OS,
-            std::env::consts::ARCH
-        );
         let clock = Arc::new(clock::RealSystemClock);
-        let http = Arc::new(HttpClientWithUrl::new(
+        let http = Arc::new(HttpClientWithUrl::new_uri(
+            cx.http_client(),
             &ClientSettings::get_global(cx).server_url,
-            Some(user_agent),
-            ProxySettings::get_global(cx).proxy.clone(),
+            cx.http_client().proxy().cloned(),
         ));
-        Self::new(clock, http.clone(), cx)
+        Self::new(clock, http, cx)
     }
 
     pub fn id(&self) -> u64 {
@@ -600,11 +584,11 @@ impl Client {
     }
 
     pub fn user_id(&self) -> Option<u64> {
-        if let Some(Credentials::User { user_id, .. }) = self.state.read().credentials.as_ref() {
-            Some(*user_id)
-        } else {
-            None
-        }
+        self.state
+            .read()
+            .credentials
+            .as_ref()
+            .map(|credentials| credentials.user_id)
     }
 
     pub fn peer_id(&self) -> Option<PeerId> {
@@ -793,11 +777,6 @@ impl Client {
             .is_some()
     }
 
-    pub fn set_dev_server_token(&self, token: DevServerToken) -> &Self {
-        self.state.write().credentials = Some(Credentials::DevServer { token });
-        self
-    }
-
     #[async_recursion(?Send)]
     pub async fn authenticate_and_connect(
         self: &Arc<Self>,
@@ -848,9 +827,7 @@ impl Client {
             }
         }
         let credentials = credentials.unwrap();
-        if let Credentials::User { user_id, .. } = &credentials {
-            self.set_id(*user_id);
-        }
+        self.set_id(credentials.user_id);
 
         if was_disconnected {
             self.set_status(Status::Connecting, cx);
@@ -866,9 +843,8 @@ impl Client {
                     Ok(conn) => {
                         self.state.write().credentials = Some(credentials.clone());
                         if !read_from_provider && IMPERSONATE_LOGIN.is_none() {
-                            if let Credentials::User{user_id, access_token} = credentials {
-                                self.credentials_provider.write_credentials(user_id, access_token, cx).await.log_err();
-                            }
+                                self.credentials_provider.write_credentials(credentials.user_id, credentials.access_token, cx).await.log_err();
+
                         }
 
                         futures::select_biased! {
@@ -1031,7 +1007,7 @@ impl Client {
         &self,
         http: Arc<HttpClientWithUrl>,
         release_channel: Option<ReleaseChannel>,
-    ) -> impl Future<Output = Result<Url>> {
+    ) -> impl Future<Output = Result<url::Url>> {
         #[cfg(any(test, feature = "test-support"))]
         let url_override = self.rpc_url.read().clone();
 
@@ -1125,7 +1101,7 @@ impl Client {
             // for us from the RPC URL.
             //
             // Among other things, it will generate and set a `Sec-WebSocket-Key` header for us.
-            let mut request = rpc_url.into_client_request()?;
+            let mut request = IntoClientRequest::into_client_request(rpc_url.as_str())?;
 
             // We then modify the request to add our desired headers.
             let request_headers = request.headers_mut();
@@ -1145,8 +1121,33 @@ impl Client {
 
             match url_scheme {
                 Https => {
+                    let client_config = {
+                        let mut root_store = rustls::RootCertStore::empty();
+
+                        let root_certs = rustls_native_certs::load_native_certs();
+                        for error in root_certs.errors {
+                            log::warn!("error loading native certs: {:?}", error);
+                        }
+                        root_store.add_parsable_certificates(
+                            &root_certs
+                                .certs
+                                .into_iter()
+                                .map(|cert| cert.as_ref().to_owned())
+                                .collect::<Vec<_>>(),
+                        );
+                        rustls::ClientConfig::builder()
+                            .with_safe_defaults()
+                            .with_root_certificates(root_store)
+                            .with_no_client_auth()
+                    };
+
                     let (stream, _) =
-                        async_tungstenite::async_std::client_async_tls(request, stream).await?;
+                        async_tungstenite::async_tls::client_async_tls_with_connector(
+                            request,
+                            stream,
+                            Some(client_config.into()),
+                        )
+                        .await?;
                     Ok(Connection::new(
                         stream
                             .map_err(|error| anyhow!(error))
@@ -1276,7 +1277,7 @@ impl Client {
                         .decrypt_string(&access_token)
                         .context("failed to decrypt access token")?;
 
-                    Ok(Credentials::User {
+                    Ok(Credentials {
                         user_id: user_id.parse()?,
                         access_token,
                     })
@@ -1397,7 +1398,7 @@ impl Client {
 
         // Use the admin API token to authenticate as the impersonated user.
         api_token.insert_str(0, "ADMIN_TOKEN:");
-        Ok(Credentials::User {
+        Ok(Credentials {
             user_id: response.user.id,
             access_token: api_token,
         })
@@ -1605,6 +1606,10 @@ impl ProtoClient for Client {
     fn message_handler_set(&self) -> &parking_lot::Mutex<ProtoMessageHandlerSet> {
         &self.handler_set
     }
+
+    fn is_via_collab(&self) -> bool {
+        true
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1638,7 +1643,7 @@ impl CredentialsProvider for DevelopmentCredentialsProvider {
 
             let credentials: DevelopmentCredentials = serde_json::from_slice(&json).log_err()?;
 
-            Some(Credentials::User {
+            Some(Credentials {
                 user_id: credentials.user_id,
                 access_token: credentials.access_token,
             })
@@ -1692,7 +1697,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
                 .await
                 .log_err()??;
 
-            Some(Credentials::User {
+            Some(Credentials {
                 user_id: user_id.parse().ok()?,
                 access_token: String::from_utf8(access_token).ok()?,
             })
@@ -1732,7 +1737,7 @@ impl CredentialsProvider for KeychainCredentialsProvider {
 }
 
 /// prefix for the zed:// url scheme
-pub static ZED_URL_SCHEME: &str = "zed";
+pub const ZED_URL_SCHEME: &str = "zed";
 
 /// Parses the given link into a Zed link.
 ///
@@ -1826,7 +1831,7 @@ mod tests {
         // Time out when client tries to connect.
         client.override_authenticate(move |cx| {
             cx.background_executor().spawn(async move {
-                Ok(Credentials::User {
+                Ok(Credentials {
                     user_id,
                     access_token: "token".into(),
                 })

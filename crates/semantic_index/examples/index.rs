@@ -26,8 +26,14 @@ fn main() {
         });
 
         let clock = Arc::new(FakeSystemClock::default());
-        let http = Arc::new(HttpClientWithUrl::new("http://localhost:11434", None, None));
 
+        let http = Arc::new(HttpClientWithUrl::new(
+            Arc::new(
+                reqwest_client::ReqwestClient::user_agent("Zed semantic index example").unwrap(),
+            ),
+            "http://localhost:11434",
+            None,
+        ));
         let client = client::Client::new(clock, http.clone(), cx);
         Client::set_global(client.clone(), cx);
 
@@ -93,7 +99,7 @@ fn main() {
                 .update(|cx| {
                     let project_index = project_index.read(cx);
                     let query = "converting an anchor to a point";
-                    project_index.search(query.into(), 4, cx)
+                    project_index.search(vec![query.into()], 4, cx)
                 })
                 .unwrap()
                 .await

@@ -11,15 +11,13 @@ use gpui::{
     PromptLevel, Render, Task, View, ViewContext,
 };
 use http_client::HttpClient;
-use isahc::Request;
 use language::Buffer;
 use project::Project;
 use regex::Regex;
 use serde_derive::Serialize;
 use ui::{prelude::*, Button, ButtonStyle, IconPosition, Tooltip};
 use util::ResultExt;
-use workspace::notifications::NotificationId;
-use workspace::{DismissDecision, ModalView, Toast, Workspace};
+use workspace::{DismissDecision, ModalView, Workspace};
 
 use crate::{system_specs::SystemSpecs, GiveFeedback, OpenZedRepo};
 
@@ -44,8 +42,8 @@ const FEEDBACK_SUBMISSION_ERROR_TEXT: &str =
 struct FeedbackRequestBody<'a> {
     feedback_text: &'a str,
     email: Option<String>,
-    metrics_id: Option<Arc<str>>,
     installation_id: Option<Arc<str>>,
+    metrics_id: Option<Arc<str>>,
     system_specs: SystemSpecs,
     is_staff: bool,
 }
@@ -120,44 +118,34 @@ impl FeedbackModal {
     pub fn register(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
         let _handle = cx.view().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, cx| {
-            let markdown = workspace
-                .app_state()
-                .languages
-                .language_for_name("Markdown");
+            workspace
+                .with_local_workspace(cx, |workspace, cx| {
+                    let markdown = workspace
+                        .app_state()
+                        .languages
+                        .language_for_name("Markdown");
 
-            let project = workspace.project().clone();
-            let is_local_project = project.read(cx).is_local_or_ssh();
+                    let project = workspace.project().clone();
 
-            if !is_local_project {
-                struct FeedbackInRemoteProject;
+                    let system_specs = SystemSpecs::new(cx);
+                    cx.spawn(|workspace, mut cx| async move {
+                        let markdown = markdown.await.log_err();
+                        let buffer = project.update(&mut cx, |project, cx| {
+                            project.create_local_buffer("", markdown, cx)
+                        })?;
+                        let system_specs = system_specs.await;
 
-                workspace.show_toast(
-                    Toast::new(
-                        NotificationId::unique::<FeedbackInRemoteProject>(),
-                        "You can only submit feedback in your own project.",
-                    ),
-                    cx,
-                );
-                return;
-            }
+                        workspace.update(&mut cx, |workspace, cx| {
+                            workspace.toggle_modal(cx, move |cx| {
+                                FeedbackModal::new(system_specs, project, buffer, cx)
+                            });
+                        })?;
 
-            let system_specs = SystemSpecs::new(cx);
-            cx.spawn(|workspace, mut cx| async move {
-                let markdown = markdown.await.log_err();
-                let buffer = project.update(&mut cx, |project, cx| {
-                    project.create_local_buffer("", markdown, cx)
-                })?;
-                let system_specs = system_specs.await;
-
-                workspace.update(&mut cx, |workspace, cx| {
-                    workspace.toggle_modal(cx, move |cx| {
-                        FeedbackModal::new(system_specs, project, buffer, cx)
-                    });
-                })?;
-
-                anyhow::Ok(())
-            })
-            .detach_and_log_err(cx);
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                })
+                .detach_and_log_err(cx);
         });
     }
 
@@ -296,21 +284,21 @@ impl FeedbackModal {
         }
 
         let telemetry = zed_client.telemetry();
-        let metrics_id = telemetry.metrics_id();
         let installation_id = telemetry.installation_id();
+        let metrics_id = telemetry.metrics_id();
         let is_staff = telemetry.is_staff();
         let http_client = zed_client.http_client();
         let feedback_endpoint = http_client.build_url("/api/feedback");
         let request = FeedbackRequestBody {
             feedback_text,
             email,
-            metrics_id,
             installation_id,
+            metrics_id,
             system_specs,
             is_staff: is_staff.unwrap_or(false),
         };
         let json_bytes = serde_json::to_vec(&request)?;
-        let request = Request::post(feedback_endpoint)
+        let request = http_client::http::Request::post(feedback_endpoint)
             .header("content-type", "application/json")
             .body(json_bytes.into())?;
         let mut response = http_client.send(request).await?;

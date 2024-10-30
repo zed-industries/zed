@@ -9,7 +9,7 @@ use anyhow::Result;
 use collections::{BTreeSet, HashSet};
 use editor::{
     diagnostic_block_renderer,
-    display_map::{BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
+    display_map::{BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock},
     highlight_diagnostic_message,
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
@@ -101,7 +101,7 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         div()
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .when(self.path_states.is_empty(), |el| {
                 el.key_context("EmptyPane")
             })
@@ -156,12 +156,7 @@ impl ProjectDiagnosticsEditor {
         cx.on_focus_out(&focus_handle, |this, _event, cx| this.focus_out(cx))
             .detach();
 
-        let excerpts = cx.new_model(|cx| {
-            MultiBuffer::new(
-                project_handle.read(cx).replica_id(),
-                project_handle.read(cx).capability(),
-            )
-        });
+        let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new_view(|cx| {
             let mut editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
@@ -444,11 +439,10 @@ impl ProjectDiagnosticsEditor {
                                     primary.message.split('\n').next().unwrap().to_string();
                                 group_state.block_count += 1;
                                 blocks_to_add.push(BlockProperties {
-                                    position: header_position,
+                                    placement: BlockPlacement::Above(header_position),
                                     height: 2,
                                     style: BlockStyle::Sticky,
                                     render: diagnostic_header_renderer(primary),
-                                    disposition: BlockDisposition::Above,
                                     priority: 0,
                                 });
                             }
@@ -464,13 +458,15 @@ impl ProjectDiagnosticsEditor {
                                 if !diagnostic.message.is_empty() {
                                     group_state.block_count += 1;
                                     blocks_to_add.push(BlockProperties {
-                                        position: (excerpt_id, entry.range.start),
+                                        placement: BlockPlacement::Below((
+                                            excerpt_id,
+                                            entry.range.start,
+                                        )),
                                         height: diagnostic.message.matches('\n').count() as u32 + 1,
                                         style: BlockStyle::Fixed,
                                         render: diagnostic_block_renderer(
                                             diagnostic, None, true, true,
                                         ),
-                                        disposition: BlockDisposition::Below,
                                         priority: 0,
                                     });
                                 }
@@ -503,13 +499,24 @@ impl ProjectDiagnosticsEditor {
             editor.remove_blocks(blocks_to_remove, None, cx);
             let block_ids = editor.insert_blocks(
                 blocks_to_add.into_iter().flat_map(|block| {
-                    let (excerpt_id, text_anchor) = block.position;
+                    let placement = match block.placement {
+                        BlockPlacement::Above((excerpt_id, text_anchor)) => BlockPlacement::Above(
+                            excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                        ),
+                        BlockPlacement::Below((excerpt_id, text_anchor)) => BlockPlacement::Below(
+                            excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                        ),
+                        BlockPlacement::Replace(_) => {
+                            unreachable!(
+                                "no Replace block should have been pushed to blocks_to_add"
+                            )
+                        }
+                    };
                     Some(BlockProperties {
-                        position: excerpts_snapshot.anchor_in_excerpt(excerpt_id, text_anchor)?,
+                        placement,
                         height: block.height,
                         style: block.style,
                         render: block.render,
-                        disposition: block.disposition,
                         priority: 0,
                     })
                 }),
@@ -645,37 +652,42 @@ impl Item for ProjectDiagnosticsEditor {
     }
 
     fn tab_content(&self, params: TabContentParams, _: &WindowContext) -> AnyElement {
-        if self.summary.error_count == 0 && self.summary.warning_count == 0 {
-            Label::new("No problems")
-                .color(params.text_color())
-                .into_any_element()
-        } else {
-            h_flex()
-                .gap_1()
-                .when(self.summary.error_count > 0, |then| {
+        h_flex()
+            .gap_1()
+            .when(
+                self.summary.error_count == 0 && self.summary.warning_count == 0,
+                |then| {
                     then.child(
                         h_flex()
                             .gap_1()
-                            .child(Icon::new(IconName::XCircle).color(Color::Error))
-                            .child(
-                                Label::new(self.summary.error_count.to_string())
-                                    .color(params.text_color()),
-                            ),
+                            .child(Icon::new(IconName::Check).color(Color::Success))
+                            .child(Label::new("No problems").color(params.text_color())),
                     )
-                })
-                .when(self.summary.warning_count > 0, |then| {
-                    then.child(
-                        h_flex()
-                            .gap_1()
-                            .child(Icon::new(IconName::Warning).color(Color::Warning))
-                            .child(
-                                Label::new(self.summary.warning_count.to_string())
-                                    .color(params.text_color()),
-                            ),
-                    )
-                })
-                .into_any_element()
-        }
+                },
+            )
+            .when(self.summary.error_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::XCircle).color(Color::Error))
+                        .child(
+                            Label::new(self.summary.error_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .when(self.summary.warning_count > 0, |then| {
+                then.child(
+                    h_flex()
+                        .gap_1()
+                        .child(Icon::new(IconName::Warning).color(Color::Warning))
+                        .child(
+                            Label::new(self.summary.warning_count.to_string())
+                                .color(params.text_color()),
+                        ),
+                )
+            })
+            .into_any_element()
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {

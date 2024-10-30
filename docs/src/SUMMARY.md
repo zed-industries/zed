@@ -16,18 +16,22 @@
 - [Key bindings](./key-bindings.md)
 - [Snippets](./snippets.md)
 - [Themes](./themes.md)
+- [Vim Mode](./vim.md)
+
+<!-- - [Globs](./globs.md) -->
 <!-- - [Fonts](./fonts.md) -->
-- [Vim](./vim.md)
 
 # Using Zed
 
 - [Multibuffers](./multibuffers.md)
+- [Outline Panel](./outline-panel.md)
 - [Code Completions](./completions.md)
 - [Channels](./channels.md)
 - [Collaboration](./collaboration.md)
 - [Git](./git.md)
 - [Tasks](./tasks.md)
 - [Remote Development](./remote-development.md)
+- [Environment Variables](./environment.md)
 - [REPL](./repl.md)
 
 # Assistant
@@ -75,11 +79,13 @@
 - [Go](./languages/go.md)
 - [Groovy](./languages/groovy.md)
 - [Haskell](./languages/haskell.md)
+- [Helm](./languages/helm.md)
 - [HTML](./languages/html.md)
 - [Java](./languages/java.md)
 - [JavaScript](./languages/javascript.md)
 - [Julia](./languages/julia.md)
 - [JSON](./languages/json.md)
+- [Jsonnet](./languages/jsonnet.md)
 - [Kotlin](./languages/kotlin.md)
 - [Lua](./languages/lua.md)
 - [Luau](./languages/luau.md)
@@ -93,6 +99,7 @@
 - [PureScript](./languages/purescript.md)
 - [Python](./languages/python.md)
 - [R](./languages/r.md)
+- [Rego](./languages/rego.md)
 - [ReStructuredText](./languages/rst.md)
 - [Racket](./languages/racket.md)
 - [Roc](./languages/roc.md)
@@ -108,6 +115,7 @@
 - [TypeScript](./languages/typescript.md)
 - [Uiua](./languages/uiua.md)
 - [Vue](./languages/vue.md)
+- [XML](./languages/xml.md)
 - [YAML](./languages/yaml.md)
 - [Yarn](./languages/yarn.md)
 - [Zig](./languages/zig.md)
@@ -121,10 +129,3 @@
   - [Local Collaboration](./development/local-collaboration.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
-
-# Community
-
-- [Code of Conduct](./code-of-conduct.md)
-- [Contributing to Zed](./contribute-to-zed.md)
-- [Conversations](./conversations.md)
-- [Feedback and Support](./feedback-and-support.md)
