@@ -1853,26 +1853,25 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
+        let body = shlex::try_quote(body).unwrap();
+        let url = shlex::try_quote(url).unwrap();
+        let dst_str = dst_path_gz.to_string_lossy();
+        let dst_escaped = shlex::try_quote(&dst_str).unwrap();
+
         let script = format!(
             r#"
-            if command -v wget >/dev/null 2>&1; then
-                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data='{}' '{}' -O '{}' && echo "wget"
-            elif command -v curl >/dev/null 2>&1; then
-                curl -L -X GET -H "Content-Type: application/json" -d '{}' '{}' -o '{}' && echo "curl"
+            if command -v curl >/dev/null 2>&1; then
+                curl -f -L -X GET -H "Content-Type: application/json" -d {body} {url} -o {dst_escaped} && echo "curl"
+            elif command -v wget >/dev/null 2>&1; then
+                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data={body} {url} -O {dst_escaped} && echo "wget"
             else
                 echo "Neither curl nor wget is available" >&2
                 exit 1
             fi
-            "#,
-            body.replace("'", r#"\'"#),
-            url,
-            dst_path_gz.display(),
-            body.replace("'", r#"\'"#),
-            url,
-            dst_path_gz.display(),
+            "#
         );
 
-        let output = run_cmd(self.socket.ssh_command("bash").arg("-c").arg(script))
+        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(script))
             .await
             .context("Failed to download server binary")?;
 
