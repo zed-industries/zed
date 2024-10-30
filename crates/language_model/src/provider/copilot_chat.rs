@@ -30,6 +30,7 @@ use crate::{
 };
 use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
+use super::anthropic::count_anthropic_tokens;
 use super::open_ai::count_open_ai_tokens;
 
 const PROVIDER_ID: &str = "copilot_chat";
@@ -179,13 +180,20 @@ impl LanguageModel for CopilotChatLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        let model = match self.model {
-            CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
-            CopilotChatModel::Gpt4 => open_ai::Model::Four,
-            CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-        };
-
-        count_open_ai_tokens(request, model, cx)
+        match self.model {
+            CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
+            _ => {
+                let model = match self.model {
+                    CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
+                    CopilotChatModel::Gpt4 => open_ai::Model::Four,
+                    CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
+                    CopilotChatModel::O1Preview => open_ai::Model::Four,
+                    CopilotChatModel::O1Mini => open_ai::Model::Four,
+                    CopilotChatModel::Claude3_5Sonnet => unreachable!(),
+                };
+                count_open_ai_tokens(request, model, cx)
+            }
+        }
     }
 
     fn stream_completion(
