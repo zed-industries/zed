@@ -222,13 +222,13 @@ pub struct HangReport {
     pub installation_id: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct LocationData {
     pub file: String,
     pub line: u32,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Panic {
     /// The name of the thread that panicked
     pub thread: String,
