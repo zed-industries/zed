@@ -292,7 +292,9 @@ message Envelope {
         GetPathMetadataResponse get_path_metadata_response = 279;
 
         GetPanicFiles get_panic_files = 280;
-        GetPanicFilesResponse get_panic_files_response = 281; // current max
+        GetPanicFilesResponse get_panic_files_response = 281;
+
+        CancelLanguageServerWork cancel_language_server_work = 282; // current max
     }
 
     reserved 87 to 88;
@@ -1257,12 +1259,14 @@ message LspWorkStart {
     optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 5;
 }
 
 message LspWorkProgress {
     string token = 1;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 4;
 }
 
 message LspWorkEnd {
@@ -2499,4 +2503,22 @@ message GetPanicFiles {
 
 message GetPanicFilesResponse {
     repeated string file_contents = 2;
+}
+
+message CancelLanguageServerWork {
+    uint64 project_id = 1;
+
+    oneof work {
+        Buffers buffers = 2;
+        LanguageServerWork language_server_work = 3;
+    }
+
+    message Buffers {
+        repeated uint64 buffer_ids = 2;
+    }
+
+    message LanguageServerWork {
+        uint64 language_server_id = 1;
+        optional string token = 2;
+    }
 }
