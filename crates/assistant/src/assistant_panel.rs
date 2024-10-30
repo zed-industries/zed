@@ -1628,7 +1628,10 @@ impl ContextEditor {
 
         self.last_error = None;
 
-        if let Some(user_message) = self
+        if request_type == RequestType::SuggestEdits && !self.context.read(cx).contains_files(cx) {
+            self.last_error = Some(AssistError::Message("You must include at least one file before suggesting edits.\nTry using the /file or /tab command.".into()));
+            cx.notify();
+        } else if let Some(user_message) = self
             .context
             .update(cx, |context, cx| context.assist(request_type, cx))
         {
