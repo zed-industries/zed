@@ -483,7 +483,7 @@ impl remote::SshClientDelegate for SshClientDelegate {
                             platform.os,
                             platform.arch,
                             release_channel,
-                            version.clone(),
+                            version,
                             &mut cx,
                         )
                         .await
