@@ -2677,9 +2677,8 @@ impl CodegenAlternative {
                 let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
                 self.request = Some(request.clone());
 
-                let stream = cx
-                    .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
-                async move { Ok(stream.await?) }.boxed_local()
+                cx.spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await })
+                    .boxed_local()
             };
         self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
         Ok(())

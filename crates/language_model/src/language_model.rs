@@ -153,7 +153,7 @@ pub trait LanguageModel: Send + Sync {
                 }
             }
 
-            let stream = futures::stream::iter(first_item_text.map(|text| Ok(text)))
+            let stream = futures::stream::iter(first_item_text.map(Ok))
                 .chain(events.filter_map(|result| async move {
                     match result {
                         Ok(LanguageModelCompletionEvent::StartMessage { .. }) => None,
