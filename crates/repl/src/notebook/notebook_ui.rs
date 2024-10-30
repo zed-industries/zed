@@ -1,19 +1,19 @@
 #![allow(unused, dead_code)]
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::Context as _;
+use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::FutureExt;
 use gpui::{
-    actions, list, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView,
-    ListScrollEvent, ListState, Model, Task,
+    actions, list, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    ListScrollEvent, ListState, Model, Task, View,
 };
 use language::LanguageRegistry;
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
-use workspace::item::ItemEvent;
+use workspace::item::{ItemEvent, TabContentParams};
 use workspace::{Item, ItemHandle, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
 
@@ -66,10 +66,10 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct NotebookEditor {
     languages: Arc<LanguageRegistry>,
+    project: Model<Project>,
 
     focus_handle: FocusHandle,
-    project: Model<Project>,
-    path: ProjectPath,
+    notebook_item: Model<NotebookItem>,
 
     remote_id: Option<ViewId>,
     cell_list: ListState,
@@ -169,10 +169,10 @@ impl NotebookEditor {
         );
 
         Self {
+            project,
             languages: languages.clone(),
             focus_handle,
-            project,
-            path: notebook_item.read(cx).project_path.clone(),
+            notebook_item,
             remote_id: None,
             cell_list,
             selected_cell_index: 0,
@@ -641,12 +641,41 @@ impl EventEmitter<()> for NotebookEditor {}
 impl Item for NotebookEditor {
     type Event = ();
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        let path = self.path.path.clone();
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<workspace::WorkspaceId>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::View<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new_view(|cx| Self::new(self.project.clone(), self.notebook_item.clone(), cx)))
+    }
 
-        path.file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .map(SharedString::from)
+    fn for_each_project_item(
+        &self,
+        cx: &AppContext,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+    ) {
+        f(self.notebook_item.entity_id(), self.notebook_item.read(cx))
+    }
+
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        true
+    }
+
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        let path = &self.notebook_item.read(cx).path;
+        let title = path
+            .file_name()
+            .unwrap_or_else(|| path.as_os_str())
+            .to_string_lossy()
+            .to_string();
+        Label::new(title)
+            .single_line()
+            .color(params.text_color())
+            .italic(params.preview)
+            .into_any_element()
     }
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
@@ -657,8 +686,54 @@ impl Item for NotebookEditor {
         false
     }
 
+    // TODO
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
+        None
+    }
+
+    // TODO
+    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        None
+    }
+
+    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {
+        // TODO
+    }
+
+    // TODO
+    fn can_save(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    // TODO
+    fn save(
+        &mut self,
+        _format: bool,
+        _project: Model<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save() must be implemented if can_save() returns true")
+    }
+
+    // TODO
+    fn save_as(
+        &mut self,
+        _project: Model<Project>,
+        _path: ProjectPath,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save_as() must be implemented if can_save() returns true")
+    }
+    // TODO
+    fn reload(
+        &mut self,
+        _project: Model<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("reload() must be implemented if can_save() returns true")
+    }
+
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        // self.is_dirty(cx)
+        // self.is_dirty(cx) TODO
         false
     }
 }
