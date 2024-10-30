@@ -30,7 +30,7 @@ use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings};
+use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowIndentGuides};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -2821,6 +2821,17 @@ impl ProjectPanel {
             return None;
         }
 
+        let scroll_handle = self.scroll_handle.0.borrow();
+        let longest_item_width = scroll_handle
+            .last_item_size
+            .filter(|size| size.contents.width > size.item.width)?
+            .contents
+            .width
+            .0 as f64;
+        if longest_item_width < scroll_handle.base_handle.bounds().size.width.0 as f64 {
+            return None;
+        }
+
         Some(
             div()
                 .occlude()
@@ -3032,7 +3043,8 @@ impl Render for ProjectPanel {
         let has_worktree = !self.visible_entries.is_empty();
         let project = self.project.read(cx);
         let indent_size = ProjectPanelSettings::get_global(cx).indent_size;
-        let indent_guides = ProjectPanelSettings::get_global(cx).indent_guides;
+        let show_indent_guides =
+            ProjectPanelSettings::get_global(cx).indent_guides.show == ShowIndentGuides::Always;
         let is_local = project.is_local();
 
         if has_worktree {
@@ -3125,7 +3137,7 @@ impl Render for ProjectPanel {
                         }
                     }),
                 )
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .child(
                     uniform_list(cx.view().clone(), "entries", item_count, {
                         |this, range, cx| {
@@ -3136,7 +3148,7 @@ impl Render for ProjectPanel {
                             items
                         }
                     })
-                    .when(indent_guides, |list| {
+                    .when(show_indent_guides, |list| {
                         list.with_decoration(
                             ui::indent_guides(
                                 cx.view().clone(),
@@ -3257,7 +3269,7 @@ impl Render for ProjectPanel {
                 .id("empty-project_panel")
                 .size_full()
                 .p_4()
-                .track_focus(&self.focus_handle)
+                .track_focus(&self.focus_handle(cx))
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()

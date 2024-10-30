@@ -13,7 +13,8 @@ use language::{
 use project::{EnvironmentErrorMessage, LanguageServerProgress, Project, WorktreeId};
 use smallvec::SmallVec;
 use std::{cmp::Reverse, fmt::Write, sync::Arc, time::Duration};
-use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle};
+use ui::{prelude::*, ButtonLike, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
+use util::truncate_and_trailoff;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 actions!(activity_indicator, [ShowErrorMessage]);
@@ -463,6 +464,8 @@ impl ActivityIndicator {
 
 impl EventEmitter<Event> for ActivityIndicator {}
 
+const MAX_MESSAGE_LEN: usize = 50;
+
 impl Render for ActivityIndicator {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let result = h_flex()
@@ -473,6 +476,7 @@ impl Render for ActivityIndicator {
             return result;
         };
         let this = cx.view().downgrade();
+        let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
         result.gap_2().child(
             PopoverMenu::new("activity-indicator-popover")
                 .trigger(
@@ -481,7 +485,21 @@ impl Render for ActivityIndicator {
                             .id("activity-indicator-status")
                             .gap_2()
                             .children(content.icon)
-                            .child(Label::new(content.message).size(LabelSize::Small))
+                            .map(|button| {
+                                if truncate_content {
+                                    button
+                                        .child(
+                                            Label::new(truncate_and_trailoff(
+                                                &content.message,
+                                                MAX_MESSAGE_LEN,
+                                            ))
+                                            .size(LabelSize::Small),
+                                        )
+                                        .tooltip(move |cx| Tooltip::text(&content.message, cx))
+                                } else {
+                                    button.child(Label::new(content.message).size(LabelSize::Small))
+                                }
+                            })
                             .when_some(content.on_click, |this, handler| {
                                 this.on_click(cx.listener(move |this, _, cx| {
                                     handler(this, cx);

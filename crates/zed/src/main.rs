@@ -32,7 +32,7 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
-use release_channel::{AppCommitSha, AppVersion};
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use session::{AppSession, Session};
 use settings::{
     handle_settings_file_changes, watch_config_file, InvalidSettingsError, Settings, SettingsStore,
@@ -164,32 +164,29 @@ fn main() {
 
     let (open_listener, mut open_rx) = OpenListener::new();
 
-    #[cfg(target_os = "linux")]
-    {
-        if env::var("ZED_STATELESS").is_err() {
-            if crate::zed::listen_for_cli_connections(open_listener.clone()).is_err() {
-                println!("zed is already running");
-                return;
+    let failed_single_instance_check =
+        if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
+            false
+        } else {
+            #[cfg(target_os = "linux")]
+            {
+                crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
             }
-        }
-    }
 
-    #[cfg(target_os = "windows")]
-    {
-        use zed::windows_only_instance::*;
-        if !check_single_instance() {
-            println!("zed is already running");
-            return;
-        }
-    }
+            #[cfg(target_os = "windows")]
+            {
+                !crate::zed::windows_only_instance::check_single_instance()
+            }
 
-    #[cfg(target_os = "macos")]
-    {
-        use zed::mac_only_instance::*;
-        if ensure_only_instance() != IsOnlyInstance::Yes {
-            println!("zed is already running");
-            return;
-        }
+            #[cfg(target_os = "macos")]
+            {
+                use zed::mac_only_instance::*;
+                ensure_only_instance() != IsOnlyInstance::Yes
+            }
+        };
+    if failed_single_instance_check {
+        println!("zed is already running");
+        return;
     }
 
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
@@ -334,7 +331,7 @@ fn main() {
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
             installation_id.as_ref().map(|id| id.to_string()),
-            session_id,
+            session_id.clone(),
             cx,
         );
 
@@ -370,7 +367,9 @@ fn main() {
         auto_update::init(client.http_client(), cx);
         reliability::init(
             client.http_client(),
+            system_id.as_ref().map(|id| id.to_string()),
             installation_id.clone().map(|id| id.to_string()),
+            session_id.clone(),
             cx,
         );
 
@@ -423,6 +422,7 @@ fn main() {
         app_state.languages.set_theme(cx.theme().clone());
         editor::init(cx);
         image_viewer::init(cx);
+        repl::notebook::init(cx);
         diagnostics::init(cx);
 
         audio::init(Assets, cx);
@@ -443,6 +443,7 @@ fn main() {
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
         language_selector::init(cx);
+        toolchain_selector::init(cx);
         theme_selector::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);

@@ -184,7 +184,7 @@ pub struct KeyIcon {
 impl RenderOnce for KeyIcon {
     fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
         Icon::new(self.icon)
-            .size(IconSize::Small)
+            .size(IconSize::XSmall)
             .color(Color::Muted)
     }
 }

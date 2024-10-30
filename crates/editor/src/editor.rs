@@ -225,7 +225,6 @@ pub fn render_parsed_markdown(
                 }
             }),
     );
-    // hello
 
     let mut links = Vec::new();
     let mut link_ranges = Vec::new();
@@ -3263,9 +3262,21 @@ impl Editor {
                         }
 
                         if enabled && pair.start.ends_with(text.as_ref()) {
-                            bracket_pair = Some(pair.clone());
-                            is_bracket_pair_start = true;
-                            break;
+                            let prefix_len = pair.start.len() - text.len();
+                            let preceding_text_matches_prefix = prefix_len == 0
+                                || (selection.start.column >= (prefix_len as u32)
+                                    && snapshot.contains_str_at(
+                                        Point::new(
+                                            selection.start.row,
+                                            selection.start.column - (prefix_len as u32),
+                                        ),
+                                        &pair.start[..prefix_len],
+                                    ));
+                            if preceding_text_matches_prefix {
+                                bracket_pair = Some(pair.clone());
+                                is_bracket_pair_start = true;
+                                break;
+                            }
                         }
                         if pair.end.as_str() == text.as_ref() {
                             bracket_pair = Some(pair.clone());
@@ -3282,8 +3293,6 @@ impl Editor {
                         self.use_auto_surround && snapshot_settings.use_auto_surround;
                     if selection.is_empty() {
                         if is_bracket_pair_start {
-                            let prefix_len = bracket_pair.start.len() - text.len();
-
                             // If the inserted text is a suffix of an opening bracket and the
                             // selection is preceded by the rest of the opening bracket, then
                             // insert the closing bracket.
@@ -3291,15 +3300,6 @@ impl Editor {
                                 .chars_at(selection.start)
                                 .next()
                                 .map_or(true, |c| scope.should_autoclose_before(c));
-                            let preceding_text_matches_prefix = prefix_len == 0
-                                || (selection.start.column >= (prefix_len as u32)
-                                    && snapshot.contains_str_at(
-                                        Point::new(
-                                            selection.start.row,
-                                            selection.start.column - (prefix_len as u32),
-                                        ),
-                                        &bracket_pair.start[..prefix_len],
-                                    ));
 
                             let is_closing_quote = if bracket_pair.end == bracket_pair.start
                                 && bracket_pair.start.len() == 1
@@ -3318,7 +3318,6 @@ impl Editor {
                             if autoclose
                                 && bracket_pair.close
                                 && following_text_allows_autoclose
-                                && preceding_text_matches_prefix
                                 && !is_closing_quote
                             {
                                 let anchor = snapshot.anchor_before(selection.end);
@@ -3803,9 +3802,6 @@ impl Editor {
     pub fn newline_below(&mut self, _: &NewlineBelow, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx);
         let snapshot = buffer.snapshot(cx);
-        //
-        //
-        //
 
         let mut edits = Vec::new();
         let mut rows = Vec::new();
@@ -10006,8 +10002,8 @@ impl Editor {
         let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
-        let buffer = self.buffer.read(cx);
         let head = self.selections.newest::<usize>(cx).head();
+        let buffer = self.buffer.read(cx);
         let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
             text_anchor
         } else {
@@ -10314,8 +10310,8 @@ impl Editor {
         _: &FindAllReferences,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<Navigated>>> {
-        let multi_buffer = self.buffer.read(cx);
         let selection = self.selections.newest::<usize>(cx);
+        let multi_buffer = self.buffer.read(cx);
         let head = selection.head();
 
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -10722,8 +10718,9 @@ impl Editor {
         self.show_local_selections = true;
 
         if moving_cursor {
-            let rename_editor = rename.editor.read(cx);
-            let cursor_in_rename_editor = rename_editor.selections.newest::<usize>(cx).head();
+            let cursor_in_rename_editor = rename.editor.update(cx, |editor, cx| {
+                editor.selections.newest::<usize>(cx).head()
+            });
 
             // Update the selection to match the position of the selection inside
             // the rename editor.
@@ -10837,7 +10834,7 @@ impl Editor {
 
     fn cancel_language_server_work(
         &mut self,
-        _: &CancelLanguageServerWork,
+        _: &actions::CancelLanguageServerWork,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(project) = self.project.clone() {
@@ -11133,12 +11130,10 @@ impl Editor {
                         let nested_start_row = foldable_range.0.start.row + 1;
                         let nested_end_row = foldable_range.0.end.row;
 
-                        if current_level == fold_at_level {
-                            fold_ranges.push(foldable_range);
-                        }
-
-                        if current_level <= fold_at_level {
+                        if current_level < fold_at_level {
                             stack.push((nested_start_row, nested_end_row, current_level + 1));
+                        } else if current_level == fold_at_level {
+                            fold_ranges.push(foldable_range);
                         }
 
                         start_row = nested_end_row + 1;
@@ -11996,9 +11991,9 @@ impl Editor {
     }
 
     pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
+        let selection = self.selections.newest::<Point>(cx).start.row + 1;
         if let Some(file) = self.target_file(cx) {
             if let Some(path) = file.path().to_str() {
-                let selection = self.selections.newest::<Point>(cx).start.row + 1;
                 cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
             }
         }
@@ -12774,9 +12769,10 @@ impl Editor {
             return;
         };
 
+        let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx);
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in selections {
             for (buffer, range, _) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
@@ -12821,6 +12817,7 @@ impl Editor {
     }
 
     fn open_excerpts_common(&mut self, split: bool, cx: &mut ViewContext<Self>) {
+        let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx);
         if buffer.is_singleton() {
             cx.propagate();
@@ -12833,7 +12830,7 @@ impl Editor {
         };
 
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in selections {
             for (mut buffer_handle, mut range, _) in
                 buffer.range_to_buffer_ranges(selection.range(), cx)
             {
@@ -12949,7 +12946,7 @@ impl Editor {
     fn selection_replacement_ranges(
         &self,
         range: Range<OffsetUtf16>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Vec<Range<OffsetUtf16>> {
         let selections = self.selections.all::<OffsetUtf16>(cx);
         let newest_selection = selections
@@ -14592,7 +14589,7 @@ pub fn diagnostic_block_renderer(
             .relative()
             .size_full()
             .pl(cx.gutter_dimensions.width)
-            .w(cx.max_width + cx.gutter_dimensions.width)
+            .w(cx.max_width - cx.gutter_dimensions.full_width())
             .child(
                 div()
                     .flex()

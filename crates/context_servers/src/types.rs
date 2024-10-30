@@ -16,6 +16,8 @@ pub enum RequestType {
     PromptsList,
     CompletionComplete,
     Ping,
+    ListTools,
+    ListResourceTemplates,
 }
 
 impl RequestType {
@@ -32,6 +34,8 @@ impl RequestType {
             RequestType::PromptsList => "prompts/list",
             RequestType::CompletionComplete => "completion/complete",
             RequestType::Ping => "ping",
+            RequestType::ListTools => "tools/list",
+            RequestType::ListResourceTemplates => "resources/templates/list",
         }
     }
 }
@@ -401,4 +405,18 @@ impl CompletionTotal {
 pub struct Completion {
     pub values: Vec<String>,
     pub total: CompletionTotal,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CallToolResponse {
+    pub tool_result: serde_json::Value,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListToolsResponse {
+    pub tools: Vec<Tool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }

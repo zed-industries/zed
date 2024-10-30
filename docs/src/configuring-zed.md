@@ -2042,10 +2042,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
+    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
       "show": null
+    },
+    "indent_guides": {
+      "show": "always"
     }
   }
 }
@@ -2163,21 +2167,54 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `indent_size`
 - Default: `20`
 
-### Scrollbar
+### Indent Guides: Show
 
-- Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
-- Setting: `scrollbar`
-- Default:
+- Description: Whether to show indent guides in the project panel. Possible values: "always", "never".
+- Setting: `indent_guides`
 
 ```json
-"scrollbar": {
-    "show": null
+"indent_guides": {
+  "show": "always"
 }
 ```
 
 **Options**
 
-1. Show scrollbar in project panel
+1. Show indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "always"
+  }
+}
+```
+
+2. Hide indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "never"
+  }
+}
+```
+
+### Scrollbar: Show
+
+- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Setting: `scrollbar`
+- Default:
+
+```json
+"scrollbar": {
+  "show": null
+}
+```
+
+**Options**
+
+1. Show scrollbar in the project panel
 
 ```json
 {
@@ -2187,7 +2224,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-2. Hide scrollbar in project panel
+2. Hide scrollbar in the project panel
 
 ```json
 {
@@ -2232,6 +2269,12 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "indent_size": 20,
   "auto_reveal_entries": true,
   "auto_fold_dirs": true,
+  "indent_guides": {
+    "show": "always"
+  },
+  "scrollbar": {
+    "show": null
+  }
 }
 ```
 

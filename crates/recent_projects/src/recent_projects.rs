@@ -1,7 +1,7 @@
 pub mod disconnected_overlay;
 mod remote_servers;
 mod ssh_connections;
-pub use ssh_connections::open_ssh_project;
+pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
 
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};

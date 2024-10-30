@@ -68,7 +68,6 @@ impl Database {
                     connection.owner_id as i32,
                 ))),
                 id: ActiveValue::NotSet,
-                hosted_project_id: ActiveValue::Set(None),
             }
             .insert(&*tx)
             .await?;
@@ -536,39 +535,6 @@ impl Database {
         .await
     }
 
-    /// Adds the given connection to the specified hosted project
-    pub async fn join_hosted_project(
-        &self,
-        id: ProjectId,
-        user_id: UserId,
-        connection: ConnectionId,
-    ) -> Result<(Project, ReplicaId)> {
-        self.transaction(|tx| async move {
-            let (project, hosted_project) = project::Entity::find_by_id(id)
-                .find_also_related(hosted_project::Entity)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("hosted project is no longer shared"))?;
-
-            let Some(hosted_project) = hosted_project else {
-                return Err(anyhow!("project is not hosted"))?;
-            };
-
-            let channel = channel::Entity::find_by_id(hosted_project.channel_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such channel"))?;
-
-            let role = self
-                .check_user_is_channel_participant(&channel, user_id, &tx)
-                .await?;
-
-            self.join_project_internal(project, user_id, connection, role, &tx)
-                .await
-        })
-        .await
-    }
-
     pub async fn get_project(&self, id: ProjectId) -> Result<project::Model> {
         self.transaction(|tx| async move {
             Ok(project::Entity::find_by_id(id)
@@ -782,49 +748,6 @@ impl Database {
                 .collect(),
         };
         Ok((project, replica_id as ReplicaId))
-    }
-
-    pub async fn leave_hosted_project(
-        &self,
-        project_id: ProjectId,
-        connection: ConnectionId,
-    ) -> Result<LeftProject> {
-        self.transaction(|tx| async move {
-            let result = project_collaborator::Entity::delete_many()
-                .filter(
-                    Condition::all()
-                        .add(project_collaborator::Column::ProjectId.eq(project_id))
-                        .add(project_collaborator::Column::ConnectionId.eq(connection.id as i32))
-                        .add(
-                            project_collaborator::Column::ConnectionServerId
-                                .eq(connection.owner_id as i32),
-                        ),
-                )
-                .exec(&*tx)
-                .await?;
-            if result.rows_affected == 0 {
-                return Err(anyhow!("not in the project"))?;
-            }
-
-            let project = project::Entity::find_by_id(project_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
-            let collaborators = project
-                .find_related(project_collaborator::Entity)
-                .all(&*tx)
-                .await?;
-            let connection_ids = collaborators
-                .into_iter()
-                .map(|collaborator| collaborator.connection())
-                .collect();
-            Ok(LeftProject {
-                id: project.id,
-                connection_ids,
-                should_unshare: false,
-            })
-        })
-        .await
     }
 
     /// Removes the given connection from the specified project.

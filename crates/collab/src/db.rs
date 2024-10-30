@@ -617,7 +617,6 @@ pub struct ChannelsForUser {
     pub channels: Vec<Channel>,
     pub channel_memberships: Vec<channel_member::Model>,
     pub channel_participants: HashMap<ChannelId, Vec<UserId>>,
-    pub hosted_projects: Vec<proto::HostedProject>,
     pub invited_channels: Vec<Channel>,
 
     pub observed_buffer_versions: Vec<proto::ChannelBufferVersion>,
@@ -741,6 +740,7 @@ impl ProjectCollaborator {
             peer_id: Some(self.connection_id.into()),
             replica_id: self.replica_id.0 as u32,
             user_id: self.user_id.to_proto(),
+            is_host: self.is_host,
         }
     }
 }

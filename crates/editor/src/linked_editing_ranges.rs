@@ -41,9 +41,9 @@ pub(super) fn refresh_linked_ranges(this: &mut Editor, cx: &mut ViewContext<Edit
         return None;
     }
     let project = this.project.clone()?;
+    let selections = this.selections.all::<usize>(cx);
     let buffer = this.buffer.read(cx);
     let mut applicable_selections = vec![];
-    let selections = this.selections.all::<usize>(cx);
     let snapshot = buffer.snapshot(cx);
     for selection in selections {
         let cursor_position = selection.head();

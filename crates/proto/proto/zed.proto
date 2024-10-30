@@ -196,8 +196,6 @@ message Envelope {
         GetImplementation get_implementation = 162;
         GetImplementationResponse get_implementation_response = 163;
 
-        JoinHostedProject join_hosted_project = 164;
-
         CountLanguageModelTokens count_language_model_tokens = 230;
         CountLanguageModelTokensResponse count_language_model_tokens_response = 231;
         GetCachedEmbeddings get_cached_embeddings = 189;
@@ -261,9 +259,6 @@ message Envelope {
         CloseBuffer close_buffer = 245;
         UpdateUserSettings update_user_settings = 246;
 
-        CheckFileExists check_file_exists = 255;
-        CheckFileExistsResponse check_file_exists_response = 256;
-
         ShutdownRemoteServer shutdown_remote_server = 257;
 
         RemoveWorktree remove_worktree = 258;
@@ -281,12 +276,30 @@ message Envelope {
         FlushBufferedMessages flush_buffered_messages = 267;
 
         LanguageServerPromptRequest language_server_prompt_request = 268;
-        LanguageServerPromptResponse language_server_prompt_response = 269; // current max
-    }
+        LanguageServerPromptResponse language_server_prompt_response = 269;
+        GitBranches git_branches = 270;
+        GitBranchesResponse git_branches_response = 271;
 
+        UpdateGitBranch update_git_branch = 272;
+
+        ListToolchains list_toolchains = 273;
+        ListToolchainsResponse list_toolchains_response = 274;
+        ActivateToolchain activate_toolchain = 275;
+        ActiveToolchain active_toolchain = 276;
+        ActiveToolchainResponse active_toolchain_response = 277;
+
+        GetPathMetadata get_path_metadata = 278;
+        GetPathMetadataResponse get_path_metadata_response = 279;
+
+        GetPanicFiles get_panic_files = 280;
+        GetPanicFilesResponse get_panic_files_response = 281;
+
+        CancelLanguageServerWork cancel_language_server_work = 282; // current max
+    }
 
     reserved 87 to 88;
     reserved 158 to 161;
+    reserved 164;
     reserved 166 to 169;
     reserved 177 to 185;
     reserved 188;
@@ -297,6 +310,7 @@ message Envelope {
     reserved 221;
     reserved 224 to 229;
     reserved 247 to 254;
+    reserved 255 to 256;
 }
 
 // Messages
@@ -517,11 +531,6 @@ message UpdateProject {
 message JoinProject {
     uint64 project_id = 1;
 }
-
-message JoinHostedProject {
-    uint64 project_id = 1;
-}
-
 
 message ListRemoteDirectory {
     uint64 dev_server_id = 1;
@@ -1250,12 +1259,14 @@ message LspWorkStart {
     optional string title = 4;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 5;
 }
 
 message LspWorkProgress {
     string token = 1;
     optional string message = 2;
     optional uint32 percentage = 3;
+    optional bool is_cancellable = 4;
 }
 
 message LspWorkEnd {
@@ -1289,13 +1300,7 @@ message UpdateChannels {
     repeated ChannelMessageId latest_channel_message_ids = 8;
     repeated ChannelBufferVersion latest_channel_buffer_versions = 9;
 
-    repeated HostedProject hosted_projects = 10;
-    repeated uint64 deleted_hosted_projects = 11;
-
-    reserved 12;
-    reserved 13;
-    reserved 14;
-    reserved 15;
+    reserved 10 to 15;
 }
 
 message UpdateUserChannels {
@@ -1322,13 +1327,6 @@ message ChannelPermission {
 message ChannelParticipants {
     uint64 channel_id = 1;
     repeated uint64 participant_user_ids = 2;
-}
-
-message HostedProject {
-    uint64 project_id = 1;
-    uint64 channel_id = 2;
-    string name = 3;
-    ChannelVisibility visibility = 4;
 }
 
 message JoinChannel {
@@ -1730,6 +1728,7 @@ message Collaborator {
     PeerId peer_id = 1;
     uint32 replica_id = 2;
     uint64 user_id = 3;
+    bool is_host = 4;
 }
 
 message User {
@@ -2125,10 +2124,16 @@ message CommitPermalink {
 }
 
 message BlameBufferResponse {
-    repeated BlameEntry entries = 1;
-    repeated CommitMessage messages = 2;
-    repeated CommitPermalink permalinks = 3;
-    optional string remote_url = 4;
+    message BlameResponse {
+        repeated BlameEntry entries = 1;
+        repeated CommitMessage messages = 2;
+        repeated CommitPermalink permalinks = 3;
+        optional string remote_url = 4;
+    }
+
+    optional BlameResponse blame_response = 5;
+
+    reserved 1 to 4;
 }
 
 message MultiLspQuery {
@@ -2367,14 +2372,15 @@ message UpdateUserSettings {
     }
 }
 
-message CheckFileExists {
+message GetPathMetadata {
     uint64 project_id = 1;
     string path = 2;
 }
 
-message CheckFileExistsResponse {
+message GetPathMetadataResponse {
     bool exists = 1;
     string path = 2;
+    bool is_dir = 3;
 }
 
 message ShutdownRemoteServer {}
@@ -2407,7 +2413,6 @@ message GetPermalinkToLine {
 message GetPermalinkToLineResponse {
     string permalink = 1;
 }
-
 message FlushBufferedMessages {}
 message FlushBufferedMessagesResponse {}
 
@@ -2431,4 +2436,89 @@ message LanguageServerPromptRequest {
 
 message LanguageServerPromptResponse {
     optional uint64 action_response = 1;
+}
+
+message ListToolchains {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+}
+
+message Toolchain {
+    string name = 1;
+    string path = 2;
+}
+
+message ToolchainGroup {
+    uint64 start_index = 1;
+    string name = 2;
+}
+
+message ListToolchainsResponse {
+    repeated Toolchain toolchains = 1;
+    bool has_values = 2;
+    repeated ToolchainGroup groups = 3;
+}
+
+message ActivateToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    Toolchain toolchain = 3;
+    string language_name = 4;
+}
+
+message ActiveToolchain {
+    uint64 project_id = 1;
+    uint64 worktree_id = 2;
+    string language_name = 3;
+}
+
+message ActiveToolchainResponse {
+    optional Toolchain toolchain = 1;
+}
+
+message Branch {
+    bool is_head = 1;
+    string name = 2;
+    optional uint64 unix_timestamp = 3;
+}
+
+message GitBranches {
+    uint64 project_id = 1;
+    ProjectPath repository = 2;
+}
+
+message GitBranchesResponse {
+    repeated Branch branches = 1;
+}
+
+message UpdateGitBranch {
+    uint64 project_id = 1;
+    string branch_name = 2;
+    ProjectPath repository = 3;
+}
+
+message GetPanicFiles {
+}
+
+message GetPanicFilesResponse {
+    repeated string file_contents = 2;
+}
+
+message CancelLanguageServerWork {
+    uint64 project_id = 1;
+
+    oneof work {
+        Buffers buffers = 2;
+        LanguageServerWork language_server_work = 3;
+    }
+
+    message Buffers {
+        repeated uint64 buffer_ids = 2;
+    }
+
+    message LanguageServerWork {
+        uint64 language_server_id = 1;
+        optional string token = 2;
+    }
 }
