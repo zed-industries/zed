@@ -2011,77 +2011,97 @@ impl ChannelClient {
         mut incoming_rx: mpsc::UnboundedReceiver<Envelope>,
         cx: &AsyncAppContext,
     ) -> Task<Result<()>> {
-        cx.spawn(|cx| {
-            async move {
-                let peer_id = PeerId { owner_id: 0, id: 0 };
-                while let Some(incoming) = incoming_rx.next().await {
-                    let Some(this) = this.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-                    if let Some(ack_id) = incoming.ack_id {
-                        let mut buffer = this.buffer.lock();
-                        while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
-                            buffer.pop_front();
+        cx.spawn(|cx| async move {
+            let peer_id = PeerId { owner_id: 0, id: 0 };
+            while let Some(incoming) = incoming_rx.next().await {
+                let Some(this) = this.upgrade() else {
+                    return anyhow::Ok(());
+                };
+                if let Some(ack_id) = incoming.ack_id {
+                    let mut buffer = this.buffer.lock();
+                    while buffer.front().is_some_and(|msg| msg.id <= ack_id) {
+                        buffer.pop_front();
+                    }
+                }
+                if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) = &incoming.payload
+                {
+                    log::debug!(
+                        "{}:ssh message received. name:FlushBufferedMessages",
+                        this.name
+                    );
+                    {
+                        let buffer = this.buffer.lock();
+                        for envelope in buffer.iter() {
+                            this.outgoing_tx
+                                .lock()
+                                .unbounded_send(envelope.clone())
+                                .ok();
                         }
                     }
-                    if let Some(proto::envelope::Payload::FlushBufferedMessages(_)) =
-                        &incoming.payload
-                    {
-                        log::debug!("{}:ssh message received. name:FlushBufferedMessages", this.name);
-                        {
-                            let buffer = this.buffer.lock();
-                            for envelope in buffer.iter() {
-                                this.outgoing_tx.lock().unbounded_send(envelope.clone()).ok();
-                            }
+                    let mut envelope = proto::Ack {}.into_envelope(0, Some(incoming.id), None);
+                    envelope.id = this.next_message_id.fetch_add(1, SeqCst);
+                    this.outgoing_tx.lock().unbounded_send(envelope).ok();
+                    continue;
+                }
+
+                this.max_received.store(incoming.id, SeqCst);
+
+                if let Some(request_id) = incoming.responding_to {
+                    let request_id = MessageId(request_id);
+                    let sender = this.response_channels.lock().remove(&request_id);
+                    if let Some(sender) = sender {
+                        let (tx, rx) = oneshot::channel();
+                        if incoming.payload.is_some() {
+                            sender.send((incoming, tx)).ok();
                         }
-                        let mut envelope = proto::Ack{}.into_envelope(0, Some(incoming.id), None);
-                        envelope.id = this.next_message_id.fetch_add(1, SeqCst);
-                        this.outgoing_tx.lock().unbounded_send(envelope).ok();
-                        continue;
+                        rx.await.ok();
                     }
-
-                    this.max_received.store(incoming.id, SeqCst);
-
-                    if let Some(request_id) = incoming.responding_to {
-                        let request_id = MessageId(request_id);
-                        let sender = this.response_channels.lock().remove(&request_id);
-                        if let Some(sender) = sender {
-                            let (tx, rx) = oneshot::channel();
-                            if incoming.payload.is_some() {
-                                sender.send((incoming, tx)).ok();
-                            }
-                            rx.await.ok();
-                        }
-                    } else if let Some(envelope) =
-                        build_typed_envelope(peer_id, Instant::now(), incoming)
-                    {
-                        let type_name = envelope.payload_type_name();
-                        if let Some(future) = ProtoMessageHandlerSet::handle_message(
-                            &this.message_handlers,
-                            envelope,
-                            this.clone().into(),
-                            cx.clone(),
-                        ) {
-                            log::debug!("{}:ssh message received. name:{type_name}", this.name);
-                            cx.foreground_executor().spawn(async move {
+                } else if let Some(envelope) =
+                    build_typed_envelope(peer_id, Instant::now(), incoming)
+                {
+                    let type_name = envelope.payload_type_name();
+                    if let Some(future) = ProtoMessageHandlerSet::handle_message(
+                        &this.message_handlers,
+                        envelope,
+                        this.clone().into(),
+                        cx.clone(),
+                    ) {
+                        log::debug!("{}:ssh message received. name:{type_name}", this.name);
+                        cx.foreground_executor()
+                            .spawn(async move {
                                 match future.await {
                                     Ok(_) => {
-                                        log::debug!("{}:ssh message handled. name:{type_name}", this.name);
+                                        log::debug!(
+                                            "{}:ssh message handled. name:{type_name}",
+                                            this.name
+                                        );
                                     }
                                     Err(error) => {
                                         log::error!(
-                                            "{}:error handling message. type:{type_name}, error:{error}", this.name,
+                                            "{}:error handling message. type:{}, error:{}",
+                                            this.name,
+                                            type_name,
+                                            format!("{error:#}").lines().fold(
+                                                String::new(),
+                                                |mut message, line| {
+                                                    if !message.is_empty() {
+                                                        message.push(' ');
+                                                    }
+                                                    message.push_str(line);
+                                                    message
+                                                }
+                                            )
                                         );
                                     }
                                 }
-                            }).detach()
-                        } else {
-                            log::error!("{}:unhandled ssh message name:{type_name}", this.name);
-                        }
+                            })
+                            .detach()
+                    } else {
+                        log::error!("{}:unhandled ssh message name:{type_name}", this.name);
                     }
                 }
-                anyhow::Ok(())
             }
+            anyhow::Ok(())
         })
     }
 
