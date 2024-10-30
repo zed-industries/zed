@@ -4119,7 +4119,7 @@ impl LspStore {
                         LanguageServerProgress {
                             title: payload.title,
                             is_disk_based_diagnostics_progress: false,
-                            is_cancellable: false,
+                            is_cancellable: payload.is_cancellable.unwrap_or(false),
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
                             last_update_at: cx.background_executor().now(),
@@ -4135,7 +4135,7 @@ impl LspStore {
                         LanguageServerProgress {
                             title: None,
                             is_disk_based_diagnostics_progress: false,
-                            is_cancellable: false,
+                            is_cancellable: payload.is_cancellable.unwrap_or(false),
                             message: payload.message,
                             percentage: payload.percentage.map(|p| p as usize),
                             last_update_at: cx.background_executor().now(),
@@ -4636,6 +4636,7 @@ impl LspStore {
                                 token,
                                 message: report.message,
                                 percentage: report.percentage,
+                                is_cancellable: report.cancellable,
                             },
                         ),
                     })
@@ -4669,6 +4670,7 @@ impl LspStore {
                 title: progress.title,
                 message: progress.message,
                 percentage: progress.percentage.map(|p| p as u32),
+                is_cancellable: Some(progress.is_cancellable),
             }),
         })
     }
@@ -4698,6 +4700,9 @@ impl LspStore {
                         }
                         if progress.percentage.is_some() {
                             entry.percentage = progress.percentage;
+                        }
+                        if progress.is_cancellable != entry.is_cancellable {
+                            entry.is_cancellable = progress.is_cancellable;
                         }
                         cx.notify();
                         return true;
@@ -5182,8 +5187,19 @@ impl LspStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
-            let buffers = this.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
-            this.cancel_language_server_work_for_buffers(buffers, cx);
+            if let Some(work) = envelope.payload.work {
+                match work {
+                    proto::cancel_language_server_work::Work::Buffers(buffers) => {
+                        let buffers =
+                            this.buffer_ids_to_buffers(buffers.buffer_ids.into_iter(), cx);
+                        this.cancel_language_server_work_for_buffers(buffers, cx);
+                    }
+                    proto::cancel_language_server_work::Work::LanguageServerWork(work) => {
+                        let server_id = LanguageServerId::from_proto(work.language_server_id);
+                        this.cancel_language_server_work(server_id, work.token, cx);
+                    }
+                }
+            }
         })?;
 
         Ok(proto::Ack {})
@@ -6751,10 +6767,14 @@ impl LspStore {
         if let Some((client, project_id)) = self.upstream_client() {
             let request = client.request(proto::CancelLanguageServerWork {
                 project_id,
-                buffer_ids: buffers
-                    .into_iter()
-                    .map(|b| b.read(cx).remote_id().to_proto())
-                    .collect(),
+                work: Some(proto::cancel_language_server_work::Work::Buffers(
+                    proto::cancel_language_server_work::Buffers {
+                        buffer_ids: buffers
+                            .into_iter()
+                            .map(|b| b.read(cx).remote_id().to_proto())
+                            .collect(),
+                    },
+                )),
             });
             cx.background_executor()
                 .spawn(request)
@@ -6771,6 +6791,62 @@ impl LspStore {
             for server_id in servers {
                 self.cancel_language_server_work(server_id, None, cx);
             }
+        }
+    }
+
+    pub(crate) fn cancel_language_server_work(
+        &mut self,
+        server_id: LanguageServerId,
+        token_to_cancel: Option<String>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(local) = self.as_local() {
+            let status = self.language_server_statuses.get(&server_id);
+            let server = local.language_servers.get(&server_id);
+            if let Some((LanguageServerState::Running { server, .. }, status)) = server.zip(status)
+            {
+                for (token, progress) in &status.pending_work {
+                    if let Some(token_to_cancel) = token_to_cancel.as_ref() {
+                        if token != token_to_cancel {
+                            continue;
+                        }
+                    }
+                    if progress.is_cancellable {
+                        server
+                            .notify::<lsp::notification::WorkDoneProgressCancel>(
+                                WorkDoneProgressCancelParams {
+                                    token: lsp::NumberOrString::String(token.clone()),
+                                },
+                            )
+                            .ok();
+                    }
+
+                    if progress.is_cancellable {
+                        server
+                            .notify::<lsp::notification::WorkDoneProgressCancel>(
+                                WorkDoneProgressCancelParams {
+                                    token: lsp::NumberOrString::String(token.clone()),
+                                },
+                            )
+                            .ok();
+                    }
+                }
+            }
+        } else if let Some((client, project_id)) = self.upstream_client() {
+            let request = client.request(proto::CancelLanguageServerWork {
+                project_id,
+                work: Some(
+                    proto::cancel_language_server_work::Work::LanguageServerWork(
+                        proto::cancel_language_server_work::LanguageServerWork {
+                            language_server_id: server_id.to_proto(),
+                            token: token_to_cancel,
+                        },
+                    ),
+                ),
+            });
+            cx.background_executor()
+                .spawn(request)
+                .detach_and_log_err(cx);
         }
     }
 
@@ -6896,47 +6972,6 @@ impl LspStore {
                             .notify::<lsp::notification::DidChangeWatchedFiles>(params)
                             .log_err();
                     }
-                }
-            }
-        }
-    }
-
-    pub(crate) fn cancel_language_server_work(
-        &mut self,
-        server_id: LanguageServerId,
-        token_to_cancel: Option<String>,
-        _cx: &mut ModelContext<Self>,
-    ) {
-        let Some(local) = self.as_local() else {
-            return;
-        };
-        let status = self.language_server_statuses.get(&server_id);
-        let server = local.language_servers.get(&server_id);
-        if let Some((LanguageServerState::Running { server, .. }, status)) = server.zip(status) {
-            for (token, progress) in &status.pending_work {
-                if let Some(token_to_cancel) = token_to_cancel.as_ref() {
-                    if token != token_to_cancel {
-                        continue;
-                    }
-                }
-                if progress.is_cancellable {
-                    server
-                        .notify::<lsp::notification::WorkDoneProgressCancel>(
-                            WorkDoneProgressCancelParams {
-                                token: lsp::NumberOrString::String(token.clone()),
-                            },
-                        )
-                        .ok();
-                }
-
-                if progress.is_cancellable {
-                    server
-                        .notify::<lsp::notification::WorkDoneProgressCancel>(
-                            WorkDoneProgressCancelParams {
-                                token: lsp::NumberOrString::String(token.clone()),
-                            },
-                        )
-                        .ok();
                 }
             }
         }

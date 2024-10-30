@@ -618,44 +618,80 @@ async fn test_remote_cancel_language_server_work(
 
     let mut fake_lsp = fake_lsp.next().await.unwrap();
 
-    // Start two operations, one cancelable and one not.
-    fake_lsp
-        .start_progress_with(
-            "another-token",
-            lsp::WorkDoneProgressBegin {
-                cancellable: Some(false),
-                ..Default::default()
-            },
-        )
-        .await;
+    // Cancelling all language server work for a given buffer
+    {
+        // Two operations, one cancellable and one not.
+        fake_lsp
+            .start_progress_with(
+                "another-token",
+                lsp::WorkDoneProgressBegin {
+                    cancellable: Some(false),
+                    ..Default::default()
+                },
+            )
+            .await;
 
-    let progress_token = "the-progress-token";
-    fake_lsp
-        .start_progress_with(
-            progress_token,
-            lsp::WorkDoneProgressBegin {
-                cancellable: Some(true),
-                ..Default::default()
-            },
-        )
-        .await;
+        let progress_token = "the-progress-token";
+        fake_lsp
+            .start_progress_with(
+                progress_token,
+                lsp::WorkDoneProgressBegin {
+                    cancellable: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await;
 
-    cx.executor().run_until_parked();
+        cx.executor().run_until_parked();
 
-    project.update(cx, |project, cx| {
-        project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
-    });
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work_for_buffers([buffer.clone()], cx)
+        });
 
-    cx.executor().run_until_parked();
+        cx.executor().run_until_parked();
 
-    // Verify the cancellation was received on the server side
-    let cancel_notification = fake_lsp
-        .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
-        .await;
-    assert_eq!(
-        cancel_notification.token,
-        lsp::NumberOrString::String(progress_token.into())
-    );
+        // Verify the cancellation was received on the server side
+        let cancel_notification = fake_lsp
+            .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
+            .await;
+        assert_eq!(
+            cancel_notification.token,
+            lsp::NumberOrString::String(progress_token.into())
+        );
+    }
+
+    // Cancelling work by server_id and token
+    {
+        let server_id = fake_lsp.server.server_id();
+        let progress_token = "the-progress-token";
+
+        fake_lsp
+            .start_progress_with(
+                progress_token,
+                lsp::WorkDoneProgressBegin {
+                    cancellable: Some(true),
+                    ..Default::default()
+                },
+            )
+            .await;
+
+        cx.executor().run_until_parked();
+
+        project.update(cx, |project, cx| {
+            project.cancel_language_server_work(server_id, Some(progress_token.into()), cx)
+        });
+
+        cx.executor().run_until_parked();
+
+        // Verify the cancellation was received on the server side
+        let cancel_notification = fake_lsp
+            .receive_notification::<lsp::notification::WorkDoneProgressCancel>()
+            .await;
+        assert_eq!(
+            cancel_notification.token,
+            lsp::NumberOrString::String(progress_token.into())
+        );
+    }
 }
 
 #[gpui::test]
