@@ -1045,7 +1045,7 @@ impl ProjectPanel {
         }
     }
 
-    fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
+    fn rename_impl(&mut self, selection: Option<Range<usize>>, cx: &mut ViewContext<Self>) {
         if let Some(SelectedEntry {
             worktree_id,
             entry_id,
@@ -1068,13 +1068,16 @@ impl ProjectPanel {
                         .map(|s| s.to_string_lossy())
                         .unwrap_or_default()
                         .to_string();
-                    let file_stem = entry.path.file_stem().map(|s| s.to_string_lossy());
-                    let selection_end =
-                        file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
+                    let selection = selection.unwrap_or_else(|| {
+                        let file_stem = entry.path.file_stem().map(|s| s.to_string_lossy());
+                        let selection_end =
+                            file_stem.map_or(file_name.len(), |file_stem| file_stem.len());
+                        0..selection_end
+                    });
                     self.filename_editor.update(cx, |editor, cx| {
                         editor.set_text(file_name, cx);
                         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                            s.select_ranges([0..selection_end])
+                            s.select_ranges([selection])
                         });
                         editor.focus(cx);
                     });
@@ -1084,6 +1087,10 @@ impl ProjectPanel {
                 }
             }
         }
+    }
+
+    fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
+        self.rename_impl(None, cx);
     }
 
     fn trash(&mut self, action: &Trash, cx: &mut ViewContext<Self>) {
@@ -1366,7 +1373,7 @@ impl ProjectPanel {
         source: &SelectedEntry,
         (worktree, target_entry): (Model<Worktree>, &Entry),
         cx: &AppContext,
-    ) -> Option<PathBuf> {
+    ) -> Option<(PathBuf, Option<Range<usize>>)> {
         let mut new_path = target_entry.path.to_path_buf();
         // If we're pasting into a file, or a directory into itself, go up one level.
         if target_entry.is_file() || (target_entry.is_dir() && target_entry.id == source.entry_id) {
@@ -1382,6 +1389,8 @@ impl ProjectPanel {
         new_path.push(&clipboard_entry_file_name);
         let extension = new_path.extension().map(|e| e.to_os_string());
         let file_name_without_extension = Path::new(&clipboard_entry_file_name).file_stem()?;
+        let file_name_len = file_name_without_extension.to_string_lossy().len();
+        let mut disambiguation_range = None;
         let mut ix = 0;
         {
             let worktree = worktree.read(cx);
@@ -1389,9 +1398,17 @@ impl ProjectPanel {
                 new_path.pop();
 
                 let mut new_file_name = file_name_without_extension.to_os_string();
-                new_file_name.push(" copy");
+
+                let disambiguation = " copy";
+                let mut disambiguation_len = disambiguation.len();
+
+                new_file_name.push(disambiguation);
+
                 if ix > 0 {
-                    new_file_name.push(format!(" {}", ix));
+                    let extra_disambiguation = format!(" {}", ix);
+                    disambiguation_len += extra_disambiguation.len();
+
+                    new_file_name.push(extra_disambiguation);
                 }
                 if let Some(extension) = extension.as_ref() {
                     new_file_name.push(".");
@@ -1399,10 +1416,11 @@ impl ProjectPanel {
                 }
 
                 new_path.push(new_file_name);
+                disambiguation_range = Some(file_name_len..(file_name_len + disambiguation_len));
                 ix += 1;
             }
         }
-        Some(new_path)
+        Some((new_path, disambiguation_range))
     }
 
     fn paste(&mut self, _: &Paste, cx: &mut ViewContext<Self>) {
@@ -1418,11 +1436,13 @@ impl ProjectPanel {
                 Rename(Task<Result<CreatedEntry>>),
                 Copy(Task<Result<Option<Entry>>>),
             }
-            let mut paste_entry_tasks: IndexMap<(ProjectEntryId, bool), PasteTask> =
-                IndexMap::default();
+            let mut paste_entry_tasks: IndexMap<
+                (ProjectEntryId, bool, Option<Range<usize>>),
+                PasteTask,
+            > = IndexMap::default();
             let clip_is_cut = clipboard_entries.is_cut();
             for clipboard_entry in clipboard_entries.items() {
-                let new_path =
+                let (new_path, disambiguation_range) =
                     self.create_paste_path(clipboard_entry, self.selected_sub_entry(cx)?, cx)?;
                 let clip_entry_id = clipboard_entry.entry_id;
                 let is_same_worktree = clipboard_entry.worktree_id == worktree_id;
@@ -1458,39 +1478,30 @@ impl ProjectPanel {
                     PasteTask::Copy(task)
                 };
                 let needs_delete = !is_same_worktree && clip_is_cut;
-                paste_entry_tasks.insert((clip_entry_id, needs_delete), task);
+                paste_entry_tasks.insert((clip_entry_id, needs_delete, disambiguation_range), task);
             }
 
             cx.spawn(|project_panel, mut cx| async move {
                 let mut last_succeed = None;
                 let mut need_delete_ids = Vec::new();
-                for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
+                for ((entry_id, need_delete, disambiguation_range), task) in
+                    paste_entry_tasks.into_iter()
+                {
                     match task {
                         PasteTask::Rename(task) => {
                             if let Some(CreatedEntry::Included(entry)) = task.await.log_err() {
-                                last_succeed = Some(entry.id);
+                                last_succeed = Some((entry.id, disambiguation_range));
                             }
                         }
                         PasteTask::Copy(task) => {
                             if let Some(Some(entry)) = task.await.log_err() {
-                                last_succeed = Some(entry.id);
+                                last_succeed = Some((entry.id, disambiguation_range));
                                 if need_delete {
                                     need_delete_ids.push(entry_id);
                                 }
                             }
                         }
                     }
-                }
-                // update selection
-                if let Some(entry_id) = last_succeed {
-                    project_panel
-                        .update(&mut cx, |project_panel, _cx| {
-                            project_panel.selection = Some(SelectedEntry {
-                                worktree_id,
-                                entry_id,
-                            });
-                        })
-                        .ok();
                 }
                 // remove entry for cut in difference worktree
                 for entry_id in need_delete_ids {
@@ -1502,6 +1513,22 @@ impl ProjectPanel {
                                 .ok_or_else(|| anyhow!("no such entry"))
                         })??
                         .await?;
+                }
+                // update selection
+                if let Some((entry_id, disambiguation_range)) = last_succeed {
+                    project_panel
+                        .update(&mut cx, |project_panel, cx| {
+                            project_panel.selection = Some(SelectedEntry {
+                                worktree_id,
+                                entry_id,
+                            });
+
+                            // if the entry was disambiguated, open the rename editor
+                            if let Some(disambiguation_range) = disambiguation_range {
+                                project_panel.rename_impl(Some(disambiguation_range), cx);
+                            }
+                        })
+                        .ok();
                 }
 
                 anyhow::Ok(())
@@ -2155,23 +2182,51 @@ impl ProjectPanel {
             let _ = maybe!({
                 let project = self.project.read(cx);
                 let target_worktree = project.worktree_for_entry(target_entry_id, cx)?;
+                let worktree_id = target_worktree.read(cx).id();
                 let target_entry = target_worktree
                     .read(cx)
                     .entry_for_id(target_entry_id)?
                     .clone();
+
+                let mut copy_tasks = Vec::new();
                 for selection in selections.items() {
-                    let new_path = self.create_paste_path(
+                    let (new_path, disambiguation_range) = self.create_paste_path(
                         selection,
                         (target_worktree.clone(), &target_entry),
                         cx,
                     )?;
-                    self.project
-                        .update(cx, |project, cx| {
-                            project.copy_entry(selection.entry_id, None, new_path, cx)
-                        })
-                        .detach_and_log_err(cx)
+
+                    let task = self.project.update(cx, |project, cx| {
+                        project.copy_entry(selection.entry_id, None, new_path, cx)
+                    });
+                    copy_tasks.push((disambiguation_range, task));
                 }
 
+                cx.spawn(|project_panel, mut cx| async move {
+                    let mut last_succeed = None;
+                    for (disambiguation_range, task) in copy_tasks.into_iter() {
+                        if let Some(Some(entry)) = task.await.log_err() {
+                            last_succeed = Some((entry.id, disambiguation_range));
+                        }
+                    }
+                    // update selection
+                    if let Some((entry_id, disambiguation_range)) = last_succeed {
+                        project_panel
+                            .update(&mut cx, |project_panel, cx| {
+                                project_panel.selection = Some(SelectedEntry {
+                                    worktree_id,
+                                    entry_id,
+                                });
+
+                                // if the entry was disambiguated, open the rename editor
+                                if let Some(disambiguation_range) = disambiguation_range {
+                                    project_panel.rename_impl(Some(disambiguation_range), cx);
+                                }
+                            })
+                            .ok();
+                    }
+                })
+                .detach();
                 Some(())
             });
         } else {
