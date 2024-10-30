@@ -1736,13 +1736,19 @@ impl SshRemoteConnection {
             }
         }
 
-        if self.is_binary_in_use(dst_path).await? {
-            log::info!("server binary is opened by another process. not updating");
-            delegate.set_status(
-                Some("Skipping update of remote development server, since it's still in use"),
-                cx,
-            );
-            return Ok(());
+        if cfg!(not(debug_assertions)) {
+            // When we're not in dev mode, we don't want to switch out the binary if it's
+            // still open.
+            // In dev mode, that's fine, since we often kill Zed processes with Ctrl-C and want
+            // to still replace the binary.
+            if self.is_binary_in_use(dst_path).await? {
+                log::info!("server binary is opened by another process. not updating");
+                delegate.set_status(
+                    Some("Skipping update of remote development server, since it's still in use"),
+                    cx,
+                );
+                return Ok(());
+            }
         }
 
         let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
