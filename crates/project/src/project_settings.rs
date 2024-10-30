@@ -161,8 +161,9 @@ pub struct InlineBlameSettings {
 const fn true_value() -> bool {
     true
 }
+
 const fn false_value() -> bool {
-    true
+    false
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
