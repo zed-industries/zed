@@ -532,6 +532,7 @@
     "context": "ContextEditor > Editor",
     "bindings": {
       "ctrl-enter": "assistant::Assist",
+      "ctrl-shift-enter": "assistant::Edit",
       "ctrl-s": "workspace::Save",
       "ctrl->": "assistant::QuoteSelection",
       "ctrl-<": "assistant::InsertIntoEditor",

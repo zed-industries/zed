@@ -13,10 +13,11 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
     Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
-    Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector,
-    NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
-    RemoteContextMetadata, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
+    DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
+    InsertIntoEditor, Message, MessageId, MessageMetadata, MessageStatus, ModelPickerDelegate,
+    ModelSelector, NewContext, PendingSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -1588,23 +1589,11 @@ impl ContextEditor {
     }
 
     fn assist(&mut self, _: &Assist, cx: &mut ViewContext<Self>) {
-        let provider = LanguageModelRegistry::read_global(cx).active_provider();
-        if provider
-            .as_ref()
-            .map_or(false, |provider| provider.must_accept_terms(cx))
-        {
-            self.show_accept_terms = true;
-            cx.notify();
-            return;
-        }
+        self.send_to_model(RequestType::Chat, cx);
+    }
 
-        if self.focus_active_patch(cx) {
-            return;
-        }
-
-        self.last_error = None;
-        self.send_to_model(cx);
-        cx.notify();
+    fn edit(&mut self, _: &Edit, cx: &mut ViewContext<Self>) {
+        self.send_to_model(RequestType::SuggestEdits, cx);
     }
 
     fn focus_active_patch(&mut self, cx: &mut ViewContext<Self>) -> bool {
@@ -1622,8 +1611,27 @@ impl ContextEditor {
         false
     }
 
-    fn send_to_model(&mut self, cx: &mut ViewContext<Self>) {
-        if let Some(user_message) = self.context.update(cx, |context, cx| context.assist(cx)) {
+    fn send_to_model(&mut self, request_type: RequestType, cx: &mut ViewContext<Self>) {
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+        if provider
+            .as_ref()
+            .map_or(false, |provider| provider.must_accept_terms(cx))
+        {
+            self.show_accept_terms = true;
+            cx.notify();
+            return;
+        }
+
+        if self.focus_active_patch(cx) {
+            return;
+        }
+
+        self.last_error = None;
+
+        if let Some(user_message) = self
+            .context
+            .update(cx, |context, cx| context.assist(request_type, cx))
+        {
             let new_selection = {
                 let cursor = user_message
                     .start
@@ -1640,6 +1648,8 @@ impl ContextEditor {
             // Avoid scrolling to the new cursor position so the assistant's output is stable.
             cx.defer(|this, _| this.scroll_position = None);
         }
+
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
@@ -1667,8 +1677,10 @@ impl ContextEditor {
         });
     }
 
-    fn cursors(&self, cx: &AppContext) -> Vec<usize> {
-        let selections = self.editor.read(cx).selections.all::<usize>(cx);
+    fn cursors(&self, cx: &mut WindowContext) -> Vec<usize> {
+        let selections = self
+            .editor
+            .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
         selections
             .into_iter()
             .map(|selection| selection.head())
@@ -2375,7 +2387,9 @@ impl ContextEditor {
     }
 
     fn update_active_patch(&mut self, cx: &mut ViewContext<Self>) {
-        let newest_cursor = self.editor.read(cx).selections.newest::<Point>(cx).head();
+        let newest_cursor = self.editor.update(cx, |editor, cx| {
+            editor.selections.newest::<Point>(cx).head()
+        });
         let context = self.context.read(cx);
 
         let new_patch = context.patch_containing(newest_cursor, cx).cloned();
@@ -2782,39 +2796,40 @@ impl ContextEditor {
     ) -> Option<(String, bool)> {
         const CODE_FENCE_DELIMITER: &'static str = "```";
 
-        let context_editor = context_editor_view.read(cx).editor.read(cx);
+        let context_editor = context_editor_view.read(cx).editor.clone();
+        context_editor.update(cx, |context_editor, cx| {
+            if context_editor.selections.newest::<Point>(cx).is_empty() {
+                let snapshot = context_editor.buffer().read(cx).snapshot(cx);
+                let (_, _, snapshot) = snapshot.as_singleton()?;
 
-        if context_editor.selections.newest::<Point>(cx).is_empty() {
-            let snapshot = context_editor.buffer().read(cx).snapshot(cx);
-            let (_, _, snapshot) = snapshot.as_singleton()?;
+                let head = context_editor.selections.newest::<Point>(cx).head();
+                let offset = snapshot.point_to_offset(head);
 
-            let head = context_editor.selections.newest::<Point>(cx).head();
-            let offset = snapshot.point_to_offset(head);
+                let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
+                let mut text = snapshot
+                    .text_for_range(surrounding_code_block_range)
+                    .collect::<String>();
 
-            let surrounding_code_block_range = find_surrounding_code_block(snapshot, offset)?;
-            let mut text = snapshot
-                .text_for_range(surrounding_code_block_range)
-                .collect::<String>();
+                // If there is no newline trailing the closing three-backticks, then
+                // tree-sitter-md extends the range of the content node to include
+                // the backticks.
+                if text.ends_with(CODE_FENCE_DELIMITER) {
+                    text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+                }
 
-            // If there is no newline trailing the closing three-backticks, then
-            // tree-sitter-md extends the range of the content node to include
-            // the backticks.
-            if text.ends_with(CODE_FENCE_DELIMITER) {
-                text.drain((text.len() - CODE_FENCE_DELIMITER.len())..);
+                (!text.is_empty()).then_some((text, true))
+            } else {
+                let anchor = context_editor.selections.newest_anchor();
+                let text = context_editor
+                    .buffer()
+                    .read(cx)
+                    .read(cx)
+                    .text_for_range(anchor.range())
+                    .collect::<String>();
+
+                (!text.is_empty()).then_some((text, false))
             }
-
-            (!text.is_empty()).then_some((text, true))
-        } else {
-            let anchor = context_editor.selections.newest_anchor();
-            let text = context_editor
-                .buffer()
-                .read(cx)
-                .read(cx)
-                .text_for_range(anchor.range())
-                .collect::<String>();
-
-            (!text.is_empty()).then_some((text, false))
-        }
+        })
     }
 
     fn insert_selection(
@@ -3644,13 +3659,70 @@ impl ContextEditor {
                 button.tooltip(move |_| tooltip.clone())
             })
             .layer(ElevationIndex::ModalSurface)
-            .child(Label::new("Send"))
+            .child(Label::new(
+                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
+                    "Chat"
+                } else {
+                    "Send"
+                },
+            ))
             .children(
                 KeyBinding::for_action_in(&Assist, &focus_handle, cx)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, cx| {
                 focus_handle.dispatch_action(&Assist, cx);
+            })
+    }
+
+    fn render_edit_button(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let focus_handle = self.focus_handle(cx).clone();
+
+        let (style, tooltip) = match token_state(&self.context, cx) {
+            Some(TokenState::NoTokensLeft { .. }) => (
+                ButtonStyle::Tinted(TintColor::Negative),
+                Some(Tooltip::text("Token limit reached", cx)),
+            ),
+            Some(TokenState::HasMoreTokens {
+                over_warn_threshold,
+                ..
+            }) => {
+                let (style, tooltip) = if over_warn_threshold {
+                    (
+                        ButtonStyle::Tinted(TintColor::Warning),
+                        Some(Tooltip::text("Token limit is close to exhaustion", cx)),
+                    )
+                } else {
+                    (ButtonStyle::Filled, None)
+                };
+                (style, tooltip)
+            }
+            None => (ButtonStyle::Filled, None),
+        };
+
+        let provider = LanguageModelRegistry::read_global(cx).active_provider();
+
+        let has_configuration_error = configuration_error(cx).is_some();
+        let needs_to_accept_terms = self.show_accept_terms
+            && provider
+                .as_ref()
+                .map_or(false, |provider| provider.must_accept_terms(cx));
+        let disabled = has_configuration_error || needs_to_accept_terms;
+
+        ButtonLike::new("edit_button")
+            .disabled(disabled)
+            .style(style)
+            .when_some(tooltip, |button, tooltip| {
+                button.tooltip(move |_| tooltip.clone())
+            })
+            .layer(ElevationIndex::ModalSurface)
+            .child(Label::new("Suggest Edits"))
+            .children(
+                KeyBinding::for_action_in(&Edit, &focus_handle, cx)
+                    .map(|binding| binding.into_any_element()),
+            )
+            .on_click(move |_event, cx| {
+                focus_handle.dispatch_action(&Edit, cx);
             })
     }
 
@@ -3910,6 +3982,7 @@ impl Render for ContextEditor {
             .capture_action(cx.listener(ContextEditor::paste))
             .capture_action(cx.listener(ContextEditor::cycle_message_role))
             .capture_action(cx.listener(ContextEditor::confirm_command))
+            .on_action(cx.listener(ContextEditor::edit))
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .size_full()
@@ -3974,7 +4047,21 @@ impl Render for ContextEditor {
                             h_flex()
                                 .w_full()
                                 .justify_end()
-                                .child(div().child(self.render_send_button(cx))),
+                                .when(
+                                    AssistantSettings::get_global(cx).are_live_diffs_enabled(cx),
+                                    |buttons| {
+                                        buttons
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(self.render_edit_button(cx))
+                                            .child(
+                                                Label::new("or")
+                                                    .size(LabelSize::Small)
+                                                    .color(Color::Muted),
+                                            )
+                                    },
+                                )
+                                .child(self.render_send_button(cx)),
                         ),
                 ),
             )

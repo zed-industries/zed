@@ -1204,7 +1204,7 @@ impl RemoteServerProjects {
         Modal::new("remote-projects", Some(self.scroll_handle.clone()))
             .header(
                 ModalHeader::new()
-                    .child(Headline::new("Remote Projects (alpha)").size(HeadlineSize::XSmall)),
+                    .child(Headline::new("Remote Projects (beta)").size(HeadlineSize::XSmall)),
             )
             .section(
                 Section::new().padded(false).child(

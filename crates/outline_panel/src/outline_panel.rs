@@ -35,7 +35,7 @@ use itertools::Itertools;
 use language::{BufferId, BufferSnapshot, OffsetRangeExt, OutlineItem};
 use menu::{Cancel, SelectFirst, SelectLast, SelectNext, SelectPrev};
 
-use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings};
+use outline_panel_settings::{OutlinePanelDockPosition, OutlinePanelSettings, ShowIndentGuides};
 use project::{File, Fs, Item, Project};
 use search::{BufferSearchBar, ProjectSearchView};
 use serde::{Deserialize, Serialize};
@@ -2410,11 +2410,9 @@ impl OutlinePanel {
         editor: &View<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Option<PanelEntry> {
-        let selection = editor
-            .read(cx)
-            .selections
-            .newest::<language::Point>(cx)
-            .head();
+        let selection = editor.update(cx, |editor, cx| {
+            editor.selections.newest::<language::Point>(cx).head()
+        });
         let editor_snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx));
         let multi_buffer = editor.read(cx).buffer();
         let multi_buffer_snapshot = multi_buffer.read(cx).snapshot(cx);
@@ -3748,7 +3746,7 @@ impl Render for OutlinePanel {
         let pinned = self.pinned;
         let settings = OutlinePanelSettings::get_global(cx);
         let indent_size = settings.indent_size;
-        let show_indent_guides = settings.indent_guides;
+        let show_indent_guides = settings.indent_guides.show == ShowIndentGuides::Always;
 
         let outline_panel = v_flex()
             .id("outline-panel")

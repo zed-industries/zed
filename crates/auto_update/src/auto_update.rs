@@ -84,9 +84,9 @@ pub struct AutoUpdater {
 }
 
 #[derive(Deserialize)]
-struct JsonRelease {
-    version: String,
-    url: String,
+pub struct JsonRelease {
+    pub version: String,
+    pub url: String,
 }
 
 struct MacOsUnmounter {
@@ -482,7 +482,7 @@ impl AutoUpdater {
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Result<(String, String)> {
+    ) -> Result<(JsonRelease, String)> {
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
@@ -504,7 +504,7 @@ impl AutoUpdater {
         let update_request_body = build_remote_server_update_request_body(cx)?;
         let body = serde_json::to_string(&update_request_body)?;
 
-        Ok((release.url, body))
+        Ok((release, body))
     }
 
     async fn get_release(

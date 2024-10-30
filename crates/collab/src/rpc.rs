@@ -1827,6 +1827,7 @@ fn join_project_internal(
             peer_id: Some(session.connection_id.into()),
             replica_id: replica_id.0 as u32,
             user_id: guest_user_id.to_proto(),
+            is_host: false,
         }),
     };
 

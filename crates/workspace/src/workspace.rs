@@ -4465,7 +4465,7 @@ impl Workspace {
         self.modal_layer.read(cx).has_active_modal()
     }
 
-    pub fn active_modal<V: ManagedView + 'static>(&mut self, cx: &AppContext) -> Option<View<V>> {
+    pub fn active_modal<V: ManagedView + 'static>(&self, cx: &AppContext) -> Option<View<V>> {
         self.modal_layer.read(cx).active_modal()
     }
 
@@ -5715,7 +5715,7 @@ pub fn join_in_room_project(
                             .read(cx)
                             .collaborators()
                             .values()
-                            .find(|collaborator| collaborator.replica_id == 0)?;
+                            .find(|collaborator| collaborator.is_host)?;
                         Some(collaborator.peer_id)
                     });
 

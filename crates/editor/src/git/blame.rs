@@ -368,12 +368,15 @@ impl GitBlame {
                 .spawn({
                     let snapshot = snapshot.clone();
                     async move {
-                        let Blame {
+                        let Some(Blame {
                             entries,
                             permalinks,
                             messages,
                             remote_url,
-                        } = blame.await?;
+                        }) = blame.await?
+                        else {
+                            return Ok(None);
+                        };
 
                         let entries = build_blame_entry_sum_tree(entries, snapshot.max_point().row);
                         let commit_details = parse_commit_messages(
@@ -385,13 +388,16 @@ impl GitBlame {
                         )
                         .await;
 
-                        anyhow::Ok((entries, commit_details))
+                        anyhow::Ok(Some((entries, commit_details)))
                     }
                 })
                 .await;
 
             this.update(&mut cx, |this, cx| match result {
-                Ok((entries, commit_details)) => {
+                Ok(None) => {
+                    // Nothing to do, e.g. no repository found
+                }
+                Ok(Some((entries, commit_details))) => {
                     this.buffer_edits = buffer_edits;
                     this.buffer_snapshot = snapshot;
                     this.entries = entries;
@@ -410,11 +416,7 @@ impl GitBlame {
                     } else {
                         // If we weren't triggered by a user, we just log errors in the background, instead of sending
                         // notifications.
-                        // Except for `NoRepositoryError`, which can  happen often if a user has inline-blame turned on
-                        // and opens a non-git file.
-                        if error.downcast_ref::<project::NoRepositoryError>().is_none() {
-                            log::error!("failed to get git blame data: {error:?}");
-                        }
+                        log::error!("failed to get git blame data: {error:?}");
                     }
                 }),
             })
