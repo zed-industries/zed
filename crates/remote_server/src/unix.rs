@@ -152,20 +152,19 @@ fn init_panic_hook() {
                 file: location.file().into(),
                 line: location.line(),
             }),
-            app_version: if let Some(build_sha) = option_env!("ZED_COMMIT_SHA") {
-                format!("remote-server ({})", build_sha.to_string())
-            } else {
-                format!("remote-server ({})", env!("ZED_PKG_VERSION").to_string())
-            },
+            app_version: format!(
+                "remote-server-{}",
+                option_env!("ZED_COMMIT_SHA").unwrap_or(&env!("ZED_PKG_VERSION"))
+            ),
             release_channel: release_channel::RELEASE_CHANNEL.display_name().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
             panicked_on: Utc::now().timestamp_millis(),
             backtrace,
-            system_id: None,
-            installation_id: None,
-            session_id: "<remote server>".to_string(),
+            system_id: None,            // Set on SSH client
+            installation_id: None,      // Set on SSH client
+            session_id: "".to_string(), // Set on SSH client
         };
 
         if let Some(panic_data_json) = serde_json::to_string(&panic_data).log_err() {

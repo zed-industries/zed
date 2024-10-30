@@ -135,7 +135,9 @@ pub fn init_panic_hook(
 
 pub fn init(
     http_client: Arc<HttpClientWithUrl>,
+    system_id: Option<String>,
     installation_id: Option<String>,
+    session_id: String,
     cx: &mut AppContext,
 ) {
     #[cfg(target_os = "macos")]
@@ -151,13 +153,16 @@ pub fn init(
     upload_panics_and_crashes(
         http_client.clone(),
         panic_report_url.clone(),
-        installation_id,
+        installation_id.clone(),
         cx,
     );
 
-    cx.observe_new_model(move |project: &mut Project, cx| {
+    cx.observe_new_models(move |project: &mut Project, cx| {
         let http_client = http_client.clone();
         let panic_report_url = panic_report_url.clone();
+        let session_id = session_id.clone();
+        let installation_id = installation_id.clone();
+        let system_id = system_id.clone();
 
         if let Some(ssh_client) = project.ssh_client() {
             ssh_client.update(cx, |client, cx| {
@@ -167,8 +172,26 @@ pub fn init(
                         .spawn(async move {
                             let panic_files = request.await?;
                             for file in panic_files.file_contents {
-                                upload_panic(&http_client, &panic_report_url, file, &mut None)
-                                    .await?;
+                                let panic: Option<Panic> = serde_json::from_str(&file)
+                                    .log_err()
+                                    .or_else(|| {
+                                        file.lines()
+                                            .next()
+                                            .and_then(|line| serde_json::from_str(line).ok())
+                                    })
+                                    .unwrap_or_else(|| {
+                                        log::error!("failed to deserialize panic file {:?}", file);
+                                        None
+                                    });
+
+                                if let Some(mut panic) = panic {
+                                    panic.session_id = session_id.clone();
+                                    panic.system_id = system_id.clone();
+                                    panic.installation_id = installation_id.clone();
+
+                                    upload_panic(&http_client, &panic_report_url, panic, &mut None)
+                                        .await?;
+                                }
                             }
 
                             anyhow::Ok(())
@@ -436,15 +459,23 @@ async fn upload_previous_panics(
                 .await
                 .context("error reading panic file")?;
 
-            if !upload_panic(
-                &http,
-                &panic_report_url,
-                panic_file_content,
-                &mut most_recent_panic,
-            )
-            .await?
-            {
-                continue;
+            let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
+                .log_err()
+                .or_else(|| {
+                    panic_file_content
+                        .lines()
+                        .next()
+                        .and_then(|line| serde_json::from_str(line).ok())
+                })
+                .unwrap_or_else(|| {
+                    log::error!("failed to deserialize panic file {:?}", panic_file_content);
+                    None
+                });
+
+            if let Some(panic) = panic {
+                if !upload_panic(&http, &panic_report_url, panic, &mut most_recent_panic).await? {
+                    continue;
+                }
             }
         }
 
@@ -459,50 +490,35 @@ async fn upload_previous_panics(
 async fn upload_panic(
     http: &Arc<HttpClientWithUrl>,
     panic_report_url: &Url,
-    panic_file_content: String,
+    panic: telemetry_events::Panic,
     most_recent_panic: &mut Option<(i64, String)>,
 ) -> Result<bool> {
-    let panic: Option<Panic> = serde_json::from_str(&panic_file_content)
-        .log_err()
-        .or_else(|| {
-            panic_file_content
-                .lines()
-                .next()
-                .and_then(|line| serde_json::from_str(line).ok())
-        })
-        .unwrap_or_else(|| {
-            log::error!("failed to deserialize panic file {:?}", panic_file_content);
-            None
-        });
+    *most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
 
-    if let Some(panic) = panic {
-        *most_recent_panic = Some((panic.panicked_on, panic.payload.clone()));
+    let json_bytes = serde_json::to_vec(&PanicRequest {
+        panic: panic.clone(),
+    })
+    .unwrap();
 
-        let json_bytes = serde_json::to_vec(&PanicRequest {
-            panic: panic.clone(),
-        })
-        .unwrap();
+    let Some(checksum) = client::telemetry::calculate_json_checksum(&json_bytes) else {
+        return Ok(false);
+    };
 
-        let Some(checksum) = client::telemetry::calculate_json_checksum(&json_bytes) else {
-            return Ok(false);
-        };
+    let Ok(request) = http_client::Request::builder()
+        .method(Method::POST)
+        .uri(panic_report_url.as_ref())
+        .header("x-zed-checksum", checksum)
+        .body(json_bytes.into())
+    else {
+        return Ok(false);
+    };
 
-        let Ok(request) = http_client::Request::builder()
-            .method(Method::POST)
-            .uri(panic_report_url.as_ref())
-            .header("x-zed-checksum", checksum)
-            .body(json_bytes.into())
-        else {
-            return Ok(false);
-        };
-
-        let response = http.send(request).await.context("error sending panic")?;
-        if !response.status().is_success() {
-            log::error!("Error uploading panic to server: {}", response.status());
-        }
+    let response = http.send(request).await.context("error sending panic")?;
+    if !response.status().is_success() {
+        log::error!("Error uploading panic to server: {}", response.status());
     }
 
-    return Ok(true);
+    Ok(true)
 }
 const LAST_CRASH_UPLOADED: &str = "LAST_CRASH_UPLOADED";
 

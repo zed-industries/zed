@@ -1047,7 +1047,7 @@ impl AppContext {
 
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
-    pub fn observe_new_model<T: 'static>(
+    pub fn observe_new_models<T: 'static>(
         &self,
         on_new: impl 'static + Fn(&mut T, &mut ModelContext<T>),
     ) -> Subscription {
