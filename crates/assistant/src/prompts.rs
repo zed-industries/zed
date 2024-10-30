@@ -311,7 +311,7 @@ impl PromptBuilder {
     }
 
     pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("edit_workflow", &())
+        self.handlebars.lock().render("suggest_edits", &())
     }
 
     pub fn generate_project_slash_command_prompt(
