@@ -4,11 +4,11 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use editor::Editor;
-use gpui::{Task, WeakView};
+use gpui::Task;
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::Arc;
 use std::{path::Path, sync::atomic::AtomicBool};
-use ui::{Context, IconName, WindowContext};
+use ui::{IconName, WindowContext};
 use workspace::Workspace;
 
 pub(crate) struct OutlineSlashCommand;

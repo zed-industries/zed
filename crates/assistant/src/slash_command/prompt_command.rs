@@ -4,11 +4,10 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use gpui::{Task, WeakView};
+use gpui::Task;
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
-use workspace::Workspace;
 
 pub(crate) struct PromptSlashCommand;
 

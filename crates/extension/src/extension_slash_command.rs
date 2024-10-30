@@ -6,11 +6,10 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use futures::FutureExt;
-use gpui::{Task, WeakView, WindowContext};
+use gpui::{Task, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use wasmtime_wasi::WasiView;
-use workspace::Workspace;
 
 use crate::wasm_host::{WasmExtension, WasmHost};
 

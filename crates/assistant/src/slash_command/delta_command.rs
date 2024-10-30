@@ -6,7 +6,7 @@ use assistant_slash_command::{
 };
 use collections::HashSet;
 use futures::future;
-use gpui::{Task, WeakView, WindowContext};
+use gpui::{Task, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
 use text::OffsetRangeExt;

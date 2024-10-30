@@ -7,10 +7,9 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use chrono::Local;
-use gpui::{Task, WeakView};
+use gpui::Task;
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
-use workspace::Workspace;
 
 pub(crate) struct NowSlashCommand;
 

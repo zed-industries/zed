@@ -8,13 +8,12 @@ use context_servers::{
     manager::{ContextServer, ContextServerManager},
     types::Prompt,
 };
-use gpui::{AppContext, Task, WeakView, WindowContext};
+use gpui::{AppContext, Task, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use text::LineEnding;
 use ui::{IconName, SharedString};
-use workspace::Workspace;
 
 use crate::slash_command::create_label_for_command;
 

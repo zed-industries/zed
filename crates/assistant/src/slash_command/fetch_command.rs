@@ -9,7 +9,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use futures::AsyncReadExt;
-use gpui::{Task, WeakView};
+use gpui::Task;
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{BufferSnapshot, LspAdapterDelegate};

@@ -4,7 +4,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use fs::Fs;
-use gpui::{AppContext, Model, Task, WeakView};
+use gpui::{AppContext, Model, Task};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use project::{Project, ProjectPath};
 use std::{
