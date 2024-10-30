@@ -1,7 +1,7 @@
-mod extension_lsp_adapter;
-mod extension_manifest;
-mod extension_settings;
-mod wasm_host;
+pub mod extension_lsp_adapter;
+pub mod extension_manifest;
+pub mod extension_settings;
+pub mod wasm_host;
 
 use crate::extension_manifest::SchemaVersion;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
@@ -20,8 +20,8 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
-    WeakModel,
+    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
+    SharedString, Task, WeakModel,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
@@ -35,6 +35,7 @@ use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::ops::RangeInclusive;
+use std::pin::Pin;
 use std::str::FromStr;
 use std::{
     cmp::Ordering,
@@ -53,6 +54,17 @@ pub use extension_manifest::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
 };
 pub use extension_settings::ExtensionSettings;
+
+pub trait ExtensionFeatures: Sync + Send + 'static {
+    fn remove_user_themes(&self, themes: &[SharedString], cx: &mut AppContext);
+    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>, cx: &mut AppContext);
+    fn load_user_theme(
+        &self,
+        themes_path: &Path,
+        fs: Arc<dyn Fs>,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>;
+    fn register_snippets(&self, file_path: &Path, contents: &str) -> Result<()>;
+}
 
 const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
@@ -90,20 +102,21 @@ pub fn is_version_compatible(
 }
 
 pub struct HeadlessExtensionStore {
-    extension_index: ExtensionIndex,
-    fs: Arc<dyn Fs>,
-    http_client: Arc<HttpClientWithUrl>,
-    telemetry: Option<Arc<Telemetry>>,
-    reload_tx: UnboundedSender<Option<Arc<str>>>,
-    reload_complete_senders: Vec<oneshot::Sender<()>>,
-    installed_dir: PathBuf,
-    outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
-    index_path: PathBuf,
-    language_registry: Arc<LanguageRegistry>,
-    modified_extensions: HashSet<Arc<str>>,
-    wasm_host: Arc<WasmHost>,
-    wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
-    tasks: Vec<Task<()>>,
+    pub feature_provider: Arc<dyn ExtensionFeatures>,
+    pub extension_index: ExtensionIndex,
+    pub fs: Arc<dyn Fs>,
+    pub http_client: Arc<HttpClientWithUrl>,
+    pub telemetry: Option<Arc<Telemetry>>,
+    pub reload_tx: UnboundedSender<Option<Arc<str>>>,
+    pub reload_complete_senders: Vec<oneshot::Sender<()>>,
+    pub installed_dir: PathBuf,
+    pub outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
+    pub index_path: PathBuf,
+    pub language_registry: Arc<LanguageRegistry>,
+    pub modified_extensions: HashSet<Arc<str>>,
+    pub wasm_host: Arc<WasmHost>,
+    pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
+    pub tasks: Vec<Task<()>>,
 }
 
 #[derive(Clone, Copy)]
@@ -123,9 +136,9 @@ pub enum Event {
 
 impl EventEmitter<Event> for HeadlessExtensionStore {}
 
-struct GlobalExtensionStore(Model<HeadlessExtensionStore>);
+struct GlobalHeadlessExtensionStore(Model<HeadlessExtensionStore>);
 
-impl Global for GlobalExtensionStore {}
+impl Global for GlobalHeadlessExtensionStore {}
 
 #[derive(Debug, Deserialize, Serialize, Default, PartialEq, Eq)]
 pub struct ExtensionIndex {
@@ -162,6 +175,8 @@ pub fn init(
     telemetry: Option<Arc<Telemetry>>,
     node_runtime: NodeRuntime,
     language_registry: Arc<LanguageRegistry>,
+    feature_provider: Arc<dyn ExtensionFeatures>,
+
     cx: &mut AppContext,
 ) {
     ExtensionSettings::register(cx);
@@ -174,23 +189,24 @@ pub fn init(
             telemetry,
             node_runtime,
             language_registry,
+            feature_provider,
             cx,
         )
     });
 
     // TODO: make the reload extensions command proto aware
 
-    cx.set_global(GlobalExtensionStore(store));
+    cx.set_global(GlobalHeadlessExtensionStore(store));
 }
 
 impl HeadlessExtensionStore {
     pub fn try_global(cx: &AppContext) -> Option<Model<Self>> {
-        cx.try_global::<GlobalExtensionStore>()
+        cx.try_global::<GlobalHeadlessExtensionStore>()
             .map(|store| store.0.clone())
     }
 
     pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<GlobalExtensionStore>().0.clone()
+        cx.global::<GlobalHeadlessExtensionStore>().0.clone()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -201,6 +217,7 @@ impl HeadlessExtensionStore {
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
+        feature_provider: Arc<dyn ExtensionFeatures>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -209,7 +226,9 @@ impl HeadlessExtensionStore {
 
         let (reload_tx, mut reload_rx) = unbounded();
         let mut this = Self {
+            feature_provider,
             extension_index: Default::default(),
+            language_registry: language_registry.clone(),
             installed_dir,
             index_path,
             outstanding_operations: Default::default(),
@@ -227,7 +246,6 @@ impl HeadlessExtensionStore {
             fs,
             http_client,
             telemetry,
-            language_registry,
             reload_tx,
             tasks: Vec::new(),
         };
@@ -349,7 +367,7 @@ impl HeadlessExtensionStore {
         this
     }
 
-    fn reload(
+    pub fn reload(
         &mut self,
         modified_extension: Option<Arc<str>>,
         cx: &mut ModelContext<Self>,
@@ -786,6 +804,7 @@ impl HeadlessExtensionStore {
         new_index: ExtensionIndex,
         cx: &mut ModelContext<Self>,
     ) -> Task<()> {
+        let feature_provider = &self.feature_provider;
         let old_index = &self.extension_index;
 
         // Determine which extensions need to be loaded and unloaded, based
@@ -854,18 +873,17 @@ impl HeadlessExtensionStore {
             }
         }
 
-        // TODO: use remove API on hypothetical extension providers for this
-        // let themes_to_remove = old_index
-        //     .themes
-        //     .iter()
-        //     .filter_map(|(name, entry)| {
-        //         if extensions_to_unload.contains(&entry.extension) {
-        //             Some(name.clone().into())
-        //         } else {
-        //             None
-        //         }
-        //     })
-        //     .collect::<Vec<_>>();
+        let themes_to_remove = old_index
+            .themes
+            .iter()
+            .filter_map(|(name, entry)| {
+                if extensions_to_unload.contains(&entry.extension) {
+                    Some(name.clone().into())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         let languages_to_remove = old_index
             .languages
             .iter()
@@ -893,48 +911,45 @@ impl HeadlessExtensionStore {
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
-        // TODO: here
-        // self.theme_registry.remove_user_themes(&themes_to_remove);
         self.language_registry
             .remove_languages(&languages_to_remove, &grammars_to_remove);
+        feature_provider.remove_user_themes(&themes_to_remove, cx);
 
         let languages_to_add = new_index
             .languages
             .iter()
             .filter(|(_, entry)| extensions_to_load.contains(&entry.extension))
             .collect::<Vec<_>>();
-        // TODO here
-        // let mut grammars_to_add = Vec::new();
-        // let mut themes_to_add = Vec::new();
-        // let mut snippets_to_add = Vec::new();
+
+        let mut grammars_to_add = Vec::new();
+        let mut themes_to_add = Vec::new();
+        let mut snippets_to_add = Vec::new();
         for extension_id in &extensions_to_load {
-            // TODO
-            let Some(_extension) = new_index.extensions.get(extension_id) else {
+            let Some(extension) = new_index.extensions.get(extension_id) else {
                 continue;
             };
 
             // TODO here:
-            // grammars_to_add.extend(extension.manifest.grammars.keys().map(|grammar_name| {
-            //     let mut grammar_path = self.installed_dir.clone();
-            //     grammar_path.extend([extension_id.as_ref(), "grammars"]);
-            //     grammar_path.push(grammar_name.as_ref());
-            //     grammar_path.set_extension("wasm");
-            //     (grammar_name.clone(), grammar_path)
-            // }));
-            // themes_to_add.extend(extension.manifest.themes.iter().map(|theme_path| {
-            //     let mut path = self.installed_dir.clone();
-            //     path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
-            //     path
-            // }));
-            // snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
-            //     let mut path = self.installed_dir.clone();
-            //     path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
-            //     path
-            // }));
+            grammars_to_add.extend(extension.manifest.grammars.keys().map(|grammar_name| {
+                let mut grammar_path = self.installed_dir.clone();
+                grammar_path.extend([extension_id.as_ref(), "grammars"]);
+                grammar_path.push(grammar_name.as_ref());
+                grammar_path.set_extension("wasm");
+                (grammar_name.clone(), grammar_path)
+            }));
+            themes_to_add.extend(extension.manifest.themes.iter().map(|theme_path| {
+                let mut path = self.installed_dir.clone();
+                path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
+                path
+            }));
+            snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
+                let mut path = self.installed_dir.clone();
+                path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
+                path
+            }));
         }
 
-        // self.language_registry
-        //     .register_wasm_grammars(grammars_to_add);
+        feature_provider.register_wasm_grammars(grammars_to_add, cx);
 
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
@@ -972,8 +987,8 @@ impl HeadlessExtensionStore {
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
-        // let theme_registry = self.theme_registry.clone();
-        // let snippet_registry = self.snippet_registry.clone();
+        let feature_provider = feature_provider.clone();
+
         let extension_entries = extensions_to_load
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
@@ -986,25 +1001,23 @@ impl HeadlessExtensionStore {
         cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .spawn({
-                    //TODO:
-                    let _fs = fs.clone();
+                    let fs = fs.clone();
                     async move {
-                        // TODO: Extension provider something
-                        // for theme_path in &themes_to_add {
-                        //     theme_registry
-                        //         .load_user_theme(theme_path, fs.clone())
-                        //         .await
-                        //         .log_err();
-                        // }
+                        for theme_path in &themes_to_add {
+                            feature_provider
+                                .load_user_theme(theme_path, fs.clone())
+                                .await
+                                .log_err();
+                        }
 
-                        // for snippets_path in &snippets_to_add {
-                        //     if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
-                        //     {
-                        //         snippet_registry
-                        //             .register_snippets(snippets_path, &snippets_contents)
-                        //             .log_err();
-                        //     }
-                        // }
+                        for snippets_path in &snippets_to_add {
+                            if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
+                            {
+                                feature_provider
+                                    .register_snippets(snippets_path, &snippets_contents)
+                                    .log_err();
+                            }
+                        }
                     }
                 })
                 .await;

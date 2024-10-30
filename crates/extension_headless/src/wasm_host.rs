@@ -49,7 +49,7 @@ pub struct WasmExtension {
     pub zed_api_version: SemanticVersion,
 }
 
-pub(crate) struct WasmState {
+pub struct WasmState {
     manifest: Arc<ExtensionManifest>,
     pub(crate) table: ResourceTable,
     ctx: wasi::WasiCtx,

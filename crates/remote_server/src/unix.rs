@@ -2,6 +2,7 @@ use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
 use client::{ClientSettings, ProxySettings};
+use extension_headless::ExtensionFeatures;
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
@@ -378,6 +379,7 @@ pub fn execute_run(
                 None,
                 node_runtime.clone(),
                 languages.clone(),
+                Arc::new(NoFeaturesProvider {}),
                 cx,
             );
 
@@ -397,6 +399,26 @@ pub fn execute_run(
     });
     log::info!("gpui app is shut down. quitting.");
     Ok(())
+}
+
+struct NoFeaturesProvider {}
+
+impl ExtensionFeatures for NoFeaturesProvider {
+    fn remove_user_themes(&self, _themes: &[gpui::SharedString], _cx: &mut AppContext) {}
+
+    fn register_wasm_grammars(&self, _grammars: Vec<(Arc<str>, PathBuf)>, _cx: &mut AppContext) {}
+
+    fn load_user_theme(
+        &self,
+        _themes_path: &Path,
+        _fs: Arc<dyn Fs>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send>> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn register_snippets(&self, _file_path: &Path, _contents: &str) -> Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Clone)]
