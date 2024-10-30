@@ -5471,61 +5471,19 @@ impl Editor {
     }
 
     pub fn spawn_nearest_task(&mut self, _: &SpawnNearestTask, cx: &mut ViewContext<Self>) {
-        // Try to find a node using tree-sitter that contains the cursor and has
-        // a task.
-        let mut target_row = maybe!({
-            let snapshot = self.buffer.read(cx).snapshot(cx);
-            let offset = self.selections.newest::<usize>(cx).head();
-            let excerpt = snapshot.excerpt_containing(offset..offset)?;
-
-            // Find the node at the cursor location
-            let layer = excerpt.buffer().syntax_layer_at(offset)?;
-            let mut cursor = layer.node().walk();
-            while cursor.goto_first_child_for_byte(offset).is_some() {
-                if cursor.node().end_byte() == offset {
-                    cursor.goto_next_sibling();
-                }
-            }
-
-            // Ascend to the smallest ancestor that contains the range.
-            loop {
-                let node_range = cursor.node().byte_range();
-                if node_range.start <= offset && node_range.end >= offset {
-                    break;
-                }
-                if !cursor.goto_parent() {
-                    break;
-                }
-            }
-
-            // Walk the tree upwards until we find a node that starts on a row
-            // that has a task.
-            let buffer_id = excerpt.buffer().remote_id();
-            loop {
-                let symbol_start_row = excerpt
-                    .buffer()
-                    .offset_to_point(cursor.node().start_byte())
-                    .row;
-                if self.tasks.contains_key(&(buffer_id, symbol_start_row)) {
-                    return Some(symbol_start_row);
-                }
-                if !cursor.goto_parent() {
-                    break;
-                }
-            }
-            None
+        // Try to find a closest, enclosing node using tree-sitter that has a
+        // task.
+        let row_with_task = self.find_enclosing_node_with_task(cx).or_else(|| {
+            // Otherwise fall back to using line-distance and get the task
+            // that's closest
+            let cursor_row = self.selections.newest_adjusted(cx).head().row;
+            self.tasks
+                .keys()
+                .min_by_key(|(_, row)| cursor_row.abs_diff(*row))
+                .map(|(_, row)| *row)
         });
 
-        if target_row.is_none() {
-            let cursor_row = self.selections.newest_adjusted(cx).head().row;
-            target_row = self
-                .tasks
-                .keys()
-                .map(|(_, row)| cursor_row.abs_diff(*row))
-                .min();
-        }
-
-        if let Some(row) = target_row {
+        if let Some(row) = row_with_task {
             let snapshot = self.display_map.update(cx, |map, cx| map.snapshot(cx));
             let display_row = Point::new(row, 0).to_display_point(&snapshot).row();
             let action = &ToggleCodeActions {
@@ -5533,6 +5491,42 @@ impl Editor {
             };
             self.toggle_code_actions(action, cx);
         };
+    }
+
+    fn find_enclosing_node_with_task(&mut self, cx: &mut ViewContext<Self>) -> Option<u32> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let offset = self.selections.newest::<usize>(cx).head();
+        let excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let buffer_id = excerpt.buffer().remote_id();
+
+        let layer = excerpt.buffer().syntax_layer_at(offset)?;
+        let mut cursor = layer.node().walk();
+
+        while cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.node().end_byte() == offset {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the smallest ancestor that contains the range and has a task.
+        loop {
+            let node = cursor.node();
+            let node_range = node.byte_range();
+            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
+
+            // Check if this node contains our offset
+            if node_range.start <= offset && node_range.end >= offset {
+                // If it contains offset, check for task
+                if self.tasks.contains_key(&(buffer_id, symbol_start_row)) {
+                    return Some(symbol_start_row);
+                }
+            }
+
+            if !cursor.goto_parent() {
+                break;
+            }
+        }
+        None
     }
 
     fn render_run_indicator(
