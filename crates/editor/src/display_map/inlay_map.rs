@@ -789,6 +789,25 @@ impl InlaySnapshot {
             None => self.buffer.max_point(),
         }
     }
+
+    pub fn to_buffer_points<'a>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = InlayPoint>,
+    ) -> impl 'a + Iterator<Item = Point> {
+        let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
+        points.into_iter().map(move |point| {
+            cursor.seek_forward(&point, Bias::Right, &());
+            match cursor.item() {
+                Some(Transform::Isomorphic(_)) => {
+                    let overshoot = point.0 - cursor.start().0 .0;
+                    cursor.start().1 + overshoot
+                }
+                Some(Transform::Inlay(_)) => cursor.start().1,
+                None => self.buffer.max_point(),
+            }
+        })
+    }
+
     pub fn to_buffer_offset(&self, offset: InlayOffset) -> usize {
         let mut cursor = self.transforms.cursor::<(InlayOffset, usize)>(&());
         cursor.seek(&offset, Bias::Right, &());
@@ -835,6 +854,7 @@ impl InlaySnapshot {
             }
         }
     }
+
     pub fn to_inlay_point(&self, point: Point) -> InlayPoint {
         let mut cursor = self.transforms.cursor::<(Point, InlayPoint)>(&());
         cursor.seek(&point, Bias::Left, &());
@@ -867,6 +887,45 @@ impl InlaySnapshot {
                 }
             }
         }
+    }
+
+    pub fn to_inlay_points<'a>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = Point>,
+    ) -> impl 'a + Iterator<Item = InlayPoint> {
+        let mut cursor = self.transforms.cursor::<(Point, InlayPoint)>(&());
+        points.into_iter().map(move |point| {
+            cursor.seek_forward(&point, Bias::Left, &());
+            loop {
+                match cursor.item() {
+                    Some(Transform::Isomorphic(_)) => {
+                        if point == cursor.end(&()).0 {
+                            while let Some(Transform::Inlay(inlay)) = cursor.next_item() {
+                                if inlay.position.bias() == Bias::Right {
+                                    break;
+                                } else {
+                                    cursor.next(&());
+                                }
+                            }
+                            return cursor.end(&()).1;
+                        } else {
+                            let overshoot = point - cursor.start().0;
+                            return InlayPoint(cursor.start().1 .0 + overshoot);
+                        }
+                    }
+                    Some(Transform::Inlay(inlay)) => {
+                        if inlay.position.bias() == Bias::Left {
+                            cursor.next(&());
+                        } else {
+                            return cursor.start().1;
+                        }
+                    }
+                    None => {
+                        return self.max_point();
+                    }
+                }
+            }
+        })
     }
 
     pub fn clip_point(&self, mut point: InlayPoint, mut bias: Bias) -> InlayPoint {

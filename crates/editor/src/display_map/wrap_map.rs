@@ -761,6 +761,12 @@ impl WrapSnapshot {
         WrapPoint(cursor.start().1 .0 + (point.0 - cursor.start().0 .0))
     }
 
+    pub fn tab_points_to_wrap_points(
+        &self,
+        points: impl IntoIterator<Item = TabPoint>,
+    ) -> impl Iterator<Item = WrapPoint> {
+    }
+
     pub fn clip_point(&self, mut point: WrapPoint, bias: Bias) -> WrapPoint {
         if bias == Bias::Left {
             let mut cursor = self.transforms.cursor::<WrapPoint>(&());

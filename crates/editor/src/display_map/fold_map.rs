@@ -79,10 +79,7 @@ impl FoldPoint {
     }
 
     pub fn to_inlay_point(self, snapshot: &FoldSnapshot) -> InlayPoint {
-        let mut cursor = snapshot.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
-        cursor.seek(&self, Bias::Right, &());
-        let overshoot = self.0 - cursor.start().0 .0;
-        InlayPoint(cursor.start().1 .0 + overshoot)
+        snapshot.to_inlay_point(self)
     }
 
     pub fn to_offset(self, snapshot: &FoldSnapshot) -> FoldOffset {
@@ -616,6 +613,48 @@ impl FoldSnapshot {
                 cursor.end(&()).1 .0,
             ))
         }
+    }
+
+    pub fn to_fold_points<'a>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = (InlayPoint, Bias)>,
+    ) -> impl 'a + Iterator<Item = FoldPoint> {
+        let mut cursor = self.transforms.cursor::<(InlayPoint, FoldPoint)>(&());
+        points.into_iter().map(move |(point, bias)| {
+            cursor.seek_forward(&point, Bias::Right, &());
+            if cursor.item().map_or(false, |t| t.is_fold()) {
+                if bias == Bias::Left || point == cursor.start().0 {
+                    cursor.start().1
+                } else {
+                    cursor.end(&()).1
+                }
+            } else {
+                let overshoot = point.0 - cursor.start().0 .0;
+                FoldPoint(cmp::min(
+                    cursor.start().1 .0 + overshoot,
+                    cursor.end(&()).1 .0,
+                ))
+            }
+        })
+    }
+
+    pub fn to_inlay_point(&self, point: FoldPoint) -> InlayPoint {
+        let mut cursor = self.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
+        cursor.seek(&point, Bias::Right, &());
+        let overshoot = point.0 - cursor.start().0 .0;
+        InlayPoint(cursor.start().1 .0 + overshoot)
+    }
+
+    pub fn to_inlay_points<'a>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = FoldPoint>,
+    ) -> impl 'a + Iterator<Item = InlayPoint> {
+        let mut cursor = self.transforms.cursor::<(FoldPoint, InlayPoint)>(&());
+        points.into_iter().map(move |point| {
+            cursor.seek(&point, Bias::Right, &());
+            let overshoot = point.0 - cursor.start().0 .0;
+            InlayPoint(cursor.start().1 .0 + overshoot)
+        })
     }
 
     pub fn len(&self) -> FoldOffset {

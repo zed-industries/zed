@@ -304,6 +304,14 @@ impl TabSnapshot {
         TabPoint::new(input.row(), expanded)
     }
 
+    pub fn to_tab_points<'a>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = FoldPoint>,
+    ) -> impl 'a + Iterator<Item = TabPoint> {
+        // todo!("make this efficient")
+        points.into_iter().map(|point| self.to_tab_point(point))
+    }
+
     pub fn to_fold_point(&self, output: TabPoint, bias: Bias) -> (FoldPoint, u32, u32) {
         let chars = self.fold_snapshot.chars_at(FoldPoint::new(output.row(), 0));
         let expanded = output.column();
@@ -314,6 +322,16 @@ impl TabSnapshot {
             expanded_char_column,
             to_next_stop,
         )
+    }
+
+    pub fn to_fold_points<'a>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = (TabPoint, Bias)>,
+    ) -> impl 'a + Iterator<Item = FoldPoint> {
+        // todo!("make this efficient")
+        points
+            .into_iter()
+            .map(|(point, bias)| self.to_fold_point(point, bias).0)
     }
 
     pub fn make_tab_point(&self, point: Point, bias: Bias) -> TabPoint {

@@ -660,6 +660,28 @@ impl DisplaySnapshot {
         new_start..new_end
     }
 
+    pub fn clip_buffer_points(
+        &self,
+        points: impl IntoIterator<Item = (MultiBufferPoint, Bias)>,
+    ) -> impl Iterator<Item = MultiBufferPoint> {
+        let block_points = self.block_snapshot.to_block_points(
+            self.wrap_snapshot.to_wrap_points(
+                self.tab_snapshot.to_tab_points(
+                    self.fold_snapshot
+                        .to_fold_points(self.inlay_snapshot.to_inlay_points(points)),
+                ),
+            ),
+        );
+        self.inlay_snapshot.to_buffer_points(
+            self.fold_snapshot.to_inlay_points(
+                self.tab_snapshot.to_fold_points(
+                    self.wrap_snapshot
+                        .to_tab_points(self.block_snapshot.to_wrap_points(block_points)),
+                ),
+            ),
+        )
+    }
+
     fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
