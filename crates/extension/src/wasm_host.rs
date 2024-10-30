@@ -1,6 +1,6 @@
-pub(crate) mod wit;
+pub mod wit;
 
-use crate::ExtensionManifest;
+use crate::{ExtensionApi, ExtensionManifest};
 use anyhow::{anyhow, bail, Context as _, Result};
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -14,7 +14,6 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use http_client::HttpClient;
-use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -28,15 +27,16 @@ use wasmtime::{
 };
 use wasmtime_wasi as wasi;
 use wit::Extension;
+pub use wit::SlashCommand;
 
-pub(crate) struct WasmHost {
+pub struct WasmHost {
     engine: Engine,
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    pub(crate) language_registry: Arc<LanguageRegistry>,
+    pub api: Arc<dyn ExtensionApi>,
     fs: Arc<dyn Fs>,
-    pub(crate) work_dir: PathBuf,
+    pub work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
@@ -44,16 +44,16 @@ pub(crate) struct WasmHost {
 #[derive(Clone)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
-    pub(crate) manifest: Arc<ExtensionManifest>,
+    pub manifest: Arc<ExtensionManifest>,
     #[allow(unused)]
     pub zed_api_version: SemanticVersion,
 }
 
-pub(crate) struct WasmState {
+pub struct WasmState {
     manifest: Arc<ExtensionManifest>,
-    pub(crate) table: ResourceTable,
+    pub table: ResourceTable,
     ctx: wasi::WasiCtx,
-    pub(crate) host: Arc<WasmHost>,
+    pub host: Arc<WasmHost>,
 }
 
 type MainThreadCall =
@@ -81,7 +81,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        language_registry: Arc<LanguageRegistry>,
+        extension_api: Arc<dyn ExtensionApi>,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -97,7 +97,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
-            language_registry,
+            api: extension_api,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,

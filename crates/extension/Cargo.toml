@@ -53,7 +53,6 @@ wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
-workspace.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

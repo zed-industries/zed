@@ -16,6 +16,8 @@ test-support = []
 
 [dependencies]
 anyhow.workspace = true
+assistant_slash_command.workspace = true
+async-trait.workspace = true
 client.workspace = true
 collections.workspace = true
 db.workspace = true
@@ -23,7 +25,9 @@ editor.workspace = true
 extension.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
+futures.workspace = true
 gpui.workspace = true
+indexed_docs.workspace = true
 language.workspace = true
 num-format.workspace = true
 picker.workspace = true
@@ -36,9 +40,29 @@ smallvec.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 ui.workspace = true
+snippet_provider.workspace = true
 util.workspace = true
 vim.workspace = true
+wasmtime-wasi.workspace = true
+wit-component.workspace = true
 workspace.workspace = true
+
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
+ctor.workspace = true
+lsp.workspace = true
+async-tar.workspace = true
+async-compression.workspace = true
+node_runtime.workspace = true
+indexed_docs.workspace = true
+http_client.workspace = true
+env_logger.workspace = true
+fs = { workspace = true, features = ["test-support"] }
+gpui = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+parking_lot.workspace = true
+project = { workspace = true, features = ["test-support"] }
+reqwest_client.workspace = true
+workspace = { workspace = true, features = ["test-support"] }
+serde_json.workspace = true

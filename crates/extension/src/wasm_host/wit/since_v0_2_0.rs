@@ -459,7 +459,7 @@ impl ExtensionImports for WasmState {
         };
 
         self.host
-            .language_registry
+            .api
             .update_lsp_status(language::LanguageServerName(server_name.into()), status);
         Ok(())
     }

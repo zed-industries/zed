@@ -1,20 +1,12 @@
 pub mod extension_builder;
-mod extension_indexed_docs_provider;
+
 mod extension_lsp_adapter;
-mod extension_manifest;
-mod extension_settings;
-mod extension_slash_command;
-mod wasm_host;
+pub mod extension_manifest;
+pub mod extension_settings;
+pub mod wasm_host;
 
-#[cfg(test)]
-mod extension_store_test;
-
-use crate::extension_indexed_docs_provider::ExtensionIndexedDocsProvider;
-use crate::extension_manifest::SchemaVersion;
-use crate::extension_slash_command::ExtensionSlashCommand;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
-use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
@@ -34,7 +26,6 @@ use gpui::{
     WeakModel,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
-use indexed_docs::{IndexedDocsRegistry, ProviderId};
 use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageRegistry,
     LoadedLanguage, QUERY_FILENAME_PREFIXES,
@@ -45,7 +36,6 @@ use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
-use snippet_provider::SnippetRegistry;
 use std::ops::RangeInclusive;
 use std::str::FromStr;
 use std::{
@@ -55,6 +45,7 @@ use std::{
     time::{Duration, Instant},
 };
 use theme::{ThemeRegistry, ThemeSettings};
+use ui::SharedString;
 use url::Url;
 use util::{maybe, ResultExt};
 use wasm_host::{
@@ -67,7 +58,9 @@ pub use extension_manifest::{
 };
 pub use extension_settings::ExtensionSettings;
 
-const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
+pub use extension_manifest::SchemaVersion;
+
+pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
 
 /// The current extension [`SchemaVersion`] supported by Zed.
@@ -102,26 +95,68 @@ pub fn is_version_compatible(
     true
 }
 
+pub trait ExtensionApi: Send + Sync + 'static {
+    fn remove_user_themes(&self, themes: Vec<SharedString>);
+    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
+    fn register_slash_command(
+        &self,
+        slash_command: wit::SlashCommand,
+        extension: WasmExtension,
+        host: Arc<WasmHost>,
+    );
+    fn register_docs_provider(
+        &self,
+        extension: WasmExtension,
+        host: Arc<WasmHost>,
+        provider_id: Arc<str>,
+    );
+    fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()>;
+
+    fn update_lsp_status(
+        &self,
+        server_name: language::LanguageServerName,
+        status: language::LanguageServerBinaryStatus,
+    );
+
+    fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter);
+
+    fn remove_lsp_adapter(
+        &self,
+        language: &LanguageName,
+        server_name: &language::LanguageServerName,
+    );
+
+    fn remove_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+    );
+
+    fn register_wasm_grammars(grammars: Vec<(Arc<str>, PathBuf)>);
+
+    fn register_language(
+        language: LanguageName,
+        grammar: Option<Arc<str>>,
+        matcher: language::LanguageMatcher,
+    );
+}
+
 pub struct ExtensionStore {
-    builder: Arc<ExtensionBuilder>,
-    extension_index: ExtensionIndex,
-    fs: Arc<dyn Fs>,
-    http_client: Arc<HttpClientWithUrl>,
-    telemetry: Option<Arc<Telemetry>>,
-    reload_tx: UnboundedSender<Option<Arc<str>>>,
-    reload_complete_senders: Vec<oneshot::Sender<()>>,
-    installed_dir: PathBuf,
-    outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
-    index_path: PathBuf,
-    language_registry: Arc<LanguageRegistry>,
-    theme_registry: Arc<ThemeRegistry>,
-    slash_command_registry: Arc<SlashCommandRegistry>,
-    indexed_docs_registry: Arc<IndexedDocsRegistry>,
-    snippet_registry: Arc<SnippetRegistry>,
-    modified_extensions: HashSet<Arc<str>>,
-    wasm_host: Arc<WasmHost>,
-    wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
-    tasks: Vec<Task<()>>,
+    pub api: Arc<dyn ExtensionApi>,
+    pub builder: Arc<ExtensionBuilder>,
+    pub extension_index: ExtensionIndex,
+    pub fs: Arc<dyn Fs>,
+    pub http_client: Arc<HttpClientWithUrl>,
+    pub telemetry: Option<Arc<Telemetry>>,
+    pub reload_tx: UnboundedSender<Option<Arc<str>>>,
+    pub reload_complete_senders: Vec<oneshot::Sender<()>>,
+    pub installed_dir: PathBuf,
+    pub outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
+    pub index_path: PathBuf,
+    pub modified_extensions: HashSet<Arc<str>>,
+    pub wasm_host: Arc<WasmHost>,
+    pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
+    pub tasks: Vec<Task<()>>,
 }
 
 #[derive(Clone, Copy)]
@@ -160,26 +195,25 @@ pub struct ExtensionIndexEntry {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexThemeEntry {
-    extension: Arc<str>,
-    path: PathBuf,
+    pub extension: Arc<str>,
+    pub path: PathBuf,
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexLanguageEntry {
-    extension: Arc<str>,
-    path: PathBuf,
-    matcher: LanguageMatcher,
-    grammar: Option<Arc<str>>,
+    pub extension: Arc<str>,
+    pub path: PathBuf,
+    pub matcher: LanguageMatcher,
+    pub grammar: Option<Arc<str>>,
 }
 
 actions!(zed, [ReloadExtensions]);
 
 pub fn init(
+    api: Arc<dyn ExtensionApi>,
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: NodeRuntime,
-    language_registry: Arc<LanguageRegistry>,
-    theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
 ) {
     ExtensionSettings::register(cx);
@@ -188,16 +222,12 @@ pub fn init(
         ExtensionStore::new(
             paths::extensions_dir().clone(),
             None,
+            api,
             fs,
             client.http_client().clone(),
             client.http_client().clone(),
             Some(client.telemetry().clone()),
             node_runtime,
-            language_registry,
-            theme_registry,
-            SlashCommandRegistry::global(cx),
-            IndexedDocsRegistry::global(cx),
-            SnippetRegistry::global(cx),
             cx,
         )
     });
@@ -224,16 +254,12 @@ impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
+        extension_api: Arc<dyn ExtensionApi>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
         builder_client: Arc<dyn HttpClient>,
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: NodeRuntime,
-        language_registry: Arc<LanguageRegistry>,
-        theme_registry: Arc<ThemeRegistry>,
-        slash_command_registry: Arc<SlashCommandRegistry>,
-        indexed_docs_registry: Arc<IndexedDocsRegistry>,
-        snippet_registry: Arc<SnippetRegistry>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let work_dir = extensions_dir.join("work");
@@ -243,6 +269,7 @@ impl ExtensionStore {
 
         let (reload_tx, mut reload_rx) = unbounded();
         let mut this = Self {
+            api: extension_api.clone(),
             extension_index: Default::default(),
             installed_dir,
             index_path,
@@ -254,7 +281,7 @@ impl ExtensionStore {
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                language_registry.clone(),
+                extension_api,
                 work_dir,
                 cx,
             ),
@@ -262,11 +289,6 @@ impl ExtensionStore {
             fs,
             http_client,
             telemetry,
-            language_registry,
-            theme_registry,
-            slash_command_registry,
-            indexed_docs_registry,
-            snippet_registry,
             reload_tx,
             tasks: Vec::new(),
         };
@@ -388,7 +410,7 @@ impl ExtensionStore {
         this
     }
 
-    fn reload(
+    pub fn reload(
         &mut self,
         modified_extension: Option<Arc<str>>,
         cx: &mut ModelContext<Self>,
@@ -1041,16 +1063,15 @@ impl ExtensionStore {
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
                 for language in config.languages() {
-                    self.language_registry
-                        .remove_lsp_adapter(&language, language_server_name);
+                    self.api.remove_lsp_adapter(&language, language_server_name);
                 }
             }
         }
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
-        self.theme_registry.remove_user_themes(&themes_to_remove);
-        self.language_registry
+        self.api.remove_user_themes(themes_to_remove);
+        self.api
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
         let languages_to_add = new_index
@@ -1124,8 +1145,7 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
-        let theme_registry = self.theme_registry.clone();
-        let snippet_registry = self.snippet_registry.clone();
+        let api = self.api.clone();
         let extension_entries = extensions_to_load
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
@@ -1140,18 +1160,14 @@ impl ExtensionStore {
                 .spawn({
                     let fs = fs.clone();
                     async move {
-                        for theme_path in &themes_to_add {
-                            theme_registry
-                                .load_user_theme(theme_path, fs.clone())
-                                .await
-                                .log_err();
+                        for theme_path in themes_to_add.into_iter() {
+                            api.load_user_theme(theme_path, fs.clone()).await.log_err();
                         }
 
                         for snippets_path in &snippets_to_add {
                             if let Some(snippets_contents) = fs.load(snippets_path).await.log_err()
                             {
-                                snippet_registry
-                                    .register_snippets(snippets_path, &snippets_contents)
+                                api.register_snippets(snippets_path, &snippets_contents)
                                     .log_err();
                             }
                         }
@@ -1207,9 +1223,9 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
-                            this.language_registry.register_lsp_adapter(
+                            this.api.register_lsp_adapter(
                                 language.clone(),
-                                Arc::new(ExtensionLspAdapter {
+                                ExtensionLspAdapter {
                                     extension: wasm_extension.clone(),
                                     host: this.wasm_host.clone(),
                                     language_server_id: language_server_id.clone(),
@@ -1217,38 +1233,33 @@ impl ExtensionStore {
                                         name: language_server_id.0.to_string(),
                                         language_name: language.to_string(),
                                     },
-                                }),
+                                },
                             );
                         }
                     }
 
                     for (slash_command_name, slash_command) in &manifest.slash_commands {
-                        this.slash_command_registry.register_command(
-                            ExtensionSlashCommand {
-                                command: crate::wit::SlashCommand {
-                                    name: slash_command_name.to_string(),
-                                    description: slash_command.description.to_string(),
-                                    // We don't currently expose this as a configurable option, as it currently drives
-                                    // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
-                                    // defined in extensions, as they are not able to be added to the menu.
-                                    tooltip_text: String::new(),
-                                    requires_argument: slash_command.requires_argument,
-                                },
-                                extension: wasm_extension.clone(),
-                                host: this.wasm_host.clone(),
+                        this.api.register_slash_command(
+                            crate::wit::SlashCommand {
+                                name: slash_command_name.to_string(),
+                                description: slash_command.description.to_string(),
+                                // We don't currently expose this as a configurable option, as it currently drives
+                                // the `menu_text` on the `SlashCommand` trait, which is not used for slash commands
+                                // defined in extensions, as they are not able to be added to the menu.
+                                tooltip_text: String::new(),
+                                requires_argument: slash_command.requires_argument,
                             },
-                            false,
+                            wasm_extension.clone(),
+                            this.wasm_host.clone(),
                         );
                     }
 
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.indexed_docs_registry.register_provider(Box::new(
-                            ExtensionIndexedDocsProvider {
-                                extension: wasm_extension.clone(),
-                                host: this.wasm_host.clone(),
-                                id: ProviderId(provider_id.clone()),
-                            },
-                        ));
+                        this.api.register_docs_provider(
+                            wasm_extension.clone(),
+                            this.wasm_host.clone(),
+                            provider_id.clone(),
+                        );
                     }
                 }
 
