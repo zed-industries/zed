@@ -73,12 +73,11 @@ use std::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::SelectionGoal;
-use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
     Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip,
 };
 use util::{maybe, ResultExt};
 use workspace::{
@@ -4304,6 +4303,7 @@ fn render_inject_context_menu(
         Button::new("trigger", "Add Context")
             .icon(IconName::Plus)
             .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
             .icon_position(IconPosition::Start)
             .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
     )
