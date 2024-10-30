@@ -1853,23 +1853,22 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
+        let body = shlex::try_quote(body).unwrap();
+        let url = shlex::try_quote(url).unwrap();
+        let dst_str = dst_path_gz.to_string_lossy();
+        let dst_escaped = shlex::try_quote(&dst_str).unwrap();
+
         let script = format!(
             r#"
             if command -v curl >/dev/null 2>&1; then
-                curl -f -L -X GET -H "Content-Type: application/json" -d {} {} -o {} && echo "curl"
+                curl -f -L -X GET -H "Content-Type: application/json" -d {body} {url} -o {dst_escaped} && echo "curl"
             elif command -v wget >/dev/null 2>&1; then
-                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data={} {} -O {} && echo "wget"
+                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data={body} {url} -O {dst_escaped} && echo "wget"
             else
                 echo "Neither curl nor wget is available" >&2
                 exit 1
             fi
-            "#,
-            shlex::try_quote(body).unwrap(),
-            shlex::try_quote(url).unwrap(),
-            shlex::try_quote(&format!("{}", dst_path_gz.to_string_lossy())).unwrap(),
-            shlex::try_quote(body).unwrap(),
-            shlex::try_quote(url).unwrap(),
-            shlex::try_quote(&format!("{}", dst_path_gz.to_string_lossy())).unwrap(),
+            "#
         );
 
         let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(script))
