@@ -1,4 +1,7 @@
+use std::fmt::Display;
+
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
+use theme::all_theme_colors;
 use ui::{prelude::*, utils::calculate_contrast_ratio, ElevationIndex};
 
 use crate::{Item, Workspace};
@@ -75,9 +78,61 @@ impl ThemePreview {
             format!("{} ({:.2})", label, contrast)
         };
 
+        let all_colors = all_theme_colors(cx);
+
         v_flex()
+            .text_color(cx.theme().colors().text)
             .gap_2()
             .child(Headline::new(layer.to_string()).size(HeadlineSize::Medium))
+            .child(
+                v_flex()
+                    .w_full()
+                    .gap_px()
+                    .children(all_colors.into_iter().map(|(color, name)| {
+                        let fg = color;
+                        let contrast = (calculate_contrast_ratio(fg, bg) * 100.0).round() / 100.0;
+
+                        h_flex()
+                            .gap_2()
+                            .border_b_1()
+                            .text_xs()
+                            .border_color(cx.theme().colors().border)
+                            .py_1()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .size_8()
+                                    .bg(fg)
+                                    .border_1()
+                                    .border_color(cx.theme().colors().border)
+                                    .overflow_hidden(),
+                            )
+                            .child(
+                                div()
+                                    .w_64()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .truncate()
+                                    .child(name),
+                            )
+                            .child(
+                                div()
+                                    .w_48()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .truncate()
+                                    .child(fg.to_string()),
+                            )
+                            .child(
+                                div()
+                                    .w_16()
+                                    .flex_none()
+                                    .overflow_hidden()
+                                    .truncate()
+                                    .child(contrast.to_string()),
+                            )
+                    })),
+            )
             .child(
                 v_flex()
                     .bg(layer.bg(cx))
