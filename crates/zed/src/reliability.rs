@@ -4,12 +4,11 @@ use chrono::Utc;
 use client::{telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{AppContext, SemanticVersion};
-use http_client::{AsyncBody, HttpRequestExt, Method};
+use http_client::{HttpRequestExt, Method};
 
 use http_client::{self, HttpClient, HttpClientWithUrl};
 use paths::{crashes_dir, crashes_retired_dir};
 use project::Project;
-use proto::TypedEnvelope;
 use release_channel::ReleaseChannel;
 use release_channel::RELEASE_CHANNEL;
 use settings::Settings;
