@@ -141,6 +141,7 @@ actions!(
         CopyRelativePath,
         Feedback,
         FollowNextCollaborator,
+        GoToLastEditLocation,
         NewCenterTerminal,
         NewFile,
         NewFileSplitVertical,
@@ -766,6 +767,7 @@ pub struct Workspace {
     serialized_ssh_project: Option<SerializedSshProject>,
     _items_serializer: Task<Result<()>>,
     session_id: Option<String>,
+    last_edit_location: Option<NavigationEntry>,
 }
 
 impl EventEmitter<Event> for Workspace {}
@@ -1069,6 +1071,7 @@ impl Workspace {
             _items_serializer,
             session_id: Some(session_id),
             serialized_ssh_project: None,
+            last_edit_location: None,
         }
     }
 
@@ -1476,6 +1479,81 @@ impl Workspace {
         cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<()>> {
         self.navigate_history(pane, NavigationMode::GoingForward, cx)
+    }
+
+    pub fn go_last_edit_location(&mut self, cx: &mut ViewContext<Workspace>) -> Task<Result<()>> {
+        let Some(entry) = self.last_edit_location.take() else {
+            return Task::ready(Ok(()));
+        };
+        let pane = self.active_pane().clone();
+        let Some((project_path, abs_path, entry)) = pane.update(cx, |pane, cx| {
+            if let Some(index) = entry
+                .item
+                .upgrade()
+                .and_then(|v| pane.index_for_item(v.as_ref()))
+            {
+                pane.activate_item(index, true, true, cx);
+                if let Some(data) = entry.data {
+                    pane.active_item()?.navigate(data, cx);
+                }
+                None
+            } else {
+                pane.nav_history()
+                    .path_for_item(entry.item.id())
+                    .map(|(project_path, abs_path)| (project_path, abs_path, entry))
+            }
+        }) else {
+            return Task::ready(Ok(()));
+        };
+        // If the item was no longer present, then load it again from its previous path, first try the local path
+        let open_by_project_path = self.load_path(project_path.clone(), cx);
+
+        cx.spawn(|workspace, mut cx| async move {
+            let open_by_project_path = open_by_project_path.await;
+            match open_by_project_path
+                .with_context(|| format!("Navigating to {project_path:?}"))
+            {
+                Ok((project_entry_id, build_item)) => {
+                    pane.update(&mut cx, |pane, cx| {
+                        let item = pane.open_item(
+                            project_entry_id,
+                            true,
+                            entry.is_preview,
+                            cx,
+                            build_item,
+                        );
+                        if let Some(data) = entry.data {
+                            item.navigate(data, cx);
+                        }
+                    })?;
+                }
+                Err(open_by_project_path_e) => {
+                    // Fall back to opening by abs path, in case an external file was opened and closed,
+                    // and its worktree is now dropped
+                    if let Some(abs_path) = abs_path {
+                        let open_by_abs_path = workspace.update(&mut cx, |workspace, cx| {
+                            workspace.open_abs_path(abs_path.clone(), false, cx)
+                        })?;
+                        match open_by_abs_path
+                            .await
+                            .with_context(|| format!("Navigating to {abs_path:?}"))
+                        {
+                            Ok(item) => {
+                                pane.update(&mut cx, |_, cx| {
+                                    if let Some(data) = entry.data {
+                                        item.navigate(data, cx);
+                                    }
+                                })?;
+                            }
+                            Err(open_by_abs_path_e) => {
+                                log::error!("Failed to navigate history: {open_by_project_path_e:#} and {open_by_abs_path_e:#}");
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(())
+        })
     }
 
     pub fn reopen_closed_item(&mut self, cx: &mut ViewContext<Workspace>) -> Task<Result<()>> {
@@ -4408,6 +4486,11 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace: &mut Workspace, _: &ReopenClosedItem, cx| {
                     workspace.reopen_closed_item(cx).detach();
+                }),
+            )
+            .on_action(
+                cx.listener(|workspace: &mut Workspace, _: &GoToLastEditLocation, cx| {
+                    workspace.go_last_edit_location(cx).detach();
                 }),
             )
             .on_action(cx.listener(Workspace::toggle_centered_layout))
