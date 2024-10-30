@@ -29,6 +29,7 @@ use gpui::{
     Task, WeakModel,
 };
 use http_client::HttpClient;
+use itertools::Itertools as _;
 use language::{
     language_settings::{
         language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
@@ -563,9 +564,7 @@ impl LocalLspStore {
                 })?;
                 prettier_store::format_with_prettier(&prettier, &buffer.handle, cx)
                     .await
-                    .transpose()
-                    .ok()
-                    .flatten()
+                    .transpose()?
             }
             Formatter::External { command, arguments } => {
                 Self::format_via_external_command(buffer, command, arguments.as_deref(), cx)
@@ -5304,11 +5303,16 @@ impl LspStore {
                 .await;
 
                 lsp_store.update(&mut cx, |lsp_store, _| {
+                    // TODO kb propagate error to the ssh client
                     let local = lsp_store.as_local_mut().unwrap();
                     match &result {
                         Ok(_) => local.last_formatting_failure = None,
                         Err(error) => {
-                            local.last_formatting_failure.replace(error.to_string());
+                            let error_string = format!("{error:#}");
+                            log::error!("Formatting failed: {error_string}");
+                            local
+                                .last_formatting_failure
+                                .replace(error_string.lines().join(" "));
                         }
                     }
                 })?;
