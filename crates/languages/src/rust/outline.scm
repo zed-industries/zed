@@ -31,7 +31,8 @@
     (visibility_modifier)? @context
     (function_modifiers)? @context
     "fn" @context
-    name: (_) @name) @item
+    name: (_) @name
+    body: (_ "{" @open (_)* "}" @close)) @item
 
 (function_signature_item
     (visibility_modifier)? @context

@@ -4,7 +4,7 @@ use crate::{motion::right, state::Mode, Vim};
 use editor::{
     display_map::{DisplaySnapshot, ToDisplayPoint},
     movement::{self, FindRange},
-    Bias, DisplayPoint, Editor,
+    Bias, DisplayPoint, Editor, ToOffset,
 };
 
 use itertools::Itertools;
@@ -29,6 +29,7 @@ pub enum Object {
     AngleBrackets,
     Argument,
     Tag,
+    OutlineObject,
 }
 
 #[derive(Clone, Deserialize, PartialEq)]
@@ -54,7 +55,8 @@ actions!(
         CurlyBrackets,
         AngleBrackets,
         Argument,
-        Tag
+        Tag,
+        OutlineObject
     ]
 );
 
@@ -100,6 +102,9 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Argument, cx| {
         vim.object(Object::Argument, cx)
     });
+    Vim::action(editor, cx, |vim, _: &OutlineObject, cx| {
+        vim.object(Object::OutlineObject, cx)
+    });
 }
 
 impl Vim {
@@ -129,7 +134,8 @@ impl Object {
             | Object::AngleBrackets
             | Object::CurlyBrackets
             | Object::SquareBrackets
-            | Object::Argument => true,
+            | Object::Argument
+            | Object::OutlineObject => true,
         }
     }
 
@@ -144,7 +150,8 @@ impl Object {
             | Object::SquareBrackets
             | Object::Tag
             | Object::CurlyBrackets
-            | Object::AngleBrackets => true,
+            | Object::AngleBrackets
+            | Object::OutlineObject => true,
         }
     }
 
@@ -167,7 +174,8 @@ impl Object {
             | Object::AngleBrackets
             | Object::VerticalBars
             | Object::Tag
-            | Object::Argument => Mode::Visual,
+            | Object::Argument
+            | Object::OutlineObject => Mode::Visual,
             Object::Paragraph => Mode::VisualLine,
         }
     }
@@ -215,6 +223,7 @@ impl Object {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '<', '>')
             }
             Object::Argument => argument(map, relative_to, around),
+            Object::OutlineObject => outline_object(map, selection.start, selection.end, around),
         }
     }
 
@@ -562,6 +571,32 @@ fn argument(
     } else {
         None
     }
+}
+
+fn outline_object(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    end: DisplayPoint,
+    around: bool,
+) -> Option<Range<DisplayPoint>> {
+    println!("outline object!!!!");
+    let start_offset = start.to_offset(&map, Bias::Left);
+    let end_offset = end.to_offset(&map, Bias::Left);
+    let (_buffer_id, symbols) = map.buffer_snapshot.symbols_containing(start_offset, None)?;
+    for symbol in symbols.iter().rev() {
+        let range = if around {
+            &symbol.range
+        } else {
+            dbg!(symbol.body_range.as_ref()).unwrap_or(&symbol.range)
+        };
+        let start = range.start.to_offset(&map.buffer_snapshot);
+        let end = range.end.to_offset(&map.buffer_snapshot);
+        if start < start_offset && end > end_offset {
+            return Some(start.to_display_point(&map)..end.to_display_point(&map));
+        }
+    }
+    dbg!("none");
+    return None;
 }
 
 fn sentence(
