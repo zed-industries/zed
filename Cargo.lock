@@ -9536,6 +9536,7 @@ dependencies = [
  "log",
  "parking_lot",
  "prost",
+ "release_channel",
  "rpc",
  "serde",
  "serde_json",
