@@ -165,8 +165,8 @@ Here's a snippet for Zed settings.json (the language server will restart automat
 
 ### Multi-project workspaces
 
-If you want rust-analyzer to diagnose multiple rust projects in the same folder that are not listed in `[members]` in the cargo workspace,
-you can list them in `linkedProjected` in the local project settings:
+If you want rust-analyzer to analyze multiple Rust projects in the same folder that are not listed in `[members]` in the Cargo workspace,
+you can list them in `linkedProjects` in the local project settings:
 
 ```json
 {
