@@ -2200,12 +2200,14 @@ impl ContextEditor {
                         let max_width = cx.max_width;
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
+                        let selected = cx.selected;
                         this.update(&mut **cx, |this, cx| {
                             this.render_patch(
                                 patch_range.clone(),
                                 max_width,
                                 gutter_width,
                                 block_id,
+                                selected,
                                 cx,
                             )
                         })
@@ -3435,6 +3437,7 @@ impl ContextEditor {
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
+        selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
@@ -3453,8 +3456,13 @@ impl ContextEditor {
 
         Some(
             v_flex()
+                .bg(cx.theme().colors().editor_background)
                 .border_1()
-                .border_color(cx.theme().colors().border)
+                .border_color(if selected {
+                    cx.theme().colors().border_focused
+                } else {
+                    cx.theme().colors().border
+                })
                 .id(id)
                 .ml(gutter_width)
                 .p_2()
