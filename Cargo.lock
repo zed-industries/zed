@@ -16,6 +16,7 @@ dependencies = [
  "project",
  "smallvec",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -15032,7 +15033,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.160.0"
+version = "0.161.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -15168,13 +15169,6 @@ dependencies = [
 [[package]]
 name = "zed_csharp"
 version = "0.0.2"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_dart"
-version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]

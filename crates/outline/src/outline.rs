@@ -194,9 +194,11 @@ impl PickerDelegate for OutlineViewDelegate {
                 })
                 .collect();
 
-            let editor = self.active_editor.read(cx);
-            let cursor_offset = editor.selections.newest::<usize>(cx).head();
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let (buffer, cursor_offset) = self.active_editor.update(cx, |editor, cx| {
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let cursor_offset = editor.selections.newest::<usize>(cx).head();
+                (buffer, cursor_offset)
+            });
             selected_index = self
                 .outline
                 .items

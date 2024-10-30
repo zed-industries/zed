@@ -8,14 +8,14 @@ use std::{
 use collections::HashMap;
 use gpui::{AppContext, Model, Pixels};
 use itertools::Itertools;
-use language::{Bias, Point, Selection, SelectionGoal, TextDimension, ToPoint};
+use language::{Bias, Point, Selection, SelectionGoal, TextDimension};
 use util::post_inc;
 
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
     Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
-    ToOffset,
+    ToOffset, ToPoint,
 };
 
 #[derive(Debug, Clone)]
@@ -96,7 +96,7 @@ impl SelectionsCollection {
 
     pub fn pending<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Option<Selection<D>> {
         self.pending_anchor()
             .as_ref()
@@ -107,7 +107,7 @@ impl SelectionsCollection {
         self.pending.as_ref().map(|pending| pending.mode.clone())
     }
 
-    pub fn all<'a, D>(&self, cx: &AppContext) -> Vec<Selection<D>>
+    pub fn all<'a, D>(&self, cx: &mut AppContext) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
@@ -194,7 +194,7 @@ impl SelectionsCollection {
     pub fn disjoint_in_range<'a, D>(
         &self,
         range: Range<Anchor>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Vec<Selection<D>>
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
@@ -239,9 +239,10 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
-        resolve(self.newest_anchor(), &self.buffer(cx))
+        let buffer = self.buffer(cx);
+        self.newest_anchor().map(|p| p.summary::<D>(&buffer))
     }
 
     pub fn newest_display(&self, cx: &mut AppContext) -> Selection<DisplayPoint> {
@@ -262,9 +263,10 @@ impl SelectionsCollection {
 
     pub fn oldest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
-        resolve(self.oldest_anchor(), &self.buffer(cx))
+        let buffer = self.buffer(cx);
+        self.oldest_anchor().map(|p| p.summary::<D>(&buffer))
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
@@ -276,14 +278,14 @@ impl SelectionsCollection {
 
     pub fn first<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
         self.all(cx).first().unwrap().clone()
     }
 
     pub fn last<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
         self.all(cx).last().unwrap().clone()
     }
@@ -298,7 +300,7 @@ impl SelectionsCollection {
     #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Vec<Range<D>> {
         self.all::<D>(cx)
             .iter()
@@ -475,7 +477,7 @@ impl<'a> MutableSelectionsCollection<'a> {
     where
         T: 'a + ToOffset + ToPoint + TextDimension + Ord + Sub<T, Output = T> + std::marker::Copy,
     {
-        let mut selections = self.all(self.cx);
+        let mut selections = self.collection.all(self.cx);
         let mut start = range.start.to_offset(&self.buffer());
         let mut end = range.end.to_offset(&self.buffer());
         let reversed = if start > end {
@@ -649,6 +651,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         let mut changed = false;
         let display_map = self.display_map();
         let selections = self
+            .collection
             .all::<Point>(self.cx)
             .into_iter()
             .map(|selection| {
@@ -676,6 +679,7 @@ impl<'a> MutableSelectionsCollection<'a> {
         let mut changed = false;
         let snapshot = self.buffer().clone();
         let selections = self
+            .collection
             .all::<usize>(self.cx)
             .into_iter()
             .map(|selection| {
@@ -868,11 +872,4 @@ where
         reversed: s.reversed,
         goal: s.goal,
     })
-}
-
-fn resolve<D: TextDimension + Ord + Sub<D, Output = D>>(
-    selection: &Selection<Anchor>,
-    buffer: &MultiBufferSnapshot,
-) -> Selection<D> {
-    selection.map(|p| p.summary::<D>(buffer))
 }

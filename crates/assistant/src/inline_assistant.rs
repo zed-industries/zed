@@ -189,11 +189,16 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
-        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
+            (
+                editor.buffer().read(cx).snapshot(cx),
+                editor.selections.all::<Point>(cx),
+            )
+        });
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
-        for mut selection in editor.read(cx).selections.all::<Point>(cx) {
+        for mut selection in initial_selections {
             if selection.end > selection.start {
                 selection.start.column = 0;
                 // If the selection ends at the start of the line, we don't want to include it.
@@ -566,10 +571,13 @@ impl InlineAssistant {
             return;
         };
 
-        let editor = editor.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+        if editor.read(cx).selections.count() == 1 {
+            let (selection, buffer) = editor.update(cx, |editor, cx| {
+                (
+                    editor.selections.newest::<usize>(cx),
+                    editor.buffer().read(cx).snapshot(cx),
+                )
+            });
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
                 let assist_range = assist.range.to_offset(&buffer);
@@ -594,10 +602,13 @@ impl InlineAssistant {
             return;
         };
 
-        let editor = editor.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+        if editor.read(cx).selections.count() == 1 {
+            let (selection, buffer) = editor.update(cx, |editor, cx| {
+                (
+                    editor.selections.newest::<usize>(cx),
+                    editor.buffer().read(cx).snapshot(cx),
+                )
+            });
             let mut closest_assist_fallback = None;
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
