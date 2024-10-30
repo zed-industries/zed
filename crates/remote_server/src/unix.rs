@@ -1,13 +1,13 @@
 use crate::headless_project::HeadlessAppState;
 use crate::HeadlessProject;
 use anyhow::{anyhow, Context, Result};
-use client::ProxySettings;
+use client::{ClientSettings, ProxySettings};
 use fs::{Fs, RealFs};
 use futures::channel::mpsc;
 use futures::{select, select_biased, AsyncRead, AsyncWrite, AsyncWriteExt, FutureExt, SinkExt};
 use git::GitHostingProviderRegistry;
 use gpui::{AppContext, Context as _, ModelContext, UpdateGlobal as _};
-use http_client::{read_proxy_from_env, Uri};
+use http_client::{read_proxy_from_env, HttpClient, HttpClientWithUrl, Uri};
 use language::LanguageRegistry;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
@@ -345,11 +345,11 @@ pub fn execute_run(
             let fs = Arc::new(RealFs::new(Default::default(), None));
             let node_settings_rx = initialize_settings(session.clone(), fs.clone(), cx);
 
-            let proxy_url = read_proxy_settings(cx);
+            let proxy_uri = read_proxy_settings(cx);
 
             let http_client = Arc::new(
                 ReqwestClient::proxy_and_user_agent(
-                    proxy_url,
+                    proxy_uri,
                     &format!(
                         "Zed-Server/{} ({}; {})",
                         env!("CARGO_PKG_VERSION"),
@@ -365,6 +365,21 @@ pub fn execute_run(
             let mut languages = LanguageRegistry::new(cx.background_executor().clone());
             languages.set_language_server_download_dir(paths::languages_dir().clone());
             let languages = Arc::new(languages);
+
+            let client_with_url = Arc::new(HttpClientWithUrl::new_uri(
+                http_client.clone(),
+                &ClientSettings::get_global(cx).server_url,
+                http_client.proxy().cloned(),
+            ));
+
+            extension_headless::init(
+                fs.clone(),
+                client_with_url,
+                None,
+                node_runtime.clone(),
+                languages.clone(),
+                cx,
+            );
 
             HeadlessProject::new(
                 HeadlessAppState {

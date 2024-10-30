@@ -1,5 +1,5 @@
 [package]
-name = "extension"
+name = "extension_headless"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -12,23 +12,17 @@ workspace = true
 path = "src/extension_store.rs"
 doctest = false
 
-[features]
-no-webrtc = ["workspace/no-webrtc"]
-
 [dependencies]
 anyhow.workspace = true
-assistant_slash_command.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 async-trait.workspace = true
-client.workspace = true
 collections.workspace = true
-# extension_headless.workspace = true
+client.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
-indexed_docs.workspace = true
 language.workspace = true
 log.workspace = true
 lsp.workspace = true
@@ -42,11 +36,7 @@ serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings.workspace = true
-snippet_provider.workspace = true
-task.workspace = true
-theme.workspace = true
 toml.workspace = true
-ui.workspace = true
 url.workspace = true
 util.workspace = true
 wasm-encoder.workspace = true
@@ -54,14 +44,3 @@ wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
 wit-component.workspace = true
-
-[dev-dependencies]
-ctor.workspace = true
-env_logger.workspace = true
-fs = { workspace = true, features = ["test-support"] }
-gpui = { workspace = true, features = ["test-support"] }
-language = { workspace = true, features = ["test-support"] }
-parking_lot.workspace = true
-project = { workspace = true, features = ["test-support"] }
-reqwest_client.workspace = true
-workspace = { workspace = true, features = ["test-support"] }

@@ -4159,6 +4159,43 @@ dependencies = [
 ]
 
 [[package]]
+name = "extension_headless"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "async-trait",
+ "client",
+ "collections",
+ "fs",
+ "futures 0.3.30",
+ "gpui",
+ "http_client",
+ "language",
+ "log",
+ "lsp",
+ "node_runtime",
+ "paths",
+ "project",
+ "release_channel",
+ "schemars",
+ "semantic_version",
+ "serde",
+ "serde_json",
+ "serde_json_lenient",
+ "settings",
+ "toml 0.8.19",
+ "url",
+ "util",
+ "wasm-encoder 0.215.0",
+ "wasmparser 0.215.0",
+ "wasmtime",
+ "wasmtime-wasi",
+ "wit-component",
+]
+
+[[package]]
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
@@ -9557,6 +9594,7 @@ dependencies = [
  "client",
  "clock",
  "env_logger 0.11.5",
+ "extension_headless",
  "fork",
  "fs",
  "futures 0.3.30",
