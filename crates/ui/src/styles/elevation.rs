@@ -1,5 +1,8 @@
-use gpui::{hsla, point, px, BoxShadow};
+use std::fmt::{self, Display, Formatter};
+
+use gpui::{hsla, point, px, BoxShadow, Hsla, WindowContext};
 use smallvec::{smallvec, SmallVec};
+use theme::ActiveTheme;
 
 /// Today, elevation is primarily used to add shadows to elements, and set the correct background for elements like buttons.
 ///
@@ -23,6 +26,19 @@ pub enum ElevationIndex {
     ModalSurface,
     /// A surface above all other surfaces, reserved exclusively for dragged elements, like a dragged file, tab or other draggable element.
     DraggedElement,
+}
+
+impl Display for ElevationIndex {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        match self {
+            ElevationIndex::Background => write!(f, "Background"),
+            ElevationIndex::Surface => write!(f, "Surface"),
+            ElevationIndex::ElevatedSurface => write!(f, "Elevated Surface"),
+            ElevationIndex::Wash => write!(f, "Wash"),
+            ElevationIndex::ModalSurface => write!(f, "Modal Surface"),
+            ElevationIndex::DraggedElement => write!(f, "Dragged Element"),
+        }
+    }
 }
 
 impl ElevationIndex {
@@ -60,6 +76,18 @@ impl ElevationIndex {
             ],
 
             _ => smallvec![],
+        }
+    }
+
+    /// Returns the background color for the given elevation index.
+    pub fn bg(&self, cx: &WindowContext) -> Hsla {
+        match self {
+            ElevationIndex::Background => cx.theme().colors().background,
+            ElevationIndex::Surface => cx.theme().colors().surface_background,
+            ElevationIndex::ElevatedSurface => cx.theme().colors().elevated_surface_background,
+            ElevationIndex::Wash => gpui::transparent_black(),
+            ElevationIndex::ModalSurface => cx.theme().colors().elevated_surface_background,
+            ElevationIndex::DraggedElement => gpui::transparent_black(),
         }
     }
 }
