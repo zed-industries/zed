@@ -1,6 +1,7 @@
 #![allow(unused, dead_code)]
 use std::{path::PathBuf, sync::Arc};
 
+use anyhow::Context as _;
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
@@ -528,6 +529,7 @@ pub struct NotebookItem {
     path: PathBuf,
     project_path: ProjectPath,
     notebook: nbformat::v4::Notebook,
+    id: ProjectEntryId,
 }
 
 impl project::Item for NotebookItem {
@@ -550,21 +552,29 @@ impl project::Item for NotebookItem {
 
                 let notebook = match notebook {
                     Ok(nbformat::Notebook::V4(notebook)) => notebook,
+                    // 4.1 - 4.4 are converted to 4.5
                     Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                         // todo!(): Decide if we want to mutate the notebook by including Cell IDs
                         // and any other conversions
                         let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
                         notebook
                     }
+                    // Bad notebooks and notebooks v4.0 and below are not supported
                     Err(e) => {
                         anyhow::bail!("Failed to parse notebook: {:?}", e);
                     }
                 };
 
+                let id = project
+                    .update(&mut cx, |project, cx| project.entry_for_path(&path, cx))?
+                    .context("Entry not found")?
+                    .id;
+
                 cx.new_model(|_| NotebookItem {
                     path: abs_path,
                     project_path: path,
                     notebook,
+                    id,
                 })
             }))
         } else {
@@ -573,7 +583,7 @@ impl project::Item for NotebookItem {
     }
 
     fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-        None
+        Some(self.id)
     }
 
     fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
