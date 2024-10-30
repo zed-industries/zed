@@ -292,7 +292,9 @@ message Envelope {
         GetPathMetadataResponse get_path_metadata_response = 279;
 
         GetPanicFiles get_panic_files = 280;
-        GetPanicFilesResponse get_panic_files_response = 281; // current max
+        GetPanicFilesResponse get_panic_files_response = 281;
+
+        CancelLanguageServerWork cancel_language_server_work = 282; // current max
     }
 
     reserved 87 to 88;
@@ -2499,4 +2501,9 @@ message GetPanicFiles {
 
 message GetPanicFilesResponse {
     repeated string file_contents = 2;
+}
+
+message CancelLanguageServerWork {
+    uint64 project_id = 1;
+    repeated uint64 buffer_ids = 2;
 }

@@ -787,6 +787,7 @@ impl LspStore {
     pub fn init(client: &AnyProtoClient) {
         client.add_model_request_handler(Self::handle_multi_lsp_query);
         client.add_model_request_handler(Self::handle_restart_language_servers);
+        client.add_model_request_handler(Self::handle_cancel_language_server_work);
         client.add_model_message_handler(Self::handle_start_language_server);
         client.add_model_message_handler(Self::handle_update_language_server);
         client.add_model_message_handler(Self::handle_language_server_log);
@@ -5168,20 +5169,39 @@ impl LspStore {
         mut cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |this, cx| {
-            let buffers: Vec<_> = envelope
-                .payload
-                .buffer_ids
-                .into_iter()
-                .flat_map(|buffer_id| {
-                    this.buffer_store
-                        .read(cx)
-                        .get(BufferId::new(buffer_id).log_err()?)
-                })
-                .collect();
-            this.restart_language_servers_for_buffers(buffers, cx)
+            let buffers = this.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
+            this.restart_language_servers_for_buffers(buffers, cx);
         })?;
 
         Ok(proto::Ack {})
+    }
+
+    pub async fn handle_cancel_language_server_work(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::CancelLanguageServerWork>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |this, cx| {
+            let buffers = this.buffer_ids_to_buffers(envelope.payload.buffer_ids.into_iter(), cx);
+            this.cancel_language_server_work_for_buffers(buffers, cx);
+        })?;
+
+        Ok(proto::Ack {})
+    }
+
+    fn buffer_ids_to_buffers(
+        &mut self,
+        buffer_ids: impl Iterator<Item = u64>,
+        cx: &mut ModelContext<Self>,
+    ) -> Vec<Model<Buffer>> {
+        buffer_ids
+            .into_iter()
+            .flat_map(|buffer_id| {
+                self.buffer_store
+                    .read(cx)
+                    .get(BufferId::new(buffer_id).log_err()?)
+            })
+            .collect::<Vec<_>>()
     }
 
     async fn handle_apply_additional_edits_for_completion(
@@ -6728,16 +6748,29 @@ impl LspStore {
         buffers: impl IntoIterator<Item = Model<Buffer>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let servers = buffers
-            .into_iter()
-            .flat_map(|buffer| {
-                self.language_server_ids_for_buffer(buffer.read(cx), cx)
+        if let Some((client, project_id)) = self.upstream_client() {
+            let request = client.request(proto::CancelLanguageServerWork {
+                project_id,
+                buffer_ids: buffers
                     .into_iter()
-            })
-            .collect::<HashSet<_>>();
+                    .map(|b| b.read(cx).remote_id().to_proto())
+                    .collect(),
+            });
+            cx.background_executor()
+                .spawn(request)
+                .detach_and_log_err(cx);
+        } else {
+            let servers = buffers
+                .into_iter()
+                .flat_map(|buffer| {
+                    self.language_server_ids_for_buffer(buffer.read(cx), cx)
+                        .into_iter()
+                })
+                .collect::<HashSet<_>>();
 
-        for server_id in servers {
-            self.cancel_language_server_work(server_id, None, cx);
+            for server_id in servers {
+                self.cancel_language_server_work(server_id, None, cx);
+            }
         }
     }
 
