@@ -4433,10 +4433,21 @@ mod tests {
                 //
                 "v root1",
                 "      one.txt",
-                "      one copy.txt  <== selected",
+                "      [EDITOR: 'one copy.txt']  <== selected",
                 "      one.two.txt",
             ]
         );
+
+        panel.update(cx, |panel, cx| {
+            panel.filename_editor.update(cx, |editor, cx| {
+                let file_name_selections = editor.selections.all::<usize>(cx);
+                assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
+                let file_name_selection = &file_name_selections[0];
+                assert_eq!(file_name_selection.start, "one".len(), "Should select the file name disambiguation after the original file name");
+                assert_eq!(file_name_selection.end, "one copy".len(), "Should select the file name disambiguation until the extension");
+            });
+            assert!(panel.confirm_edit(cx).is_none());
+        });
 
         panel.update(cx, |panel, cx| {
             panel.paste(&Default::default(), cx);
@@ -4450,10 +4461,12 @@ mod tests {
                 "v root1",
                 "      one.txt",
                 "      one copy.txt",
-                "      one copy 1.txt  <== selected",
+                "      [EDITOR: 'one copy 1.txt']  <== selected",
                 "      one.two.txt",
             ]
         );
+
+        panel.update(cx, |panel, cx| assert!(panel.confirm_edit(cx).is_none()));
     }
 
     #[gpui::test]
@@ -4645,10 +4658,13 @@ mod tests {
                 "      four.txt",
                 "      one.txt",
                 "      three.txt",
-                "      three copy.txt  <== selected",
+                "      [EDITOR: 'three copy.txt']  <== selected",
                 "      two.txt",
             ]
         );
+
+        panel.update(cx, |panel, cx| panel.cancel(&menu::Cancel {}, cx));
+        cx.executor().run_until_parked();
 
         select_path(&panel, "root1/a", cx);
         panel.update(cx, |panel, cx| {
@@ -4753,6 +4769,48 @@ mod tests {
         select_path(&panel, "root", cx);
         panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
         cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root",
+                "    > a",
+                "    > [EDITOR: 'a copy']  <== selected",
+                "    v b",
+                "        v a",
+                "            v inner_dir",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt"
+            ]
+        );
+
+        let confirm = panel.update(cx, |panel, cx| {
+            panel
+                .filename_editor
+                .update(cx, |editor, cx| editor.set_text("c", cx));
+            panel.confirm_edit(cx).unwrap()
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                //
+                "v root",
+                "    > a",
+                "    > [PROCESSING: 'c']  <== selected",
+                "    v b",
+                "        v a",
+                "            v inner_dir",
+                "                  four.txt",
+                "                  three.txt",
+                "              one.txt",
+                "              two.txt"
+            ]
+        );
+
+        confirm.await.unwrap();
+
         panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
         cx.executor().run_until_parked();
         assert_eq!(
@@ -4761,18 +4819,18 @@ mod tests {
                 //
                 "v root",
                 "    > a",
-                "    v a copy",
-                "        > a  <== selected",
-                "        > inner_dir",
-                "          one.txt",
-                "          two.txt",
                 "    v b",
                 "        v a",
                 "            v inner_dir",
                 "                  four.txt",
                 "                  three.txt",
                 "              one.txt",
-                "              two.txt"
+                "              two.txt",
+                "    v c",
+                "        > a  <== selected",
+                "        > inner_dir",
+                "          one.txt",
+                "          two.txt",
             ]
         );
     }
