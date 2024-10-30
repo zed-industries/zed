@@ -57,7 +57,6 @@ indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
 parking_lot.workspace = true
-release_channel.workspace = true
 settings.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }
