@@ -135,10 +135,10 @@ impl Keystroke {
             str.push_str("cmd-");
 
             #[cfg(target_os = "linux")]
-            str.push_str("super-")?;
+            str.push_str("super-");
 
             #[cfg(target_os = "windows")]
-            str.push_str("win-")?;
+            str.push_str("win-");
         }
         if self.modifiers.shift {
             str.push_str("shift-");
