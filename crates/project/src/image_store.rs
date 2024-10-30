@@ -1,6 +1,6 @@
 use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Project, ProjectEntryId, ProjectPath,
+    Project, ProjectEntryId, ProjectItem, ProjectPath,
 };
 use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
@@ -114,7 +114,7 @@ impl ImageItem {
     }
 }
 
-impl project::ProjectItem for ImageItem {
+impl ProjectItem for ImageItem {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
