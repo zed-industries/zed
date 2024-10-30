@@ -2068,6 +2068,7 @@ impl EditorElement {
         editor_width: Pixels,
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
+        active_rows: &BTreeMap<DisplayRow, bool>,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
@@ -2094,6 +2095,7 @@ impl EditorElement {
                         line_height,
                         em_width,
                         block_id,
+                        selected: active_rows.contains_key(&block_row_start),
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
@@ -2431,6 +2433,7 @@ impl EditorElement {
         text_x: Pixels,
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
+        active_rows: &BTreeMap<DisplayRow, bool>,
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2467,6 +2470,7 @@ impl EditorElement {
                 editor_width,
                 scroll_width,
                 &mut resized_blocks,
+                active_rows,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2511,6 +2515,7 @@ impl EditorElement {
                 editor_width,
                 scroll_width,
                 &mut resized_blocks,
+                active_rows,
                 cx,
             );
 
@@ -2556,6 +2561,7 @@ impl EditorElement {
                             editor_width,
                             scroll_width,
                             &mut resized_blocks,
+                            active_rows,
                             cx,
                         );
 
@@ -5176,6 +5182,7 @@ impl Element for EditorElement {
                             gutter_dimensions.full_width(),
                             line_height,
                             &line_layouts,
+                            &active_rows,
                             cx,
                         )
                     });
