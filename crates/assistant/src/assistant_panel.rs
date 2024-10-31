@@ -3483,10 +3483,6 @@ impl ContextEditor {
             .anchor_in_excerpt(excerpt_id, range.start)
             .unwrap();
 
-        if !snapshot.intersects_fold(anchor) {
-            return None;
-        }
-
         let patch = self.context.read(cx).patch_for_range(&range, cx)?;
         let paths = patch
             .paths()
