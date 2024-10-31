@@ -2254,7 +2254,7 @@ impl ContextEditor {
                     let block_ids = editor.insert_blocks(
                         [BlockProperties {
                             height: path_count as u32 + 1,
-                            style: BlockStyle::Flex,
+                            style: BlockStyle::Fixed,
                             render: render_block,
                             placement: BlockPlacement::Replace(patch_start..patch_end),
                             priority: 0,
