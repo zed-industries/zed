@@ -91,9 +91,7 @@ impl NotebookEditor {
         let language_name = notebook_item.read(cx).language_name();
 
         let notebook_language = notebook_item.read(cx).notebook_language();
-        let notebook_language = cx
-            .spawn(|_, _| async move { notebook_language.await })
-            .shared();
+        let notebook_language = cx.spawn(|_, _| notebook_language).shared();
 
         let mut cell_order = vec![]; // Vec<CellId>
         let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
