@@ -50,6 +50,11 @@ pub enum AssistantProviderContentV1 {
         api_url: Option<String>,
         low_speed_timeout_in_seconds: Option<u64>,
     },
+    #[serde(rename = "bedrock")]
+    Bedrock {
+        default_model: Option<CloudModel>,
+        region: Option<String>,
+    },
 }
 
 #[derive(Debug, Default)]

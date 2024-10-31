@@ -221,8 +221,8 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         cx: &AsyncAppContext
-    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<bedrock::Event, BedrockError>>>> {
-        todo!()
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<Event, BedrockError>>>> {
+
     }
 }
 
@@ -298,7 +298,54 @@ impl LanguageModel for BedrockModel {
 }
 
 fn get_bedrock_tokens(request: LanguageModelRequest, cx: &AppContext) -> BoxFuture<'static, Result<usize>> {
+    cx.background_executor()
+        .spawn(async move {
+            let messages = request.messages;
+            let mut tokens_from_images = 0;
+            let mut string_messages = Vec::with_capacity(messages.len());
 
+            for message in messages {
+                use crate::MessageContent;
+
+                let mut string_contents = String::new();
+
+                for content in message.content {
+                    match content {
+                        MessageContent::Text(text) => {
+                            string_contents.push_str(&text);
+                        }
+                        MessageContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                        MessageContent::ToolUse(_tool_use) => {
+                            unimplemented!();
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            unimplemented!();
+                        }
+                    }
+                }
+
+                if !string_contents.is_empty() {
+                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                        role: match message.role {
+                            Role::User => "user".into(),
+                            Role::Assistant => "assistant".into(),
+                            Role::System => "system".into(),
+                        },
+                        content: Some(string_contents),
+                        name: None,
+                        function_call: None,
+                    });
+                }
+            }
+
+            // Tiktoken doesn't yet support these models, so we manually use the
+            // same tokenizer as GPT-4.
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+                .map(|tokens| tokens + tokens_from_images)
+        })
+        .boxed()
 }
 
 pub fn map_to_language_model_completion_events(
