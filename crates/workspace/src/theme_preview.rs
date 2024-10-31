@@ -394,7 +394,6 @@ impl ThemePreview {
                     .gap_1()
                     .children(all_colors.into_iter().map(|(color, name)| {
                         let id = ElementId::Name(format!("{:?}-preview", color).into());
-                        let color = color.clone();
                         let name = name.clone();
                         div().size_8().flex_none().child(
                             ButtonLike::new(id)
@@ -409,7 +408,6 @@ impl ThemePreview {
                                 .size(ButtonSize::None)
                                 .style(ButtonStyle::Transparent)
                                 .tooltip(move |cx| {
-                                    let color = color.clone();
                                     let name = name.clone();
                                     Tooltip::with_meta(name, None, format!("{:?}", color), cx)
                                 }),
