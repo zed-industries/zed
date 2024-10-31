@@ -76,10 +76,9 @@ use text::SelectionGoal;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
-    Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip,
+    Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, IconButtonShape, KeyBinding,
+    ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip,
 };
-use ui::{IconButtonShape, TintColor};
 use util::{maybe, ResultExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
