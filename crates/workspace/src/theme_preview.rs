@@ -73,9 +73,7 @@ impl ThemePreview {
         cx.theme().colors().editor_background
     }
 
-    fn render_avatars(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
-        let base_avatar = Avatar::new(AVATAR_URL).size(px(24.)).into_any_element();
-
+    fn render_avatars(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .gap_1()
             .child(Headline::new("Avatars").size(HeadlineSize::Small))
@@ -110,25 +108,25 @@ impl ThemePreview {
                                 .child(
                                     Avatar::new(AVATAR_URL)
                                         .border_color(Self::preview_bg(cx))
-                                        .size(rems(1.5))
+                                        .size(px(26.))
                                         .into_any_element(),
                                 )
                                 .child(
                                     Avatar::new(AVATAR_URL)
                                         .border_color(Self::preview_bg(cx))
-                                        .size(rems(1.5))
+                                        .size(px(26.))
                                         .into_any_element(),
                                 )
                                 .child(
                                     Avatar::new(AVATAR_URL)
                                         .border_color(Self::preview_bg(cx))
-                                        .size(rems(1.5))
+                                        .size(px(26.))
                                         .into_any_element(),
                                 )
                                 .child(
                                     Avatar::new(AVATAR_URL)
                                         .border_color(Self::preview_bg(cx))
-                                        .size(rems(1.5))
+                                        .size(px(26.))
                                         .into_any_element(),
                                 ),
                         ),
@@ -154,7 +152,7 @@ impl ThemePreview {
             .text_color(cx.theme().colors().text)
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
-            .child(self.render_avatars(layer.clone(), cx))
+            .child(self.render_avatars(cx))
             .child(
                 v_flex()
                     .w_full()
