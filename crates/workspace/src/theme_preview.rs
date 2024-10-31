@@ -1,8 +1,10 @@
 #![allow(unused, dead_code)]
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
+use theme::all_theme_colors;
 use ui::{
     prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ElevationIndex, Facepile, TintColor,
+    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, ElevationIndex, Facepile,
+    TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -375,6 +377,47 @@ impl ThemePreview {
             )
     }
 
+    fn render_colors(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
+        let bg = layer.bg(cx);
+        let all_colors = all_theme_colors(cx);
+
+        v_flex()
+            .gap_1()
+            .child(
+                Headline::new("Colors")
+                    .size(HeadlineSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .children(all_colors.into_iter().map(|(color, name)| {
+                        let id = ElementId::Name(format!("{:?}-preview", color).into());
+                        let color = color.clone();
+                        let name = name.clone();
+                        div().size_8().flex_none().child(
+                            ButtonLike::new(id)
+                                .child(
+                                    div()
+                                        .size_8()
+                                        .bg(color)
+                                        .border_1()
+                                        .border_color(cx.theme().colors().border)
+                                        .overflow_hidden(),
+                                )
+                                .size(ButtonSize::None)
+                                .style(ButtonStyle::Transparent)
+                                .tooltip(move |cx| {
+                                    let color = color.clone();
+                                    let name = name.clone();
+                                    Tooltip::with_meta(name, None, format!("{:?}", color), cx)
+                                }),
+                        )
+                    })),
+            )
+    }
+
     fn render_theme_layer(
         &self,
         layer: ElevationIndex,
@@ -389,55 +432,7 @@ impl ThemePreview {
             .child(self.render_avatars(cx))
             .child(self.render_buttons(layer, cx))
             .child(self.render_text(layer, cx))
-        // .child(
-        //     v_flex()
-        //         .w_full()
-        //         .gap_px()
-        //         .children(all_colors.into_iter().map(|(color, name)| {
-        //             let fg = color;
-        //             let contrast = (calculate_contrast_ratio(fg, bg) * 100.0).round() / 100.0;
-
-        //             h_flex()
-        //                 .gap_2()
-        //                 .border_b_1()
-        //                 .text_xs()
-        //                 .border_color(cx.theme().colors().border)
-        //                 .py_1()
-        //                 .child(
-        //                     div()
-        //                         .flex_none()
-        //                         .size_8()
-        //                         .bg(fg)
-        //                         .border_1()
-        //                         .border_color(cx.theme().colors().border)
-        //                         .overflow_hidden(),
-        //                 )
-        //                 .child(
-        //                     div()
-        //                         .w_64()
-        //                         .flex_none()
-        //                         .overflow_hidden()
-        //                         .truncate()
-        //                         .child(name),
-        //                 )
-        //                 .child(
-        //                     div()
-        //                         .w_48()
-        //                         .flex_none()
-        //                         .overflow_hidden()
-        //                         .truncate()
-        //                         .child(fg.to_string()),
-        //                 )
-        //                 .child(
-        //                     div()
-        //                         .w_16()
-        //                         .flex_none()
-        //                         .overflow_hidden()
-        //                         .truncate()
-        //                         .child(contrast.to_string()),
-        //                 )
-        //         })),
-        // )
+            .child(self.render_colors(layer, cx))
     }
 }
 
