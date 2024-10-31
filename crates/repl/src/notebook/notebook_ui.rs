@@ -72,9 +72,6 @@ pub struct NotebookEditor {
     remote_id: Option<ViewId>,
     cell_list: ListState,
 
-    metadata: NotebookMetadata,
-    nbformat: i32,
-    nbformat_minor: i32,
     selected_cell_index: usize,
     cell_order: Vec<CellId>,
     cell_map: HashMap<CellId, Cell>,
@@ -91,19 +88,7 @@ impl NotebookEditor {
         let notebook = notebook_item.read(cx).notebook.clone();
 
         let languages = project.read(cx).languages().clone();
-
-        let metadata = notebook.metadata;
-        let nbformat = notebook.nbformat;
-        let nbformat_minor = notebook.nbformat_minor;
-
-        let language_name = metadata
-            .language_info
-            .as_ref()
-            .map(|l| l.name.clone())
-            .or(metadata
-                .kernelspec
-                .as_ref()
-                .and_then(|spec| spec.language.clone()));
+        let language_name = notebook_item.read(cx).language_name();
 
         let notebook_language = if let Some(language_name) = language_name {
             cx.spawn(|_, _| {
@@ -114,16 +99,6 @@ impl NotebookEditor {
         } else {
             Task::ready(None).shared()
         };
-
-        let languages = project.read(cx).languages().clone();
-        let notebook_language = cx
-            .spawn(|_, _| {
-                // todo: pull from notebook metadata
-                const TODO: &'static str = "Python";
-                let languages = languages.clone();
-                async move { languages.language_for_name(TODO).await.ok() }
-            })
-            .shared();
 
         let mut cell_order = vec![]; // Vec<CellId>
         let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
@@ -168,9 +143,6 @@ impl NotebookEditor {
             remote_id: None,
             cell_list,
             selected_cell_index: 0,
-            metadata,
-            nbformat,
-            nbformat_minor,
             cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
         }
@@ -588,7 +560,21 @@ impl project::Item for NotebookItem {
     }
 }
 
-impl NotebookItem {}
+impl NotebookItem {
+    pub fn language_name(&self) -> Option<String> {
+        self.notebook
+            .metadata
+            .language_info
+            .as_ref()
+            .map(|l| l.name.clone())
+            .or(self
+                .notebook
+                .metadata
+                .kernelspec
+                .as_ref()
+                .and_then(|spec| spec.language.clone()))
+    }
+}
 
 impl EventEmitter<()> for NotebookEditor {}
 
