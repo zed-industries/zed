@@ -20,6 +20,7 @@ use gpui::{
     AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Global, Model,
     ModelContext, SemanticVersion, Task, WeakModel,
 };
+use itertools::Itertools;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
@@ -34,8 +35,7 @@ use smol::{
 use std::{
     any::TypeId,
     collections::VecDeque,
-    ffi::OsStr,
-    fmt,
+    fmt, iter,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
@@ -68,6 +68,18 @@ pub struct SshConnectionOptions {
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
+}
+
+#[macro_export]
+macro_rules! shell_script {
+    ($fmt:expr, $($name:ident = $arg:expr),+ $(,)?) => {{
+        format!(
+            $fmt,
+            $(
+                $name = shlex::try_quote($arg).unwrap()
+            ),+
+        )
+    }};
 }
 
 impl SshConnectionOptions {
@@ -281,12 +293,24 @@ pub trait SshClientDelegate: Send + Sync {
 }
 
 impl SshSocket {
-    fn ssh_command<S: AsRef<OsStr>>(&self, program: S) -> process::Command {
+    // :WARNING: ssh unquotes arguments when executing on the remote :WARNING:
+    // e.g. $ ssh host sh -c 'ls -l' is equivalent to $ ssh host sh -c ls -l
+    // and passes -l as an argument to sh, not to ls.
+    // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
+    fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
         let mut command = process::Command::new("ssh");
+        let to_run = iter::once(&program)
+            .chain(args.iter())
+            .map(|token| shlex::try_quote(token).unwrap())
+            .join(" ");
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
-            .arg(program);
+            .arg(to_run);
         command
+    }
+
+    fn shell_script(&self, script: impl AsRef<str>) -> process::Command {
+        return self.ssh_command("sh", &["-c", script.as_ref()]);
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
@@ -309,7 +333,7 @@ impl SshSocket {
     }
 }
 
-async fn run_cmd(command: &mut process::Command) -> Result<String> {
+async fn run_cmd(mut command: process::Command) -> Result<String> {
     let output = command.output().await?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -1236,7 +1260,7 @@ impl RemoteConnection for SshRemoteConnection {
         }
 
         let socket = self.socket.clone();
-        run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
+        run_cmd(socket.ssh_command(&remote_binary_path.to_string_lossy(), &["version"])).await?;
         Ok(remote_binary_path)
     }
 
@@ -1253,22 +1277,33 @@ impl RemoteConnection for SshRemoteConnection {
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Starting proxy"), cx);
 
-        let mut start_proxy_command = format!(
-            "RUST_LOG={} {} {:?} proxy --identifier {}",
-            std::env::var("RUST_LOG").unwrap_or_default(),
-            std::env::var("RUST_BACKTRACE")
-                .map(|b| { format!("RUST_BACKTRACE={}", b) })
-                .unwrap_or_default(),
-            remote_binary_path,
-            unique_identifier,
+        let mut start_proxy_command = shell_script!(
+            "exec {binary_path} proxy --identifier {identifier}",
+            binary_path = &remote_binary_path.to_string_lossy(),
+            identifier = &unique_identifier,
         );
+
+        if let Some(rust_log) = std::env::var("RUST_LOG").ok() {
+            start_proxy_command = format!(
+                "RUST_LOG={} {}",
+                shlex::try_quote(&rust_log).unwrap(),
+                start_proxy_command
+            )
+        }
+        if let Some(rust_backtrace) = std::env::var("RUST_BACKTRACE").ok() {
+            start_proxy_command = format!(
+                "RUST_BACKTRACE={} {}",
+                shlex::try_quote(&rust_backtrace).unwrap(),
+                start_proxy_command
+            )
+        }
         if reconnect {
             start_proxy_command.push_str(" --reconnect");
         }
 
         let ssh_proxy_process = match self
             .socket
-            .ssh_command(start_proxy_command)
+            .shell_script(start_proxy_command)
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -1450,8 +1485,8 @@ impl SshRemoteConnection {
             socket_path,
         };
 
-        let os = run_cmd(socket.ssh_command("uname").arg("-s")).await?;
-        let arch = run_cmd(socket.ssh_command("uname").arg("-m")).await?;
+        let os = run_cmd(socket.ssh_command("uname", &["-s"])).await?;
+        let arch = run_cmd(socket.ssh_command("uname", &["-m"])).await?;
 
         let os = match os.trim() {
             "Darwin" => "macos",
@@ -1649,14 +1684,9 @@ impl SshRemoteConnection {
     }
 
     async fn get_ssh_source_port(&self) -> Result<String> {
-        let output = run_cmd(
-            self.socket
-                .ssh_command("sh")
-                .arg("-c")
-                .arg(r#""echo $SSH_CLIENT | cut -d' ' -f2""#),
-        )
-        .await
-        .context("failed to get source port from SSH_CLIENT on host")?;
+        let output = run_cmd(self.socket.shell_script("echo $SSH_CLIENT | cut -d' ' -f2"))
+            .await
+            .context("failed to get source port from SSH_CLIENT on host")?;
 
         Ok(output.trim().to_string())
     }
@@ -1667,13 +1697,13 @@ impl SshRemoteConnection {
             .ok_or_else(|| anyhow!("Lock file path has no parent directory"))?;
 
         let script = format!(
-            r#"'mkdir -p "{parent_dir}" && [ ! -f "{lock_file}" ] && echo "{content}" > "{lock_file}" && echo "created" || echo "exists"'"#,
+            r#"mkdir -p "{parent_dir}" && [ ! -f "{lock_file}" ] && echo "{content}" > "{lock_file}" && echo "created" || echo "exists""#,
             parent_dir = parent_dir.display(),
             lock_file = lock_file.display(),
             content = content,
         );
 
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(&script))
+        let output = run_cmd(self.socket.shell_script(&script))
             .await
             .with_context(|| format!("failed to create a lock file at {:?}", lock_file))?;
 
@@ -1681,7 +1711,7 @@ impl SshRemoteConnection {
     }
 
     fn generate_stale_check_script(lock_file: &Path, max_age: u64) -> String {
-        format!(
+        shell_script!(
             r#"
             if [ ! -f "{lock_file}" ]; then
                 echo "lock file does not exist"
@@ -1709,18 +1739,15 @@ impl SshRemoteConnection {
             else
                 echo "recent"
             fi"#,
-            lock_file = lock_file.display(),
-            max_age = max_age
+            lock_file = &lock_file.to_string_lossy(),
+            max_age = &max_age.to_string()
         )
     }
 
     async fn is_lock_stale(&self, lock_file: &Path, max_age: &Duration) -> Result<bool> {
-        let script = format!(
-            "'{}'",
-            Self::generate_stale_check_script(lock_file, max_age.as_secs())
-        );
+        let script = Self::generate_stale_check_script(lock_file, max_age.as_secs());
 
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(&script))
+        let output = run_cmd(self.socket.shell_script(script))
             .await
             .with_context(|| {
                 format!("failed to check whether lock file {:?} is stale", lock_file)
@@ -1733,9 +1760,12 @@ impl SshRemoteConnection {
     }
 
     async fn remove_lock_file(&self, lock_file: &Path) -> Result<()> {
-        run_cmd(self.socket.ssh_command("rm").arg("-f").arg(lock_file))
-            .await
-            .context("failed to remove lock file")?;
+        run_cmd(
+            self.socket
+                .ssh_command("rm", &["-f", &lock_file.to_string_lossy()]),
+        )
+        .await
+        .context("failed to remove lock file")?;
         Ok(())
     }
 
@@ -1746,7 +1776,11 @@ impl SshRemoteConnection {
         platform: SshPlatform,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let current_version = match run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
+        let current_version = match run_cmd(
+            self.socket
+                .ssh_command(&dst_path.to_string_lossy(), &["version"]),
+        )
+        .await
         {
             Ok(version_output) => {
                 if let Ok(version) = version_output.trim().parse::<SemanticVersion>() {
@@ -1866,26 +1900,25 @@ impl SshRemoteConnection {
     }
 
     async fn is_binary_in_use(&self, binary_path: &Path) -> Result<bool> {
-        let script = format!(
-            r#"'
+        let script = shell_script!(
+            r#"
             if command -v lsof >/dev/null 2>&1; then
-                if lsof "{}" >/dev/null 2>&1; then
+                if lsof "{binary_path}" >/dev/null 2>&1; then
                     echo "in_use"
                     exit 0
                 fi
             elif command -v fuser >/dev/null 2>&1; then
-                if fuser "{}" >/dev/null 2>&1; then
+                if fuser "{binary_path}" >/dev/null 2>&1; then
                     echo "in_use"
                     exit 0
                 fi
             fi
             echo "not_in_use"
-            '"#,
-            binary_path.display(),
-            binary_path.display(),
+            "#,
+            binary_path = &binary_path.to_string_lossy(),
         );
 
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(script))
+        let output = run_cmd(self.socket.shell_script(script))
             .await
             .context("failed to check if binary is in use")?;
 
@@ -1904,30 +1937,32 @@ impl SshRemoteConnection {
         dst_path_gz.set_extension("gz");
 
         if let Some(parent) = dst_path.parent() {
-            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+            run_cmd(
+                self.socket
+                    .ssh_command("mkdir", &["-p", &parent.to_string_lossy()]),
+            )
+            .await?;
         }
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
-        let body = shlex::try_quote(body).unwrap();
-        let url = shlex::try_quote(url).unwrap();
-        let dst_str = dst_path_gz.to_string_lossy();
-        let dst_escaped = shlex::try_quote(&dst_str).unwrap();
-
-        let script = format!(
+        let script = shell_script!(
             r#"
             if command -v curl >/dev/null 2>&1; then
-                curl -f -L -X GET -H "Content-Type: application/json" -d {body} {url} -o {dst_escaped} && echo "curl"
+                curl -f -L -X GET -H "Content-Type: application/json" -d {body} {url} -o {dst_path} && echo "curl"
             elif command -v wget >/dev/null 2>&1; then
-                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data={body} {url} -O {dst_escaped} && echo "wget"
+                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data={body} {url} -O {dst_path} && echo "wget"
             else
                 echo "Neither curl nor wget is available" >&2
                 exit 1
             fi
-            "#
+            "#,
+            body = body,
+            url = url,
+            dst_path = &dst_path_gz.to_string_lossy(),
         );
 
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(script))
+        let output = run_cmd(self.socket.shell_script(script))
             .await
             .context("Failed to download server binary")?;
 
@@ -1950,7 +1985,11 @@ impl SshRemoteConnection {
         dst_path_gz.set_extension("gz");
 
         if let Some(parent) = dst_path.parent() {
-            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+            run_cmd(
+                self.socket
+                    .ssh_command("mkdir", &["-p", &parent.to_string_lossy()]),
+            )
+            .await?;
         }
 
         let src_stat = fs::metadata(&src_path).await?;
@@ -1978,20 +2017,16 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         run_cmd(
             self.socket
-                .ssh_command("gunzip")
-                .arg("--force")
-                .arg(&dst_path_gz),
+                .ssh_command("gunzip", &["-f", &dst_path_gz.to_string_lossy()]),
         )
         .await?;
 
         let server_mode = 0o755;
         delegate.set_status(Some("Marking remote development server executable"), cx);
-        run_cmd(
-            self.socket
-                .ssh_command("chmod")
-                .arg(format!("{:o}", server_mode))
-                .arg(dst_path),
-        )
+        run_cmd(self.socket.ssh_command(
+            "chmod",
+            &[&format!("{:o}", server_mode), &dst_path.to_string_lossy()],
+        ))
         .await?;
 
         Ok(())

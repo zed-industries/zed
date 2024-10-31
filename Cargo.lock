@@ -9533,6 +9533,7 @@ dependencies = [
  "fs",
  "futures 0.3.30",
  "gpui",
+ "itertools 0.13.0",
  "log",
  "parking_lot",
  "prost",
