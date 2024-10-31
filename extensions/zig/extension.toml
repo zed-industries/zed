@@ -11,5 +11,5 @@ name = "zls"
 language = "Zig"
 
 [grammars.zig]
-repository = "https://github.com/maxxnino/tree-sitter-zig"
-commit = "0d08703e4c3f426ec61695d7617415fff97029bd"
+repository = "https://github.com/tree-sitter-grammars/tree-sitter-zig"
+commit = "eb7d58c2dc4fbeea4745019dee8df013034ae66b"
