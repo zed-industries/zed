@@ -520,10 +520,12 @@ impl FocusableView for NotebookEditor {
     }
 }
 
+// Intended to be a NotebookBuffer
 pub struct NotebookItem {
     path: PathBuf,
     project_path: ProjectPath,
     notebook: nbformat::v4::Notebook,
+    // Store our version of the notebook in memory (cell_order, cell_map)
     id: ProjectEntryId,
 }
 
@@ -571,6 +573,8 @@ impl project::Item for NotebookItem {
                 // * Does VS Code _actually_ use this?
                 // * Does Pyright?
                 // * Do we possibly need to create a large buffer
+                //
+                //
 
                 let notebook = nbformat::parse_notebook(&file_content);
 
