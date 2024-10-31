@@ -883,10 +883,14 @@ fn resolve_selections_display<'a>(
     let mut selections = selections
         .map(move |s| {
             let start = summaries.next().unwrap();
-            let display_start = map.point_to_display_point(start, Bias::Left);
-
             let end = summaries.next().unwrap();
-            let display_end = map.point_to_display_point(end, Bias::Right);
+
+            let display_start = map.point_to_display_point(start, Bias::Left);
+            let display_end = if start == end {
+                map.point_to_display_point(end, Bias::Right)
+            } else {
+                map.point_to_display_point(end, Bias::Left)
+            };
 
             Selection {
                 id: s.id,
@@ -924,10 +928,13 @@ where
     let mut converted_endpoints = map
         .buffer_snapshot
         .dimensions_from_points::<D>(to_convert.flat_map(|s| {
-            [
-                map.display_point_to_point(s.start, Bias::Left),
-                map.display_point_to_point(s.end, Bias::Right),
-            ]
+            let start = map.display_point_to_point(s.start, Bias::Left);
+            let end = if s.start == s.end {
+                map.display_point_to_point(s.end, Bias::Right)
+            } else {
+                map.display_point_to_point(s.end, Bias::Left)
+            };
+            [start, end]
         }))
         .into_iter();
     selections.map(move |s| {
