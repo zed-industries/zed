@@ -23,9 +23,6 @@ use super::{Cell, CellPosition, RenderableCell};
 use nbformat::v4::CellId;
 use nbformat::v4::Metadata as NotebookMetadata;
 
-pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
-pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
-
 actions!(
     notebook,
     [
@@ -524,6 +521,7 @@ impl FocusableView for NotebookEditor {
 pub struct NotebookItem {
     path: PathBuf,
     project_path: ProjectPath,
+    // Raw notebook data
     notebook: nbformat::v4::Notebook,
     // Store our version of the notebook in memory (cell_order, cell_map)
     id: ProjectEntryId,
@@ -589,6 +587,8 @@ impl project::Item for NotebookItem {
         Some(self.project_path.clone())
     }
 }
+
+impl NotebookItem {}
 
 impl EventEmitter<()> for NotebookEditor {}
 
