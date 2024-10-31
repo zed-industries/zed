@@ -7463,10 +7463,11 @@ impl Editor {
                 if !selection.is_empty() && !line_mode {
                     selection.goal = SelectionGoal::None;
                 }
-                let (cursor, goal) = movement::up(
+                let (cursor, goal) = movement::up2(
                     map,
                     selection.start,
                     selection.goal,
+                    false,
                     false,
                     text_layout_details,
                 );
@@ -7628,8 +7629,16 @@ impl Editor {
     pub fn select_up(&mut self, _: &SelectUp, cx: &mut ViewContext<Self>) {
         let text_layout_details = &self.text_layout_details(cx);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-            s.move_heads_with(|map, head, goal| {
-                movement::up(map, head, goal, false, text_layout_details)
+            s.move_with(|map, selection| {
+                let (head, goal) = movement::up2(
+                    map,
+                    selection.head(),
+                    selection.goal,
+                    false,
+                    !selection.reversed,
+                    text_layout_details,
+                );
+                selection.set_head(head, goal);
             })
         })
     }

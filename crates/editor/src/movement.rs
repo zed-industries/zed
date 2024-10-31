@@ -77,6 +77,26 @@ pub fn saturating_right(map: &DisplaySnapshot, mut point: DisplayPoint) -> Displ
 }
 
 /// Returns a display point for the preceding displayed line (which might be a soft-wrapped line).
+pub fn up2(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    goal: SelectionGoal,
+    preserve_column_at_start: bool,
+    skip_replace_blocks: bool,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    up_by_rows2(
+        map,
+        start,
+        1,
+        goal,
+        preserve_column_at_start,
+        skip_replace_blocks,
+        text_layout_details,
+    )
+}
+
+/// Returns a display point for the preceding displayed line (which might be a soft-wrapped line).
 pub fn up(
     map: &DisplaySnapshot,
     start: DisplayPoint,
@@ -108,6 +128,26 @@ pub fn down(
         1,
         goal,
         preserve_column_at_end,
+        text_layout_details,
+    )
+}
+
+/// Returns a display point for the next displayed line (which might be a soft-wrapped line).
+pub fn down2(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    goal: SelectionGoal,
+    preserve_column_at_end: bool,
+    skip_replace_blocks: bool,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    down_by_rows2(
+        map,
+        start,
+        1,
+        goal,
+        preserve_column_at_end,
+        skip_replace_blocks,
         text_layout_details,
     )
 }
@@ -151,6 +191,46 @@ pub(crate) fn up_by_rows(
     )
 }
 
+pub(crate) fn up_by_rows2(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    row_count: u32,
+    goal: SelectionGoal,
+    preserve_column_at_start: bool,
+    skip_replace_blocks: bool,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    let mut goal_x = match goal {
+        SelectionGoal::HorizontalPosition(x) => x.into(),
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        SelectionGoal::HorizontalRange { end, .. } => end.into(),
+        _ => map.x_for_display_point(start, text_layout_details),
+    };
+
+    let prev_row = DisplayRow(start.row().0.saturating_sub(row_count));
+    let mut point = map.clip_point(
+        DisplayPoint::new(prev_row, map.line_len(prev_row)),
+        Bias::Left,
+    );
+    if point.row() < start.row() {
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
+    } else if preserve_column_at_start {
+        return (start, goal);
+    } else {
+        point = DisplayPoint::new(DisplayRow(0), 0);
+        goal_x = px(0.);
+    }
+
+    let mut clipped_point = map.clip_point_2(point, Bias::Left, skip_replace_blocks);
+    if clipped_point.row() < point.row() {
+        clipped_point = map.clip_point_2(point, Bias::Right, skip_replace_blocks);
+    }
+    (
+        clipped_point,
+        SelectionGoal::HorizontalPosition(goal_x.into()),
+    )
+}
+
 pub(crate) fn down_by_rows(
     map: &DisplaySnapshot,
     start: DisplayPoint,
@@ -180,6 +260,43 @@ pub(crate) fn down_by_rows(
     let mut clipped_point = map.clip_point(point, Bias::Right);
     if clipped_point.row() > point.row() {
         clipped_point = map.clip_point(point, Bias::Left);
+    }
+    (
+        clipped_point,
+        SelectionGoal::HorizontalPosition(goal_x.into()),
+    )
+}
+
+pub(crate) fn down_by_rows2(
+    map: &DisplaySnapshot,
+    start: DisplayPoint,
+    row_count: u32,
+    goal: SelectionGoal,
+    preserve_column_at_end: bool,
+    skip_replace_blocks: bool,
+    text_layout_details: &TextLayoutDetails,
+) -> (DisplayPoint, SelectionGoal) {
+    let mut goal_x = match goal {
+        SelectionGoal::HorizontalPosition(x) => x.into(),
+        SelectionGoal::WrappedHorizontalPosition((_, x)) => x.into(),
+        SelectionGoal::HorizontalRange { end, .. } => end.into(),
+        _ => map.x_for_display_point(start, text_layout_details),
+    };
+
+    let new_row = DisplayRow(start.row().0 + row_count);
+    let mut point = map.clip_point(DisplayPoint::new(new_row, 0), Bias::Right);
+    if point.row() > start.row() {
+        *point.column_mut() = map.display_column_for_x(point.row(), goal_x, text_layout_details)
+    } else if preserve_column_at_end {
+        return (start, goal);
+    } else {
+        point = map.max_point();
+        goal_x = map.x_for_display_point(point, text_layout_details)
+    }
+
+    let mut clipped_point = map.clip_point_2(point, Bias::Right, skip_replace_blocks);
+    if clipped_point.row() > point.row() {
+        clipped_point = map.clip_point_2(point, Bias::Left, skip_replace_blocks);
     }
     (
         clipped_point,

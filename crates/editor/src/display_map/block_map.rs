@@ -1298,6 +1298,68 @@ impl BlockSnapshot {
         cursor.item().map_or(false, |t| t.block.is_some())
     }
 
+    pub fn clip_point_2(&self, point: BlockPoint, bias: Bias, skip_blocks: bool) -> BlockPoint {
+        let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
+        cursor.seek(&BlockRow(point.row), Bias::Right, &());
+
+        let max_input_row = WrapRow(self.transforms.summary().input_rows);
+        let mut search_left =
+            (bias == Bias::Left && cursor.start().1 .0 > 0) || cursor.end(&()).1 == max_input_row;
+        let mut reversed = false;
+
+        loop {
+            if let Some(transform) = cursor.item() {
+                let (output_start_row, input_start_row) = cursor.start();
+                let (output_end_row, input_end_row) = cursor.end(&());
+                let output_start = Point::new(output_start_row.0, 0);
+                let output_end = Point::new(output_end_row.0, 0);
+                let input_start = Point::new(input_start_row.0, 0);
+                let input_end = Point::new(input_end_row.0, 0);
+
+                match transform.block.as_ref() {
+                    Some(Block::Custom(block))
+                        if matches!(block.placement, BlockPlacement::Replace(_)) =>
+                    {
+                        if bias == Bias::Left {
+                            return BlockPoint(output_start);
+                        } else {
+                            return BlockPoint(Point::new(output_end.row - 1, 0));
+                        }
+                    }
+                    None => {
+                        let input_point = if point.row >= output_end_row.0 {
+                            let line_len = self.wrap_snapshot.line_len(input_end_row.0 - 1);
+                            self.wrap_snapshot
+                                .clip_point(WrapPoint::new(input_end_row.0 - 1, line_len), bias)
+                        } else {
+                            let output_overshoot = point.0.saturating_sub(output_start);
+                            self.wrap_snapshot
+                                .clip_point(WrapPoint(input_start + output_overshoot), bias)
+                        };
+
+                        if (input_start..input_end).contains(&input_point.0) {
+                            let input_overshoot = input_point.0.saturating_sub(input_start);
+                            return BlockPoint(output_start + input_overshoot);
+                        }
+                    }
+                    _ => {}
+                }
+
+                if search_left {
+                    cursor.prev(&());
+                } else {
+                    cursor.next(&());
+                }
+            } else if reversed {
+                return self.max_point();
+            } else {
+                reversed = true;
+                search_left = !search_left;
+                cursor.seek(&BlockRow(point.row), Bias::Right, &());
+            }
+        }
+    }
+
     pub fn clip_point(&self, point: BlockPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&BlockRow(point.row), Bias::Right, &());
