@@ -17,7 +17,6 @@ use workspace::{
 pub struct ProposedChangesEditor {
     editor: View<Editor>,
     multibuffer: Model<MultiBuffer>,
-    title: SharedString,
     buffer_entries: Vec<BufferEntry>,
     _recalculate_diffs_task: Task<Option<()>>,
     recalculate_diffs_tx: mpsc::UnboundedSender<RecalculateDiff>,
@@ -51,12 +50,13 @@ struct BranchBufferSemanticsProvider(Rc<dyn SemanticsProvider>);
 
 impl ProposedChangesEditor {
     pub fn new<T: ToOffset>(
-        title: impl Into<SharedString>,
+        title: String,
         locations: Vec<ProposedChangeLocation<T>>,
         project: Option<Model<Project>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
+        let multibuffer =
+            cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite).with_title(title));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
             editor: cx.new_view(|cx| {
@@ -72,7 +72,6 @@ impl ProposedChangesEditor {
                 editor
             }),
             multibuffer,
-            title: title.into(),
             buffer_entries: Vec::new(),
             recalculate_diffs_tx,
             _recalculate_diffs_task: cx.spawn(|_, mut cx| async move {
@@ -121,7 +120,9 @@ impl ProposedChangesEditor {
     }
 
     pub fn set_title(&mut self, title: SharedString, cx: &mut ViewContext<Self>) {
-        self.title = title;
+        self.multibuffer.update(cx, |multibuffer, cx| {
+            multibuffer.set_title(title.into(), cx);
+        });
         cx.notify();
     }
 
@@ -254,8 +255,8 @@ impl Item for ProposedChangesEditor {
         Some(Icon::new(IconName::Diff))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        Some(self.title.clone())
+    fn tab_content_text(&self, cx: &WindowContext) -> Option<SharedString> {
+        Some(self.multibuffer.read(cx).title(cx).to_string().into())
     }
 
     fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {

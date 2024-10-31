@@ -12394,7 +12394,7 @@ impl Editor {
             .collect::<Vec<_>>();
         let proposed_changes_editor = cx.new_view(|cx| {
             ProposedChangesEditor::new(
-                "Proposed changes",
+                "Proposed changes".into(),
                 proposed_changes_buffers,
                 self.project.clone(),
                 cx,

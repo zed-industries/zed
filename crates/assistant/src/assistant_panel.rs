@@ -2468,7 +2468,7 @@ impl ContextEditor {
 
         let editor = cx.new_view(|cx| {
             let editor = ProposedChangesEditor::new(
-                patch.title.clone(),
+                patch.title.clone().into(),
                 resolved_patch
                     .edit_groups
                     .iter()
