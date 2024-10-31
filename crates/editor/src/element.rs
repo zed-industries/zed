@@ -812,6 +812,7 @@ impl EditorElement {
         &self,
         start_anchor: Anchor,
         end_anchor: Anchor,
+        local_selections: &[Selection<Point>],
         snapshot: &EditorSnapshot,
         start_row: DisplayRow,
         end_row: DisplayRow,
@@ -826,13 +827,9 @@ impl EditorElement {
         let mut newest_selection_head = None;
         self.editor.update(cx, |editor, cx| {
             if editor.show_local_selections {
-                let mut local_selections: Vec<Selection<Point>> = editor
-                    .selections
-                    .disjoint_in_range(start_anchor..end_anchor, cx);
-                local_selections.extend(editor.selections.pending(cx));
                 let mut layouts = Vec::new();
                 let newest = editor.selections.newest(cx);
-                for selection in local_selections.drain(..) {
+                for selection in local_selections.iter().cloned() {
                     let is_empty = selection.start == selection.end;
                     let is_newest = selection == newest;
 
@@ -2067,15 +2064,14 @@ impl EditorElement {
         editor_width: Pixels,
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
-        active_rows: &BTreeMap<DisplayRow, bool>,
+        selections: &[Selection<Point>],
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
             Block::Custom(block) => {
-                let align_to = block
-                    .start()
-                    .to_point(&snapshot.buffer_snapshot)
-                    .to_display_point(snapshot);
+                let block_start = block.start().to_point(&snapshot.buffer_snapshot);
+                let block_end = block.end().to_point(&snapshot.buffer_snapshot);
+                let align_to = block_start.to_display_point(snapshot);
                 let anchor_x = text_x
                     + if rows.contains(&align_to.row()) {
                         line_layouts[align_to.row().minus(rows.start) as usize]
@@ -2084,6 +2080,18 @@ impl EditorElement {
                         layout_line(align_to.row(), snapshot, &self.style, editor_width, cx)
                             .x_for_index(align_to.column() as usize)
                     };
+
+                let selected = selections
+                    .binary_search_by(|selection| {
+                        if selection.end <= block_start {
+                            Ordering::Less
+                        } else if selection.start >= block_end {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                    .is_ok();
 
                 div()
                     .size_full()
@@ -2094,7 +2102,7 @@ impl EditorElement {
                         line_height,
                         em_width,
                         block_id,
-                        selected: active_rows.contains_key(&block_row_start),
+                        selected,
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
@@ -2432,7 +2440,7 @@ impl EditorElement {
         text_x: Pixels,
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
-        active_rows: &BTreeMap<DisplayRow, bool>,
+        selections: &[Selection<Point>],
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2469,7 +2477,7 @@ impl EditorElement {
                 editor_width,
                 scroll_width,
                 &mut resized_blocks,
-                active_rows,
+                selections,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2514,7 +2522,7 @@ impl EditorElement {
                 editor_width,
                 scroll_width,
                 &mut resized_blocks,
-                active_rows,
+                selections,
                 cx,
             );
 
@@ -2560,7 +2568,7 @@ impl EditorElement {
                             editor_width,
                             scroll_width,
                             &mut resized_blocks,
-                            active_rows,
+                            selections,
                             cx,
                         );
 
@@ -5106,9 +5114,19 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let local_selections: Vec<Selection<Point>> =
+                        self.editor.update(cx, |editor, cx| {
+                            let mut selections = editor
+                                .selections
+                                .disjoint_in_range(start_anchor..end_anchor, cx);
+                            selections.extend(editor.selections.pending(cx));
+                            selections
+                        });
+
                     let (selections, active_rows, newest_selection_head) = self.layout_selections(
                         start_anchor,
                         end_anchor,
+                        &local_selections,
                         &snapshot,
                         start_row,
                         end_row,
@@ -5181,7 +5199,7 @@ impl Element for EditorElement {
                             gutter_dimensions.full_width(),
                             line_height,
                             &line_layouts,
-                            &active_rows,
+                            &local_selections,
                             cx,
                         )
                     });
