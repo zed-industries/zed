@@ -503,7 +503,7 @@ struct RunnableTasks {
 }
 
 impl RunnableTasks {
-    fn resolve_templates<'a>(
+    fn resolve<'a>(
         &'a self,
         cx: &'a task::TaskContext,
     ) -> impl Iterator<Item = (TaskSourceKind, ResolvedTask)> + 'a {
@@ -4747,7 +4747,7 @@ impl Editor {
                         let resolved_tasks =
                             tasks.zip(task_context).map(|(tasks, task_context)| {
                                 Arc::new(ResolvedTasks {
-                                    templates: tasks.resolve_templates(&task_context).collect(),
+                                    templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
                                         multibuffer_point.row,
                                         tasks.column,
@@ -5499,17 +5499,14 @@ impl Editor {
             return;
         };
 
-        let reveal_strategy = action.reveal.clone();
+        let reveal_strategy = action.reveal;
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
         cx.spawn(|_, mut cx| async move {
-            let task_context = task_context.await?;
+            let context = task_context.await?;
+            let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
 
-            let (task_source_kind, mut resolved_task) =
-                tasks.resolve_templates(&task_context).next()?;
-
-            if let Some(resolved) = resolved_task.resolved.as_mut() {
-                resolved.reveal = reveal_strategy;
-            }
+            let resolved = resolved_task.resolved.as_mut()?;
+            resolved.reveal = reveal_strategy;
 
             workspace
                 .update(&mut cx, |workspace, cx| {
