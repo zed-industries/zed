@@ -13275,21 +13275,15 @@ async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
         });
-        assert_eq!(
-            editor.find_enclosing_node_with_task(cx),
-            Some(3),
-            "Should find task for cursor inside runnable_1"
-        );
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
+        assert_eq!(row, 3, "Should find task for cursor inside runnable_1");
 
         // Test finding task when cursor is on function name
         editor.change_selections(None, cx, |s| {
             s.select_ranges([Point::new(8, 4)..Point::new(8, 4)])
         });
-        assert_eq!(
-            editor.find_enclosing_node_with_task(cx),
-            Some(8),
-            "Should find task when cursor is on function name"
-        );
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
+        assert_eq!(row, 8, "Should find task when cursor is on function name");
     });
 }
 
