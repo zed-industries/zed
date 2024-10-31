@@ -502,6 +502,19 @@ struct RunnableTasks {
     context_range: Range<BufferOffset>,
 }
 
+impl RunnableTasks {
+    fn resolve<'a>(
+        &'a self,
+        cx: &'a task::TaskContext,
+    ) -> impl Iterator<Item = (TaskSourceKind, ResolvedTask)> + 'a {
+        self.templates.iter().filter_map(|(kind, template)| {
+            template
+                .resolve_task(&kind.to_id_base(), cx)
+                .map(|task| (kind.clone(), task))
+        })
+    }
+}
+
 #[derive(Clone)]
 struct ResolvedTasks {
     templates: SmallVec<[(TaskSourceKind, ResolvedTask); 1]>,
@@ -4723,29 +4736,7 @@ impl Editor {
                             .as_ref()
                             .zip(editor.project.clone())
                             .map(|(tasks, project)| {
-                                let position = Point::new(buffer_row, tasks.column);
-                                let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
-                                let location = Location {
-                                    buffer: buffer.clone(),
-                                    range: range_start..range_start,
-                                };
-                                // Fill in the environmental variables from the tree-sitter captures
-                                let mut captured_task_variables = TaskVariables::default();
-                                for (capture_name, value) in tasks.extra_variables.clone() {
-                                    captured_task_variables.insert(
-                                        task::VariableName::Custom(capture_name.into()),
-                                        value.clone(),
-                                    );
-                                }
-                                project.update(cx, |project, cx| {
-                                    project.task_store().update(cx, |task_store, cx| {
-                                        task_store.task_context_for_location(
-                                            captured_task_variables,
-                                            location,
-                                            cx,
-                                        )
-                                    })
-                                })
+                                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
                     Some(cx.spawn(|editor, mut cx| async move {
@@ -4756,15 +4747,7 @@ impl Editor {
                         let resolved_tasks =
                             tasks.zip(task_context).map(|(tasks, task_context)| {
                                 Arc::new(ResolvedTasks {
-                                    templates: tasks
-                                        .templates
-                                        .iter()
-                                        .filter_map(|(kind, template)| {
-                                            template
-                                                .resolve_task(&kind.to_id_base(), &task_context)
-                                                .map(|task| (kind.clone(), task))
-                                        })
-                                        .collect(),
+                                    templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
                                         multibuffer_point.row,
                                         tasks.column,
@@ -5468,6 +5451,132 @@ impl Editor {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
         }
+    }
+
+    fn build_tasks_context(
+        project: &Model<Project>,
+        buffer: &Model<Buffer>,
+        buffer_row: u32,
+        tasks: &Arc<RunnableTasks>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Option<task::TaskContext>> {
+        let position = Point::new(buffer_row, tasks.column);
+        let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
+        let location = Location {
+            buffer: buffer.clone(),
+            range: range_start..range_start,
+        };
+        // Fill in the environmental variables from the tree-sitter captures
+        let mut captured_task_variables = TaskVariables::default();
+        for (capture_name, value) in tasks.extra_variables.clone() {
+            captured_task_variables.insert(
+                task::VariableName::Custom(capture_name.into()),
+                value.clone(),
+            );
+        }
+        project.update(cx, |project, cx| {
+            project.task_store().update(cx, |task_store, cx| {
+                task_store.task_context_for_location(captured_task_variables, location, cx)
+            })
+        })
+    }
+
+    pub fn spawn_nearest_task(&mut self, action: &SpawnNearestTask, cx: &mut ViewContext<Self>) {
+        let Some((workspace, _)) = self.workspace.clone() else {
+            return;
+        };
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+
+        // Try to find a closest, enclosing node using tree-sitter that has a
+        // task
+        let Some((buffer, buffer_row, tasks)) = self
+            .find_enclosing_node_task(cx)
+            // Or find the task that's closest in row-distance.
+            .or_else(|| self.find_closest_task(cx))
+        else {
+            return;
+        };
+
+        let reveal_strategy = action.reveal;
+        let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
+        cx.spawn(|_, mut cx| async move {
+            let context = task_context.await?;
+            let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
+
+            let resolved = resolved_task.resolved.as_mut()?;
+            resolved.reveal = reveal_strategy;
+
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace::tasks::schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        resolved_task,
+                        false,
+                        cx,
+                    );
+                })
+                .ok()
+        })
+        .detach();
+    }
+
+    fn find_closest_task(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Model<Buffer>, u32, Arc<RunnableTasks>)> {
+        let cursor_row = self.selections.newest_adjusted(cx).head().row;
+
+        let ((buffer_id, row), tasks) = self
+            .tasks
+            .iter()
+            .min_by_key(|((_, row), _)| cursor_row.abs_diff(*row))?;
+
+        let buffer = self.buffer.read(cx).buffer(*buffer_id)?;
+        let tasks = Arc::new(tasks.to_owned());
+        Some((buffer, *row, tasks))
+    }
+
+    fn find_enclosing_node_task(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Model<Buffer>, u32, Arc<RunnableTasks>)> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let offset = self.selections.newest::<usize>(cx).head();
+        let excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let buffer_id = excerpt.buffer().remote_id();
+
+        let layer = excerpt.buffer().syntax_layer_at(offset)?;
+        let mut cursor = layer.node().walk();
+
+        while cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.node().end_byte() == offset {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the smallest ancestor that contains the range and has a task.
+        loop {
+            let node = cursor.node();
+            let node_range = node.byte_range();
+            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
+
+            // Check if this node contains our offset
+            if node_range.start <= offset && node_range.end >= offset {
+                // If it contains offset, check for task
+                if let Some(tasks) = self.tasks.get(&(buffer_id, symbol_start_row)) {
+                    let buffer = self.buffer.read(cx).buffer(buffer_id)?;
+                    return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
+                }
+            }
+
+            if !cursor.goto_parent() {
+                break;
+            }
+        }
+        None
     }
 
     fn render_run_indicator(
