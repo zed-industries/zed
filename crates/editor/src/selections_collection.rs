@@ -239,7 +239,7 @@ impl SelectionsCollection {
 
     pub fn newest<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Selection<D> {
         let buffer = self.buffer(cx);
         self.newest_anchor().map(|p| p.summary::<D>(&buffer))

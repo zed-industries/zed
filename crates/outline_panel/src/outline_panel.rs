@@ -4479,7 +4479,13 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
+            // Project search re-adds items to the buffer, removing the caret from it.
+            // Select the first entry and move 4 elements down.
+            for _ in 0..6 {
+                outline_panel.select_next(&SelectNext, cx);
+            }
+
             assert_eq!(
                 display_entries(
                     &outline_panel.cached_entries,
@@ -4795,7 +4801,7 @@ mod tests {
                 r#"/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }  <==== selected
+      search: { "something": "static" }
   src/
     app/(site)/
       (about)/jobs/[slug]/
@@ -4811,8 +4817,11 @@ mod tests {
         });
 
         outline_panel.update(cx, |outline_panel, cx| {
-            outline_panel.select_next(&SelectNext, cx);
-            outline_panel.select_next(&SelectNext, cx);
+            // After the search is done, we have updated the outline panel contents and caret is not in any excerot, so there are no selections.
+            // Move to 5th element in the list (0th action will selection the first element)
+            for _ in 0..6 {
+                outline_panel.select_next(&SelectNext, cx);
+            }
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, cx);
         });
         cx.run_until_parked();
