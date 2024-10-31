@@ -1440,26 +1440,26 @@ impl OutlinePanel {
         }
     }
 
-    fn reveal_entry_for_selection(
-        &mut self,
-        editor: &View<Editor>,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
+    fn reveal_entry_for_selection(&mut self, editor: View<Editor>, cx: &mut ViewContext<'_, Self>) {
         if !self.active {
             return;
         }
         if !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
-        let Some(entry_with_selection) = self.location_for_editor_selection(editor, cx) else {
-            self.selected_entry = SelectedEntry::None;
-            cx.notify();
-            return;
-        };
-
         let project = self.project.clone();
         self.reveal_selection_task = cx.spawn(|outline_panel, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            let entry_with_selection = outline_panel.update(&mut cx, |outline_panel, cx| {
+                outline_panel.location_for_editor_selection(&editor, cx)
+            })?;
+            let Some(entry_with_selection) = entry_with_selection else {
+                outline_panel.update(&mut cx, |outline_panel, cx| {
+                    outline_panel.selected_entry = SelectedEntry::None;
+                    cx.notify();
+                })?;
+                return Ok(());
+            };
             let related_buffer_entry = match &entry_with_selection {
                 PanelEntry::Fs(FsEntry::File(worktree_id, _, buffer_id, _)) => {
                     project.update(&mut cx, |project, cx| {
@@ -2436,7 +2436,7 @@ impl OutlinePanel {
     }
 
     fn location_for_editor_selection(
-        &mut self,
+        &self,
         editor: &View<Editor>,
         cx: &mut ViewContext<Self>,
     ) -> Option<PanelEntry> {
@@ -2500,7 +2500,7 @@ impl OutlinePanel {
     }
 
     fn outline_location(
-        &mut self,
+        &self,
         buffer_id: BufferId,
         excerpt_id: ExcerptId,
         multi_buffer_snapshot: editor::MultiBufferSnapshot,
@@ -4321,7 +4321,7 @@ fn subscribe_for_editor_events(
         editor,
         move |outline_panel, editor, e: &EditorEvent, cx| match e {
             EditorEvent::SelectionsChanged { local: true } => {
-                outline_panel.reveal_entry_for_selection(&editor, cx);
+                outline_panel.reveal_entry_for_selection(editor, cx);
                 cx.notify();
             }
             EditorEvent::ExcerptsAdded { excerpts, .. } => {
