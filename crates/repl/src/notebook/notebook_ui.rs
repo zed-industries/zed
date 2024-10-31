@@ -1,16 +1,18 @@
 #![allow(unused, dead_code)]
+use std::future::Future;
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
+use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{
     actions, list, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     ListScrollEvent, ListState, Model, Point, Task, View,
 };
-use language::LanguageRegistry;
+use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
 use workspace::item::{ItemEvent, TabContentParams};
@@ -90,15 +92,10 @@ impl NotebookEditor {
         let languages = project.read(cx).languages().clone();
         let language_name = notebook_item.read(cx).language_name();
 
-        let notebook_language = if let Some(language_name) = language_name {
-            cx.spawn(|_, _| {
-                let languages = languages.clone();
-                async move { languages.language_for_name(&language_name).await.ok() }
-            })
-            .shared()
-        } else {
-            Task::ready(None).shared()
-        };
+        let notebook_language = notebook_item.read(cx).notebook_language();
+        let notebook_language = cx
+            .spawn(|_, _| async move { notebook_language.await })
+            .shared();
 
         let mut cell_order = vec![]; // Vec<CellId>
         let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
@@ -493,6 +490,7 @@ impl FocusableView for NotebookEditor {
 pub struct NotebookItem {
     path: PathBuf,
     project_path: ProjectPath,
+    languages: Arc<LanguageRegistry>,
     // Raw notebook data
     notebook: nbformat::v4::Notebook,
     // Store our version of the notebook in memory (cell_order, cell_map)
@@ -508,6 +506,7 @@ impl project::Item for NotebookItem {
         let path = path.clone();
         let project = project.clone();
         let fs = project.read(cx).fs().clone();
+        let languages = project.read(cx).languages().clone();
 
         if path.path.extension().unwrap_or_default() == "ipynb" {
             Some(cx.spawn(|mut cx| async move {
@@ -542,6 +541,7 @@ impl project::Item for NotebookItem {
                 cx.new_model(|_| NotebookItem {
                     path: abs_path,
                     project_path: path,
+                    languages,
                     notebook,
                     id,
                 })
@@ -573,6 +573,19 @@ impl NotebookItem {
                 .kernelspec
                 .as_ref()
                 .and_then(|spec| spec.language.clone()))
+    }
+
+    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> {
+        let language_name = self.language_name();
+        let languages = self.languages.clone();
+
+        async move {
+            if let Some(language_name) = language_name {
+                languages.language_for_name(&language_name).await.ok()
+            } else {
+                None
+            }
+        }
     }
 }
 
