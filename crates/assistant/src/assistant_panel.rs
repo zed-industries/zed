@@ -2201,7 +2201,7 @@ impl ContextEditor {
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
                         this.update(&mut **cx, |this, cx| {
-                            this.render_patch_footer(
+                            this.render_patch(
                                 patch_range.clone(),
                                 max_width,
                                 gutter_width,
@@ -3467,7 +3467,7 @@ impl ContextEditor {
         )
     }
 
-    fn render_patch_footer(
+    fn render_patch(
         &mut self,
         range: Range<text::Anchor>,
         max_width: Pixels,
