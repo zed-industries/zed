@@ -58,7 +58,7 @@ impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
                 let id = self.id.clone();
                 |extension, store| {
                     async move {
-                        let database_resource = store.data_mut().table().push(database)?;
+                        let database_resource = store.data_mut().table().push(database as _)?;
                         extension
                             .call_index_docs(
                                 store,

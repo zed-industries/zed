@@ -1,6 +1,6 @@
 pub mod extension_builder;
 
-mod extension_lsp_adapter;
+pub mod extension_lsp_adapter;
 pub mod extension_manifest;
 pub mod extension_settings;
 pub mod wasm_host;
@@ -22,13 +22,13 @@ use futures::{
     select_biased, AsyncReadExt as _, Future, FutureExt as _, StreamExt as _,
 };
 use gpui::{
-    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task,
-    WeakModel,
+    actions, AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext,
+    SharedString, Task, WeakModel,
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageRegistry,
-    LoadedLanguage, QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -44,8 +44,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use theme::{ThemeRegistry, ThemeSettings};
-use ui::SharedString;
 use url::Url;
 use util::{maybe, ResultExt};
 use wasm_host::{
@@ -95,9 +93,40 @@ pub fn is_version_compatible(
     true
 }
 
+pub trait DocsDatabase: Send + Sync + 'static {
+    fn insert(&self, key: String, docs: String) -> Task<Result<()>>;
+}
+
 pub trait ExtensionApi: Send + Sync + 'static {
     fn remove_user_themes(&self, themes: Vec<SharedString>);
     fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
+    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
+    fn reload_current_theme(&self, cx: &mut AppContext);
+
+    fn register_language(
+        &self,
+        language: LanguageName,
+        grammar: Option<Arc<str>>,
+        matcher: language::LanguageMatcher,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+    );
+
+    fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter);
+
+    fn remove_lsp_adapter(
+        &self,
+        language: &LanguageName,
+        server_name: &language::LanguageServerName,
+    );
+
+    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>);
+
+    fn remove_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        grammars_to_remove: &[Arc<str>],
+    );
+
     fn register_slash_command(
         &self,
         slash_command: wit::SlashCommand,
@@ -116,28 +145,6 @@ pub trait ExtensionApi: Send + Sync + 'static {
         &self,
         server_name: language::LanguageServerName,
         status: language::LanguageServerBinaryStatus,
-    );
-
-    fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter);
-
-    fn remove_lsp_adapter(
-        &self,
-        language: &LanguageName,
-        server_name: &language::LanguageServerName,
-    );
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    );
-
-    fn register_wasm_grammars(grammars: Vec<(Arc<str>, PathBuf)>);
-
-    fn register_language(
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: language::LanguageMatcher,
     );
 }
 
@@ -1106,8 +1113,7 @@ impl ExtensionStore {
             }));
         }
 
-        self.language_registry
-            .register_wasm_grammars(grammars_to_add);
+        self.api.register_wasm_grammars(grammars_to_add);
 
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
@@ -1115,11 +1121,11 @@ impl ExtensionStore {
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
-            self.language_registry.register_language(
+            self.api.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
-                move || {
+                Arc::new(move || {
                     let config = std::fs::read_to_string(language_path.join("config.toml"))?;
                     let config: LanguageConfig = ::toml::from_str(&config)?;
                     let queries = load_plugin_queries(&language_path);
@@ -1138,7 +1144,7 @@ impl ExtensionStore {
                         context_provider,
                         toolchain_provider: None,
                     })
-                },
+                }),
             );
         }
 
@@ -1264,7 +1270,7 @@ impl ExtensionStore {
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
-                ThemeSettings::reload_current_theme(cx)
+                this.api.reload_current_theme(cx);
             })
             .ok();
         })
@@ -1275,6 +1281,7 @@ impl ExtensionStore {
         let work_dir = self.wasm_host.work_dir.clone();
         let extensions_dir = self.installed_dir.clone();
         let index_path = self.index_path.clone();
+        let extension_api = self.api.clone();
         cx.background_executor().spawn(async move {
             let start_time = Instant::now();
             let mut index = ExtensionIndex::default();
@@ -1296,9 +1303,14 @@ impl ExtensionStore {
                         continue;
                     }
 
-                    Self::add_extension_to_index(fs.clone(), extension_dir, &mut index)
-                        .await
-                        .log_err();
+                    Self::add_extension_to_index(
+                        fs.clone(),
+                        extension_dir,
+                        &mut index,
+                        extension_api.clone(),
+                    )
+                    .await
+                    .log_err();
                 }
             }
 
@@ -1318,6 +1330,7 @@ impl ExtensionStore {
         fs: Arc<dyn Fs>,
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
+        extension_api: Arc<dyn ExtensionApi>,
     ) -> Result<()> {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();
@@ -1369,7 +1382,8 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let Some(theme_family) = ThemeRegistry::read_user_theme(&theme_path, fs.clone())
+                let Some(theme_families) = extension_api
+                    .list_theme_names(theme_path.clone(), fs.clone())
                     .await
                     .log_err()
                 else {
@@ -1381,9 +1395,9 @@ impl ExtensionStore {
                     extension_manifest.themes.push(relative_path.clone());
                 }
 
-                for theme in theme_family.themes {
+                for theme_name in theme_families {
                     index.themes.insert(
-                        theme.name.into(),
+                        theme_name.into(),
                         ExtensionIndexThemeEntry {
                             extension: extension_id.clone(),
                             path: relative_path.clone(),

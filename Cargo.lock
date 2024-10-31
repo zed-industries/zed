@@ -4106,7 +4106,6 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "http_client",
- "indexed_docs",
  "language",
  "log",
  "lsp",
@@ -4124,9 +4123,7 @@ dependencies = [
  "settings",
  "snippet_provider",
  "task",
- "theme",
  "toml 0.8.19",
- "ui",
  "url",
  "util",
  "wasm-encoder 0.215.0",
@@ -4134,7 +4131,6 @@ dependencies = [
  "wasmtime",
  "wasmtime-wasi",
  "wit-component",
- "workspace",
 ]
 
 [[package]]
@@ -5818,6 +5814,7 @@ dependencies = [
  "cargo_metadata",
  "collections",
  "derive_more",
+ "extension",
  "fs",
  "futures 0.3.30",
  "fuzzy",

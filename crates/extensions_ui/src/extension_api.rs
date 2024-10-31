@@ -2,12 +2,13 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use assistant_slash_command::SlashCommandRegistry;
-use extension::wasm_host;
+use extension::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
+use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
-use language::LanguageRegistry;
+use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use snippet_provider::SnippetRegistry;
-use theme::ThemeRegistry;
+use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
 
 use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
@@ -97,26 +98,56 @@ impl extension::ExtensionApi for ExtensionApi {
             .update_lsp_status(server_name, status);
     }
 
-    fn register_lsp_adapter(&self, language: language::LanguageName, adapter: ExtensionLspAdapter) {
+    fn register_lsp_adapter(
+        &self,
+        language_name: language::LanguageName,
+        adapter: ExtensionLspAdapter,
+    ) {
         self.language_registry
-            .register_lsp_adapter(language_name, Arc::new(adapter))
+            .register_lsp_adapter(language_name, Arc::new(adapter));
     }
 
     fn remove_lsp_adapter(
         &self,
-        language: &language::LanguageName,
+        language_name: &language::LanguageName,
         server_name: &language::LanguageServerName,
     ) {
         self.language_registry
-            .remove_lsp_adapter(language_name, name);
+            .remove_lsp_adapter(language_name, server_name);
     }
 
     fn remove_languages(
         &self,
-        languages_to_remove: Vec<language::LanguageName>,
-        grammars_to_remove: Vec<Arc<str>>,
+        languages_to_remove: &[language::LanguageName],
+        grammars_to_remove: &[Arc<str>],
     ) {
         self.language_registry
-            .remove_languages(languages_to_remove, grammars_to_remove);
+            .remove_languages(&languages_to_remove, &grammars_to_remove);
+    }
+
+    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
+        self.language_registry.register_wasm_grammars(grammars)
+    }
+
+    fn register_language(
+        &self,
+        language: language::LanguageName,
+        grammar: Option<Arc<str>>,
+        matcher: language::LanguageMatcher,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+    ) {
+        self.language_registry
+            .register_language(language, grammar, matcher, load)
+    }
+
+    fn reload_current_theme(&self, cx: &mut AppContext) {
+        ThemeSettings::reload_current_theme(cx)
+    }
+
+    fn list_theme_names(&self, path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
+        self.executor.spawn(async move {
+            let themes = ThemeRegistry::read_user_theme(&path, fs).await?;
+            Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
+        })
     }
 }
