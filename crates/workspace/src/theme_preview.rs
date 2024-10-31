@@ -2,7 +2,7 @@ use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use theme::all_theme_colors;
 use ui::{
     prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ElevationIndex, Facepile, Indicator,
+    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ElevationIndex, Facepile, TintColor,
 };
 
 use crate::{Item, Workspace};
@@ -134,6 +134,78 @@ impl ThemePreview {
             )
     }
 
+    fn render_buttons(&self, layer: ElevationIndex, cx: &ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .gap_1()
+            .child(Headline::new("Buttons").size(HeadlineSize::Small))
+            .child(
+                h_flex()
+                    .gap_px()
+                    .child(
+                        IconButton::new("icon_button_transparent", IconName::Check)
+                            .style(ButtonStyle::Transparent),
+                    )
+                    .child(
+                        IconButton::new("icon_button_subtle", IconName::Check)
+                            .style(ButtonStyle::Subtle),
+                    )
+                    .child(
+                        IconButton::new("icon_button_filled", IconName::Check)
+                            .style(ButtonStyle::Filled),
+                    )
+                    .child(
+                        IconButton::new("icon_button_selected_accent", IconName::Check)
+                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                            .selected(true),
+                    )
+                    .child(IconButton::new("icon_button_selected", IconName::Check).selected(true))
+                    .child(
+                        IconButton::new("icon_button_positive", IconName::Check)
+                            .style(ButtonStyle::Tinted(TintColor::Positive)),
+                    )
+                    .child(
+                        IconButton::new("icon_button_warning", IconName::Check)
+                            .style(ButtonStyle::Tinted(TintColor::Warning)),
+                    )
+                    .child(
+                        IconButton::new("icon_button_negative", IconName::Check)
+                            .style(ButtonStyle::Tinted(TintColor::Negative)),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .gap_px()
+                    .child(
+                        Button::new("button_transparent", "Transparent")
+                            .style(ButtonStyle::Transparent),
+                    )
+                    .child(Button::new("button_subtle", "Subtle").style(ButtonStyle::Subtle))
+                    .child(Button::new("button_filled", "Filled").style(ButtonStyle::Filled))
+                    .child(
+                        Button::new("button_selected", "Selected")
+                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                            .selected(true),
+                    )
+                    .child(
+                        Button::new("button_selected_tinted", "Selected (Tinted)")
+                            .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+                            .selected(true),
+                    )
+                    .child(
+                        Button::new("button_positive", "Tint::Positive")
+                            .style(ButtonStyle::Tinted(TintColor::Positive)),
+                    )
+                    .child(
+                        Button::new("button_warning", "Tint::Warning")
+                            .style(ButtonStyle::Tinted(TintColor::Warning)),
+                    )
+                    .child(
+                        Button::new("button_negative", "Tint::Negative")
+                            .style(ButtonStyle::Tinted(TintColor::Negative)),
+                    ),
+            )
+    }
+
     fn render_theme_layer(
         &self,
         layer: ElevationIndex,
@@ -153,6 +225,7 @@ impl ThemePreview {
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
             .child(self.render_avatars(cx))
+            .child(self.render_buttons(layer, cx))
             .child(
                 v_flex()
                     .w_full()
@@ -209,52 +282,38 @@ impl ThemePreview {
                     .border_color(cx.theme().colors().border)
                     .p_2()
                     .child(
-                        h_flex()
-                            .items_start()
-                            .child(
-                                v_flex()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .p_2()
-                                    .child(
-                                        Headline::new("Buttons")
-                                            .size(HeadlineSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(Button::new("background_button", "Button")),
-                            )
-                            .child(
-                                v_flex()
-                                    .border_1()
-                                    .border_color(cx.theme().colors().border)
-                                    .p_2()
-                                    .child(
-                                        Headline::new("Text")
-                                            .size(HeadlineSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(label_with_contrast(
-                                            "Default Text",
-                                            Color::Default.color(cx),
-                                        ))
-                                        .color(Color::Default),
-                                    )
-                                    .child(
-                                        Label::new(label_with_contrast(
-                                            "Muted Text",
-                                            Color::Muted.color(cx),
-                                        ))
+                        h_flex().items_start().child(
+                            v_flex()
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
+                                .p_2()
+                                .child(
+                                    Headline::new("Text")
+                                        .size(HeadlineSize::Small)
                                         .color(Color::Muted),
-                                    )
-                                    .child(
-                                        Label::new(label_with_contrast(
-                                            "Placeholder Text",
-                                            Color::Placeholder.color(cx),
-                                        ))
-                                        .color(Color::Placeholder),
-                                    ),
-                            ),
+                                )
+                                .child(
+                                    Label::new(label_with_contrast(
+                                        "Default Text",
+                                        Color::Default.color(cx),
+                                    ))
+                                    .color(Color::Default),
+                                )
+                                .child(
+                                    Label::new(label_with_contrast(
+                                        "Muted Text",
+                                        Color::Muted.color(cx),
+                                    ))
+                                    .color(Color::Muted),
+                                )
+                                .child(
+                                    Label::new(label_with_contrast(
+                                        "Placeholder Text",
+                                        Color::Placeholder.color(cx),
+                                    ))
+                                    .color(Color::Placeholder),
+                                ),
+                        ),
                     ),
             )
     }
