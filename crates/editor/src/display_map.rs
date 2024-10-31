@@ -665,7 +665,7 @@ impl DisplaySnapshot {
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
-        let block_point = self.block_snapshot.to_block_point(wrap_point);
+        let block_point = self.block_snapshot.to_block_point(wrap_point, bias);
         DisplayPoint(block_point)
     }
 
@@ -704,10 +704,10 @@ impl DisplaySnapshot {
         self.tab_snapshot.to_fold_point(tab_point, bias).0
     }
 
-    pub fn fold_point_to_display_point(&self, fold_point: FoldPoint) -> DisplayPoint {
+    pub fn fold_point_to_display_point(&self, fold_point: FoldPoint, bias: Bias) -> DisplayPoint {
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
         let wrap_point = self.wrap_snapshot.tab_point_to_wrap_point(tab_point);
-        let block_point = self.block_snapshot.to_block_point(wrap_point);
+        let block_point = self.block_snapshot.to_block_point(wrap_point, bias);
         DisplayPoint(block_point)
     }
 
@@ -2046,6 +2046,96 @@ pub mod tests {
                 (";\n".into(), None, black),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_point_translation_with_replace_blocks(cx: &mut gpui::TestAppContext) {
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        cx.update(|cx| init_test(cx, |_| {}));
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple("abcde\nfghij\nklmno\npqrst", cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                font("Courier"),
+                px(16.0),
+                None,
+                true,
+                1,
+                1,
+                0,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
+
+        let snapshot = map.update(cx, |map, cx| {
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Replace(
+                        buffer_snapshot.anchor_before(Point::new(1, 2))
+                            ..buffer_snapshot.anchor_after(Point::new(2, 3)),
+                    ),
+                    height: 4,
+                    style: BlockStyle::Fixed,
+                    render: Box::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            );
+            map.snapshot(cx)
+        });
+
+        let point_to_display_points = [
+            (
+                Point::new(1, 0),
+                DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(4), 0),
+            ),
+            (
+                Point::new(2, 0),
+                DisplayPoint::new(DisplayRow(1), 0),
+                DisplayPoint::new(DisplayRow(4), 0),
+            ),
+            (
+                Point::new(3, 0),
+                DisplayPoint::new(DisplayRow(5), 0),
+                DisplayPoint::new(DisplayRow(5), 0),
+            ),
+        ];
+        for (buffer_point, display_point_start, display_point_end) in point_to_display_points {
+            assert_eq!(
+                snapshot.point_to_display_point(buffer_point, Bias::Left),
+                display_point_start,
+                "point_to_display_point({:?}, Bias::Left)",
+                buffer_point
+            );
+            assert_eq!(
+                snapshot.point_to_display_point(buffer_point, Bias::Right),
+                display_point_end,
+                "point_to_display_point({:?}, Bias::Right)",
+                buffer_point
+            );
+        }
+
+        let display_points_to_points = [
+            (DisplayPoint::new(DisplayRow(1), 0), Point::new(1, 0)),
+            (DisplayPoint::new(DisplayRow(2), 0), Point::new(1, 0)),
+            (DisplayPoint::new(DisplayRow(3), 0), Point::new(1, 0)),
+            (DisplayPoint::new(DisplayRow(4), 0), Point::new(2, 5)),
+            (DisplayPoint::new(DisplayRow(5), 0), Point::new(3, 0)),
+        ];
+        for (display_point, buffer_point) in display_points_to_points {
+            assert_eq!(
+                snapshot.display_point_to_point(display_point, Bias::Left),
+                buffer_point,
+                "display_point_to_point({:?}, Bias::Left)",
+                display_point
+            );
+        }
     }
 
     // todo(linux) fails due to pixel differences in text rendering

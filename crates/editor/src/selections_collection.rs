@@ -864,15 +864,15 @@ where
         .into_iter();
     let mut selection_endpoints = map.buffer_snapshot.dimensions_from_points::<D>(
         iter::from_fn(move || {
-            let start = map.display_point_to_point(
-                map.point_to_display_point(summaries.next().unwrap(), Bias::Left),
-                Bias::Left,
-            );
-            let end = map.display_point_to_point(
-                map.point_to_display_point(summaries.next().unwrap(), Bias::Right),
-                Bias::Right,
-            );
-            Some([start, end])
+            let start = summaries.next().unwrap();
+            let display_start = map.point_to_display_point(start, Bias::Left);
+            let buffer_start = map.display_point_to_point(display_start, Bias::Left);
+
+            let end = summaries.next().unwrap();
+            let display_end = map.point_to_display_point(end, Bias::Right);
+            let buffer_end = map.display_point_to_point(display_end, Bias::Right);
+
+            Some([buffer_start, buffer_end])
         })
         .flatten(),
     );
