@@ -417,7 +417,88 @@ impl LanguageModelRequest {
         default_temperature: f32,
         max_output_tokens: u32
     ) -> bedrock::Request {
-        todo!();
+        let mut new_messages: Vec<bedrock::Message> = Vec::new();
+        let mut system_message = String::new();
+
+        for message in self.messages {
+            if message.contents_empty() {
+                continue;
+            }
+
+            match message.role {
+                Role::User | Role::Assistant => {
+                    let cache_control = if message.cache {
+                        Some(bedrock::CacheControl {
+                            cache_type: bedrock::CacheControlType::Ephemeral,
+                        })
+                    } else {
+                        None
+                    };
+                    let bedrock_message_content: Vec<bedrock::RequestContent> = message
+                        .content
+                        .into_iter()
+                        .filter_map(|content| match content {
+                            MessageContent::Text(text) => {
+                                if !text.is_empty() {
+                                    Some(bedrock::RequestContent::Text {
+                                        text,
+                                        cache_control,
+                                    })
+                                } else {
+                                    None
+                                }
+                            }
+                            MessageContent::Image(image) => {
+                                Some(bedrock::RequestContent::Image {
+                                    source: bedrock::ImageSource {
+                                        source_type: "base64".to_string(),
+                                        media_type: "image/png".to_string(),
+                                        data: image.source.to_string(),
+                                    },
+                                    cache_control,
+                                })
+                            }
+                            _ => {
+                                unimplemented!()
+                            }
+                        })
+                        .collect();
+                    let bedrock_role = match message.role {
+                        Role::User => bedrock::Role::User,
+                        Role::Assistant => bedrock::Role::Assistant,
+                        Role::System => unreachable!("System role should never occur here"),
+                    };
+                    if let Some(last_message) = new_messages.last_mut() {
+                        if last_message.role == bedrock_role {
+                            last_message.content.extend(bedrock_message_content);
+                            continue;
+                        }
+                    }
+                    new_messages.push(bedrock::Message {
+                        role: bedrock_role,
+                        content: bedrock_message_content,
+                    });
+                }
+                Role::System => {
+                    if !system_message.is_empty() {
+                        system_message.push_str("\n\n");
+                    }
+                    system_message.push_str(&message.string_contents());
+                }
+            }
+        }
+
+         bedrock::Request {
+            model,
+            messages: new_messages,
+            max_tokens: max_output_tokens,
+            system: Some(system_message),
+            metadata: None,
+            stop_sequences: Vec::new(),
+            temperature: self.temperature.or(Some(default_temperature)),
+            top_k: None,
+            top_p: None,
+        }
     }
 }
 

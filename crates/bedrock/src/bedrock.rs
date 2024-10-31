@@ -2,14 +2,21 @@ use std::time::Duration;
 use std::{pin::Pin, str::FromStr};
 
 use anyhow::{anyhow, Context, Result};
-use aws_sdk_bedrockruntime as bedrock;
+use aws_sdk_bedrockruntime::types::ConverseStreamOutput;
 use chrono::{DateTime, Utc};
-use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
+use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
 use util::ResultExt as _;
 
+pub use aws_sdk_bedrockruntime as bedrock;
+
+pub use bedrock::operation::converse_stream::ConverseStreamInput as StreamingRequest;
+pub use bedrock::Error as BedrockError;
+
+//TODO: Re-export the Bedrock stuff
+// https://doc.rust-lang.org/rustdoc/write-documentation/re-exports.html
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -141,13 +148,56 @@ pub async fn complete(
 
 pub async fn stream_completion(
     client: &bedrock::Client,
-    api_url: &str,
-    api_key: &str,
     request: Request,
     low_speed_timeout: Option<Duration>,
 ) -> Result<BoxStream<'static, Result<Event, BedrockError>>, BedrockError> {
-    todo!()
+
+    let response = bedrock::Client::converse_stream(client)
+        .model_id(request.model)
+        .set_messages(request.messages.into()).send().await;
+
+    let mut stream = match response {
+        Ok(output) => Ok(output.stream),
+        Err(e) => {
+            // TODO: Figure this out
+            unimplemented!();
+        }
+    };
+
+    if stream.is_ok() {
+        let reader = BufReader::new(stream);
+        let stream = reader
+            .lines()
+            .filter_map(|line| async move {
+                match line {
+                    Ok(line) => {
+                        let event: bedrock = get_converse_output_text(line);
+                        Some(Ok(event))
+                    }
+                    Err(e) => Some(Err(e.into())),
+                }
+            }).boxed();
+
+        Ok(stream)
+    }
 }
+
+fn get_converse_output_text(
+    output: ConverseStreamOutput,
+) -> Result<String, bedrock::operation::converse_stream::ConverseStreamError> {
+    Ok(match output {
+        ConverseStreamOutput::ContentBlockDelta(c) => {
+            match c.delta() {
+                Some(delta) => delta.as_text().cloned().unwrap_or_else(|_| "".into()),
+                None => "".into(),
+            }
+        }
+        _ => {
+            String::from("")
+        }
+    })
+}
+//TODO: A LOT of these types need to re-export the Bedrock types instead of making custom ones
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
@@ -161,18 +211,9 @@ pub struct CacheControl {
     pub cache_type: CacheControlType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Message {
-    pub role: Role,
-    pub content: Vec<RequestContent>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Eq, PartialEq, Hash)]
-#[serde(rename_all = "lowercase")]
-pub enum Role {
-    User,
-    Assistant,
-}
+pub use bedrock::types::Message;
+pub use bedrock::types::ConversationRole;
+pub use bedrock::types::ResponseStream;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -226,13 +267,6 @@ pub struct Request {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-struct StreamingRequest {
-    #[serde(flatten)]
-    pub base: Request,
-    pub stream: bool,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct Metadata {
     pub user_id: Option<String>,
 }
@@ -266,30 +300,6 @@ pub struct Response {
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
-pub enum Event {
-    #[serde(rename = "message_start")]
-    MessageStart { message: Response },
-    #[serde(rename = "content_block_start")]
-    ContentBlockStart {
-        index: usize,
-        content_block: ResponseContent,
-    },
-    #[serde(rename = "content_block_delta")]
-    ContentBlockDelta { index: usize, delta: ContentDelta },
-    #[serde(rename = "content_block_stop")]
-    ContentBlockStop { index: usize },
-    #[serde(rename = "message_delta")]
-    MessageDelta { delta: MessageDelta, usage: Usage },
-    #[serde(rename = "message_stop")]
-    MessageStop,
-    #[serde(rename = "ping")]
-    Ping,
-    #[serde(rename = "error")]
-    Error { error: ApiError },
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
 pub enum ContentDelta {
     #[serde(rename = "text_delta")]
     TextDelta { text: String },
@@ -301,20 +311,4 @@ pub enum ContentDelta {
 pub struct MessageDelta {
     pub stop_reason: Option<String>,
     pub stop_sequence: Option<String>,
-}
-
-#[derive(Error, Debug)]
-pub enum BedrockError {
-    // TODO: propagate the error message
-    #[error("an error occurred while interacting with the Bedrock API")]
-    ApiError(bedrock::Error),
-    #[error("{0}")]
-    Other(#[from] anyhow::Error),
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ApiError {
-    #[serde(rename = "type")]
-    pub error_type: String,
-    pub message: String,
 }
