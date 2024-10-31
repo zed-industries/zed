@@ -257,7 +257,6 @@ message Envelope {
         FindSearchCandidatesResponse find_search_candidates_response = 244;
 
         CloseBuffer close_buffer = 245;
-        UpdateUserSettings update_user_settings = 246;
 
         ShutdownRemoteServer shutdown_remote_server = 257;
 
@@ -309,6 +308,7 @@ message Envelope {
     reserved 205 to 206;
     reserved 221;
     reserved 224 to 229;
+    reserved 246;
     reserved 247 to 254;
     reserved 255 to 256;
 }
@@ -2359,17 +2359,6 @@ message AddWorktree {
 message AddWorktreeResponse {
     uint64 worktree_id = 1;
     string canonicalized_path = 2;
-}
-
-message UpdateUserSettings {
-    uint64 project_id = 1;
-    string content = 2;
-    optional Kind kind = 3;
-
-    enum Kind {
-        Settings = 0;
-        Tasks = 1;
-    }
 }
 
 message GetPathMetadata {
