@@ -46,6 +46,11 @@ pub enum AssistantProviderContentV1 {
         default_model: Option<LmStudioModel>,
         api_url: Option<String>,
     },
+    #[serde(rename = "bedrock")]
+    Bedrock {
+        default_model: Option<CloudModel>,
+        region: Option<String>,
+    },
 }
 
 #[derive(Debug, Default)]
