@@ -1,6 +1,9 @@
 use anyhow::{anyhow, Result};
+use extension::ExtensionApi;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, PromptLevel};
+use gpui::{
+    AppContext, AsyncAppContext, BackgroundExecutor, Context as _, Model, ModelContext, PromptLevel,
+};
 use http_client::HttpClient;
 use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
@@ -37,6 +40,7 @@ pub struct HeadlessProject {
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
+    pub extensions: Arc<HeadlessExtensionStore>,
 }
 
 pub struct HeadlessAppState {
@@ -45,6 +49,60 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
+}
+
+struct HeadlessExtensionsApi {
+    language_registry: Arc<LanguageRegistry>,
+}
+
+impl HeadlessExtensionsApi {
+    fn new(language_registry: Arc<LanguageRegistry>) -> Self {
+        Self { language_registry }
+    }
+}
+
+impl ExtensionApi for HeadlessExtensionsApi {
+    fn register_language(
+        &self,
+        language: LanguageName,
+        _grammar: Option<Arc<str>>,
+        matcher: language::LanguageMatcher,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+    ) {
+        self.language_registry
+            .register_language(language, None, matcher, load)
+    }
+    fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter) {
+        self.language_registry
+            .register_lsp_adapter(language, adapter);
+    }
+
+    fn remove_lsp_adapter(
+        &self,
+        language: &LanguageName,
+        server_name: &language::LanguageServerName,
+    ) {
+        self.language_registry
+            .remove_lsp_adapter(language, server_name)
+    }
+
+    fn remove_languages(
+        &self,
+        languages_to_remove: &[LanguageName],
+        _grammars_to_remove: &[Arc<str>],
+    ) {
+        self.language_registry
+            .remove_languages(languages_to_remove, &[])
+    }
+
+    fn update_lsp_status(
+        &self,
+        server_name: language::LanguageServerName,
+        status: language::LanguageServerBinaryStatus,
+    ) {
+        self.language_registry
+            .update_lsp_status(server_name, status)
+    }
 }
 
 impl HeadlessProject {
@@ -165,12 +223,24 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
+        client.add_request_handler(cx.weak_model(), Self::handle_sync_extensions);
+        client.add_request_handler(cx.weak_model(), Self::handle_load_extension);
+
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
+
+        let extensions = extension::HeadlessExtensionStore::new(
+            fs.clone(),
+            http_client.clone(),
+            Arc::new(HeadlessExtensionsApi::new(languages)),
+            paths::remote_extensions_dir(),
+            node_runtime,
+            cx,
+        );
 
         HeadlessProject {
             session: client,
@@ -182,6 +252,7 @@ impl HeadlessProject {
             task_store,
             next_entry_id: Default::default(),
             languages,
+            extensions,
         }
     }
 
@@ -568,6 +639,27 @@ impl HeadlessProject {
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
         Ok(proto::Ack {})
+    }
+
+    pub async fn handle_sync_extensions(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::SyncExtensions>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::SyncExtensionsResponse> {
+        let requested_extensions = envelope.payload.extensions.map(|p| ExtensionVersion{id: p.id, version: p.version}));
+        let missing_extensions = this
+            .update(&mut cx, |this, cx| {
+                this.extensions.sync_extensions(requested_extensions)
+            })
+            .await?;
+
+        Ok(proto::SyncExtensionsResponse {
+            missing_extensions: missing_extensions
+                .into_iter()
+                .map(|e| proto::Extension { id: e.id, version: e.version })
+                .collect(),
+            requested_extensions,
+        })
     }
 }
 

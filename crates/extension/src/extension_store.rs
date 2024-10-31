@@ -10,8 +10,9 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
-use collections::{btree_map, BTreeMap, HashSet};
+use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension_manifest::ExtensionManifest;
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -27,8 +28,8 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
-    QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageServerName,
+    LoadedLanguage, QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -51,9 +52,7 @@ use wasm_host::{
     WasmExtension, WasmHost,
 };
 
-pub use extension_manifest::{
-    ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
-};
+pub use extension_manifest::{ExtensionLibraryKind, GrammarManifestEntry, OldExtensionManifest};
 pub use extension_settings::ExtensionSettings;
 
 pub use extension_manifest::SchemaVersion;
@@ -98,54 +97,210 @@ pub trait DocsDatabase: Send + Sync + 'static {
 }
 
 pub trait ExtensionApi: Send + Sync + 'static {
-    fn remove_user_themes(&self, themes: Vec<SharedString>);
-    fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
-    fn list_theme_names(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>>;
-    fn reload_current_theme(&self, cx: &mut AppContext);
+    fn remove_user_themes(&self, _themes: Vec<SharedString>) {}
+    fn load_user_theme(&self, _theme_path: PathBuf, _fs: Arc<dyn Fs>) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+    fn list_theme_names(
+        &self,
+        _theme_path: PathBuf,
+        _fs: Arc<dyn Fs>,
+    ) -> Task<Result<Vec<String>>> {
+        Task::ready(Ok(Vec::new()))
+    }
+    fn reload_current_theme(&self, _cx: &mut AppContext) {}
 
     fn register_language(
         &self,
-        language: LanguageName,
-        grammar: Option<Arc<str>>,
-        matcher: language::LanguageMatcher,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
-    );
+        _language: LanguageName,
+        _grammar: Option<Arc<str>>,
+        _matcher: language::LanguageMatcher,
+        _load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
+    ) {
+    }
 
-    fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter);
+    fn register_lsp_adapter(&self, _language: LanguageName, _adapter: ExtensionLspAdapter) {}
 
     fn remove_lsp_adapter(
         &self,
-        language: &LanguageName,
-        server_name: &language::LanguageServerName,
-    );
+        _language: &LanguageName,
+        _server_name: &language::LanguageServerName,
+    ) {
+    }
 
-    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>);
+    fn register_wasm_grammars(&self, _grammars: Vec<(Arc<str>, PathBuf)>) {}
 
     fn remove_languages(
         &self,
-        languages_to_remove: &[LanguageName],
-        grammars_to_remove: &[Arc<str>],
-    );
+        _languages_to_remove: &[LanguageName],
+        _grammars_to_remove: &[Arc<str>],
+    ) {
+    }
 
     fn register_slash_command(
         &self,
-        slash_command: wit::SlashCommand,
-        extension: WasmExtension,
-        host: Arc<WasmHost>,
-    );
+        _slash_command: wit::SlashCommand,
+        _extension: WasmExtension,
+        _host: Arc<WasmHost>,
+    ) {
+    }
     fn register_docs_provider(
         &self,
-        extension: WasmExtension,
-        host: Arc<WasmHost>,
-        provider_id: Arc<str>,
-    );
-    fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()>;
+        _extension: WasmExtension,
+        _host: Arc<WasmHost>,
+        _provider_id: Arc<str>,
+    ) {
+    }
+    fn register_snippets(&self, _path: &PathBuf, _snippet_contents: &str) -> Result<()> {
+        Ok(())
+    }
 
     fn update_lsp_status(
         &self,
-        server_name: language::LanguageServerName,
-        status: language::LanguageServerBinaryStatus,
-    );
+        _server_name: language::LanguageServerName,
+        _status: language::LanguageServerBinaryStatus,
+    ) {
+    }
+}
+
+pub struct HeadlessExtensionStore {
+    pub api: Arc<dyn ExtensionApi>,
+    pub fs: Arc<dyn Fs>,
+    pub extension_dir: PathBuf,
+    pub wasm_host: Arc<WasmHost>,
+    pub loaded_languages: HashMap<Arc<str>, Vec<LanguageName>>,
+    pub loaded_language_servers: HashMap<Arc<str>, Vec<LanguageServerName>>,
+}
+
+pub struct ExtensionVersion {
+    id: String,
+    version: String,
+}
+
+impl HeadlessExtensionStore {
+    pub fn new(
+        fs: Arc<dyn Fs>,
+        http_client: Arc<dyn HttpClient>,
+        api: Arc<dyn ExtensionApi>,
+        extension_dir: PathBuf, // extensions_dir, if
+        node_runtime: NodeRuntime,
+        cx: &mut AppContext,
+    ) -> Self {
+        Self {
+            api: api.clone(),
+            fs: fs.clone(),
+            wasm_host: WasmHost::new(
+                fs.clone(),
+                http_client.clone(),
+                node_runtime,
+                api,
+                extension_dir.join("work"),
+                cx,
+            ),
+            extension_dir,
+            loaded_languages: Default::default(),
+        }
+    }
+
+    pub async fn sync_extensions(
+        &self,
+        extensions: Vec<ExtensionVersion>,
+        cx: &AsyncAppContext,
+    ) -> Result<Vec<ExtensionVersion>> {
+        let mut missing = Vec::new();
+
+        for extension in extensions {
+            if let Err(e) = self.load_extension(&extension, cx).await {
+                log::info!("failed to load extension: {}, {:?}", extension.id, e);
+                missing.push(extension)
+            }
+        }
+
+        Ok(missing)
+    }
+
+    pub async fn load_extension(
+        &self,
+        extension: &ExtensionVersion,
+        cx: &AsyncAppContext,
+    ) -> Result<()> {
+        let extension_dir = self.extension_dir.join(&extension.id);
+        let manifest = Arc::new(ExtensionManifest::load(self.fs.clone(), &extension_dir).await?);
+
+        debug_assert!(!manifest.languages.is_empty() || !manifest.language_servers.is_empty());
+
+        if manifest.version.as_ref() != extension.version.as_str() {
+            anyhow::bail!(
+                "mismatched versions: ({}) != ({})",
+                manifest.version,
+                extension.version
+            )
+        }
+
+        for language_path in manifest.languages {
+            let language_path = extension_dir.join(language_path);
+            let config = self.fs.load(&language_path.join("config.toml")).await?;
+            let config = ::toml::from_str::<LanguageConfig>(&config)?;
+            self.loaded_languages
+                .entry(manifest.id.clone())
+                .or_default()
+                .push(config.name.clone());
+            self.api.register_language(
+                config.name,
+                None,
+                config.matcher,
+                Arc::new(move || {
+                    Ok(LoadedLanguage {
+                        config,
+                        context_provider: None,
+                        queries: LanguageQueries::default(),
+                        toolchain_provider: None,
+                    })
+                }),
+            );
+        }
+
+        if manifest.language_servers.is_empty() {
+            return Ok(());
+        }
+
+        let wasm_extension =
+            WasmExtension::load(extension_dir, &manifest, self.wasm_host.clone(), &cx).await?;
+
+        for (language_server_id, language_server_config) in &manifest.language_servers {
+            self.loaded_language_servers
+                .entry(manifest.id.clone())
+                .or_default()
+                .push(language_server_id.clone());
+            for language in language_server_config.languages() {
+                self.api.register_lsp_adapter(
+                    language.clone(),
+                    ExtensionLspAdapter {
+                        extension: wasm_extension.clone(),
+                        host: self.wasm_host.clone(),
+                        language_server_id: language_server_id.clone(),
+                        config: wit::LanguageServerConfig {
+                            name: language_server_id.0.to_string(),
+                            language_name: language.to_string(),
+                        },
+                    },
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    //
+    // scp <extension> <destination>.tmp ('SSH private')
+    //
+    // mv <folder> <extensions_dir>/<extension_id>
+
+    pub fn install_extension(&self, extension_id: &str, path: PathBuf) -> Result<()> {
+        todo!()
+        // self.fs.rename(path, self.extension_dir.join(extension_id))
+        // self.actually_load_extension(extension_id)
+    }
 }
 
 pub struct ExtensionStore {
@@ -1187,30 +1342,13 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let wasm_extension = maybe!(async {
-                    let mut path = root_dir.clone();
-                    path.extend([extension.manifest.clone().id.as_ref(), "extension.wasm"]);
-                    let mut wasm_file = fs
-                        .open_sync(&path)
-                        .await
-                        .context("failed to open wasm file")?;
-
-                    let mut wasm_bytes = Vec::new();
-                    wasm_file
-                        .read_to_end(&mut wasm_bytes)
-                        .context("failed to read wasm")?;
-
-                    wasm_host
-                        .load_extension(
-                            wasm_bytes,
-                            extension.manifest.clone().clone(),
-                            cx.background_executor().clone(),
-                        )
-                        .await
-                        .with_context(|| {
-                            format!("failed to load wasm extension {}", extension.manifest.id)
-                        })
-                })
+                let extension_path = root_dir.join(extension.manifest.id.as_ref());
+                let wasm_extension = WasmExtension::load(
+                    extension_path,
+                    &extension.manifest,
+                    wasm_host.clone(),
+                    &cx,
+                )
                 .await;
 
                 if let Some(wasm_extension) = wasm_extension.log_err() {

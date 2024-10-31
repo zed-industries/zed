@@ -107,7 +107,7 @@ impl WasmHost {
     pub fn load_extension(
         self: &Arc<Self>,
         wasm_bytes: Vec<u8>,
-        manifest: Arc<ExtensionManifest>,
+        manifest: &Arc<ExtensionManifest>,
         executor: BackgroundExecutor,
     ) -> Task<Result<WasmExtension>> {
         let this = self.clone();
@@ -150,7 +150,7 @@ impl WasmHost {
                 .detach();
 
             Ok(WasmExtension {
-                manifest,
+                manifest: manifest.clone(),
                 tx,
                 zed_api_version,
             })
@@ -241,6 +241,31 @@ fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVe
 }
 
 impl WasmExtension {
+    pub async fn load(
+        extension_dir: PathBuf,
+        manifest: &Arc<ExtensionManifest>,
+        wasm_host: Arc<WasmHost>,
+        cx: &AsyncAppContext,
+    ) -> Result<Self> {
+        let path = extension_dir.join("extension.wasm");
+
+        let mut wasm_file = wasm_host
+            .fs
+            .open_sync(&path)
+            .await
+            .context("failed to open wasm file")?;
+
+        let mut wasm_bytes = Vec::new();
+        wasm_file
+            .read_to_end(&mut wasm_bytes)
+            .context("failed to read wasm")?;
+
+        wasm_host
+            .load_extension(wasm_bytes, manifest, cx.background_executor().clone())
+            .await
+            .with_context(|| format!("failed to load wasm extension {}", manifest.id))
+    }
+
     pub async fn call<T, Fn>(&self, f: Fn) -> T
     where
         T: 'static + Send,
