@@ -18,6 +18,8 @@ pub enum ElevationIndex {
     Background,
     /// The primary surface – Contains panels, panes, containers, etc.
     Surface,
+    /// The same elevation as the primary surface, but used for the editable areas, like buffers
+    EditorSurface,
     /// A surface that is elevated above the primary surface. but below washes, models, and dragged elements.
     ElevatedSurface,
     /// A surface that is above all non-modal surfaces, and separates the app from focused intents, like dialogs, alerts, modals, etc.
@@ -33,6 +35,7 @@ impl Display for ElevationIndex {
         match self {
             ElevationIndex::Background => write!(f, "Background"),
             ElevationIndex::Surface => write!(f, "Surface"),
+            ElevationIndex::EditorSurface => write!(f, "Editor Surface"),
             ElevationIndex::ElevatedSurface => write!(f, "Elevated Surface"),
             ElevationIndex::Wash => write!(f, "Wash"),
             ElevationIndex::ModalSurface => write!(f, "Modal Surface"),
@@ -46,6 +49,7 @@ impl ElevationIndex {
     pub fn shadow(self) -> SmallVec<[BoxShadow; 2]> {
         match self {
             ElevationIndex::Surface => smallvec![],
+            ElevationIndex::EditorSurface => smallvec![],
 
             ElevationIndex::ElevatedSurface => smallvec![BoxShadow {
                 color: hsla(0., 0., 0., 0.12),
@@ -84,6 +88,7 @@ impl ElevationIndex {
         match self {
             ElevationIndex::Background => cx.theme().colors().background,
             ElevationIndex::Surface => cx.theme().colors().surface_background,
+            ElevationIndex::EditorSurface => cx.theme().colors().editor_background,
             ElevationIndex::ElevatedSurface => cx.theme().colors().elevated_surface_background,
             ElevationIndex::Wash => gpui::transparent_black(),
             ElevationIndex::ModalSurface => cx.theme().colors().elevated_surface_background,
