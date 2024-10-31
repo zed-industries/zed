@@ -8664,14 +8664,22 @@ impl Editor {
             let snapshot = this.buffer.read(cx).read(cx);
             let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
+            let ignore_indent = action.ignore_indent;
 
             fn comment_prefix_range(
                 snapshot: &MultiBufferSnapshot,
                 row: MultiBufferRow,
                 comment_prefix: &str,
                 comment_prefix_whitespace: &str,
+                ignore_indent: bool,
             ) -> Range<Point> {
-                let start = Point::new(row.0, snapshot.indent_size_for_line(row).len);
+                let indent_size = if ignore_indent {
+                    0
+                } else {
+                    snapshot.indent_size_for_line(row).len
+                };
+
+                let start = Point::new(row.0, indent_size);
 
                 let mut line_bytes = snapshot
                     .bytes_in_range(start..snapshot.max_point())
@@ -8767,7 +8775,16 @@ impl Editor {
                 }
 
                 // If the language has line comments, toggle those.
-                let full_comment_prefixes = language.line_comment_prefixes();
+                let mut full_comment_prefixes = language.line_comment_prefixes().to_vec();
+
+                // If ignore_indent is set, trim spaces from the right side of all full_comment_prefixes
+                if ignore_indent {
+                    full_comment_prefixes = full_comment_prefixes
+                        .into_iter()
+                        .map(|s| Arc::from(s.trim_end()))
+                        .collect();
+                }
+
                 if !full_comment_prefixes.is_empty() {
                     let first_prefix = full_comment_prefixes
                         .first()
@@ -8794,6 +8811,7 @@ impl Editor {
                                     row,
                                     &prefix[..trimmed_prefix_len],
                                     &prefix[trimmed_prefix_len..],
+                                    ignore_indent,
                                 )
                             })
                             .max_by_key(|range| range.end.column - range.start.column)
@@ -8834,6 +8852,7 @@ impl Editor {
                         start_row,
                         comment_prefix,
                         comment_prefix_whitespace,
+                        ignore_indent,
                     );
                     let suffix_range = comment_suffix_range(
                         snapshot.deref(),
