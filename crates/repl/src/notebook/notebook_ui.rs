@@ -537,6 +537,7 @@ impl project::Item for NotebookItem {
     ) -> Option<Task<gpui::Result<Model<Self>>>> {
         let path = path.clone();
         let project = project.clone();
+        let fs = project.read(cx).fs().clone();
 
         if path.path.extension().unwrap_or_default() == "ipynb" {
             Some(cx.spawn(|mut cx| async move {
@@ -544,38 +545,8 @@ impl project::Item for NotebookItem {
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
                     .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
 
-                // Read into a buffer (?)
-                let file_content = std::fs::read_to_string(abs_path.clone())?;
                 // todo: watch for changes to the file
-
-                //The model in my head:
-                // NotebookItem: <source> <- Useless JSON (watched from file system)
-                // <Buffer>,  (<Buffer>, Output), <Buffer>, (<Buffer>, Output), <Buffer>, <Buffer>
-                // ^Markdown  ^Python             ^Markdown  ^Python
-                //
-                // Logically, the python buffers are one file?
-
-                // pub struct CodeCell {
-                //     id: CellId,
-                //     metadata: CellMetadata,
-                //     execution_count: Option<i32>,
-                //     source: String,
-                //     editor: View<editor::Editor>,
-                //     outputs: Vec<Output>,
-                //     selected: bool,
-                //     cell_position: Option<CellPosition>,
-                //     language_task: Task<()>,
-                // }
-                //
-                //
-                // Which LSPs actually use the LSP NotebookDocumentSync Capability?
-                //
-                // * Does VS Code _actually_ use this?
-                // * Does Pyright?
-                // * Do we possibly need to create a large buffer
-                //
-                //
-
+                let file_content = fs.load(&abs_path.as_path()).await?;
                 let notebook = nbformat::parse_notebook(&file_content);
 
                 let notebook = match notebook {
