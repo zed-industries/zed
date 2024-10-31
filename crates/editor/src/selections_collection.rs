@@ -262,15 +262,18 @@ impl SelectionsCollection {
         &self,
         cx: &mut AppContext,
     ) -> Selection<D> {
-        let buffer = self.buffer(cx);
-        self.newest_anchor().map(|p| p.summary::<D>(&buffer))
+        let map = self.display_map(cx);
+        let selection = resolve_selections([self.newest_anchor()], &map)
+            .next()
+            .unwrap();
+        selection
     }
 
     pub fn newest_display(&self, cx: &mut AppContext) -> Selection<DisplayPoint> {
-        let display_map = self.display_map(cx);
-        let selection = self
-            .newest_anchor()
-            .map(|point| point.to_display_point(&display_map));
+        let map = self.display_map(cx);
+        let selection = resolve_selections_display([self.newest_anchor()], &map)
+            .next()
+            .unwrap();
         selection
     }
 
@@ -286,8 +289,11 @@ impl SelectionsCollection {
         &self,
         cx: &mut AppContext,
     ) -> Selection<D> {
-        let buffer = self.buffer(cx);
-        self.oldest_anchor().map(|p| p.summary::<D>(&buffer))
+        let map = self.display_map(cx);
+        let selection = resolve_selections([self.oldest_anchor()], &map)
+            .next()
+            .unwrap();
+        selection
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
@@ -337,15 +343,14 @@ impl SelectionsCollection {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn display_ranges(&self, cx: &mut AppContext) -> Vec<Range<DisplayPoint>> {
-        let display_map = self.display_map(cx);
-        self.disjoint_anchors()
-            .iter()
-            .chain(self.pending_anchor().as_ref())
-            .map(|s| {
-                if s.reversed {
-                    s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
+        self.all_display(cx)
+            .1
+            .into_iter()
+            .map(|selection| {
+                if selection.reversed {
+                    selection.end..selection.start
                 } else {
-                    s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
+                    selection.start..selection.end
                 }
             })
             .collect()
