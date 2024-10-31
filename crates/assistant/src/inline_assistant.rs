@@ -2497,6 +2497,7 @@ pub struct CodegenAlternative {
     line_operations: Vec<LineOperation>,
     request: Option<LanguageModelRequest>,
     elapsed_time: Option<f64>,
+    completion: Option<String>,
 }
 
 enum CodegenStatus {
@@ -2570,6 +2571,7 @@ impl CodegenAlternative {
             range,
             request: None,
             elapsed_time: None,
+            completion: None,
         }
     }
 
@@ -2780,6 +2782,9 @@ impl CodegenAlternative {
         self.diff = Diff::default();
         self.status = CodegenStatus::Pending;
         let mut edit_start = self.range.start.to_offset(&snapshot);
+        let completion = Arc::new(Mutex::new(String::new()));
+        let completion_clone = completion.clone();
+
         self.generation = cx.spawn(|codegen, mut cx| {
             async move {
                 let chunks = stream.await;
@@ -2805,6 +2810,7 @@ impl CodegenAlternative {
                                         response_latency = Some(request_start.elapsed());
                                     }
                                     let chunk = chunk?;
+                                    completion_clone.lock().push_str(&chunk);
 
                                     let mut lines = chunk.split('\n').peekable();
                                     while let Some(line) = lines.next() {
@@ -2968,6 +2974,7 @@ impl CodegenAlternative {
                             this.status = CodegenStatus::Done;
                         }
                         this.elapsed_time = Some(elapsed_time);
+                        this.completion = Some(completion.lock().clone());
                         cx.emit(CodegenEvent::Finished);
                         cx.notify();
                     })
