@@ -157,6 +157,13 @@ pub struct DeleteToPreviousWordStart {
 pub struct FoldAtLevel {
     pub level: u32,
 }
+
+#[derive(PartialEq, Clone, Deserialize, Default)]
+pub struct SpawnNearestTask {
+    #[serde(default)]
+    pub reveal: task::RevealStrategy,
+}
+
 impl_actions!(
     editor,
     [
@@ -182,6 +189,7 @@ impl_actions!(
         SelectToBeginningOfLine,
         SelectToEndOfLine,
         SelectUpByLines,
+        SpawnNearestTask,
         ShowCompletions,
         ToggleCodeActions,
         ToggleComments,
@@ -334,7 +342,6 @@ gpui::actions!(
         ShuffleLines,
         SortLinesCaseInsensitive,
         SortLinesCaseSensitive,
-        SpawnNearestTask,
         SplitSelectionIntoLines,
         SwitchSourceHeader,
         Tab,

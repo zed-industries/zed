@@ -5481,7 +5481,7 @@ impl Editor {
         })
     }
 
-    pub fn spawn_nearest_task(&mut self, _: &SpawnNearestTask, cx: &mut ViewContext<Self>) {
+    pub fn spawn_nearest_task(&mut self, action: &SpawnNearestTask, cx: &mut ViewContext<Self>) {
         let Some((workspace, _)) = self.workspace.clone() else {
             return;
         };
@@ -5499,12 +5499,17 @@ impl Editor {
             return;
         };
 
+        let reveal_strategy = action.reveal.clone();
         let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
         cx.spawn(|_, mut cx| async move {
             let task_context = task_context.await?;
 
-            let (task_source_kind, resolved_task) =
+            let (task_source_kind, mut resolved_task) =
                 tasks.resolve_templates(&task_context).next()?;
+
+            if let Some(resolved) = resolved_task.resolved.as_mut() {
+                resolved.reveal = reveal_strategy;
+            }
 
             workspace
                 .update(&mut cx, |workspace, cx| {
