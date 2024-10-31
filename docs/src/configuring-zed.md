@@ -2271,6 +2271,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "auto_fold_dirs": true,
   "indent_guides": {
     "show": "always"
+  },
+  "scrollbar": {
+    "show": null
   }
 }
 ```

@@ -77,9 +77,9 @@ impl GitHostingProvider for Gitlab {
             return None;
         }
 
-        let mut path_segments = url.path_segments()?;
-        let owner = path_segments.next()?;
-        let repo = path_segments.next()?.trim_end_matches(".git");
+        let mut path_segments = url.path_segments()?.collect::<Vec<_>>();
+        let repo = path_segments.pop()?.trim_end_matches(".git");
+        let owner = path_segments.join("/");
 
         Some(ParsedGitRemote {
             owner: owner.into(),
@@ -173,6 +173,23 @@ mod tests {
             parsed_remote,
             ParsedGitRemote {
                 owner: "zed-industries".into(),
+                repo: "zed".into(),
+            }
+        );
+    }
+
+    #[test]
+    fn test_parse_remote_url_given_self_hosted_https_url_with_subgroup() {
+        let remote_url = "https://gitlab.my-enterprise.com/group/subgroup/zed.git";
+        let parsed_remote = Gitlab::from_remote_url(remote_url)
+            .unwrap()
+            .parse_remote_url(remote_url)
+            .unwrap();
+
+        assert_eq!(
+            parsed_remote,
+            ParsedGitRemote {
+                owner: "group/subgroup".into(),
                 repo: "zed".into(),
             }
         );

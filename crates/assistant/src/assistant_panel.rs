@@ -73,12 +73,11 @@ use std::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::SelectionGoal;
-use ui::TintColor;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
     Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
-    ListItemSpacing, PopoverMenu, PopoverMenuHandle, Tooltip,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip,
 };
 use util::{maybe, ResultExt};
 use workspace::{
@@ -1462,6 +1461,7 @@ type MessageHeader = MessageMetadata;
 
 #[derive(Clone)]
 enum AssistError {
+    FileRequired,
     PaymentRequired,
     MaxMonthlySpendReached,
     Message(SharedString),
@@ -1628,7 +1628,10 @@ impl ContextEditor {
 
         self.last_error = None;
 
-        if let Some(user_message) = self
+        if request_type == RequestType::SuggestEdits && !self.context.read(cx).contains_files(cx) {
+            self.last_error = Some(AssistError::FileRequired);
+            cx.notify();
+        } else if let Some(user_message) = self
             .context
             .update(cx, |context, cx| context.assist(request_type, cx))
         {
@@ -3740,6 +3743,7 @@ impl ContextEditor {
                 .elevation_2(cx)
                 .occlude()
                 .child(match last_error {
+                    AssistError::FileRequired => self.render_file_required_error(cx),
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
                     AssistError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(cx)
@@ -3750,6 +3754,41 @@ impl ContextEditor {
                 })
                 .into_any(),
         )
+    }
+
+    fn render_file_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
+        v_flex()
+            .gap_0p5()
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .items_center()
+                    .child(Icon::new(IconName::Warning).color(Color::Warning))
+                    .child(
+                        Label::new("Suggest Edits needs a file to edit").weight(FontWeight::MEDIUM),
+                    ),
+            )
+            .child(
+                div()
+                    .id("error-message")
+                    .max_h_24()
+                    .overflow_y_scroll()
+                    .child(Label::new(
+                        "To include files, type /file or /tab in your prompt.",
+                    )),
+            )
+            .child(
+                h_flex()
+                    .justify_end()
+                    .mt_1()
+                    .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
+                        |this, _, cx| {
+                            this.last_error = None;
+                            cx.notify();
+                        },
+                    ))),
+            )
+            .into_any()
     }
 
     fn render_payment_required_error(&self, cx: &mut ViewContext<Self>) -> AnyElement {
@@ -3966,13 +4005,7 @@ impl Render for ContextEditor {
         } else {
             None
         };
-        let focus_handle = self
-            .workspace
-            .update(cx, |workspace, cx| {
-                Some(workspace.active_item_as::<Editor>(cx)?.focus_handle(cx))
-            })
-            .ok()
-            .flatten();
+
         v_flex()
             .key_context("ContextEditor")
             .capture_action(cx.listener(ContextEditor::cancel))
@@ -4020,28 +4053,7 @@ impl Render for ContextEditor {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(render_inject_context_menu(cx.view().downgrade(), cx))
-                                .child(
-                                    IconButton::new("quote-button", IconName::Quote)
-                                        .icon_size(IconSize::Small)
-                                        .on_click(|_, cx| {
-                                            cx.dispatch_action(QuoteSelection.boxed_clone());
-                                        })
-                                        .tooltip(move |cx| {
-                                            cx.new_view(|cx| {
-                                                Tooltip::new("Insert Selection").key_binding(
-                                                    focus_handle.as_ref().and_then(|handle| {
-                                                        KeyBinding::for_action_in(
-                                                            &QuoteSelection,
-                                                            &handle,
-                                                            cx,
-                                                        )
-                                                    }),
-                                                )
-                                            })
-                                            .into()
-                                        }),
-                                ),
+                                .child(render_inject_context_menu(cx.view().downgrade(), cx)),
                         )
                         .child(
                             h_flex()
@@ -4336,6 +4348,7 @@ fn render_inject_context_menu(
         Button::new("trigger", "Add Context")
             .icon(IconName::Plus)
             .icon_size(IconSize::Small)
+            .icon_color(Color::Muted)
             .icon_position(IconPosition::Start)
             .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
     )
@@ -4510,7 +4523,7 @@ impl Render for ContextEditorToolbarItem {
                                                 .w_full()
                                                 .justify_between()
                                                 .gap_2()
-                                                .child(Label::new("Insert Context"))
+                                                .child(Label::new("Add Context"))
                                                 .child(Label::new("/ command").color(Color::Muted))
                                                 .into_any()
                                         },
@@ -4534,7 +4547,7 @@ impl Render for ContextEditorToolbarItem {
                                             }
                                         },
                                     )
-                                    .action("Insert Selection", QuoteSelection.boxed_clone())
+                                    .action("Add Selection", QuoteSelection.boxed_clone())
                             }))
                         }
                     }),

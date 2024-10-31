@@ -10,6 +10,7 @@ use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};
 use text::OffsetRangeExt;
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub(crate) struct DeltaSlashCommand;
@@ -25,6 +26,10 @@ impl SlashCommand for DeltaSlashCommand {
 
     fn menu_text(&self) -> String {
         self.description()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Diff
     }
 
     fn requires_argument(&self) -> bool {

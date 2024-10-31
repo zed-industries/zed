@@ -2,8 +2,9 @@
 mod context_tests;
 
 use crate::{
-    prompts::PromptBuilder, slash_command::SlashCommandLine, AssistantEdit, AssistantPatch,
-    AssistantPatchStatus, MessageId, MessageStatus,
+    prompts::PromptBuilder,
+    slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
+    AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
@@ -66,7 +67,7 @@ impl ContextId {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestType {
     /// Request a normal chat response from the model.
     Chat,
@@ -987,6 +988,20 @@ impl Context {
 
     pub fn slash_command_output_sections(&self) -> &[SlashCommandOutputSection<language::Anchor>] {
         &self.slash_command_output_sections
+    }
+
+    pub fn contains_files(&self, cx: &AppContext) -> bool {
+        let buffer = self.buffer.read(cx);
+        self.slash_command_output_sections.iter().any(|section| {
+            section.is_valid(buffer)
+                && section
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| {
+                        serde_json::from_value::<FileCommandMetadata>(metadata.clone()).ok()
+                    })
+                    .is_some()
+        })
     }
 
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
