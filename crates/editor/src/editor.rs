@@ -131,7 +131,9 @@ use project::{
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
-use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
+use selections_collection::{
+    resolve_selections, MutableSelectionsCollection, SelectionsCollection,
+};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
@@ -3485,7 +3487,7 @@ impl Editor {
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
             let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
-            let new_selections = resolve_multiple::<usize, _>(new_anchor_selections, &map)
+            let new_selections = resolve_selections::<usize, _>(new_anchor_selections, &map)
                 .zip(new_selection_deltas)
                 .map(|(selection, delta)| Selection {
                     id: selection.id,
