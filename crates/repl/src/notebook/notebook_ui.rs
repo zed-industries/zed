@@ -87,8 +87,6 @@ impl NotebookEditor {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let notebook = notebook_item.read(cx).notebook.clone();
-
         let languages = project.read(cx).languages().clone();
         let language_name = notebook_item.read(cx).language_name();
 
@@ -100,7 +98,14 @@ impl NotebookEditor {
         let mut cell_order = vec![]; // Vec<CellId>
         let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
 
-        for (index, cell) in notebook.cells.iter().enumerate() {
+        for (index, cell) in notebook_item
+            .read(cx)
+            .notebook
+            .clone()
+            .cells
+            .iter()
+            .enumerate()
+        {
             let cell_id = cell.id();
             cell_order.push(cell_id.clone());
             cell_map.insert(
