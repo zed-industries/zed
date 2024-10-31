@@ -3495,10 +3495,13 @@ impl ContextEditor {
 
         Some(
             v_flex()
+                .border_1()
+                .border_color(cx.theme().colors().border)
                 .id(id)
-                .pl(gutter_width)
-                .w(max_width)
-                .py_2()
+                .ml(gutter_width)
+                .p_2()
+                .rounded_md()
+                .min_h(cx.line_height() * 3.)
                 .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.editor.update(cx, |editor, cx| {
@@ -3508,6 +3511,7 @@ impl ContextEditor {
                     });
                     this.focus_active_patch(cx);
                 }))
+                .child(Label::new(patch.title.clone()))
                 .children(paths.into_iter().map(|path| {
                     h_flex()
                         .pl_1()
