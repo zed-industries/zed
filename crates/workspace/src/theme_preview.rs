@@ -1,3 +1,4 @@
+#![allow(unused, dead_code)]
 use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use ui::{
     prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
