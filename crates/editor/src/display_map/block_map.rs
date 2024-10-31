@@ -1360,13 +1360,12 @@ impl BlockSnapshot {
         }
     }
 
-    pub fn to_block_point(&self, wrap_point: WrapPoint) -> BlockPoint {
+    pub fn to_block_point(&self, wrap_point: WrapPoint, bias: Bias) -> BlockPoint {
         let mut cursor = self.transforms.cursor::<(WrapRow, BlockRow)>(&());
         cursor.seek(&WrapRow(wrap_point.row()), Bias::Right, &());
         if let Some(transform) = cursor.item() {
             if transform.block.is_some() {
-                let wrap_start = WrapPoint::new(cursor.start().0 .0, 0);
-                if wrap_start == wrap_point {
+                if bias == Bias::Left {
                     BlockPoint::new(cursor.start().1 .0, 0)
                 } else {
                     BlockPoint::new(cursor.end(&()).1 .0 - 1, 0)
@@ -1754,15 +1753,15 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.to_block_point(WrapPoint::new(0, 3)),
+            snapshot.to_block_point(WrapPoint::new(0, 3), Bias::Left),
             BlockPoint::new(0, 3)
         );
         assert_eq!(
-            snapshot.to_block_point(WrapPoint::new(1, 0)),
+            snapshot.to_block_point(WrapPoint::new(1, 0), Bias::Left),
             BlockPoint::new(4, 0)
         );
         assert_eq!(
-            snapshot.to_block_point(WrapPoint::new(3, 3)),
+            snapshot.to_block_point(WrapPoint::new(3, 3), Bias::Left),
             BlockPoint::new(6, 3)
         );
 
@@ -2618,9 +2617,22 @@ mod tests {
             // Ensure that conversion between block points and wrap points is stable.
             for row in 0..=blocks_snapshot.wrap_snapshot.max_point().row() {
                 let original_wrap_point = WrapPoint::new(row, 0);
-                let block_point = blocks_snapshot.to_block_point(original_wrap_point);
-                let wrap_point = blocks_snapshot.to_wrap_point(block_point);
-                assert_eq!(blocks_snapshot.to_block_point(wrap_point), block_point);
+
+                let left_block_point =
+                    blocks_snapshot.to_block_point(original_wrap_point, Bias::Left);
+                let left_wrap_point = blocks_snapshot.to_wrap_point(left_block_point);
+                assert_eq!(
+                    blocks_snapshot.to_block_point(left_wrap_point, Bias::Left),
+                    left_block_point
+                );
+
+                let right_block_point =
+                    blocks_snapshot.to_block_point(original_wrap_point, Bias::Right);
+                let right_wrap_point = blocks_snapshot.to_wrap_point(right_block_point);
+                assert_eq!(
+                    blocks_snapshot.to_block_point(right_wrap_point, Bias::Right),
+                    right_block_point
+                );
             }
 
             let mut block_point = BlockPoint::new(0, 0);
@@ -2628,7 +2640,8 @@ mod tests {
                 let left_point = blocks_snapshot.clip_point(block_point, Bias::Left);
                 let left_buffer_point = blocks_snapshot.to_point(left_point, Bias::Left);
                 assert_eq!(
-                    blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(left_point)),
+                    blocks_snapshot
+                        .to_block_point(blocks_snapshot.to_wrap_point(left_point), Bias::Left),
                     left_point,
                     "wrap point: {:?}",
                     blocks_snapshot.to_wrap_point(left_point)
@@ -2643,7 +2656,8 @@ mod tests {
                 let right_point = blocks_snapshot.clip_point(block_point, Bias::Right);
                 let right_buffer_point = blocks_snapshot.to_point(right_point, Bias::Right);
                 assert_eq!(
-                    blocks_snapshot.to_block_point(blocks_snapshot.to_wrap_point(right_point)),
+                    blocks_snapshot
+                        .to_block_point(blocks_snapshot.to_wrap_point(right_point), Bias::Right),
                     right_point,
                     "wrap point: {:?}",
                     blocks_snapshot.to_wrap_point(right_point)
