@@ -1716,7 +1716,7 @@ impl Context {
 
     pub fn insert_command_output(
         &mut self,
-        command_range: Range<language::Anchor>,
+        command_source_range: Range<language::Anchor>,
         name: &str,
         arguments: &[String],
         output: Task<SlashCommandResult>,
@@ -1726,9 +1726,14 @@ impl Context {
     ) {
         let command_id = SlashCommandId(self.next_timestamp());
 
-        let insert_position = self.buffer.update(cx, |buffer, cx| {
-            buffer.edit([(command_range.clone(), "")], None, cx);
-            command_range.end.bias_right(buffer)
+        let (insert_position, command_range) = self.buffer.update(cx, |buffer, cx| {
+            let command_source_range = command_source_range.to_offset(buffer);
+            buffer.edit([(command_source_range.clone(), "\n\n")], None, cx);
+            let insert_position =
+                buffer.anchor_after(command_source_range.start + 1);
+            let range = buffer.anchor_before(command_source_range.start)
+                ..buffer.anchor_after(command_source_range.start + 2);
+            (insert_position, range)
         });
         self.reparse(cx);
 

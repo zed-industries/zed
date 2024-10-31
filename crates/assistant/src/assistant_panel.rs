@@ -2162,34 +2162,45 @@ impl ContextEditor {
                 self.context.read(cx).invoked_slash_command(&command_id)
             {
                 if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
+                    let buffer = editor.buffer().read(cx).snapshot(cx);
+                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
+                        buffer.as_singleton().unwrap();
+
+                    let start = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
+                        .unwrap();
+                    editor.unfold_ranges([start..start], true, false, cx);
+
                     editor.remove_creases(
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
                         cx,
-                    )
+                    );
                 } else if self.invoked_slash_command_creases.contains_key(&command_id) {
                     cx.notify();
                 } else {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, buffer_id, buffer_snapshot) = buffer.as_singleton().unwrap();
+                    let (&excerpt_id, _buffer_id, _buffer_snapshot) =
+                        buffer.as_singleton().unwrap();
                     let context = self.context.downgrade();
+                    let crease_start = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
+                        .unwrap();
+                    let crease_end = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                        .unwrap();
+                    let fold_placeholder =
+                        invoked_slash_command_fold_placeholder(command_id, context, context_editor);
                     let crease_ids = editor.insert_creases(
                         [Crease::new(
-                            buffer.anchor_before(
-                                invoked_slash_command.range.start.to_offset(buffer_snapshot),
-                            )
-                                ..buffer.anchor_after(
-                                    invoked_slash_command.range.start.to_offset(buffer_snapshot),
-                                ),
-                            invoked_slash_command_fold_placeholder(
-                                command_id,
-                                context,
-                                context_editor,
-                            ),
+                            crease_start..crease_end,
+                            fold_placeholder.clone(),
                             fold_toggle("invoked-slash-command"),
                             |_row, _folded, _cx| Empty.into_any(),
                         )],
                         cx,
                     );
+
+                    editor.fold_ranges([(crease_start..crease_end, fold_placeholder)], false, cx);
 
                     self.invoked_slash_command_creases
                         .insert(command_id, crease_ids[0]);
