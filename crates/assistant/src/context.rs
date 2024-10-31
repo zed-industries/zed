@@ -1943,7 +1943,7 @@ impl Context {
             InvokedSlashCommand {
                 name: name.to_string().into(),
                 arguments: arguments.iter().cloned().map(SharedString::from).collect(),
-                position: command_range.start,
+                range: command_range,
                 status: InvokedSlashCommandStatus::Running(insert_output_task),
             },
         );
@@ -2990,7 +2990,7 @@ pub struct ParsedSlashCommand {
 pub struct InvokedSlashCommand {
     pub name: SharedString,
     pub arguments: SmallVec<[SharedString; 3]>,
-    pub position: language::Anchor,
+    pub range: Range<language::Anchor>,
     pub status: InvokedSlashCommandStatus,
 }
 

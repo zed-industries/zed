@@ -1479,7 +1479,7 @@ pub struct ContextEditor {
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
-    invoked_slash_command_blocks: HashMap<SlashCommandId, CustomBlockId>,
+    invoked_slash_command_creases: HashMap<SlashCommandId, CreaseId>,
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
@@ -1550,7 +1550,7 @@ impl ContextEditor {
             workspace,
             project,
             pending_slash_command_creases: HashMap::default(),
-            invoked_slash_command_blocks: HashMap::default(),
+            invoked_slash_command_creases: HashMap::default(),
             pending_tool_use_creases: HashMap::default(),
             _subscriptions,
             patches: HashMap::default(),
@@ -2162,46 +2162,44 @@ impl ContextEditor {
                 self.context.read(cx).invoked_slash_command(&command_id)
             {
                 if let InvokedSlashCommandStatus::Finished = invoked_slash_command.status {
-                    editor.remove_blocks(
-                        HashSet::from_iter(self.invoked_slash_command_blocks.remove(&command_id)),
-                        None,
+                    editor.remove_creases(
+                        HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
                         cx,
                     )
-                } else if self.invoked_slash_command_blocks.contains_key(&command_id) {
+                } else if self.invoked_slash_command_creases.contains_key(&command_id) {
                     cx.notify();
                 } else {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
-                    let (&excerpt_id, buffer_id, _) = buffer.as_singleton().unwrap();
+                    let (&excerpt_id, buffer_id, buffer_snapshot) = buffer.as_singleton().unwrap();
                     let context = self.context.downgrade();
-                    let block_ids = editor.insert_blocks(
-                        [BlockProperties {
-                            style: BlockStyle::Fixed,
-                            placement: BlockPlacement::Above(Anchor {
-                                buffer_id: Some(buffer_id),
-                                excerpt_id,
-                                text_anchor: invoked_slash_command.position,
-                            }),
-                            height: 1,
-                            render: invoked_slash_command_renderer(
+                    let crease_ids = editor.insert_creases(
+                        [Crease::new(
+                            buffer.anchor_before(
+                                invoked_slash_command.range.start.to_offset(buffer_snapshot),
+                            )
+                                ..buffer.anchor_after(
+                                    invoked_slash_command.range.start.to_offset(buffer_snapshot),
+                                ),
+                            invoked_slash_command_fold_placeholder(
                                 command_id,
                                 context,
                                 context_editor,
                             ),
-                            priority: 0,
-                        }],
-                        None,
+                            fold_toggle("invoked-slash-command"),
+                            |_row, _folded, _cx| Empty.into_any(),
+                        )],
                         cx,
                     );
 
-                    self.invoked_slash_command_blocks
-                        .insert(command_id, block_ids[0]);
+                    self.invoked_slash_command_creases
+                        .insert(command_id, crease_ids[0]);
                 }
             } else {
-                editor.remove_blocks(
-                    HashSet::from_iter(self.invoked_slash_command_blocks.remove(&command_id)),
-                    None,
+                editor.remove_creases(
+                    HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
                     cx,
-                )
+                );
+                cx.notify();
             };
         });
     }
@@ -5103,71 +5101,75 @@ fn make_lsp_adapter_delegate(
     })
 }
 
-fn invoked_slash_command_renderer(
+fn invoked_slash_command_fold_placeholder(
     command_id: SlashCommandId,
     context: WeakModel<Context>,
     context_editor: WeakView<ContextEditor>,
-) -> RenderBlock {
-    Box::new(move |cx| {
-        let Some(context) = context.upgrade() else {
-            return Empty.into_any();
-        };
+) -> FoldPlaceholder {
+    FoldPlaceholder {
+        constrain_width: false,
+        merge_adjacent: false,
+        render: Arc::new(move |fold_id, fold_range, cx| {
+            let Some(context) = context.upgrade() else {
+                return Empty.into_any();
+            };
 
-        let Some(command) = context.read(cx).invoked_slash_command(&command_id) else {
-            return Empty.into_any();
-        };
+            let Some(command) = context.read(cx).invoked_slash_command(&command_id) else {
+                return Empty.into_any();
+            };
 
-        h_flex()
-            .px_1()
-            .ml_6()
-            .gap_2()
-            .bg(cx.theme().colors().surface_background)
-            .rounded_md()
-            .child(Label::new(format!("/{}", command.name.clone())))
-            .map(|parent| match &command.status {
-                InvokedSlashCommandStatus::Running(_) => {
-                    parent.child(Icon::new(IconName::ArrowCircle).with_animation(
-                        "arrow-circle",
-                        Animation::new(Duration::from_secs(4)).repeat(),
-                        |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
-                    ))
-                }
-                InvokedSlashCommandStatus::Error(message) => parent
-                    .child(
-                        Label::new(format!("error: {message}"))
-                            .single_line()
-                            .color(Color::Error),
-                    )
-                    .child(
-                        IconButton::new("dismiss-error", IconName::Close)
-                            .shape(IconButtonShape::Square)
-                            .icon_size(IconSize::XSmall)
-                            .icon_color(Color::Muted)
-                            .on_click({
-                                let context_editor = context_editor.clone();
-                                move |_event, cx| {
-                                    context_editor
-                                        .update(cx, |context_editor, cx| {
-                                            context_editor.editor.update(cx, |editor, cx| {
-                                                editor.remove_blocks(
-                                                    HashSet::from_iter(
-                                                        context_editor
-                                                            .invoked_slash_command_blocks
-                                                            .remove(&command_id),
-                                                    ),
-                                                    None,
-                                                    cx,
-                                                );
+            h_flex()
+                .id(fold_id)
+                .px_1()
+                .ml_6()
+                .gap_2()
+                .bg(cx.theme().colors().surface_background)
+                .rounded_md()
+                .child(Label::new(format!("/{}", command.name.clone())))
+                .map(|parent| match &command.status {
+                    InvokedSlashCommandStatus::Running(_) => {
+                        parent.child(Icon::new(IconName::ArrowCircle).with_animation(
+                            "arrow-circle",
+                            Animation::new(Duration::from_secs(4)).repeat(),
+                            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+                        ))
+                    }
+                    InvokedSlashCommandStatus::Error(message) => parent
+                        .child(
+                            Label::new(format!("error: {message}"))
+                                .single_line()
+                                .color(Color::Error),
+                        )
+                        .child(
+                            IconButton::new("dismiss-error", IconName::Close)
+                                .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
+                                .icon_color(Color::Muted)
+                                .on_click({
+                                    let context_editor = context_editor.clone();
+                                    move |_event, cx| {
+                                        context_editor
+                                            .update(cx, |context_editor, cx| {
+                                                context_editor.editor.update(cx, |editor, cx| {
+                                                    editor.remove_creases(
+                                                        HashSet::from_iter(
+                                                            context_editor
+                                                                .invoked_slash_command_creases
+                                                                .remove(&command_id),
+                                                        ),
+                                                        cx,
+                                                    );
+                                                })
                                             })
-                                        })
-                                        .log_err();
-                                }
-                            }),
-                    ),
-                InvokedSlashCommandStatus::Finished => parent,
-            })
-            .into_any_element()
-    })
+                                            .log_err();
+                                    }
+                                }),
+                        ),
+                    InvokedSlashCommandStatus::Finished => parent,
+                })
+                .into_any_element()
+        }),
+    }
 }
 
 enum TokenState {
