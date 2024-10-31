@@ -451,12 +451,7 @@ impl AssistantPanel {
                                 }),
                             )
                             .tooltip(move |cx| {
-                                Tooltip::for_action_in(
-                                    "New Context",
-                                    &NewContext,
-                                    &focus_handle,
-                                    cx,
-                                )
+                                Tooltip::for_action_in("New Chat", &NewContext, &focus_handle, cx)
                             }),
                     )
                     .child(
@@ -473,7 +468,7 @@ impl AssistantPanel {
                                 let focus_handle = _pane.focus_handle(cx);
                                 Some(ContextMenu::build(cx, move |menu, _| {
                                     menu.context(focus_handle.clone())
-                                        .action("New Context", Box::new(NewContext))
+                                        .action("New Chat", Box::new(NewContext))
                                         .action("History", Box::new(DeployHistory))
                                         .action("Prompt Library", Box::new(DeployPromptLibrary))
                                         .action("Configure", Box::new(ShowConfiguration))
@@ -1497,7 +1492,7 @@ pub struct ContextEditor {
     dragged_file_worktrees: Vec<Model<Worktree>>,
 }
 
-const DEFAULT_TAB_TITLE: &str = "New Context";
+const DEFAULT_TAB_TITLE: &str = "New Chat";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl ContextEditor {
@@ -3073,7 +3068,7 @@ impl ContextEditor {
         }
 
         panel.update(cx, |_, cx| {
-            // Wait to create a new context until the workspace is no longer
+            // Wait to create a new chat until the workspace is no longer
             // being updated.
             cx.defer(move |panel, cx| {
                 if let Some(context) = panel
@@ -4507,7 +4502,7 @@ impl Render for ContextEditorToolbarItem {
                                     .ok()
                                     .flatten();
                                 menu.when_some(context, |menu, context| menu.context(context))
-                                    .entry("Regenerate Context Title", None, {
+                                    .entry("Regenerate Chat Title", None, {
                                         let weak_self = weak_self.clone();
                                         move |cx| {
                                             weak_self
@@ -4766,7 +4761,7 @@ impl ConfigurationView {
                             h_flex().justify_end().child(
                                 Button::new(
                                     SharedString::from(format!("new-context-{provider_id}")),
-                                    "Open new context",
+                                    "Open New Chat",
                                 )
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Plus)
