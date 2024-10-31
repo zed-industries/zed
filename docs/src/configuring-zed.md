@@ -1043,6 +1043,32 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+3. Show a commit summary next to the commit date and author:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "show_commit_summary": true
+    }
+  }
+}
+```
+
+4. Use this as the minimum column at which to display inline blame information:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "min_column": 80
+    }
+  }
+}
+```
+
 ## Indent Guides
 
 - Description: Configuration related to indent guides. Indent guides can be configured separately for each language.
@@ -2271,6 +2297,9 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "auto_fold_dirs": true,
   "indent_guides": {
     "show": "always"
+  },
+  "scrollbar": {
+    "show": null
   }
 }
 ```

@@ -51,6 +51,7 @@ use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
 
+use crate::slash_command::streaming_example_command;
 use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
@@ -463,6 +464,19 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
             if is_enabled {
                 // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
                 slash_command_registry.register_command(auto_command::AutoCommand, true);
+            }
+        }
+    })
+    .detach();
+
+    cx.observe_flag::<streaming_example_command::StreamingExampleSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                slash_command_registry.register_command(
+                    streaming_example_command::StreamingExampleSlashCommand,
+                    false,
+                );
             }
         }
     })

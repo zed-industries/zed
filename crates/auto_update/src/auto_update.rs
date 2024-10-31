@@ -686,6 +686,12 @@ async fn download_remote_server_binary(
     let request_body = AsyncBody::from(serde_json::to_string(&update_request_body)?);
 
     let mut response = client.get(&release.url, request_body, true).await?;
+    if !response.status().is_success() {
+        return Err(anyhow!(
+            "failed to download remote server release: {:?}",
+            response.status()
+        ));
+    }
     smol::io::copy(response.body_mut(), &mut temp_file).await?;
     smol::fs::rename(&temp, &target_path).await?;
 

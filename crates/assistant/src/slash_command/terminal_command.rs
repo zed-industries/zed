@@ -33,6 +33,10 @@ impl SlashCommand for TerminalSlashCommand {
         "Insert terminal output".into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Terminal
+    }
+
     fn menu_text(&self) -> String {
         self.description()
     }

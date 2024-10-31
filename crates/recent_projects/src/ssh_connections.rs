@@ -13,8 +13,7 @@ use gpui::{AppContext, Model};
 
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
-use release_channel::{AppVersion, ReleaseChannel};
-use remote::ssh_session::{ServerBinary, ServerVersion};
+use release_channel::ReleaseChannel;
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -441,23 +440,66 @@ impl remote::SshClientDelegate for SshClientDelegate {
         self.update_status(status, cx)
     }
 
-    fn get_server_binary(
+    fn download_server_binary_locally(
         &self,
         platform: SshPlatform,
-        upload_binary_over_ssh: bool,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(ServerBinary, ServerVersion)>> {
-        let (tx, rx) = oneshot::channel();
-        let this = self.clone();
+    ) -> Task<anyhow::Result<PathBuf>> {
         cx.spawn(|mut cx| async move {
-            tx.send(
-                this.get_server_binary_impl(platform, upload_binary_over_ssh, &mut cx)
-                    .await,
+            let binary_path = AutoUpdater::download_remote_server_release(
+                platform.os,
+                platform.arch,
+                release_channel,
+                version,
+                &mut cx,
             )
-            .ok();
+            .await
+            .map_err(|e| {
+                anyhow!(
+                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
+                    version
+                        .map(|v| format!("{}", v))
+                        .unwrap_or("unknown".to_string()),
+                    platform.os,
+                    platform.arch,
+                    e
+                )
+            })?;
+            Ok(binary_path)
         })
-        .detach();
-        rx
+    }
+
+    fn get_download_params(
+        &self,
+        platform: SshPlatform,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
+        cx: &mut AsyncAppContext,
+    ) -> Task<Result<(String, String)>> {
+        cx.spawn(|mut cx| async move {
+                let (release, request_body) = AutoUpdater::get_remote_server_release_url(
+                            platform.os,
+                            platform.arch,
+                            release_channel,
+                            version,
+                            &mut cx,
+                        )
+                        .await
+                        .map_err(|e| {
+                            anyhow!(
+                                "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
+                                version.map(|v| format!("{}", v)).unwrap_or("unknown".to_string()),
+                                platform.os,
+                                platform.arch,
+                                e
+                            )
+                        })?;
+
+                Ok((release.url, request_body))
+            }
+        )
     }
 
     fn remote_server_binary_path(
@@ -484,208 +526,6 @@ impl SshClientDelegate {
                 })
             })
             .ok();
-    }
-
-    async fn get_server_binary_impl(
-        &self,
-        platform: SshPlatform,
-        upload_binary_via_ssh: bool,
-        cx: &mut AsyncAppContext,
-    ) -> Result<(ServerBinary, ServerVersion)> {
-        let (version, release_channel) = cx.update(|cx| {
-            let version = AppVersion::global(cx);
-            let channel = ReleaseChannel::global(cx);
-
-            (version, channel)
-        })?;
-
-        // In dev mode, build the remote server binary from source
-        #[cfg(debug_assertions)]
-        if release_channel == ReleaseChannel::Dev {
-            let result = self.build_local(cx, platform, version).await?;
-            // Fall through to a remote binary if we're not able to compile a local binary
-            if let Some((path, version)) = result {
-                return Ok((
-                    ServerBinary::LocalBinary(path),
-                    ServerVersion::Semantic(version),
-                ));
-            }
-        }
-
-        // For nightly channel, always get latest
-        let current_version = if release_channel == ReleaseChannel::Nightly {
-            None
-        } else {
-            Some(version)
-        };
-
-        self.update_status(
-            Some(&format!("Checking remote server release {}", version)),
-            cx,
-        );
-
-        if upload_binary_via_ssh {
-            let binary_path = AutoUpdater::download_remote_server_release(
-                platform.os,
-                platform.arch,
-                release_channel,
-                current_version,
-                cx,
-            )
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "Failed to download remote server binary (version: {}, os: {}, arch: {}): {}",
-                    version,
-                    platform.os,
-                    platform.arch,
-                    e
-                )
-            })?;
-
-            Ok((
-                ServerBinary::LocalBinary(binary_path),
-                ServerVersion::Semantic(version),
-            ))
-        } else {
-            let (release, request_body) = AutoUpdater::get_remote_server_release_url(
-                    platform.os,
-                    platform.arch,
-                    release_channel,
-                    current_version,
-                    cx,
-                )
-                .await
-                .map_err(|e| {
-                    anyhow!(
-                        "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
-                        version,
-                        platform.os,
-                        platform.arch,
-                        e
-                    )
-                })?;
-
-            let version = release
-                .version
-                .parse::<SemanticVersion>()
-                .map(ServerVersion::Semantic)
-                .unwrap_or_else(|_| ServerVersion::Commit(release.version));
-            Ok((
-                ServerBinary::ReleaseUrl {
-                    url: release.url,
-                    body: request_body,
-                },
-                version,
-            ))
-        }
-    }
-
-    #[cfg(debug_assertions)]
-    async fn build_local(
-        &self,
-        cx: &mut AsyncAppContext,
-        platform: SshPlatform,
-        version: gpui::SemanticVersion,
-    ) -> Result<Option<(PathBuf, gpui::SemanticVersion)>> {
-        use smol::process::{Command, Stdio};
-
-        async fn run_cmd(command: &mut Command) -> Result<()> {
-            let output = command
-                .kill_on_drop(true)
-                .stderr(Stdio::inherit())
-                .output()
-                .await?;
-            if !output.status.success() {
-                Err(anyhow!("Failed to run command: {:?}", command))?;
-            }
-            Ok(())
-        }
-
-        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
-            self.update_status(Some("Building remote server binary from source"), cx);
-            log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
-                "build",
-                "--package",
-                "remote_server",
-                "--features",
-                "debug-embed",
-                "--target-dir",
-                "target/remote_server",
-            ]))
-            .await?;
-
-            self.update_status(Some("Compressing binary"), cx);
-
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                "target/remote_server/debug/remote_server",
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
-            return Ok(Some((path, version)));
-        } else if let Some(triple) = platform.triple() {
-            smol::fs::create_dir_all("target/remote_server").await?;
-
-            self.update_status(Some("Installing cross.rs for cross-compilation"), cx);
-            log::info!("installing cross");
-            run_cmd(Command::new("cargo").args([
-                "install",
-                "cross",
-                "--git",
-                "https://github.com/cross-rs/cross",
-            ]))
-            .await?;
-
-            self.update_status(
-                Some(&format!(
-                    "Building remote server binary from source for {} with Docker",
-                    &triple
-                )),
-                cx,
-            );
-            log::info!("building remote server binary from source for {}", &triple);
-            run_cmd(
-                Command::new("cross")
-                    .args([
-                        "build",
-                        "--package",
-                        "remote_server",
-                        "--features",
-                        "debug-embed",
-                        "--target-dir",
-                        "target/remote_server",
-                        "--target",
-                        &triple,
-                    ])
-                    .env(
-                        "CROSS_CONTAINER_OPTS",
-                        "--mount type=bind,src=./target,dst=/app/target",
-                    ),
-            )
-            .await?;
-
-            self.update_status(Some("Compressing binary"), cx);
-
-            run_cmd(Command::new("gzip").args([
-                "-9",
-                "-f",
-                &format!("target/remote_server/{}/debug/remote_server", triple),
-            ]))
-            .await?;
-
-            let path = std::env::current_dir()?.join(format!(
-                "target/remote_server/{}/debug/remote_server.gz",
-                triple
-            ));
-
-            return Ok(Some((path, version)));
-        } else {
-            return Ok(None);
-        }
     }
 }
 
