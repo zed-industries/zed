@@ -2256,7 +2256,7 @@ impl ContextEditor {
                             height: path_count as u32 + 1,
                             style: BlockStyle::Flex,
                             render: render_block,
-                            placement: BlockPlacement::Below(patch_start),
+                            placement: BlockPlacement::Replace(patch_start..patch_end),
                             priority: 0,
                         }],
                         None,
