@@ -217,7 +217,8 @@ impl LanguageModel for CopilotChatLanguageModel {
             }
         }
 
-        let request = self.to_copilot_chat_request(request);
+        let copilot_request = self.to_copilot_chat_request(request);
+        let is_streaming = copilot_request.stream;
         let Ok(low_speed_timeout) = cx.update(|cx| {
             AllLanguageModelSettings::get_global(cx)
                 .copilot_chat
@@ -228,28 +229,43 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(|cx| async move {
-            let response = CopilotChat::stream_completion(request, low_speed_timeout, cx);
-            request_limiter.stream(async move {
-                let response = response.await?;
-                let stream = response
-                    .filter_map(|response| async move {
-                        match response {
-                            Ok(result) => {
-                                let choice = result.choices.first();
-                                match choice {
-                                    Some(choice) => Some(Ok(choice.delta.content.clone().unwrap_or_default())),
-                                    None => Some(Err(anyhow::anyhow!(
-                                        "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
-                                    ))),
+                let response = CopilotChat::stream_completion(copilot_request, low_speed_timeout, cx);
+                request_limiter.stream(async move {
+                    let response = response.await?;
+                    let stream = response
+                        .filter_map(move |response| async move {
+                            match response {
+                                Ok(result) => {
+                                    let choice = result.choices.first();
+                                    match choice {
+                                        Some(choice) if !is_streaming => {
+                                            match &choice.message {
+                                                Some(msg) => Some(Ok(msg.content.clone().unwrap_or_default())),
+                                                None => Some(Err(anyhow::anyhow!(
+                                                    "The Copilot Chat API returned a response with no message content"
+                                                ))),
+                                            }
+                                        },
+                                        Some(choice) => {
+                                            match &choice.delta {
+                                                Some(delta) => Some(Ok(delta.content.clone().unwrap_or_default())),
+                                                None => Some(Err(anyhow::anyhow!(
+                                                    "The Copilot Chat API returned a response with no delta content"
+                                                ))),
+                                            }
+                                        },
+                                        None => Some(Err(anyhow::anyhow!(
+                                            "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
+                                        ))),
+                                    }
                                 }
+                                Err(err) => Some(Err(err)),
                             }
-                            Err(err) => Some(Err(err)),
-                        }
-                    })
-                    .boxed();
-                Ok(stream)
-            }).await
-        });
+                        })
+                        .boxed();
+                    Ok(stream)
+                }).await
+            });
 
         async move {
             Ok(future

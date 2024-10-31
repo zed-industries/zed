@@ -44,6 +44,17 @@ pub enum Model {
 }
 
 impl Model {
+    pub fn uses_streaming(&self) -> bool {
+        match self {
+            Self::Gpt4o => true,
+            Self::Gpt4 => true,
+            Self::Gpt3_5Turbo => true,
+            Self::O1Mini => false,
+            Self::O1Preview => false,
+            Self::Claude3_5Sonnet => true,
+        }
+    }
+
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "gpt-4o" => Ok(Self::Gpt4o),
@@ -105,7 +116,7 @@ impl Request {
         Self {
             intent: true,
             n: 1,
-            stream: true,
+            stream: model.uses_streaming(),
             temperature: 0.1,
             model,
             messages,
@@ -131,7 +142,8 @@ pub struct ResponseEvent {
 pub struct ResponseChoice {
     pub index: usize,
     pub finish_reason: Option<String>,
-    pub delta: ResponseDelta,
+    pub delta: Option<ResponseDelta>,
+    pub message: Option<ResponseDelta>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -351,9 +363,23 @@ async fn stream_completion(
     if let Some(low_speed_timeout) = low_speed_timeout {
         request_builder = request_builder.read_timeout(low_speed_timeout);
     }
+    let is_streaming = request.stream;
+
     let request = request_builder.body(AsyncBody::from(serde_json::to_string(&request)?))?;
     let mut response = client.send(request).await?;
-    if response.status().is_success() {
+
+    if !response.status().is_success() {
+        let mut body = Vec::new();
+        response.body_mut().read_to_end(&mut body).await?;
+        let body_str = std::str::from_utf8(&body)?;
+        return Err(anyhow!(
+            "Failed to connect to API: {} {}",
+            response.status(),
+            body_str
+        ));
+    }
+
+    if is_streaming {
         let reader = BufReader::new(response.into_body());
         Ok(reader
             .lines()
@@ -385,19 +411,9 @@ async fn stream_completion(
     } else {
         let mut body = Vec::new();
         response.body_mut().read_to_end(&mut body).await?;
-
         let body_str = std::str::from_utf8(&body)?;
+        let response: ResponseEvent = serde_json::from_str(body_str)?;
 
-        match serde_json::from_str::<ResponseEvent>(body_str) {
-            Ok(_) => Err(anyhow!(
-                "Unexpected success response while expecting an error: {}",
-                body_str,
-            )),
-            Err(_) => Err(anyhow!(
-                "Failed to connect to API: {} {}",
-                response.status(),
-                body_str,
-            )),
-        }
+        Ok(futures::stream::once(async move { Ok(response) }).boxed())
     }
 }
