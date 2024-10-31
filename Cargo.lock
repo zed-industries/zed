@@ -5585,7 +5585,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.4.10",
+ "socket2 0.5.7",
  "tokio",
  "tower-service",
  "tracing",
@@ -6157,9 +6157,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-serde"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a444fb3f87ee6885eb316028cc998c7d84811663ef95d78c419419423d5a054"
+checksum = "77b96de099fc23d5c21e05de32cc087c8326983895b7f6c242562af01f7d4c81"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6492,7 +6492,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4979f22fdb869068da03c9f7528f8297c6fd2606bc3a4affe42e6a823fdb8da4"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7157,9 +7157,9 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "146074ad45cab20f5d98ccded164826158471f21d04f96e40b9872529e10979d"
+checksum = "84f8a9ab08b34237c2c1d0504b794c2ff01c08dfc46a060d160f004a7f479c31"
 dependencies = [
  "anyhow",
  "chrono",
@@ -9970,9 +9970,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.16.0"
+version = "0.16.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "263588fe9593333c4bfde258c9021fc64e766ea434e070c6b67c7100536d6499"
+checksum = "bc7fe3c17675445fe89de68d130be00b7115104924fbcf53a9b0a84b0283fc81"
 dependencies = [
  "anyhow",
  "async-dispatcher",
