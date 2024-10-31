@@ -35,6 +35,7 @@ smol.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 util.workspace = true
+release_channel.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

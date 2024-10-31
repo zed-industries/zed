@@ -68,7 +68,6 @@ actions!(
         Hide,
         HideOthers,
         Minimize,
-        OpenDefaultKeymap,
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
@@ -474,7 +473,7 @@ pub fn initialize_workspace(
             .register_action(open_project_tasks_file)
             .register_action(
                 move |workspace: &mut Workspace,
-                      _: &OpenDefaultKeymap,
+                      _: &zed_actions::OpenDefaultKeymap,
                       cx: &mut ViewContext<Workspace>| {
                     open_bundled_file(
                         workspace,

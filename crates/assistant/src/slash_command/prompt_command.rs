@@ -21,6 +21,10 @@ impl SlashCommand for PromptSlashCommand {
         "Insert prompt from library".into()
     }
 
+    fn icon(&self) -> IconName {
+        IconName::Library
+    }
+
     fn menu_text(&self) -> String {
         self.description()
     }

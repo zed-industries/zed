@@ -414,6 +414,23 @@
       // 2. Never show indent guides:
       //    "never"
       "show": "always"
+    },
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the project panel.
+      /// This setting can take four values:
+      ///
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
     }
   },
   "collaboration_panel": {
@@ -635,6 +652,12 @@
       // Sets a delay after which the inline blame information is shown.
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
+      //
+      // Whether or not do display the git commit summary on the same line.
+      // "show_commit_summary": false
+      //
+      // The minimum column number to show the inline blame information at
+      // "min_column": 0
     }
   },
   // Configuration for how direnv configuration should be loaded. May take 2 values:
