@@ -12,8 +12,8 @@ use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
-use extension_manifest::ExtensionManifest;
-use fs::{Fs, RemoveOptions};
+pub use extension_manifest::ExtensionManifest;
+use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedSender},
@@ -46,7 +46,7 @@ use std::{
     time::{Duration, Instant},
 };
 use url::Url;
-use util::{maybe, ResultExt};
+use util::ResultExt;
 use wasm_host::{
     wit::{is_supported_wasm_api_version, wasm_api_version_range},
     WasmExtension, WasmHost,
@@ -169,12 +169,13 @@ pub struct HeadlessExtensionStore {
     pub extension_dir: PathBuf,
     pub wasm_host: Arc<WasmHost>,
     pub loaded_languages: HashMap<Arc<str>, Vec<LanguageName>>,
-    pub loaded_language_servers: HashMap<Arc<str>, Vec<LanguageServerName>>,
+    pub loaded_language_servers: HashMap<Arc<str>, Vec<(LanguageServerName, LanguageName)>>,
 }
 
+#[derive(Clone)]
 pub struct ExtensionVersion {
-    id: String,
-    version: String,
+    pub id: String,
+    pub version: String,
 }
 
 impl HeadlessExtensionStore {
@@ -182,11 +183,11 @@ impl HeadlessExtensionStore {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         api: Arc<dyn ExtensionApi>,
-        extension_dir: PathBuf, // extensions_dir, if
+        extension_dir: PathBuf,
         node_runtime: NodeRuntime,
         cx: &mut AppContext,
-    ) -> Self {
-        Self {
+    ) -> Model<Self> {
+        cx.new_model(|cx| Self {
             api: api.clone(),
             fs: fs.clone(),
             wasm_host: WasmHost::new(
@@ -199,33 +200,44 @@ impl HeadlessExtensionStore {
             ),
             extension_dir,
             loaded_languages: Default::default(),
-        }
+            loaded_language_servers: Default::default(),
+        })
     }
 
-    pub async fn sync_extensions(
-        &self,
+    pub fn sync_extensions(
+        &mut self,
         extensions: Vec<ExtensionVersion>,
-        cx: &AsyncAppContext,
-    ) -> Result<Vec<ExtensionVersion>> {
-        let mut missing = Vec::new();
+        cx: &ModelContext<Self>,
+    ) -> Task<Result<Vec<ExtensionVersion>>> {
+        cx.spawn(|this, mut cx| async move {
+            let mut missing = Vec::new();
 
-        for extension in extensions {
-            if let Err(e) = self.load_extension(&extension, cx).await {
-                log::info!("failed to load extension: {}, {:?}", extension.id, e);
-                missing.push(extension)
+            for extension in extensions {
+                if let Err(e) = Self::load_extension(this.clone(), extension.clone(), &mut cx).await
+                {
+                    log::info!("failed to load extension: {}, {:?}", extension.id, e);
+                    missing.push(extension)
+                }
             }
-        }
 
-        Ok(missing)
+            Ok(missing)
+        })
     }
 
     pub async fn load_extension(
-        &self,
-        extension: &ExtensionVersion,
-        cx: &AsyncAppContext,
+        this: WeakModel<Self>,
+        extension: ExtensionVersion,
+        cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let extension_dir = self.extension_dir.join(&extension.id);
-        let manifest = Arc::new(ExtensionManifest::load(self.fs.clone(), &extension_dir).await?);
+        let (fs, wasm_host, extension_dir) = this.update(cx, |this, _cx| {
+            (
+                this.fs.clone(),
+                this.wasm_host.clone(),
+                this.extension_dir.join(&extension.id),
+            )
+        })?;
+
+        let manifest = Arc::new(ExtensionManifest::load(fs.clone(), &extension_dir).await?);
 
         debug_assert!(!manifest.languages.is_empty() || !manifest.language_servers.is_empty());
 
@@ -237,27 +249,30 @@ impl HeadlessExtensionStore {
             )
         }
 
-        for language_path in manifest.languages {
+        for language_path in &manifest.languages {
             let language_path = extension_dir.join(language_path);
-            let config = self.fs.load(&language_path.join("config.toml")).await?;
+            let config = fs.load(&language_path.join("config.toml")).await?;
             let config = ::toml::from_str::<LanguageConfig>(&config)?;
-            self.loaded_languages
-                .entry(manifest.id.clone())
-                .or_default()
-                .push(config.name.clone());
-            self.api.register_language(
-                config.name,
-                None,
-                config.matcher,
-                Arc::new(move || {
-                    Ok(LoadedLanguage {
-                        config,
-                        context_provider: None,
-                        queries: LanguageQueries::default(),
-                        toolchain_provider: None,
-                    })
-                }),
-            );
+
+            this.update(cx, |this, _cx| {
+                this.loaded_languages
+                    .entry(manifest.id.clone())
+                    .or_default()
+                    .push(config.name.clone());
+                this.api.register_language(
+                    config.name.clone(),
+                    None,
+                    config.matcher.clone(),
+                    Arc::new(move || {
+                        Ok(LoadedLanguage {
+                            config: config.clone(),
+                            context_provider: None,
+                            queries: LanguageQueries::default(),
+                            toolchain_provider: None,
+                        })
+                    }),
+                );
+            })?;
         }
 
         if manifest.language_servers.is_empty() {
@@ -265,41 +280,77 @@ impl HeadlessExtensionStore {
         }
 
         let wasm_extension =
-            WasmExtension::load(extension_dir, &manifest, self.wasm_host.clone(), &cx).await?;
+            WasmExtension::load(extension_dir, &manifest, wasm_host.clone(), &cx).await?;
 
-        for (language_server_id, language_server_config) in &manifest.language_servers {
-            self.loaded_language_servers
-                .entry(manifest.id.clone())
-                .or_default()
-                .push(language_server_id.clone());
+        for (language_server_name, language_server_config) in &manifest.language_servers {
             for language in language_server_config.languages() {
-                self.api.register_lsp_adapter(
-                    language.clone(),
-                    ExtensionLspAdapter {
-                        extension: wasm_extension.clone(),
-                        host: self.wasm_host.clone(),
-                        language_server_id: language_server_id.clone(),
-                        config: wit::LanguageServerConfig {
-                            name: language_server_id.0.to_string(),
-                            language_name: language.to_string(),
+                this.update(cx, |this, _cx| {
+                    this.loaded_language_servers
+                        .entry(manifest.id.clone())
+                        .or_default()
+                        .push((language_server_name.clone(), language.clone()));
+                    this.api.register_lsp_adapter(
+                        language.clone(),
+                        ExtensionLspAdapter {
+                            extension: wasm_extension.clone(),
+                            host: wasm_host.clone(),
+                            language_server_id: language_server_name.clone(),
+                            config: wit::LanguageServerConfig {
+                                name: language_server_name.0.to_string(),
+                                language_name: language.to_string(),
+                            },
                         },
-                    },
-                );
+                    );
+                })?;
             }
         }
 
         Ok(())
     }
 
-    //
-    // scp <extension> <destination>.tmp ('SSH private')
-    //
-    // mv <folder> <extensions_dir>/<extension_id>
+    pub fn install_extension(
+        &mut self,
+        extension: ExtensionVersion,
+        tmp_path: PathBuf,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let path = self.extension_dir.join(&extension.id);
+        let fs = self.fs.clone();
 
-    pub fn install_extension(&self, extension_id: &str, path: PathBuf) -> Result<()> {
-        todo!()
-        // self.fs.rename(path, self.extension_dir.join(extension_id))
-        // self.actually_load_extension(extension_id)
+        cx.spawn(|this, mut cx| async move {
+            if fs.is_dir(&path).await {
+                fs.remove_dir(
+                    &path,
+                    RemoveOptions {
+                        recursive: true,
+                        ignore_if_not_exists: true,
+                    },
+                )
+                .await?;
+
+                let extension_id: Arc<str> = extension.id.clone().into();
+                this.update(&mut cx, |this, _cx| {
+                    let languages_to_remove = this
+                        .loaded_languages
+                        .remove(&extension_id)
+                        .unwrap_or_default();
+                    this.api.remove_languages(&languages_to_remove, &[]);
+                    for (language_server_name, language) in this
+                        .loaded_language_servers
+                        .remove(&extension_id)
+                        .unwrap_or_default()
+                    {
+                        this.api
+                            .remove_lsp_adapter(&language, &language_server_name);
+                    }
+                })?;
+            }
+
+            fs.rename(&tmp_path, &path, RenameOptions::default())
+                .await?;
+
+            Self::load_extension(this, extension, &mut cx).await
+        })
     }
 }
 

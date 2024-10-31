@@ -111,6 +111,7 @@ impl WasmHost {
         executor: BackgroundExecutor,
     ) -> Task<Result<WasmExtension>> {
         let this = self.clone();
+        let manifest = manifest.clone();
         executor.clone().spawn(async move {
             let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 

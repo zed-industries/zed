@@ -1,11 +1,14 @@
-use anyhow::{anyhow, Result};
-use extension::ExtensionApi;
-use fs::Fs;
-use gpui::{
-    AppContext, AsyncAppContext, BackgroundExecutor, Context as _, Model, ModelContext, PromptLevel,
+use anyhow::{anyhow, Context, Result};
+use extension::{
+    extension_lsp_adapter::ExtensionLspAdapter, ExtensionApi, ExtensionVersion,
+    HeadlessExtensionStore,
 };
+use fs::Fs;
+use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, PromptLevel};
 use http_client::HttpClient;
-use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
+use language::{
+    proto::serialize_operation, Buffer, BufferEvent, LanguageName, LanguageRegistry, LoadedLanguage,
+};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
@@ -40,7 +43,7 @@ pub struct HeadlessProject {
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
-    pub extensions: Arc<HeadlessExtensionStore>,
+    pub extensions: Model<HeadlessExtensionStore>,
 }
 
 pub struct HeadlessAppState {
@@ -74,7 +77,7 @@ impl ExtensionApi for HeadlessExtensionsApi {
     }
     fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter) {
         self.language_registry
-            .register_lsp_adapter(language, adapter);
+            .register_lsp_adapter(language, Arc::new(adapter) as _);
     }
 
     fn remove_lsp_adapter(
@@ -136,7 +139,7 @@ impl HeadlessProject {
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                node_runtime,
+                node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
@@ -176,7 +179,7 @@ impl HeadlessProject {
                 toolchain_store.clone(),
                 environment,
                 languages.clone(),
-                http_client,
+                http_client.clone(),
                 fs.clone(),
                 cx,
             );
@@ -196,6 +199,15 @@ impl HeadlessProject {
             },
         )
         .detach();
+
+        let extensions = extension::HeadlessExtensionStore::new(
+            fs.clone(),
+            http_client.clone(),
+            Arc::new(HeadlessExtensionsApi::new(languages.clone())),
+            paths::remote_extensions_dir().to_path_buf(),
+            node_runtime,
+            cx,
+        );
 
         let client: AnyProtoClient = session.clone().into();
 
@@ -223,8 +235,11 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
-        client.add_request_handler(cx.weak_model(), Self::handle_sync_extensions);
-        client.add_request_handler(cx.weak_model(), Self::handle_load_extension);
+        client.add_request_handler(extensions.clone().downgrade(), Self::handle_sync_extensions);
+        client.add_request_handler(
+            extensions.clone().downgrade(),
+            Self::handle_install_extension,
+        );
 
         BufferStore::init(&client);
         WorktreeStore::init(&client);
@@ -232,15 +247,6 @@ impl HeadlessProject {
         LspStore::init(&client);
         TaskStore::init(Some(&client));
         ToolchainStore::init(&client);
-
-        let extensions = extension::HeadlessExtensionStore::new(
-            fs.clone(),
-            http_client.clone(),
-            Arc::new(HeadlessExtensionsApi::new(languages)),
-            paths::remote_extensions_dir(),
-            node_runtime,
-            cx,
-        );
 
         HeadlessProject {
             session: client,
@@ -642,24 +648,63 @@ impl HeadlessProject {
     }
 
     pub async fn handle_sync_extensions(
-        this: Model<Self>,
+        extension_store: Model<HeadlessExtensionStore>,
         envelope: TypedEnvelope<proto::SyncExtensions>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::SyncExtensionsResponse> {
-        let requested_extensions = envelope.payload.extensions.map(|p| ExtensionVersion{id: p.id, version: p.version}));
-        let missing_extensions = this
-            .update(&mut cx, |this, cx| {
-                this.extensions.sync_extensions(requested_extensions)
-            })
+        let requested_extensions =
+            envelope
+                .payload
+                .extensions
+                .into_iter()
+                .map(|p| ExtensionVersion {
+                    id: p.id,
+                    version: p.version,
+                });
+        let missing_extensions = extension_store
+            .update(&mut cx, |extension_store, cx| {
+                extension_store.sync_extensions(requested_extensions.collect(), cx)
+            })?
             .await?;
 
         Ok(proto::SyncExtensionsResponse {
             missing_extensions: missing_extensions
                 .into_iter()
-                .map(|e| proto::Extension { id: e.id, version: e.version })
+                .map(|e| proto::Extension {
+                    id: e.id,
+                    version: e.version,
+                })
                 .collect(),
-            requested_extensions,
+            tmp_dir: paths::remote_extensions_uploads_dir()
+                .to_string_lossy()
+                .to_string(),
         })
+    }
+
+    pub async fn handle_install_extension(
+        extensions: Model<HeadlessExtensionStore>,
+        envelope: TypedEnvelope<proto::InstallExtension>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        let extension = envelope
+            .payload
+            .extension
+            .with_context(|| anyhow!("Invalid IntallExtension request"))?;
+
+        extensions
+            .update(&mut cx, |extensions, cx| {
+                extensions.install_extension(
+                    ExtensionVersion {
+                        id: extension.id,
+                        version: extension.version,
+                    },
+                    PathBuf::from(envelope.payload.tmp_path),
+                    cx,
+                )
+            })?
+            .await?;
+
+        Ok(proto::Ack {})
     }
 }
 

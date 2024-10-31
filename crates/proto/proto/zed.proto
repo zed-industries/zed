@@ -2537,7 +2537,8 @@ message SyncExtensions {
 }
 
 message SyncExtensionsResponse {
-    repeated Extension missing_extensions = 1;
+    string tmp_dir = 1;
+    repeated Extension missing_extensions = 2;
 }
 
 message InstallExtension {

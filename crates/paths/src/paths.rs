@@ -173,6 +173,14 @@ pub fn remote_extensions_dir() -> &'static PathBuf {
     EXTENSIONS_DIR.get_or_init(|| support_dir().join("remote_extensions"))
 }
 
+/// Returns the path to the extensions directory.
+///
+/// This is where installed extensions are stored on a remote.
+pub fn remote_extensions_uploads_dir() -> &'static PathBuf {
+    static UPLOAD_DIR: OnceLock<PathBuf> = OnceLock::new();
+    UPLOAD_DIR.get_or_init(|| remote_extensions_dir().join("uploads"))
+}
+
 /// Returns the path to the themes directory.
 ///
 /// This is where themes that are not provided by extensions are stored.
