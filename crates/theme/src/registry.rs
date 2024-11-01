@@ -39,10 +39,10 @@ impl Global for GlobalThemeRegistry {}
 #[async_trait]
 pub trait ThemeRegistry: Send + Sync + 'static {
     /// Returns the names of all themes in the registry.
-    fn list_names(&self, _staff: bool) -> Vec<SharedString>;
+    fn list_names(&self) -> Vec<SharedString>;
 
     /// Returns the metadata of all themes in the registry.
-    fn list(&self, _staff: bool) -> Vec<ThemeMeta>;
+    fn list(&self) -> Vec<ThemeMeta>;
 
     /// Returns the theme with the given name.
     fn get(&self, name: &str) -> Result<Arc<Theme>>;
@@ -171,13 +171,13 @@ impl Default for RealThemeRegistry {
 
 #[async_trait]
 impl ThemeRegistry for RealThemeRegistry {
-    fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+    fn list_names(&self) -> Vec<SharedString> {
         let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
         names.sort();
         names
     }
 
-    fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+    fn list(&self) -> Vec<ThemeMeta> {
         self.state
             .read()
             .themes
@@ -238,11 +238,11 @@ pub struct VoidThemeRegistry;
 
 #[async_trait]
 impl ThemeRegistry for VoidThemeRegistry {
-    fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+    fn list_names(&self) -> Vec<SharedString> {
         Vec::new()
     }
 
-    fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+    fn list(&self) -> Vec<ThemeMeta> {
         Vec::new()
     }
 
