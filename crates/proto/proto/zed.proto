@@ -2532,5 +2532,5 @@ message SyncExtensionsResponse {
 
 message InstallExtension {
     Extension extension = 1;
-    string tmp_path = 2;
+    string tmp_dir = 2;
 }

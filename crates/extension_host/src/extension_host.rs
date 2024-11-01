@@ -31,6 +31,7 @@ use language::{
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
+use remote::SshRemoteClient;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -261,15 +262,40 @@ impl HeadlessExtensionStore {
                     .entry(manifest.id.clone())
                     .or_default()
                     .push(config.name.clone());
+
+                this.registration_hooks.register_wasm_grammars(
+                    manifest
+                        .grammars
+                        .keys()
+                        .map(|grammar_name| {
+                            let mut grammar_path =
+                                extension_dir.join("grammars").join(grammar_name.as_ref());
+                            grammar_path.set_extension("wasm");
+                            (grammar_name.clone(), grammar_path)
+                        })
+                        .collect(),
+                );
+
                 this.registration_hooks.register_language(
                     config.name.clone(),
-                    None,
+                    config.grammar.clone(),
                     config.matcher.clone(),
                     Arc::new(move || {
+                        let queries = load_plugin_queries(&language_path);
+                        let context_provider =
+                            std::fs::read_to_string(language_path.join("tasks.json"))
+                                .ok()
+                                .and_then(|contents| {
+                                    let definitions =
+                                        serde_json_lenient::from_str(&contents).log_err()?;
+                                    Some(Arc::new(ContextProviderWithTasks::new(definitions))
+                                        as Arc<_>)
+                                });
+
                         Ok(LoadedLanguage {
                             config: config.clone(),
-                            context_provider: None,
-                            queries: LanguageQueries::default(),
+                            queries,
+                            context_provider,
                             toolchain_provider: None,
                         })
                     }),
@@ -336,6 +362,7 @@ impl HeadlessExtensionStore {
                         .loaded_languages
                         .remove(&extension_id)
                         .unwrap_or_default();
+                    // todo!() unregister grammars.
                     this.registration_hooks
                         .remove_languages(&languages_to_remove, &[]);
                     for (language_server_name, language) in this
@@ -373,6 +400,9 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
+
+    pub ssh_clients: HashMap<String, WeakModel<SshRemoteClient>>,
+    pub ssh_registered_tx: UnboundedSender<()>,
 }
 
 #[derive(Clone, Copy)]
@@ -484,6 +514,7 @@ impl ExtensionStore {
         let index_path = extensions_dir.join("index.json");
 
         let (reload_tx, mut reload_rx) = unbounded();
+        let (connection_registered_tx, mut connection_registed_rx) = unbounded();
         let mut this = Self {
             registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
@@ -507,6 +538,9 @@ impl ExtensionStore {
             telemetry,
             reload_tx,
             tasks: Vec::new(),
+
+            ssh_clients: Default::default(),
+            ssh_registered_tx: connection_registered_tx,
         };
 
         // The extensions store maintains an index file, which contains a complete
@@ -565,6 +599,7 @@ impl ExtensionStore {
             async move {
                 load_initial_extensions.await;
 
+                let mut index_changed = false;
                 let mut debounce_timer = cx
                     .background_executor()
                     .spawn(futures::future::pending())
@@ -572,17 +607,29 @@ impl ExtensionStore {
                 loop {
                     select_biased! {
                         _ = debounce_timer => {
-                            let index = this
-                                .update(&mut cx, |this, cx| this.rebuild_extension_index(cx))?
-                                .await;
-                            this.update(&mut cx, |this, cx| this.extensions_updated(index, cx))?
-                                .await;
+                            if index_changed {
+                                let index = this
+                                    .update(&mut cx, |this, cx| this.rebuild_extension_index(cx))?
+                                    .await;
+                                this.update(&mut cx, |this, cx| this.extensions_updated(index, cx))?
+                                    .await;
+                                index_changed = false;
+                            }
+
+                            Self::update_ssh_clients(&this, &mut cx).await?;
+                        }
+                        _ = connection_registed_rx.next() => {
+                            debounce_timer = cx
+                                .background_executor()
+                                .timer(RELOAD_DEBOUNCE_DURATION)
+                                .fuse();
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
                             this.update(&mut cx, |this, _| {
                                 this.modified_extensions.extend(extension_id);
                             })?;
+                            index_changed = true;
                             debounce_timer = cx
                                 .background_executor()
                                 .timer(RELOAD_DEBOUNCE_DURATION)
@@ -1223,6 +1270,10 @@ impl ExtensionStore {
         }
 
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
+            // if is_init {
+            //     maintain_ssh_connection()
+            // }
+            // Ping the ssh connection
             return Task::ready(());
         }
 
@@ -1618,6 +1669,98 @@ impl ExtensionStore {
         );
 
         Ok(())
+    }
+
+    async fn sync_extensions_over_ssh(
+        this: &WeakModel<Self>,
+        client: WeakModel<SshRemoteClient>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let extensions = this.update(cx, |this, _cx| {
+            this.extension_index
+                .extensions
+                .iter()
+                .filter_map(|(id, entry)| {
+                    if entry.manifest.language_servers.is_empty() {
+                        return None;
+                    }
+                    Some(proto::Extension {
+                        id: id.to_string(),
+                        version: entry.manifest.version.to_string(),
+                    })
+                })
+                .collect()
+        })?;
+
+        let response = client
+            .update(cx, |client, _cx| {
+                client
+                    .proto_client()
+                    .request(proto::SyncExtensions { extensions })
+            })?
+            .await?;
+
+        for missing_extension in response.missing_extensions.into_iter() {
+            let src_dir = this.update(cx, |this, _cx| {
+                this.extensions_dir().join(missing_extension.clone().id)
+            })?;
+            let dest_dir = PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id);
+
+            dbg!(&missing_extension);
+            dbg!("uploading...", &src_dir, &dest_dir);
+
+            client
+                .update(cx, |client, cx| {
+                    client.upload_directory(src_dir, dest_dir.clone(), cx)
+                })?
+                .await?;
+
+            client
+                .update(cx, |client, _cx| {
+                    client.proto_client().request(proto::InstallExtension {
+                        tmp_dir: dest_dir.to_string_lossy().to_string(),
+                        extension: Some(missing_extension),
+                    })
+                })?
+                .await?;
+
+            dbg!("uploaded!");
+        }
+
+        anyhow::Ok(())
+    }
+
+    pub async fn update_ssh_clients(
+        this: &WeakModel<Self>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<()> {
+        let clients = this.update(cx, |this, _cx| {
+            this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
+            this.ssh_clients.values().cloned().collect::<Vec<_>>()
+        })?;
+
+        for client in clients {
+            Self::sync_extensions_over_ssh(&this, client, cx)
+                .await
+                .log_err();
+        }
+
+        anyhow::Ok(())
+    }
+
+    pub fn register_ssh_client(
+        &mut self,
+        client: Model<SshRemoteClient>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let connection_options = client.read(cx).connection_options();
+        if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
+            return;
+        }
+
+        self.ssh_clients
+            .insert(connection_options.ssh_url(), client.downgrade());
+        self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }
 

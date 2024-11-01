@@ -72,12 +72,18 @@ impl ExtensionRegistrationHooks for HeadlessExtensionsApi {
         matcher: language::LanguageMatcher,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     ) {
+        log::info!("registering language: {:?}", language);
         self.language_registry
             .register_language(language, None, matcher, load)
     }
     fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter) {
+        log::info!("registering lsp adapter {:?}", language);
         self.language_registry
             .register_lsp_adapter(language, Arc::new(adapter) as _);
+    }
+
+    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
+        self.language_registry.register_wasm_grammars(grammars)
     }
 
     fn remove_lsp_adapter(
@@ -698,7 +704,7 @@ impl HeadlessProject {
                         id: extension.id,
                         version: extension.version,
                     },
-                    PathBuf::from(envelope.payload.tmp_path),
+                    PathBuf::from(envelope.payload.tmp_dir),
                     cx,
                 )
             })?

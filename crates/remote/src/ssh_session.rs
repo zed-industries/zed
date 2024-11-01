@@ -1022,6 +1022,19 @@ impl SshRemoteClient {
             .map(|ssh_connection| ssh_connection.ssh_args())
     }
 
+    pub fn upload_directory(
+        &self,
+        src_path: PathBuf,
+        dest_path: PathBuf,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let state = self.state.lock();
+        let Some(connection) = state.as_ref().and_then(|state| state.ssh_connection()) else {
+            return Task::ready(Err(anyhow!("no ssh connection")));
+        };
+        connection.upload_directory(src_path, dest_path, cx)
+    }
+
     pub fn proto_client(&self) -> AnyProtoClient {
         self.client.clone().into()
     }
@@ -1233,6 +1246,12 @@ trait RemoteConnection: Send + Sync {
         reconnect: bool,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf>;
+    fn upload_directory(
+        &self,
+        src_path: PathBuf,
+        dest_path: PathBuf,
+        cx: &AppContext,
+    ) -> Task<Result<()>>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn ssh_args(&self) -> Vec<String>;
@@ -1270,6 +1289,48 @@ impl RemoteConnection for SshRemoteConnection {
 
     fn connection_options(&self) -> SshConnectionOptions {
         self.socket.connection_options.clone()
+    }
+
+    fn upload_directory(
+        &self,
+        src_path: PathBuf,
+        dest_path: PathBuf,
+        cx: &AppContext,
+    ) -> Task<Result<()>> {
+        let mut command = process::Command::new("scp");
+        let output = self
+            .socket
+            .ssh_options(&mut command)
+            .args(
+                self.socket
+                    .connection_options
+                    .port
+                    .map(|port| vec!["-P".to_string(), port.to_string()])
+                    .unwrap_or_default(),
+            )
+            .arg("-r")
+            .arg(&src_path)
+            .arg(format!(
+                "{}:{}",
+                self.socket.connection_options.scp_url(),
+                dest_path.display()
+            ))
+            .output();
+
+        cx.background_executor().spawn(async move {
+            let output = output.await?;
+
+            if !output.status.success() {
+                return Err(anyhow!(
+                    "failed to upload directory {} -> {}: {}",
+                    src_path.display(),
+                    dest_path.display(),
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+
+            Ok(())
+        })
     }
 
     async fn get_remote_binary_path(
@@ -2518,7 +2579,7 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AsyncAppContext, SemanticVersion, Task, TestAppContext};
+    use gpui::{AppContext, AsyncAppContext, SemanticVersion, Task, TestAppContext};
     use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
@@ -2561,6 +2622,14 @@ mod fake {
 
         fn ssh_args(&self) -> Vec<String> {
             Vec::new()
+        }
+        fn upload_directory(
+            &self,
+            _src_path: PathBuf,
+            _dest_path: PathBuf,
+            _cx: &AppContext,
+        ) -> Task<Result<()>> {
+            unreachable!()
         }
 
         fn connection_options(&self) -> SshConnectionOptions {
