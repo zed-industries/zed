@@ -3577,7 +3577,7 @@ impl<'a> WindowContext<'a> {
     /// is updated.
     pub fn observe_global<G: Global>(
         &mut self,
-        mut f: impl FnMut(&mut WindowContext<'_>) + 'static,
+        f: impl Fn(&mut WindowContext<'_>) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
         let (subscription, activate) = self.global_observers.insert(
