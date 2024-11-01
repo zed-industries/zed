@@ -1064,7 +1064,7 @@ impl DisplaySnapshot {
             .query_row(buffer_row, &self.buffer_snapshot)
         {
             Some((
-                crease.range.to_point(&self.buffer_snapshot),
+                crease.range().to_point(&self.buffer_snapshot),
                 crease.placeholder.clone(),
             ))
         } else if self.starts_indent(MultiBufferRow(start.row))
