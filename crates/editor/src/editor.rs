@@ -402,6 +402,7 @@ pub struct EditorStyle {
     pub background: Hsla,
     pub local_player: PlayerColor,
     pub text: TextStyle,
+    pub minimap_width: Pixels,
     pub scrollbar_width: Pixels,
     pub syntax: Arc<SyntaxTheme>,
     pub status: StatusColors,
@@ -416,6 +417,7 @@ impl Default for EditorStyle {
             background: Hsla::default(),
             local_player: PlayerColor::default(),
             text: TextStyle::default(),
+            minimap_width: Pixels::default(),
             scrollbar_width: Pixels::default(),
             syntax: Default::default(),
             // HACK: Status colors don't have a real default.
@@ -14367,6 +14369,7 @@ impl Render for Editor {
                 background,
                 local_player: cx.theme().players().local(),
                 text: text_style,
+                minimap_width: EditorElement::MINIMAP_WIDTH,
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),

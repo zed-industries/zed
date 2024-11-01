@@ -151,6 +151,7 @@ type DisplayRowDelta = u32;
 
 impl EditorElement {
     pub(crate) const SCROLLBAR_WIDTH: Pixels = px(13.);
+    pub(crate) const MINIMAP_WIDTH: Pixels = px(52.);
 
     pub fn new(editor: &View<Editor>, style: EditorStyle) -> Self {
         Self {
@@ -1148,8 +1149,93 @@ impl EditorElement {
 
         cursor_layouts
     }
-    
-    // we need layout_minimap...
+
+    fn layout_minimap(
+        &self,
+        snapshot: &EditorSnapshot,
+        bounds: Bounds<Pixels>,
+        scroll_position: gpui::Point<f32>,
+        rows_per_page: f32,
+        non_visible_cursors: bool,
+        cx: &mut WindowContext,
+    ) -> Option<MinimapLayout> {
+        // TODO: minimap_settings (display mode)
+        // TODO: scroll_manager.minimap_visible() ?
+        // let scrollbar_settings = EditorSettings::get_global(cx).scrollbar;
+        // let show_scrollbars = match scrollbar_settings.show {
+        //     ShowScrollbar::Auto => {
+        //         let editor = self.editor.read(cx);
+        //         let is_singleton = editor.is_singleton(cx);
+        //         // Git
+        //         (is_singleton && scrollbar_settings.git_diff && snapshot.buffer_snapshot.has_git_diffs())
+        //             ||
+        //             // Buffer Search Results
+        //             (is_singleton && scrollbar_settings.search_results && editor.has_background_highlights::<BufferSearchHighlights>())
+        //             ||
+        //             // Selected Symbol Occurrences
+        //             (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
+        //             ||
+        //             // Diagnostics
+        //             (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
+        //             ||
+        //             // Cursors out of sight
+        //             non_visible_cursors
+        //             ||
+        //             // Scrollmanager
+        //             editor.scroll_manager.scrollbars_visible()
+        //     }
+        //     ShowScrollbar::System => self.editor.read(cx).scroll_manager.scrollbars_visible(),
+        //     ShowScrollbar::Always => true,
+        //     ShowScrollbar::Never => false,
+        // };
+        // if snapshot.mode != EditorMode::Full {
+        //     return None;
+        // }
+
+        let visible_row_range = scroll_position.y..scroll_position.y + rows_per_page;
+
+        // TODO: dragging?
+        // If a drag took place after we started dragging the scrollbar,
+        // cancel the scrollbar drag.
+        // if cx.has_active_drag() {
+        //     self.editor.update(cx, |editor, cx| {
+        //         // TODO: is_dragging_minimap
+        //         editor.scroll_manager.set_is_dragging_scrollbar(false, cx);
+        //     });
+        // }
+        //
+
+        let settings = EditorSettings::get_global(cx);
+        let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
+            ScrollBeyondLastLine::OnePage => rows_per_page,
+            ScrollBeyondLastLine::Off => 1.0,
+            ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
+        };
+
+        // this is total rows, but at least one page of rows
+        let total_rows =
+            (snapshot.max_point().row().as_f32() + scroll_beyond_last_line).max(rows_per_page);
+
+        let aspect_ratio = bounds.size.height.0 / bounds.size.width.0;
+        let visible_region_height =
+            (self.style.minimap_width * aspect_ratio).max(MinimapLayout::MIN_VISIBLE_REGION_HEIGHT);
+        let row_height = visible_region_height / rows_per_page;
+
+        // TODO: visib;le: show_scrollbars
+        let track_height = (row_height * total_rows).min(bounds.size.height);
+        let track_bounds = Bounds::from_corners(
+            point(self.minimap_left(&bounds), bounds.origin.y),
+            point(self.scrollbar_left(&bounds), bounds.origin.y + track_height),
+        );
+
+        Some(MinimapLayout {
+            hitbox: cx.insert_hitbox(track_bounds, false),
+            visible_row_range,
+            row_height,
+            visible: true, //TODO: show_scrollbars -> show_minimap
+            visible_region_height,
+        })
+    }
 
     fn layout_scrollbar(
         &self,
@@ -3567,88 +3653,51 @@ impl EditorElement {
             cursor.paint(layout.content_origin, cx);
         }
     }
-    
+
     fn paint_minimap(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
-        let Some(scrollbar_layout) = layout.scrollbar_layout.as_ref() else {
+        let Some(minimap_layout) = layout.minimap_layout.as_ref() else {
             return;
         };
-        
-        let box_width = Pixels(100.0);
-        let box_height = scrollbar_layout.hitbox.bounds.size.height;
-        let box_right_padding = Pixels(20.0);
-        
-        let mut test_box_bounds = scrollbar_layout.hitbox.bounds.clone();
-        test_box_bounds.origin -= point(box_width + box_right_padding, Pixels::ZERO);
-        test_box_bounds.size = size(box_width, box_height);
-        
-        // background
-        cx.paint_layer(scrollbar_layout.hitbox.bounds, |cx| {
+
+        // TODO: check if scrollbar is visible
+        // TODO: add new colors for track bg, track border
+
+        // background (track)
+        cx.paint_layer(minimap_layout.hitbox.bounds, |cx| {
             cx.paint_quad(quad(
-                test_box_bounds,
+                minimap_layout.hitbox.bounds,
                 Corners::default(),
                 cx.theme().colors().scrollbar_track_background,
                 Edges {
                     top: Pixels::ZERO,
-                    right: ScrollbarLayout::BORDER_WIDTH,
-                    bottom: Pixels::ZERO,
-                    left: ScrollbarLayout::BORDER_WIDTH,
+                    right: Pixels::ZERO,
+                    bottom: MinimapLayout::BORDER_WIDTH,
+                    left: MinimapLayout::BORDER_WIDTH,
                 },
                 cx.theme().colors().scrollbar_track_border,
             ));
         });
-        
-        let style = self.style.clone();
-        let line_height = style.text.line_height_in_pixels(cx.rem_size());
-        
-        let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
 
-        // The scroll position is a fractional point, the whole number of which represents
-        // the top of the window in terms of display rows.
-        let scroll_position = snapshot.scroll_position();
-        
-        // visible area
-        let rows_per_page = test_box_bounds.size.height / line_height;
-        let visible_row_range = scroll_position.y..scroll_position.y + rows_per_page;
-        
-        let settings = EditorSettings::get_global(cx);
-        let scroll_beyond_last_line: f32 = match settings.scroll_beyond_last_line {
-            ScrollBeyondLastLine::OnePage => rows_per_page,
-            ScrollBeyondLastLine::Off => 1.0,
-            ScrollBeyondLastLine::VerticalScrollMargin => 1.0 + settings.vertical_scroll_margin,
-        };
-        let total_rows =
-            (snapshot.max_point().row().as_f32() + scroll_beyond_last_line).max(rows_per_page);
-        
-        let height = test_box_bounds.size.height;
-        let px_per_row = height / total_rows;
-        let thumb_height = (rows_per_page * px_per_row).max(ScrollbarLayout::MIN_THUMB_HEIGHT);
-        let row_height = (height - thumb_height) / (total_rows - rows_per_page).max(0.);
-        
-        let y_for_row = test_box_bounds.top() + visible_row_range.start * row_height;
-        let minimap_thumb_top = y_for_row;
-        let minimap_thumb_bottom = minimap_thumb_top + thumb_height;
-        let minimap_thumb_bounds = Bounds::from_corners(
-            point(test_box_bounds.left(), minimap_thumb_top),
-            point(test_box_bounds.right(), minimap_thumb_bottom),
-        );
-        
-        // "thumb" -- really its the visible area preview
-        cx.paint_layer(scrollbar_layout.hitbox.bounds, |cx| {
+        // track bottom edge does get covered by visible region when scrolled to the bottom
+
+        // TODO: add new colors for minimap_visible_region_background, minimap_visible_region_border
+        let visible_region_bounds = minimap_layout.visible_region_bounds();
+        cx.paint_layer(minimap_layout.hitbox.bounds, |cx| {
             cx.paint_quad(quad(
-                minimap_thumb_bounds,
+                visible_region_bounds,
                 Corners::default(),
                 cx.theme().colors().scrollbar_thumb_background,
                 Edges {
                     top: Pixels::ZERO,
-                    right: ScrollbarLayout::BORDER_WIDTH,
+                    right: Pixels::ZERO,
                     bottom: Pixels::ZERO,
-                    left: ScrollbarLayout::BORDER_WIDTH,
+                    left: MinimapLayout::BORDER_WIDTH,
                 },
                 cx.theme().colors().scrollbar_thumb_border,
             ));
         });
     }
-    
+
     fn paint_scrollbar(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
         let Some(scrollbar_layout) = layout.scrollbar_layout.as_ref() else {
             return;
@@ -4191,6 +4240,11 @@ impl EditorElement {
                 }
             }
         });
+    }
+
+    fn minimap_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
+        // TODO: move this if scrollbar is hidden?
+        bounds.upper_right().x - self.style.minimap_width - self.style.scrollbar_width
     }
 
     fn scrollbar_left(&self, bounds: &Bounds<Pixels>) -> Pixels {
@@ -5514,7 +5568,18 @@ impl Element for EditorElement {
                         autoscroll_containing_element,
                         cx,
                     );
-                    
+
+                    // we have access to all info to draw anything here
+                    // so pass in whatever is needed to layout the minimap
+                    let minimap_layout = self.layout_minimap(
+                        &snapshot,
+                        bounds,
+                        scroll_position,
+                        height_in_lines,
+                        non_visible_cursors,
+                        cx,
+                    );
+
                     let scrollbar_layout = self.layout_scrollbar(
                         &snapshot,
                         bounds,
@@ -5731,6 +5796,7 @@ impl Element for EditorElement {
                         gutter_dimensions,
                         display_hunks,
                         content_origin,
+                        minimap_layout,
                         scrollbar_layout,
                         active_rows,
                         highlighted_rows,
@@ -5867,6 +5933,7 @@ pub struct EditorLayout {
     gutter_hitbox: Hitbox,
     gutter_dimensions: GutterDimensions,
     content_origin: gpui::Point<Pixels>,
+    minimap_layout: Option<MinimapLayout>,
     scrollbar_layout: Option<ScrollbarLayout>,
     mode: EditorMode,
     wrap_guides: SmallVec<[(Pixels, bool); 2]>,
@@ -5905,6 +5972,48 @@ struct ColoredRange<T> {
     start: T,
     end: T,
     color: Hsla,
+}
+
+#[derive(Clone)]
+struct MinimapLayout {
+    hitbox: Hitbox,
+    visible_row_range: Range<f32>,
+    visible: bool,
+    row_height: Pixels,
+    visible_region_height: Pixels,
+}
+
+impl MinimapLayout {
+    const BORDER_WIDTH: Pixels = px(1.0);
+    // TODO: test on small, large, and empty files
+    const MIN_VISIBLE_REGION_HEIGHT: Pixels = px(0.0);
+
+    fn visible_region_bounds(&self) -> Bounds<Pixels> {
+        let visible_region_top = self.y_for_row(self.visible_row_range.start);
+        let visible_region_bottom = visible_region_top + self.visible_region_height;
+        Bounds::from_corners(
+            point(self.hitbox.left(), visible_region_top),
+            point(self.hitbox.right(), visible_region_bottom),
+        )
+    }
+
+    fn y_for_row(&self, row: f32) -> Pixels {
+        // let scaled_track_height = self.hitbox.size.height *
+
+        // TODO: offset the whole minimap to keep the visible region on screen
+
+        // this is the track that goes offscreen
+        // let large_track_height = px((self.total_rows as f32) * self.row_height.0 + self.visible_region_height.0);
+        // let hidden_track_portion_height = large_track_height - self.hitbox.size.height;
+
+        // // offset... what is it
+        // // at zero (row == 0), it is zero. that's for sure
+        // // at maximum, it is:
+        // let percent_scrolled = (row / (self.total_rows as f32)).max(0.0);
+        // let offset = -hidden_track_portion_height * percent_scrolled;
+
+        self.hitbox.top() + row * self.row_height // + offset
+    }
 }
 
 #[derive(Clone)]

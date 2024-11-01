@@ -97,6 +97,9 @@ pub struct Toolbar {
     pub selections_menu: bool,
 }
 
+// TODO: minimap settings
+// how do migrations work?
+
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct Scrollbar {
     pub show: ShowScrollbar,
