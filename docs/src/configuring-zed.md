@@ -127,6 +127,15 @@ Define extensions which should be installed (`true`) or never installed (`false`
 
 `boolean` values
 
+## Allow Binary Downloads
+- Description: Whether or not to allow Zed to download binarys for internal LSPs
+- Setting: `allow_binary_downloads`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
 ## Base Keymap
 
 - Description: Base key bindings scheme. Base keymaps can be overridden with user keymaps.
