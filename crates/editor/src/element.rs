@@ -809,6 +809,7 @@ impl EditorElement {
         cx.notify()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_selections(
         &self,
         start_anchor: Anchor,

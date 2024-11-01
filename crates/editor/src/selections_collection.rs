@@ -905,7 +905,7 @@ fn resolve_selections_display<'a>(
         let mut selection = selections.next()?;
         while let Some(next_selection) = selections.peek() {
             if selection.end >= next_selection.start {
-                selection.end = cmp::max(selection.end, next_selection.end.clone());
+                selection.end = cmp::max(selection.end, next_selection.end);
                 selections.next();
             } else {
                 break;
@@ -925,14 +925,13 @@ where
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     let (to_convert, selections) = resolve_selections_display(selections, map).tee();
-    let mut converted_endpoints = map
-        .buffer_snapshot
-        .dimensions_from_points::<D>(to_convert.flat_map(|s| {
-            let start = map.display_point_to_point(s.start, Bias::Left);
-            let end = map.display_point_to_point(s.end, Bias::Right);
-            [start, end]
-        }))
-        .into_iter();
+    let mut converted_endpoints =
+        map.buffer_snapshot
+            .dimensions_from_points::<D>(to_convert.flat_map(|s| {
+                let start = map.display_point_to_point(s.start, Bias::Left);
+                let end = map.display_point_to_point(s.end, Bias::Right);
+                [start, end]
+            }));
     selections.map(move |s| {
         let start = converted_endpoints.next().unwrap();
         let end = converted_endpoints.next().unwrap();
