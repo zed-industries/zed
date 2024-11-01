@@ -48,7 +48,7 @@ impl DebugAdapter for PhpDebugAdapter {
     async fn get_installed_binary(
         &self,
         delegate: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         let node_runtime = delegate
@@ -92,6 +92,7 @@ impl DebugAdapter for PhpDebugAdapter {
                 adapter_path.join(Self::ADAPTER_PATH).into(),
                 format!("--server={}", self.port).into(),
             ]),
+            cwd: config.cwd.clone(),
             envs: None,
             version,
         })

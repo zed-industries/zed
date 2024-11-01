@@ -28,7 +28,7 @@ impl DebugAdapter for LldbDebugAdapter {
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugAdapterConfig,
         _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         #[cfg(target_os = "macos")]
@@ -42,6 +42,7 @@ impl DebugAdapter for LldbDebugAdapter {
                 command: lldb_dap_path,
                 arguments: None,
                 envs: None,
+                cwd: config.cwd.clone(),
                 version: "1".into(),
             })
         }

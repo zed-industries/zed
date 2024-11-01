@@ -404,6 +404,10 @@ impl Transport for TcpTransport {
     ) -> Result<TransportParams> {
         let mut command = process::Command::new(&binary.command);
 
+        if let Some(cwd) = &binary.cwd {
+            command.current_dir(cwd);
+        }
+
         if let Some(args) = &binary.arguments {
             command.args(args);
         }
@@ -483,6 +487,10 @@ impl Transport for StdioTransport {
         _: &mut AsyncAppContext,
     ) -> Result<TransportParams> {
         let mut command = process::Command::new(&binary.command);
+
+        if let Some(cwd) = &binary.cwd {
+            command.current_dir(cwd);
+        }
 
         if let Some(args) = &binary.arguments {
             command.args(args);

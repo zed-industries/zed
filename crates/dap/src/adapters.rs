@@ -73,6 +73,7 @@ pub struct DebugAdapterBinary {
     pub command: String,
     pub arguments: Option<Vec<OsString>>,
     pub envs: Option<HashMap<String, String>>,
+    pub cwd: Option<PathBuf>,
     pub version: String,
 }
 

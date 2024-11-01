@@ -57,7 +57,7 @@ impl DebugAdapter for PythonDebugAdapter {
     async fn get_installed_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
+        config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         let adapter_path = paths::debug_adapters_dir().join(self.name());
@@ -94,6 +94,7 @@ impl DebugAdapter for PythonDebugAdapter {
                 format!("--port={}", self.port).into(),
                 format!("--host={}", self.host).into(),
             ]),
+            cwd: config.cwd.clone(),
             envs: None,
             version,
         })

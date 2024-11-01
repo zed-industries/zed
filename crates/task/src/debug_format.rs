@@ -2,6 +2,7 @@ use schemars::{gen::SchemaSettings, JsonSchema};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
+use std::path::PathBuf;
 use util::ResultExt;
 
 use crate::{TaskTemplate, TaskTemplates, TaskType};
@@ -105,6 +106,8 @@ pub struct DebugAdapterConfig {
     pub request: DebugRequestType,
     /// The program that you trying to debug
     pub program: Option<String>,
+    /// The current working directory of your project
+    pub cwd: Option<PathBuf>,
     /// Additional initialization arguments to be sent on DAP initialization
     pub initialize_args: Option<serde_json::Value>,
 }
@@ -126,6 +129,8 @@ pub struct DebugTaskDefinition {
     label: String,
     /// Program to run the debugger on
     program: Option<String>,
+    /// The current working directory of your project
+    cwd: Option<String>,
     /// Launch | Request depending on the session the adapter should be ran as
     #[serde(default)]
     session_type: DebugRequestType,
@@ -142,6 +147,7 @@ impl DebugTaskDefinition {
             kind: self.adapter,
             request: self.session_type,
             program: self.program,
+            cwd: self.cwd.clone().map(PathBuf::from),
             initialize_args: self.initialize_args,
         });
 
@@ -152,6 +158,7 @@ impl DebugTaskDefinition {
             command,
             args,
             task_type,
+            cwd: self.cwd,
             ..Default::default()
         })
     }
