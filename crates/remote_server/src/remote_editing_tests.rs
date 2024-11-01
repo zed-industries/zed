@@ -15,7 +15,6 @@ use project::{
     search::{SearchQuery, SearchResult},
     Project, ProjectPath,
 };
-use release_channel::ReleaseChannel;
 use remote::SshRemoteClient;
 use serde_json::json;
 use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
