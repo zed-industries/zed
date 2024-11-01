@@ -21,9 +21,9 @@ use webrtc::{
     video_stream::native::NativeVideoStream,
 };
 
-#[cfg(not(any(test, feature = "test-support")))]
+#[cfg(not(any(test, feature = "test-support", target_os = windows)))]
 pub use livekit::*;
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(any(test, feature = "test-support", target_os = windows))]
 pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
