@@ -402,7 +402,7 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
-        extension::init(
+        extension_host::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),
