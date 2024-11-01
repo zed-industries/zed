@@ -126,7 +126,7 @@ type RenderTrailerFn =
 
 #[derive(Clone)]
 pub enum Crease {
-    Fold {
+    Inline {
         range: Range<Anchor>,
         placeholder: FoldPlaceholder,
         render_toggle: RenderToggleFn,
@@ -168,7 +168,7 @@ impl Crease {
             + 'static,
         TrailerElement: IntoElement,
     {
-        Crease::Fold {
+        Crease::Inline {
             range,
             placeholder,
             render_toggle: Arc::new(move |row, folded, toggle, cx| {
@@ -183,13 +183,13 @@ impl Crease {
 
     pub fn with_metadata(self, metadata: CreaseMetadata) -> Self {
         match self {
-            Crease::Fold {
+            Crease::Inline {
                 range,
                 placeholder,
                 render_toggle,
                 render_trailer,
                 ..
-            } => Crease::Fold {
+            } => Crease::Inline {
                 range,
                 placeholder,
                 render_toggle,
@@ -201,7 +201,7 @@ impl Crease {
 
     pub fn range(&self) -> &Range<Anchor> {
         match self {
-            Crease::Fold { range, .. } => range,
+            Crease::Inline { range, .. } => range,
         }
     }
 }
@@ -209,7 +209,7 @@ impl Crease {
 impl std::fmt::Debug for Crease {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Crease::Fold { range, .. } => f
+            Crease::Inline { range, .. } => f
                 .debug_struct("Crease::Fold")
                 .field("range", range)
                 .finish(),
