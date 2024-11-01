@@ -4139,7 +4139,6 @@ name = "extension_host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assistant_slash_command",
  "async-compression",
  "async-tar",
  "async-trait",
@@ -4167,16 +4166,13 @@ dependencies = [
  "serde_json",
  "serde_json_lenient",
  "settings",
- "snippet_provider",
  "task",
  "toml 0.8.19",
  "url",
  "util",
- "wasm-encoder 0.215.0",
  "wasmparser 0.215.0",
  "wasmtime",
  "wasmtime-wasi",
- "wit-component",
 ]
 
 [[package]]
@@ -4222,7 +4218,6 @@ dependencies = [
  "util",
  "vim",
  "wasmtime-wasi",
- "wit-component",
  "workspace",
 ]
 

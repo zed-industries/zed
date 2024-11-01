@@ -689,7 +689,7 @@ impl HeadlessProject {
         let extension = envelope
             .payload
             .extension
-            .with_context(|| anyhow!("Invalid IntallExtension request"))?;
+            .with_context(|| anyhow!("Invalid InstallExtension request"))?;
 
         extensions
             .update(&mut cx, |extensions, cx| {
