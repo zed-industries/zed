@@ -2414,6 +2414,11 @@ impl Project {
         self.lsp_store.read(cx).last_formatting_failure()
     }
 
+    pub fn reset_last_formatting_failure(&self, cx: &mut AppContext) {
+        self.lsp_store
+            .update(cx, |store, _| store.reset_last_formatting_failure());
+    }
+
     pub fn update_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,

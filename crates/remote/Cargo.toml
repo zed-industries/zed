@@ -24,6 +24,7 @@ collections.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 log.workspace = true
 parking_lot.workspace = true
 prost.workspace = true
@@ -35,6 +36,7 @@ smol.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 util.workspace = true
+release_channel.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
