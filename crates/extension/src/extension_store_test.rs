@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::ThemeRegistry;
+use theme::{RealThemeRegistry, ThemeRegistry};
 use util::test::temp_tree;
 
 #[cfg(test)]
@@ -260,7 +260,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     };
 
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let theme_registry = Arc::new(RealThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());
@@ -486,7 +486,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let theme_registry = Arc::new(RealThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());

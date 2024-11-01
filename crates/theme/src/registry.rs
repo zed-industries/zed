@@ -1,7 +1,8 @@
 use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
+use async_trait::async_trait;
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
@@ -10,7 +11,9 @@ use gpui::{AppContext, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
 use util::ResultExt;
 
-use crate::{refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent};
+use crate::{
+    read_user_theme, refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent,
+};
 
 /// The metadata for a theme.
 #[derive(Debug, Clone)]
@@ -27,22 +30,34 @@ pub struct ThemeMeta {
 /// inserting the [`ThemeRegistry`] into the context as a global.
 ///
 /// This should not be exposed outside of this module.
-#[derive(Default, Deref, DerefMut)]
-struct GlobalThemeRegistry(Arc<ThemeRegistry>);
+#[derive(Deref, DerefMut)]
+struct GlobalThemeRegistry(Arc<dyn ThemeRegistry>);
 
 impl Global for GlobalThemeRegistry {}
 
-struct ThemeRegistryState {
-    themes: HashMap<SharedString, Arc<Theme>>,
+/// A registry for themes.
+#[async_trait]
+pub trait ThemeRegistry: Send + Sync + 'static {
+    /// Returns the names of all themes in the registry.
+    fn list_names(&self, _staff: bool) -> Vec<SharedString>;
+
+    /// Returns the metadata of all themes in the registry.
+    fn list(&self, _staff: bool) -> Vec<ThemeMeta>;
+
+    /// Returns the theme with the given name.
+    fn get(&self, name: &str) -> Result<Arc<Theme>>;
+
+    /// Loads the user theme from the specified path and adds it to the registry.
+    async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()>;
+
+    /// Loads the user themes from the specified directory and adds them to the registry.
+    async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()>;
+
+    /// Removes the themes with the given names from the registry.
+    fn remove_user_themes(&self, themes_to_remove: &[SharedString]);
 }
 
-/// The registry for themes.
-pub struct ThemeRegistry {
-    state: RwLock<ThemeRegistryState>,
-    assets: Box<dyn AssetSource>,
-}
-
-impl ThemeRegistry {
+impl dyn ThemeRegistry {
     /// Returns the global [`ThemeRegistry`].
     pub fn global(cx: &AppContext) -> Arc<Self> {
         cx.global::<GlobalThemeRegistry>().0.clone()
@@ -52,18 +67,37 @@ impl ThemeRegistry {
     ///
     /// Inserts a default [`ThemeRegistry`] if one does not yet exist.
     pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
-        cx.default_global::<GlobalThemeRegistry>().0.clone()
-    }
+        if let Some(registry) = cx.try_global::<GlobalThemeRegistry>() {
+            return registry.0.clone();
+        }
 
+        let registry = Arc::new(RealThemeRegistry::default());
+        cx.set_global(GlobalThemeRegistry(registry.clone()));
+
+        registry
+    }
+}
+
+struct RealThemeRegistryState {
+    themes: HashMap<SharedString, Arc<Theme>>,
+}
+
+/// The registry for themes.
+pub struct RealThemeRegistry {
+    state: RwLock<RealThemeRegistryState>,
+    assets: Box<dyn AssetSource>,
+}
+
+impl RealThemeRegistry {
     /// Sets the global [`ThemeRegistry`].
-    pub(crate) fn set_global(assets: Box<dyn AssetSource>, cx: &mut AppContext) {
-        cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
+    pub(crate) fn set_global(self: Arc<Self>, cx: &mut AppContext) {
+        cx.set_global(GlobalThemeRegistry(self));
     }
 
     /// Creates a new [`ThemeRegistry`] with the given [`AssetSource`].
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let registry = Self {
-            state: RwLock::new(ThemeRegistryState {
+            state: RwLock::new(RealThemeRegistryState {
                 themes: HashMap::default(),
             }),
             assets,
@@ -98,47 +132,9 @@ impl ThemeRegistry {
         }
     }
 
-    /// Removes the themes with the given names from the registry.
-    pub fn remove_user_themes(&self, themes_to_remove: &[SharedString]) {
-        self.state
-            .write()
-            .themes
-            .retain(|name, _| !themes_to_remove.contains(name))
-    }
-
     /// Removes all themes from the registry.
     pub fn clear(&self) {
         self.state.write().themes.clear();
-    }
-
-    /// Returns the names of all themes in the registry.
-    pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
-        let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
-        names.sort();
-        names
-    }
-
-    /// Returns the metadata of all themes in the registry.
-    pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
-        self.state
-            .read()
-            .themes
-            .values()
-            .map(|theme| ThemeMeta {
-                name: theme.name.clone(),
-                appearance: theme.appearance(),
-            })
-            .collect()
-    }
-
-    /// Returns the theme with the given name.
-    pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
-        self.state
-            .read()
-            .themes
-            .get(name)
-            .ok_or_else(|| anyhow!("theme not found: {}", name))
-            .cloned()
     }
 
     /// Loads the themes bundled with the Zed binary and adds them to the registry.
@@ -165,9 +161,52 @@ impl ThemeRegistry {
             self.insert_user_theme_families([theme_family]);
         }
     }
+}
 
-    /// Loads the user themes from the specified directory and adds them to the registry.
-    pub async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+impl Default for RealThemeRegistry {
+    fn default() -> Self {
+        Self::new(Box::new(()))
+    }
+}
+
+#[async_trait]
+impl ThemeRegistry for RealThemeRegistry {
+    fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+        let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
+    fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+        self.state
+            .read()
+            .themes
+            .values()
+            .map(|theme| ThemeMeta {
+                name: theme.name.clone(),
+                appearance: theme.appearance(),
+            })
+            .collect()
+    }
+
+    fn get(&self, name: &str) -> Result<Arc<Theme>> {
+        self.state
+            .read()
+            .themes
+            .get(name)
+            .ok_or_else(|| anyhow!("theme not found: {}", name))
+            .cloned()
+    }
+
+    async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+        let theme = read_user_theme(theme_path, fs).await?;
+
+        self.insert_user_theme_families([theme]);
+
+        Ok(())
+    }
+
+    async fn load_user_themes(&self, themes_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
         let mut theme_paths = fs
             .read_dir(themes_path)
             .await
@@ -186,40 +225,38 @@ impl ThemeRegistry {
         Ok(())
     }
 
-    /// Asynchronously reads the user theme from the specified path.
-    pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
-        let reader = fs.open_sync(theme_path).await?;
-        let theme_family: ThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
-
-        for theme in &theme_family.themes {
-            if theme
-                .style
-                .colors
-                .deprecated_scrollbar_thumb_background
-                .is_some()
-            {
-                log::warn!(
-                    r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
-                    theme_name = theme.name
-                )
-            }
-        }
-
-        Ok(theme_family)
-    }
-
-    /// Loads the user theme from the specified path and adds it to the registry.
-    pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
-        let theme = Self::read_user_theme(theme_path, fs).await?;
-
-        self.insert_user_theme_families([theme]);
-
-        Ok(())
+    fn remove_user_themes(&self, themes_to_remove: &[SharedString]) {
+        self.state
+            .write()
+            .themes
+            .retain(|name, _| !themes_to_remove.contains(name))
     }
 }
 
-impl Default for ThemeRegistry {
-    fn default() -> Self {
-        Self::new(Box::new(()))
+/// A theme registry that doesn't have any behavior.
+pub struct VoidThemeRegistry;
+
+#[async_trait]
+impl ThemeRegistry for VoidThemeRegistry {
+    fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+        Vec::new()
     }
+
+    fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+        Vec::new()
+    }
+
+    fn get(&self, name: &str) -> Result<Arc<Theme>> {
+        bail!("cannot retrieve theme {name:?} from a void theme registry")
+    }
+
+    async fn load_user_theme(&self, _theme_path: &Path, _fs: Arc<dyn Fs>) -> Result<()> {
+        Ok(())
+    }
+
+    async fn load_user_themes(&self, _themes_path: &Path, _fs: Arc<dyn Fs>) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove_user_themes(&self, _themes_to_remove: &[SharedString]) {}
 }
