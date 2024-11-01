@@ -1,5 +1,4 @@
 use client::telemetry::Telemetry;
-use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -96,10 +95,9 @@ impl ThemeSelectorDelegate {
     ) -> Self {
         let original_theme = cx.theme().clone();
 
-        let staff_mode = cx.is_staff();
-        let registry = ThemeRegistry::global(cx);
+        let registry = <dyn ThemeRegistry>::global(cx);
         let mut themes = registry
-            .list(staff_mode)
+            .list()
             .into_iter()
             .filter(|meta| {
                 if let Some(theme_filter) = themes_filter {
@@ -142,7 +140,7 @@ impl ThemeSelectorDelegate {
 
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let registry = ThemeRegistry::global(cx);
+            let registry = <dyn ThemeRegistry>::global(cx);
             match registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);

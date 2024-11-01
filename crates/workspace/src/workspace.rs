@@ -9,6 +9,7 @@ pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
+mod theme_preview;
 mod toolbar;
 mod workspace_settings;
 
@@ -323,6 +324,7 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
+    theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);

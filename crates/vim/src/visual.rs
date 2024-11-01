@@ -416,7 +416,7 @@ impl Vim {
 
     pub fn other_end(&mut self, _: &OtherEnd, cx: &mut ViewContext<Self>) {
         self.update_editor(cx, |_, editor, cx| {
-            editor.change_selections(None, cx, |s| {
+            editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.move_with(|_, selection| {
                     selection.reversed = !selection.reversed;
                 })

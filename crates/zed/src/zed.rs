@@ -1139,7 +1139,7 @@ mod tests {
         path::{Path, PathBuf},
         time::Duration,
     };
-    use theme::{ThemeRegistry, ThemeSettings};
+    use theme::{RealThemeRegistry, ThemeRegistry, ThemeSettings};
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
@@ -3419,12 +3419,12 @@ mod tests {
                     .unwrap(),
             ])
             .unwrap();
-        let themes = ThemeRegistry::default();
+        let themes = RealThemeRegistry::default();
         settings::init(cx);
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list(false).into_iter().map(|meta| meta.name) {
+        for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
             if theme.name == ThemeSettings::get(None, cx).active_theme.name {

@@ -15,7 +15,7 @@ use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionS
 
 pub struct ExtensionApi {
     slash_command_registry: Arc<SlashCommandRegistry>,
-    theme_registry: Arc<ThemeRegistry>,
+    theme_registry: Arc<dyn ThemeRegistry>,
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
@@ -24,7 +24,7 @@ pub struct ExtensionApi {
 
 impl ExtensionApi {
     pub fn new(
-        theme_registry: Arc<ThemeRegistry>,
+        theme_registry: Arc<dyn ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         indexed_docs_registry: Arc<IndexedDocsRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
@@ -146,7 +146,7 @@ impl extension::ExtensionApi for ExtensionApi {
 
     fn list_theme_names(&self, path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<Vec<String>>> {
         self.executor.spawn(async move {
-            let themes = ThemeRegistry::read_user_theme(&path, fs).await?;
+            let themes = theme::read_user_theme(&path, fs).await?;
             Ok(themes.themes.into_iter().map(|theme| theme.name).collect())
         })
     }

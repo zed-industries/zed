@@ -406,7 +406,7 @@ fn main() {
             cx,
         );
         let api = extensions_ui::ExtensionApi::new(
-            ThemeRegistry::global(cx),
+            <dyn ThemeRegistry>::global(cx),
             SlashCommandRegistry::global(cx),
             IndexedDocsRegistry::global(cx),
             SnippetRegistry::global(cx),
@@ -1171,7 +1171,7 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         let fs = fs.clone();
         |cx| async move {
             if let Some(theme_registry) =
-                cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                cx.update(|cx| <dyn ThemeRegistry>::global(cx).clone()).log_err()
             {
                 let themes_dir = paths::themes_dir().as_ref();
                 match fs
@@ -1210,8 +1210,9 @@ fn watch_themes(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
         while let Some(paths) = events.next().await {
             for event in paths {
                 if fs.metadata(&event.path).await.ok().flatten().is_some() {
-                    if let Some(theme_registry) =
-                        cx.update(|cx| ThemeRegistry::global(cx).clone()).log_err()
+                    if let Some(theme_registry) = cx
+                        .update(|cx| <dyn ThemeRegistry>::global(cx).clone())
+                        .log_err()
                     {
                         if let Some(()) = theme_registry
                             .load_user_theme(&event.path, fs.clone())

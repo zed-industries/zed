@@ -117,7 +117,7 @@ impl SlashCommand for FileSlashCommand {
     }
 
     fn description(&self) -> String {
-        "Insert file".into()
+        "Insert file and/or directory".into()
     }
 
     fn menu_text(&self) -> String {
@@ -126,6 +126,10 @@ impl SlashCommand for FileSlashCommand {
 
     fn requires_argument(&self) -> bool {
         true
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::File
     }
 
     fn complete_argument(
