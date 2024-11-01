@@ -1170,8 +1170,9 @@ fn load_user_themes_in_background(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     cx.spawn({
         let fs = fs.clone();
         |cx| async move {
-            if let Some(theme_registry) =
-                cx.update(|cx| <dyn ThemeRegistry>::global(cx).clone()).log_err()
+            if let Some(theme_registry) = cx
+                .update(|cx| <dyn ThemeRegistry>::global(cx).clone())
+                .log_err()
             {
                 let themes_dir = paths::themes_dir().as_ref();
                 match fs
