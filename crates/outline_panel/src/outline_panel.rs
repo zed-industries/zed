@@ -4261,7 +4261,7 @@ impl Render for OutlinePanel {
                     }
                 }),
             )
-            .track_focus(&self.focus_handle(cx))
+            .track_focus(&self.focus_handle)
             .when_some(search_query, |outline_panel, search_state| {
                 outline_panel.child(
                     v_flex()
