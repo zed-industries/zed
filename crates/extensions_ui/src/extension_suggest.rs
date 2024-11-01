@@ -14,6 +14,7 @@ use workspace::{
 };
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
+    ("ansible", &["ansible"]),
     ("astro", &["astro"]),
     ("beancount", &["beancount"]),
     ("clojure", &["bb", "clj", "cljc", "cljs", "edn"]),
