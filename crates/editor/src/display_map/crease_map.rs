@@ -143,7 +143,7 @@ pub struct CreaseMetadata {
 }
 
 impl Crease {
-    pub fn new<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
+    pub fn inline<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
         range: Range<Anchor>,
         placeholder: FoldPlaceholder,
         render_toggle: RenderToggle,
@@ -353,13 +353,13 @@ mod test {
 
         // Insert creases
         let creases = [
-            Crease::new(
+            Crease::inline(
                 snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
                 FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
                 |_row, _folded, _cx| div(),
             ),
-            Crease::new(
+            Crease::inline(
                 snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
                 FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
@@ -399,19 +399,19 @@ mod test {
         let mut crease_map = CreaseMap::new(&snapshot);
 
         let creases = [
-            Crease::new(
+            Crease::inline(
                 snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
                 FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
                 |_row, _folded, _cx| div(),
             ),
-            Crease::new(
+            Crease::inline(
                 snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
                 FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
                 |_row, _folded, _cx| div(),
             ),
-            Crease::new(
+            Crease::inline(
                 snapshot.anchor_before(Point::new(5, 0))..snapshot.anchor_after(Point::new(5, 5)),
                 FoldPlaceholder::test(),
                 |_row, _folded, _toggle, _cx| div(),
