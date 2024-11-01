@@ -25,33 +25,37 @@ impl DebugAdapter for LldbDebugAdapter {
         Box::new(StdioTransport::new())
     }
 
+    #[cfg(target_os = "macos")]
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
         config: &DebugAdapterConfig,
         _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
-        #[cfg(target_os = "macos")]
-        {
-            let output = std::process::Command::new("xcrun")
-                .args(&["-f", "lldb-dap"])
-                .output()?;
-            let lldb_dap_path = String::from_utf8(output.stdout)?.trim().to_string();
+        let output = std::process::Command::new("xcrun")
+            .args(&["-f", "lldb-dap"])
+            .output()?;
+        let lldb_dap_path = String::from_utf8(output.stdout)?.trim().to_string();
 
-            Ok(DebugAdapterBinary {
-                command: lldb_dap_path,
-                arguments: None,
-                envs: None,
-                cwd: config.cwd.clone(),
-                version: "1".into(),
-            })
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            Err(anyhow::anyhow!(
-                "LLDB-DAP is only supported on macOS (Right now)"
-            ))
-        }
+        Ok(DebugAdapterBinary {
+            command: lldb_dap_path,
+            arguments: None,
+            envs: None,
+            cwd: config.cwd.clone(),
+            version: "1".into(),
+        })
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    async fn get_binary(
+        &self,
+        _: &dyn DapDelegate,
+        _: &DebugAdapterConfig,
+        _: Option<PathBuf>,
+    ) -> Result<DebugAdapterBinary> {
+        Err(anyhow::anyhow!(
+            "LLDB-DAP is only supported on macOS (Right now)"
+        ))
     }
 
     async fn install_binary(
