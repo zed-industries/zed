@@ -6371,7 +6371,6 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
- "feature_flags",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -12127,7 +12126,6 @@ name = "theme_selector"
 version = "0.1.0"
 dependencies = [
  "client",
- "feature_flags",
  "fs",
  "fuzzy",
  "gpui",

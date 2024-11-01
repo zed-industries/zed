@@ -296,7 +296,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["ERB", "Plain Text", "Ruby"]
         );
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Monokai Dark",
                 "Monokai Light",
@@ -377,7 +377,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(index.themes, expected_index.themes);
 
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Gruvbox",
                 "Monokai Dark",
@@ -424,7 +424,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["embedded_template".into(), "ruby".into()]
         );
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Gruvbox",
                 "Monokai Dark",
