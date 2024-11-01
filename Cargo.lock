@@ -4090,13 +4090,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "extension"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-compression",
+ "async-tar",
+ "collections",
+ "fs",
+ "futures 0.3.30",
+ "http_client",
+ "language",
+ "log",
+ "lsp",
+ "semantic_version",
+ "serde",
+ "serde_json",
+ "toml 0.8.19",
+ "wasm-encoder 0.215.0",
+ "wasmparser 0.215.0",
+ "wit-component",
+]
+
+[[package]]
 name = "extension_cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
  "env_logger 0.11.5",
- "extension_host",
+ "extension",
  "fs",
  "language",
  "log",
@@ -4124,6 +4147,7 @@ dependencies = [
  "collections",
  "ctor",
  "env_logger 0.11.5",
+ "extension",
  "fs",
  "futures 0.3.30",
  "gpui",
@@ -4151,11 +4175,8 @@ dependencies = [
  "ui",
  "url",
  "util",
- "wasm-encoder 0.215.0",
- "wasmparser 0.215.0",
  "wasmtime",
  "wasmtime-wasi",
- "wit-component",
  "workspace",
 ]
 
