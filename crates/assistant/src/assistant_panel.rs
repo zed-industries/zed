@@ -1894,7 +1894,7 @@ impl ContextEditor {
                                 );
                             });
 
-                            Crease::new(
+                            Crease::inline(
                                 start..end,
                                 placeholder,
                                 fold_toggle("tool-use"),
@@ -2005,7 +2005,7 @@ impl ContextEditor {
                             let end = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.end)
                                 .unwrap();
-                            Crease::new(start..end, placeholder, render_toggle, render_trailer)
+                            Crease::inline(start..end, placeholder, render_toggle, render_trailer)
                         }),
                         cx,
                     );
@@ -2133,7 +2133,7 @@ impl ContextEditor {
 
                     let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
 
-                    let crease = Crease::new(
+                    let crease = Crease::inline(
                         start..end,
                         placeholder,
                         fold_toggle("tool-use"),
@@ -2310,7 +2310,7 @@ impl ContextEditor {
                 let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                 buffer_rows_to_fold.insert(buffer_row);
                 creases.push(
-                    Crease::new(
+                    Crease::inline(
                         start..end,
                         FoldPlaceholder {
                             render: render_fold_icon_button(
@@ -3085,7 +3085,7 @@ impl ContextEditor {
                                     crease_title,
                                     cx.view().downgrade(),
                                 );
-                                let crease = Crease::new(
+                                let crease = Crease::inline(
                                     anchor_before..anchor_after,
                                     fold_placeholder,
                                     render_quote_selection_output_toggle,
@@ -3280,7 +3280,7 @@ impl ContextEditor {
 
                             let buffer_row = MultiBufferRow(start.to_point(&buffer).row);
                             buffer_rows_to_fold.insert(buffer_row);
-                            Crease::new(
+                            Crease::inline(
                                 start..end,
                                 FoldPlaceholder {
                                     constrain_width: false,

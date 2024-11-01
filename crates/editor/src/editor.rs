@@ -13586,24 +13586,22 @@ impl EditorSnapshot {
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
-            let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
-                if folded {
-                    editor.update(cx, |editor, cx| {
-                        editor.fold_at(&crate::FoldAt { buffer_row }, cx)
+            match crease {
+                Crease::Inline { render_toggle, .. } => {
+                    let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
+                        if folded {
+                            editor.update(cx, |editor, cx| {
+                                editor.fold_at(&crate::FoldAt { buffer_row }, cx)
+                            });
+                        } else {
+                            editor.update(cx, |editor, cx| {
+                                editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
+                            });
+                        }
                     });
-                } else {
-                    editor.update(cx, |editor, cx| {
-                        editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
-                    });
+                    Some((render_toggle)(buffer_row, folded, toggle_callback, cx))
                 }
-            });
-
-            Some((crease.render_toggle)(
-                buffer_row,
-                folded,
-                toggle_callback,
-                cx,
-            ))
+            }
         } else if folded
             || (self.starts_indent(buffer_row) && (row_contains_cursor || self.gutter_hovered))
         {
@@ -13630,10 +13628,10 @@ impl EditorSnapshot {
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
-        let crease = self
+        let Crease::Inline { render_trailer, .. } = self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)?;
-        Some((crease.render_trailer)(buffer_row, folded, cx))
+        Some((render_trailer)(buffer_row, folded, cx))
     }
 }
 
