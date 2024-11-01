@@ -2,7 +2,7 @@ use collections::HashMap;
 use gpui::{AnyElement, IntoElement};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToPoint};
 use serde::{Deserialize, Serialize};
-use std::{cmp::Ordering, ops::Range, sync::Arc};
+use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
 use ui::{IconName, SharedString, WindowContext};
@@ -45,7 +45,7 @@ impl CreaseSnapshot {
         &'a self,
         row: MultiBufferRow,
         snapshot: &'a MultiBufferSnapshot,
-    ) -> Option<&'a Crease> {
+    ) -> Option<&'a Crease<Anchor>> {
         let start = snapshot.anchor_before(Point::new(row.0, 0));
         let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         cursor.seek(&start, Bias::Left, snapshot);
@@ -69,7 +69,7 @@ impl CreaseSnapshot {
         &'a self,
         range: Range<MultiBufferRow>,
         snapshot: &'a MultiBufferSnapshot,
-    ) -> impl 'a + Iterator<Item = &'a Crease> {
+    ) -> impl 'a + Iterator<Item = &'a Crease<Anchor>> {
         let start = snapshot.anchor_before(Point::new(range.start.0, 0));
         let mut cursor = self.creases.cursor::<ItemSummary>(snapshot);
         cursor.seek(&start, Bias::Left, snapshot);
@@ -125,9 +125,9 @@ type RenderTrailerFn =
     Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut WindowContext) -> AnyElement>;
 
 #[derive(Clone)]
-pub enum Crease {
+pub enum Crease<T> {
     Inline {
-        range: Range<Anchor>,
+        range: Range<T>,
         placeholder: FoldPlaceholder,
         render_toggle: RenderToggleFn,
         render_trailer: RenderTrailerFn,
@@ -142,9 +142,9 @@ pub struct CreaseMetadata {
     pub label: SharedString,
 }
 
-impl Crease {
+impl<T> Crease<T> {
     pub fn inline<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
-        range: Range<Anchor>,
+        range: Range<T>,
         placeholder: FoldPlaceholder,
         render_toggle: RenderToggle,
         render_trailer: RenderTrailer,
@@ -199,20 +199,26 @@ impl Crease {
         }
     }
 
-    pub fn range(&self) -> &Range<Anchor> {
+    pub fn range(&self) -> &Range<T> {
         match self {
             Crease::Inline { range, .. } => range,
         }
     }
 }
 
-impl std::fmt::Debug for Crease {
+impl<T> std::fmt::Debug for Crease<T>
+where
+    T: Debug,
+{
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Crease::Inline { range, .. } => f
-                .debug_struct("Crease::Fold")
+            Crease::Inline {
+                range, metadata, ..
+            } => f
+                .debug_struct("Crease::Inline")
                 .field("range", range)
-                .finish(),
+                .field("metadata", metadata)
+                .finish_non_exhaustive(),
         }
     }
 }
@@ -220,7 +226,7 @@ impl std::fmt::Debug for Crease {
 #[derive(Clone, Debug)]
 struct CreaseItem {
     id: CreaseId,
-    crease: Crease,
+    crease: Crease<Anchor>,
 }
 
 impl CreaseMap {
@@ -230,7 +236,7 @@ impl CreaseMap {
 
     pub fn insert(
         &mut self,
-        creases: impl IntoIterator<Item = Crease>,
+        creases: impl IntoIterator<Item = Crease<Anchor>>,
         snapshot: &MultiBufferSnapshot,
     ) -> Vec<CreaseId> {
         let mut new_ids = Vec::new();

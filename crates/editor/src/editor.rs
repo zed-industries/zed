@@ -6706,7 +6706,7 @@ impl Editor {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_ranges(refold_ranges, true, cx);
+            this.fold_creases(refold_ranges, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             })
@@ -6800,7 +6800,7 @@ impl Editor {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_ranges(refold_ranges, true, cx);
+            this.fold_creases(refold_ranges, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
         });
     }
@@ -10703,7 +10703,7 @@ impl Editor {
     }
 
     pub fn fold(&mut self, _: &actions::Fold, cx: &mut ViewContext<Self>) {
-        let mut fold_ranges = Vec::new();
+        let mut to_fold = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all_adjusted(cx);
 
@@ -10715,12 +10715,10 @@ impl Editor {
                 let mut found = false;
                 let mut row = range.start.row;
                 while row <= range.end.row {
-                    if let Some((foldable_range, fold_text)) =
-                        { display_map.foldable_range(MultiBufferRow(row)) }
-                    {
+                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
                         found = true;
-                        row = foldable_range.end.row + 1;
-                        fold_ranges.push((foldable_range, fold_text));
+                        row = crease.range().end.row + 1;
+                        to_fold.push(crease);
                     } else {
                         row += 1
                     }
@@ -10731,11 +10729,9 @@ impl Editor {
             }
 
             for row in (0..=range.start.row).rev() {
-                if let Some((foldable_range, fold_text)) =
-                    display_map.foldable_range(MultiBufferRow(row))
-                {
-                    if foldable_range.end.row >= buffer_start_row {
-                        fold_ranges.push((foldable_range, fold_text));
+                if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                    if crease.range().end.row >= buffer_start_row {
+                        to_fold.push(crease);
                         if row <= range.start.row {
                             break;
                         }
@@ -10744,26 +10740,29 @@ impl Editor {
             }
         }
 
-        self.fold_ranges(fold_ranges, true, cx);
+        self.fold_creases(to_fold, true, cx);
     }
 
     fn fold_at_level(&mut self, fold_at: &FoldAtLevel, cx: &mut ViewContext<Self>) {
         let fold_at_level = fold_at.level;
         let snapshot = self.buffer.read(cx).snapshot(cx);
-        let mut fold_ranges = Vec::new();
+        let mut to_fold = Vec::new();
         let mut stack = vec![(0, snapshot.max_buffer_row().0, 1)];
 
         while let Some((mut start_row, end_row, current_level)) = stack.pop() {
             while start_row < end_row {
-                match self.snapshot(cx).foldable_range(MultiBufferRow(start_row)) {
-                    Some(foldable_range) => {
-                        let nested_start_row = foldable_range.0.start.row + 1;
-                        let nested_end_row = foldable_range.0.end.row;
+                match self
+                    .snapshot(cx)
+                    .crease_for_buffer_row(MultiBufferRow(start_row))
+                {
+                    Some(crease) => {
+                        let nested_start_row = crease.range().start.row + 1;
+                        let nested_end_row = crease.range().end.row;
 
                         if current_level < fold_at_level {
                             stack.push((nested_start_row, nested_end_row, current_level + 1));
                         } else if current_level == fold_at_level {
-                            fold_ranges.push(foldable_range);
+                            to_fold.push(crease);
                         }
 
                         start_row = nested_end_row + 1;
@@ -10773,7 +10772,7 @@ impl Editor {
             }
         }
 
-        self.fold_ranges(fold_ranges, true, cx);
+        self.fold_creases(to_fold, true, cx);
     }
 
     pub fn fold_all(&mut self, _: &actions::FoldAll, cx: &mut ViewContext<Self>) {
@@ -10781,16 +10780,18 @@ impl Editor {
         let snapshot = self.buffer.read(cx).snapshot(cx);
 
         for row in 0..snapshot.max_buffer_row().0 {
-            if let Some(foldable_range) = self.snapshot(cx).foldable_range(MultiBufferRow(row)) {
+            if let Some(foldable_range) =
+                self.snapshot(cx).crease_for_buffer_row(MultiBufferRow(row))
+            {
                 fold_ranges.push(foldable_range);
             }
         }
 
-        self.fold_ranges(fold_ranges, true, cx);
+        self.fold_creases(fold_ranges, true, cx);
     }
 
     pub fn fold_recursive(&mut self, _: &actions::FoldRecursive, cx: &mut ViewContext<Self>) {
-        let mut fold_ranges = Vec::new();
+        let mut to_fold = Vec::new();
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let selections = self.selections.all_adjusted(cx);
 
@@ -10801,11 +10802,9 @@ impl Editor {
             if range.start.row != range.end.row {
                 let mut found = false;
                 for row in range.start.row..=range.end.row {
-                    if let Some((foldable_range, fold_text)) =
-                        { display_map.foldable_range(MultiBufferRow(row)) }
-                    {
+                    if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
                         found = true;
-                        fold_ranges.push((foldable_range, fold_text));
+                        to_fold.push(crease);
                     }
                 }
                 if found {
@@ -10814,11 +10813,9 @@ impl Editor {
             }
 
             for row in (0..=range.start.row).rev() {
-                if let Some((foldable_range, fold_text)) =
-                    display_map.foldable_range(MultiBufferRow(row))
-                {
-                    if foldable_range.end.row >= buffer_start_row {
-                        fold_ranges.push((foldable_range, fold_text));
+                if let Some(crease) = display_map.crease_for_buffer_row(MultiBufferRow(row)) {
+                    if crease.range().end.row >= buffer_start_row {
+                        to_fold.push(crease);
                     } else {
                         break;
                     }
@@ -10826,21 +10823,21 @@ impl Editor {
             }
         }
 
-        self.fold_ranges(fold_ranges, true, cx);
+        self.fold_creases(to_fold, true, cx);
     }
 
     pub fn fold_at(&mut self, fold_at: &FoldAt, cx: &mut ViewContext<Self>) {
         let buffer_row = fold_at.buffer_row;
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
 
-        if let Some((fold_range, placeholder)) = display_map.foldable_range(buffer_row) {
+        if let Some(crease) = display_map.crease_for_buffer_row(buffer_row) {
             let autoscroll = self
                 .selections
                 .all::<Point>(cx)
                 .iter()
-                .any(|selection| fold_range.overlaps(&selection.range()));
+                .any(|selection| crease.range().overlaps(&selection.range()));
 
-            self.fold_ranges([(fold_range, placeholder)], autoscroll, cx);
+            self.fold_creases([crease], autoscroll, cx);
         }
     }
 
@@ -10927,12 +10924,12 @@ impl Editor {
                 (s.start..s.end, display_map.fold_placeholder.clone())
             }
         });
-        self.fold_ranges(ranges, true, cx);
+        self.fold_creases(ranges, true, cx);
     }
 
-    pub fn fold_ranges<T: ToOffset + Clone>(
+    pub fn fold_creases<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
+        ranges: impl IntoIterator<Item = Crease<T>>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
@@ -11102,7 +11099,7 @@ impl Editor {
 
     pub fn insert_creases(
         &mut self,
-        creases: impl IntoIterator<Item = Crease>,
+        creases: impl IntoIterator<Item = Crease<Anchor>>,
         cx: &mut ViewContext<Self>,
     ) -> Vec<CreaseId> {
         self.display_map
