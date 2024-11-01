@@ -929,11 +929,7 @@ where
         .buffer_snapshot
         .dimensions_from_points::<D>(to_convert.flat_map(|s| {
             let start = map.display_point_to_point(s.start, Bias::Left);
-            let end = if s.start == s.end {
-                map.display_point_to_point(s.end, Bias::Right)
-            } else {
-                map.display_point_to_point(s.end, Bias::Left)
-            };
+            let end = map.display_point_to_point(s.end, Bias::Right);
             [start, end]
         }))
         .into_iter();

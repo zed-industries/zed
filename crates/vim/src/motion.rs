@@ -1018,7 +1018,6 @@ pub(crate) fn start_of_relative_buffer_row(
         map.fold_point_to_display_point(
             map.fold_snapshot
                 .clip_point(FoldPoint::new(new_row, 0), Bias::Right),
-            Bias::Right,
         ),
         Bias::Right,
     )
@@ -1035,7 +1034,6 @@ fn up_down_buffer_rows(
     let begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
             .clip_point(FoldPoint::new(start.row(), 0), Bias::Left),
-        Bias::Left,
     );
     let select_nth_wrapped_row = point.row().0 - begin_folded_line.row().0;
 
@@ -1056,7 +1054,6 @@ fn up_down_buffer_rows(
     let mut begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
             .clip_point(FoldPoint::new(new_row, 0), Bias::Left),
-        Bias::Left,
     );
 
     let mut i = 0;
