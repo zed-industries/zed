@@ -16,6 +16,7 @@ use gpui::{
 };
 use picker::Picker;
 use project::Project;
+use remote::ssh_session::ConnectionIdentifier;
 use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
 use settings::update_settings_file;
@@ -413,7 +414,7 @@ impl RemoteServerProjects {
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
         let connection = connect_over_ssh(
-            connection_options.remote_server_identifier(),
+            ConnectionIdentifier::Setup,
             connection_options.clone(),
             ssh_prompt.clone(),
             cx,
@@ -501,7 +502,7 @@ impl RemoteServerProjects {
                     .clone();
 
                 let connect = connect_over_ssh(
-                    connection_options.remote_server_identifier(),
+                    ConnectionIdentifier::Setup,
                     connection_options.clone(),
                     prompt,
                     cx,
