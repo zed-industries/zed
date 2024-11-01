@@ -15,7 +15,7 @@ use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionS
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
-    theme_registry: Arc<dyn ThemeRegistry>,
+    theme_registry: Arc<ThemeRegistry>,
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
@@ -24,7 +24,7 @@ pub struct ConcreteExtensionRegistrationHooks {
 
 impl ConcreteExtensionRegistrationHooks {
     pub fn new(
-        theme_registry: Arc<dyn ThemeRegistry>,
+        theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         indexed_docs_registry: Arc<IndexedDocsRegistry>,
         snippet_registry: Arc<SnippetRegistry>,

@@ -88,11 +88,10 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
         LoadThemes::JustBase => (Box::new(()) as Box<dyn AssetSource>, false),
         LoadThemes::All(assets) => (assets, true),
     };
-    let registry = Arc::new(RealThemeRegistry::new(assets));
-    registry.clone().set_global(cx);
+    ThemeRegistry::set_global(assets, cx);
 
     if load_user_themes {
-        registry.load_bundled_themes();
+        ThemeRegistry::global(cx).load_bundled_themes();
     }
 
     ThemeSettings::register(cx);

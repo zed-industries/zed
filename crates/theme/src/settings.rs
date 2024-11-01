@@ -150,7 +150,7 @@ impl ThemeSettings {
 
             // If the selected theme doesn't exist, fall back to a default theme
             // based on the system appearance.
-            let theme_registry = <dyn ThemeRegistry>::global(cx);
+            let theme_registry = ThemeRegistry::global(cx);
             if theme_registry.get(theme_name).ok().is_none() {
                 theme_name = Self::default_theme(*system_appearance);
             };
@@ -446,7 +446,7 @@ impl ThemeSettings {
     /// Returns a `Some` containing the new theme if it was successful.
     /// Returns `None` otherwise.
     pub fn switch_theme(&mut self, theme: &str, cx: &mut AppContext) -> Option<Arc<Theme>> {
-        let themes = <dyn ThemeRegistry>::default_global(cx);
+        let themes = ThemeRegistry::default_global(cx);
 
         let mut new_theme = None;
 
@@ -598,7 +598,7 @@ impl settings::Settings for ThemeSettings {
     type FileContent = ThemeSettingsContent;
 
     fn load(sources: SettingsSources<Self::FileContent>, cx: &mut AppContext) -> Result<Self> {
-        let themes = <dyn ThemeRegistry>::default_global(cx);
+        let themes = ThemeRegistry::default_global(cx);
         let system_appearance = SystemAppearance::default_global(cx);
 
         let defaults = sources.default;
@@ -710,7 +710,7 @@ impl settings::Settings for ThemeSettings {
         cx: &AppContext,
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
-        let theme_names = <dyn ThemeRegistry>::global(cx)
+        let theme_names = ThemeRegistry::global(cx)
             .list_names()
             .into_iter()
             .map(|theme_name| Value::String(theme_name.to_string()))
