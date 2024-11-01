@@ -93,11 +93,13 @@ pub trait DocsDatabase: Send + Sync + 'static {
     fn insert(&self, key: String, docs: String) -> Task<Result<()>>;
 }
 
-pub trait ExtensionApi: Send + Sync + 'static {
+pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     fn remove_user_themes(&self, _themes: Vec<SharedString>) {}
+
     fn load_user_theme(&self, _theme_path: PathBuf, _fs: Arc<dyn Fs>) -> Task<Result<()>> {
         Task::ready(Ok(()))
     }
+
     fn list_theme_names(
         &self,
         _theme_path: PathBuf,
@@ -105,6 +107,7 @@ pub trait ExtensionApi: Send + Sync + 'static {
     ) -> Task<Result<Vec<String>>> {
         Task::ready(Ok(Vec::new()))
     }
+
     fn reload_current_theme(&self, _cx: &mut AppContext) {}
 
     fn register_language(
@@ -141,6 +144,7 @@ pub trait ExtensionApi: Send + Sync + 'static {
         _host: Arc<WasmHost>,
     ) {
     }
+
     fn register_docs_provider(
         &self,
         _extension: WasmExtension,
@@ -148,6 +152,7 @@ pub trait ExtensionApi: Send + Sync + 'static {
         _provider_id: Arc<str>,
     ) {
     }
+
     fn register_snippets(&self, _path: &PathBuf, _snippet_contents: &str) -> Result<()> {
         Ok(())
     }
@@ -161,7 +166,7 @@ pub trait ExtensionApi: Send + Sync + 'static {
 }
 
 pub struct HeadlessExtensionStore {
-    pub api: Arc<dyn ExtensionApi>,
+    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     pub fs: Arc<dyn Fs>,
     pub extension_dir: PathBuf,
     pub wasm_host: Arc<WasmHost>,
@@ -179,19 +184,19 @@ impl HeadlessExtensionStore {
     pub fn new(
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
-        api: Arc<dyn ExtensionApi>,
+        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
         extension_dir: PathBuf,
         node_runtime: NodeRuntime,
         cx: &mut AppContext,
     ) -> Model<Self> {
         cx.new_model(|cx| Self {
-            api: api.clone(),
+            registration_hooks: registration_hooks.clone(),
             fs: fs.clone(),
             wasm_host: WasmHost::new(
                 fs.clone(),
                 http_client.clone(),
                 node_runtime,
-                api,
+                registration_hooks,
                 extension_dir.join("work"),
                 cx,
             ),
@@ -256,7 +261,7 @@ impl HeadlessExtensionStore {
                     .entry(manifest.id.clone())
                     .or_default()
                     .push(config.name.clone());
-                this.api.register_language(
+                this.registration_hooks.register_language(
                     config.name.clone(),
                     None,
                     config.matcher.clone(),
@@ -286,7 +291,7 @@ impl HeadlessExtensionStore {
                         .entry(manifest.id.clone())
                         .or_default()
                         .push((language_server_name.clone(), language.clone()));
-                    this.api.register_lsp_adapter(
+                    this.registration_hooks.register_lsp_adapter(
                         language.clone(),
                         ExtensionLspAdapter {
                             extension: wasm_extension.clone(),
@@ -331,13 +336,14 @@ impl HeadlessExtensionStore {
                         .loaded_languages
                         .remove(&extension_id)
                         .unwrap_or_default();
-                    this.api.remove_languages(&languages_to_remove, &[]);
+                    this.registration_hooks
+                        .remove_languages(&languages_to_remove, &[]);
                     for (language_server_name, language) in this
                         .loaded_language_servers
                         .remove(&extension_id)
                         .unwrap_or_default()
                     {
-                        this.api
+                        this.registration_hooks
                             .remove_lsp_adapter(&language, &language_server_name);
                     }
                 })?;
@@ -352,7 +358,7 @@ impl HeadlessExtensionStore {
 }
 
 pub struct ExtensionStore {
-    pub api: Arc<dyn ExtensionApi>,
+    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     pub builder: Arc<ExtensionBuilder>,
     pub extension_index: ExtensionIndex,
     pub fs: Arc<dyn Fs>,
@@ -420,7 +426,7 @@ pub struct ExtensionIndexLanguageEntry {
 actions!(zed, [ReloadExtensions]);
 
 pub fn init(
-    api: Arc<dyn ExtensionApi>,
+    registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
     node_runtime: NodeRuntime,
@@ -432,7 +438,7 @@ pub fn init(
         ExtensionStore::new(
             paths::extensions_dir().clone(),
             None,
-            api,
+            registration_hooks,
             fs,
             client.http_client().clone(),
             client.http_client().clone(),
@@ -464,7 +470,7 @@ impl ExtensionStore {
     pub fn new(
         extensions_dir: PathBuf,
         build_dir: Option<PathBuf>,
-        extension_api: Arc<dyn ExtensionApi>,
+        extension_api: Arc<dyn ExtensionRegistrationHooks>,
         fs: Arc<dyn Fs>,
         http_client: Arc<HttpClientWithUrl>,
         builder_client: Arc<dyn HttpClient>,
@@ -479,7 +485,7 @@ impl ExtensionStore {
 
         let (reload_tx, mut reload_rx) = unbounded();
         let mut this = Self {
-            api: extension_api.clone(),
+            registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
             installed_dir,
             index_path,
@@ -1273,15 +1279,16 @@ impl ExtensionStore {
             grammars_to_remove.extend(extension.manifest.grammars.keys().cloned());
             for (language_server_name, config) in extension.manifest.language_servers.iter() {
                 for language in config.languages() {
-                    self.api.remove_lsp_adapter(&language, language_server_name);
+                    self.registration_hooks
+                        .remove_lsp_adapter(&language, language_server_name);
                 }
             }
         }
 
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
-        self.api.remove_user_themes(themes_to_remove);
-        self.api
+        self.registration_hooks.remove_user_themes(themes_to_remove);
+        self.registration_hooks
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
         let languages_to_add = new_index
@@ -1316,7 +1323,8 @@ impl ExtensionStore {
             }));
         }
 
-        self.api.register_wasm_grammars(grammars_to_add);
+        self.registration_hooks
+            .register_wasm_grammars(grammars_to_add);
 
         for (language_name, language) in languages_to_add {
             let mut language_path = self.installed_dir.clone();
@@ -1324,7 +1332,7 @@ impl ExtensionStore {
                 Path::new(language.extension.as_ref()),
                 language.path.as_path(),
             ]);
-            self.api.register_language(
+            self.registration_hooks.register_language(
                 language_name.clone(),
                 language.grammar.clone(),
                 language.matcher.clone(),
@@ -1354,7 +1362,7 @@ impl ExtensionStore {
         let fs = self.fs.clone();
         let wasm_host = self.wasm_host.clone();
         let root_dir = self.installed_dir.clone();
-        let api = self.api.clone();
+        let api = self.registration_hooks.clone();
         let extension_entries = extensions_to_load
             .iter()
             .filter_map(|name| new_index.extensions.get(name).cloned())
@@ -1415,7 +1423,7 @@ impl ExtensionStore {
                 for (manifest, wasm_extension) in &wasm_extensions {
                     for (language_server_id, language_server_config) in &manifest.language_servers {
                         for language in language_server_config.languages() {
-                            this.api.register_lsp_adapter(
+                            this.registration_hooks.register_lsp_adapter(
                                 language.clone(),
                                 ExtensionLspAdapter {
                                     extension: wasm_extension.clone(),
@@ -1431,7 +1439,7 @@ impl ExtensionStore {
                     }
 
                     for (slash_command_name, slash_command) in &manifest.slash_commands {
-                        this.api.register_slash_command(
+                        this.registration_hooks.register_slash_command(
                             crate::wit::SlashCommand {
                                 name: slash_command_name.to_string(),
                                 description: slash_command.description.to_string(),
@@ -1447,7 +1455,7 @@ impl ExtensionStore {
                     }
 
                     for (provider_id, _provider) in &manifest.indexed_docs_providers {
-                        this.api.register_docs_provider(
+                        this.registration_hooks.register_docs_provider(
                             wasm_extension.clone(),
                             this.wasm_host.clone(),
                             provider_id.clone(),
@@ -1456,7 +1464,7 @@ impl ExtensionStore {
                 }
 
                 this.wasm_extensions.extend(wasm_extensions);
-                this.api.reload_current_theme(cx);
+                this.registration_hooks.reload_current_theme(cx);
             })
             .ok();
         })
@@ -1467,7 +1475,7 @@ impl ExtensionStore {
         let work_dir = self.wasm_host.work_dir.clone();
         let extensions_dir = self.installed_dir.clone();
         let index_path = self.index_path.clone();
-        let extension_api = self.api.clone();
+        let extension_api = self.registration_hooks.clone();
         cx.background_executor().spawn(async move {
             let start_time = Instant::now();
             let mut index = ExtensionIndex::default();
@@ -1516,7 +1524,7 @@ impl ExtensionStore {
         fs: Arc<dyn Fs>,
         extension_dir: PathBuf,
         index: &mut ExtensionIndex,
-        extension_api: Arc<dyn ExtensionApi>,
+        extension_api: Arc<dyn ExtensionRegistrationHooks>,
     ) -> Result<()> {
         let mut extension_manifest = ExtensionManifest::load(fs.clone(), &extension_dir).await?;
         let extension_id = extension_manifest.id.clone();

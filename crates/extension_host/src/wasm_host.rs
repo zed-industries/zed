@@ -1,6 +1,6 @@
 pub mod wit;
 
-use crate::{ExtensionApi, ExtensionManifest};
+use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -34,7 +34,7 @@ pub struct WasmHost {
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    pub api: Arc<dyn ExtensionApi>,
+    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
@@ -81,7 +81,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        extension_api: Arc<dyn ExtensionApi>,
+        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -97,7 +97,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
-            api: extension_api,
+            registration_hooks,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,

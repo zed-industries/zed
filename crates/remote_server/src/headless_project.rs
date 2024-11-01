@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use extension_host::{
-    extension_lsp_adapter::ExtensionLspAdapter, ExtensionApi, ExtensionVersion,
+    extension_lsp_adapter::ExtensionLspAdapter, ExtensionRegistrationHooks, ExtensionVersion,
     HeadlessExtensionStore,
 };
 use fs::Fs;
@@ -64,7 +64,7 @@ impl HeadlessExtensionsApi {
     }
 }
 
-impl ExtensionApi for HeadlessExtensionsApi {
+impl ExtensionRegistrationHooks for HeadlessExtensionsApi {
     fn register_language(
         &self,
         language: LanguageName,

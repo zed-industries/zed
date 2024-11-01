@@ -267,7 +267,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
-        let extension_api = crate::ExtensionApi::new(
+        let extension_registration_hooks = crate::ConcreteExtensionRegistrationHooks::new(
             theme_registry.clone(),
             slash_command_registry.clone(),
             indexed_docs_registry.clone(),
@@ -279,7 +279,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
-            extension_api,
+            extension_registration_hooks,
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
@@ -400,7 +400,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     // Create new extension store, as if Zed were restarting.
     drop(store);
     let store = cx.new_model(|cx| {
-        let extension_api = crate::ExtensionApi::new(
+        let extension_api = crate::ConcreteExtensionRegistrationHooks::new(
             theme_registry.clone(),
             slash_command_registry,
             indexed_docs_registry,
@@ -590,7 +590,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
     let extension_store = cx.new_model(|cx| {
-        let extension_api = crate::ExtensionApi::new(
+        let extension_api = crate::ConcreteExtensionRegistrationHooks::new(
             theme_registry.clone(),
             slash_command_registry,
             indexed_docs_registry,

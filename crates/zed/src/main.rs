@@ -405,7 +405,7 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
-        let api = extensions_ui::ExtensionApi::new(
+        let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
             <dyn ThemeRegistry>::global(cx),
             SlashCommandRegistry::global(cx),
             IndexedDocsRegistry::global(cx),

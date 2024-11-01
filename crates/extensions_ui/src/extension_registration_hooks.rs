@@ -13,7 +13,7 @@ use ui::SharedString;
 
 use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
 
-pub struct ExtensionApi {
+pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
     theme_registry: Arc<dyn ThemeRegistry>,
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
@@ -22,7 +22,7 @@ pub struct ExtensionApi {
     executor: BackgroundExecutor,
 }
 
-impl ExtensionApi {
+impl ConcreteExtensionRegistrationHooks {
     pub fn new(
         theme_registry: Arc<dyn ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
@@ -30,7 +30,7 @@ impl ExtensionApi {
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
         cx: &AppContext,
-    ) -> Arc<dyn extension_host::ExtensionApi> {
+    ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
         Arc::new(Self {
             theme_registry,
             slash_command_registry,
@@ -42,7 +42,7 @@ impl ExtensionApi {
     }
 }
 
-impl extension_host::ExtensionApi for ExtensionApi {
+impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistrationHooks {
     fn remove_user_themes(&self, themes: Vec<SharedString>) {
         self.theme_registry.remove_user_themes(&themes);
     }
