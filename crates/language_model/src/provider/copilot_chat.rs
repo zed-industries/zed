@@ -183,6 +183,15 @@ impl LanguageModel for CopilotChatLanguageModel {
             CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
             CopilotChatModel::Gpt4 => open_ai::Model::Four,
             CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
+            CopilotChatModel::O1Preview => open_ai::Model::O1Preview,
+            CopilotChatModel::O1Mini => open_ai::Model::O1Mini,
+            CopilotChatModel::Claude3_5Sonnet => open_ai::Model::Custom{
+                name: "claude-3.5-sonnet".to_string(),
+                display_name: Some("Claude 3.5 Sonnet".to_string()),
+                max_tokens: 200_000,
+                max_output_tokens: Some(8_192),
+                max_completion_tokens: Some(8_192),
+            },
         };
 
         count_open_ai_tokens(request, model, cx)

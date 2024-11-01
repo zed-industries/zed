@@ -23,6 +23,7 @@ pub enum Role {
     User,
     Assistant,
     System,
+    Tool,
 }
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
@@ -35,6 +36,12 @@ pub enum Model {
     Gpt4,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
+    #[serde(alias = "o1-preview", rename = "o1-preview-2024-09-12")]
+    O1Preview,
+    #[serde(alias = "o1-mini", rename = "o1-mini-2024-09-12")]
+    O1Mini,
+    #[serde(alias = "claude-3.5-sonnet", rename = "claude-3.5-sonnet")]
+    Claude3_5Sonnet,
 }
 
 impl Model {
@@ -43,6 +50,9 @@ impl Model {
             "gpt-4o" => Ok(Self::Gpt4o),
             "gpt-4" => Ok(Self::Gpt4),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
+            "o1-preview" => Ok(Self::O1Preview),
+            "o1-mini" => Ok(Self::O1Mini),
+            "claude-3.5-sonnet" => Ok(Self::Claude3_5Sonnet),
             _ => Err(anyhow!("Invalid model id: {}", id)),
         }
     }
@@ -52,6 +62,9 @@ impl Model {
             Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
             Self::Gpt4o => "gpt-4o",
+            Self::O1Preview => "o1-preview-2024-09-12",
+            Self::O1Mini => "o1-mini-2024-09-12",
+            Self::Claude3_5Sonnet => "claude-3.5-sonnet",
         }
     }
 
@@ -60,6 +73,9 @@ impl Model {
             Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
             Self::Gpt4o => "GPT-4o",
+            Self::O1Preview => "o1-preview",
+            Self::O1Mini => "o1-mini",
+            Self::Claude3_5Sonnet => "Claude-3.5 Sonnet",
         }
     }
 
@@ -68,6 +84,9 @@ impl Model {
             Self::Gpt4o => 128000,
             Self::Gpt4 => 8192,
             Self::Gpt3_5Turbo => 16385,
+            Self::O1Preview => 128000,
+            Self::O1Mini => 128000,
+            Self::Claude3_5Sonnet => 200000,
         }
     }
 }
