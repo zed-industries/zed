@@ -33,7 +33,6 @@ struct ReplMenuState {
     // TODO: Persist rotation state so the
     // icon doesn't reset on every state change
     // current_delta: Duration,
-    kernel_selector_menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
 impl QuickActionBar {
@@ -251,40 +250,40 @@ impl QuickActionBar {
             h_flex()
                 .child(button)
                 .child(dropdown_menu)
-                .child(self.render_kernel_selector(
-                    menu_state.kernel_name.clone(),
-                    menu_state.kernel_selector_menu_handle,
-                    cx,
-                ))
+                .child(self.render_kernel_selector(Some(menu_state.kernel_name.clone()), cx))
                 .into_any_element(),
         )
     }
-
     pub fn render_repl_launch_menu(
         &self,
         kernel_specification: KernelSpecification,
-        _cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString =
             SharedString::from(format!("Start REPL for {}", kernel_specification.name));
 
         Some(
-            IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
-                .size(ButtonSize::Compact)
-                .icon_color(Color::Muted)
-                .style(ButtonStyle::Subtle)
-                .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
+            h_flex()
+                .child(
+                    IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
+                        .size(ButtonSize::Compact)
+                        .icon_color(Color::Muted)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                        .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))),
+                )
+                .child(self.render_kernel_selector(None, cx))
                 .into_any_element(),
         )
     }
 
     pub fn render_kernel_selector(
         &self,
-        current_kernel_name: SharedString,
-        menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
+        current_kernel_name: Option<SharedString>,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
+            PopoverMenuHandle::default();
         KernelSelector::new(
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
@@ -298,10 +297,18 @@ impl QuickActionBar {
                                 .flex_grow()
                                 .whitespace_nowrap()
                                 .child(
-                                    Label::new(current_kernel_name)
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted)
-                                        .into_any_element(),
+                                    Label::new(if let Some(name) = current_kernel_name.clone() {
+                                        name
+                                    } else {
+                                        SharedString::from("Select Kernel")
+                                    })
+                                    .size(LabelSize::Small)
+                                    .color(if current_kernel_name.is_some() {
+                                        Color::Default
+                                    } else {
+                                        Color::Placeholder
+                                    })
+                                    .into_any_element(),
                                 ),
                         )
                         .child(
@@ -318,16 +325,22 @@ impl QuickActionBar {
     pub fn render_repl_setup(
         &self,
         language: &str,
-        _cx: &mut ViewContext<Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
-            IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
-                .size(ButtonSize::Compact)
-                .icon_color(Color::Muted)
-                .style(ButtonStyle::Subtle)
-                .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                .on_click(|_, cx| cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION)))
+            h_flex()
+                .child(self.render_kernel_selector(None, cx))
+                .child(
+                    IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
+                        .size(ButtonSize::Compact)
+                        .icon_color(Color::Muted)
+                        .style(ButtonStyle::Subtle)
+                        .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                        .on_click(|_, cx| {
+                            cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
+                        }),
+                )
                 .into_any_element(),
         )
     }
@@ -343,7 +356,6 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         .language
         .clone()
         .into();
-    let kernel_selector_menu_handle = PopoverMenuHandle::default();
 
     let fill_fields = || {
         ReplMenuState {
@@ -358,7 +370,6 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             // todo!(): Technically not shutdown, but indeterminate
             status: KernelStatus::Shutdown,
             // current_delta: Duration::default(),
-            kernel_selector_menu_handle,
         }
     };
 
