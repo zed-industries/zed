@@ -1277,7 +1277,7 @@ impl SearchableItem for Editor {
         matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) {
-        self.unfold_ranges([matches[index].clone()], false, true, cx);
+        self.unfold_ranges(vec![matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges([range]);

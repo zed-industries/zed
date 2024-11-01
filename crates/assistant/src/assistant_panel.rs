@@ -2290,7 +2290,7 @@ impl ContextEditor {
                 }
 
                 if should_refold {
-                    editor.unfold_ranges([patch_start..patch_end], true, false, cx);
+                    editor.unfold_ranges(vec![patch_start..patch_end], true, false, cx);
                     editor.fold_creases(
                         vec![Crease::simple(patch_start..patch_end, header_placeholder)],
                         false,

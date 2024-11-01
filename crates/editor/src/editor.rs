@@ -1848,7 +1848,7 @@ impl Editor {
                         editor
                             .update(cx, |editor, cx| {
                                 editor.unfold_ranges(
-                                    [fold_range.start..fold_range.end],
+                                    vec![fold_range.start..fold_range.end],
                                     true,
                                     false,
                                     cx,
@@ -8389,7 +8389,7 @@ impl Editor {
             auto_scroll: Option<Autoscroll>,
             cx: &mut ViewContext<Editor>,
         ) {
-            this.unfold_ranges([range.clone()], false, true, cx);
+            this.unfold_ranges(vec![range.clone()], false, true, cx);
             this.change_selections(auto_scroll, cx, |s| {
                 if replace_newest {
                     s.delete(s.newest_anchor().id);
@@ -8600,7 +8600,10 @@ impl Editor {
 
         select_next_state.done = true;
         self.unfold_ranges(
-            new_selections.iter().map(|selection| selection.range()),
+            new_selections
+                .iter()
+                .map(|selection| selection.range())
+                .collect(),
             false,
             false,
             cx,
@@ -8669,7 +8672,7 @@ impl Editor {
                 }
 
                 if let Some(next_selected_range) = next_selected_range {
-                    self.unfold_ranges([next_selected_range.clone()], false, true, cx);
+                    self.unfold_ranges(vec![next_selected_range.clone()], false, true, cx);
                     self.change_selections(Some(Autoscroll::newest()), cx, |s| {
                         if action.replace_newest {
                             s.delete(s.newest_anchor().id);
@@ -8746,7 +8749,7 @@ impl Editor {
                 }
 
                 self.unfold_ranges(
-                    selections.iter().map(|s| s.range()).collect::<Vec<_>>(),
+                    selections.iter().map(|s| s.range()).collect(),
                     false,
                     true,
                     cx,
@@ -11021,17 +11024,12 @@ impl Editor {
             .iter()
             .any(|selection| RangeExt::overlaps(&selection.range(), &intersection_range));
 
-        self.unfold_ranges(std::iter::once(intersection_range), true, autoscroll, cx)
+        self.unfold_ranges(vec![intersection_range], true, autoscroll, cx)
     }
 
     pub fn unfold_all(&mut self, _: &actions::UnfoldAll, cx: &mut ViewContext<Self>) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
-        self.unfold_ranges(
-            [Point::zero()..display_map.max_point().to_point(&display_map)],
-            true,
-            true,
-            cx,
-        );
+        self.unfold_ranges(vec![0..display_map.buffer_snapshot.len()], true, true, cx);
     }
 
     pub fn fold_selected_ranges(&mut self, _: &FoldSelectedRanges, cx: &mut ViewContext<Self>) {
@@ -11064,6 +11062,10 @@ impl Editor {
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        if creases.is_empty() {
+            return;
+        }
+
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
         for crease in &creases {
@@ -11074,69 +11076,65 @@ impl Editor {
             };
         }
 
-        let mut creases = creases.into_iter().peekable();
-        if creases.peek().is_some() {
-            self.display_map.update(cx, |map, cx| map.fold(creases, cx));
+        self.display_map.update(cx, |map, cx| map.fold(creases, cx));
 
-            if auto_scroll {
-                self.request_autoscroll(Autoscroll::fit(), cx);
-            }
-
-            for buffer in buffers_affected.into_values() {
-                self.sync_expanded_diff_hunks(buffer, cx);
-            }
-
-            cx.notify();
-
-            if let Some(active_diagnostics) = self.active_diagnostics.take() {
-                // Clear diagnostics block when folding a range that contains it.
-                let snapshot = self.snapshot(cx);
-                if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
-                    drop(snapshot);
-                    self.active_diagnostics = Some(active_diagnostics);
-                    self.dismiss_diagnostics(cx);
-                } else {
-                    self.active_diagnostics = Some(active_diagnostics);
-                }
-            }
-
-            self.scrollbar_marker_state.dirty = true;
+        if auto_scroll {
+            self.request_autoscroll(Autoscroll::fit(), cx);
         }
+
+        for buffer in buffers_affected.into_values() {
+            self.sync_expanded_diff_hunks(buffer, cx);
+        }
+
+        cx.notify();
+
+        if let Some(active_diagnostics) = self.active_diagnostics.take() {
+            // Clear diagnostics block when folding a range that contains it.
+            let snapshot = self.snapshot(cx);
+            if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
+                drop(snapshot);
+                self.active_diagnostics = Some(active_diagnostics);
+                self.dismiss_diagnostics(cx);
+            } else {
+                self.active_diagnostics = Some(active_diagnostics);
+            }
+        }
+
+        self.scrollbar_marker_state.dirty = true;
     }
 
     pub fn unfold_ranges<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: Vec<Range<T>>,
         inclusive: bool,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut unfold_ranges = Vec::new();
+        if ranges.is_empty() {
+            return;
+        }
+
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
-        for range in ranges {
+        for range in &ranges {
             if let Some((_, buffer, _)) = multi_buffer.excerpt_containing(range.start.clone(), cx) {
                 buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
             };
-            unfold_ranges.push(range);
         }
 
-        let mut ranges = unfold_ranges.into_iter().peekable();
-        if ranges.peek().is_some() {
-            self.display_map
-                .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
-            if auto_scroll {
-                self.request_autoscroll(Autoscroll::fit(), cx);
-            }
-
-            for buffer in buffers_affected.into_values() {
-                self.sync_expanded_diff_hunks(buffer, cx);
-            }
-
-            cx.notify();
-            self.scrollbar_marker_state.dirty = true;
-            self.active_indent_guides_state.dirty = true;
+        self.display_map
+            .update(cx, |map, cx| map.unfold(ranges, inclusive, cx));
+        if auto_scroll {
+            self.request_autoscroll(Autoscroll::fit(), cx);
         }
+
+        for buffer in buffers_affected.into_values() {
+            self.sync_expanded_diff_hunks(buffer, cx);
+        }
+
+        cx.notify();
+        self.scrollbar_marker_state.dirty = true;
+        self.active_indent_guides_state.dirty = true;
     }
 
     pub fn default_fold_placeholder(&self, cx: &AppContext) -> FoldPlaceholder {

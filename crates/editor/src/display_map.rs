@@ -201,14 +201,15 @@ impl DisplayMap {
                         fold.range.to_offset(&other.buffer_snapshot),
                         fold.placeholder.clone(),
                     )
-                }),
+                })
+                .collect(),
             cx,
         );
     }
 
-    pub fn fold<T: ToOffset>(
+    pub fn fold<T: Clone + ToOffset>(
         &mut self,
-        creases: impl IntoIterator<Item = Crease<T>>,
+        creases: Vec<Crease<T>>,
         cx: &mut ModelContext<Self>,
     ) {
         let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
@@ -221,45 +222,56 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let mut blocks = Vec::new();
-        let mut inline = Vec::new();
-        for crease in creases {
-            match crease {
-                Crease::Inline {
-                    range, placeholder, ..
-                } => inline.push((range, placeholder)),
-                Crease::Block {
-                    range,
-                    block_height,
-                    render_block,
-                    block_style,
-                    block_priority,
-                    ..
-                } => blocks.push((
-                    range,
-                    block_height,
-                    render_block,
-                    block_style,
-                    block_priority,
-                )),
+
+        let inline = creases.iter().filter_map(|crease| {
+            if let Crease::Inline {
+                range, placeholder, ..
+            } = crease
+            {
+                Some((range.clone(), placeholder.clone()))
+            } else {
+                None
             }
-        }
+        });
         let (snapshot, edits) = fold_map.fold(inline);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+
+        let blocks = creases.into_iter().filter_map(|crease| {
+            if let Crease::Block {
+                range,
+                block_height,
+                render_block,
+                block_style,
+                block_priority,
+                ..
+            } = crease
+            {
+                Some((
+                    range,
+                    render_block,
+                    block_height,
+                    block_style,
+                    block_priority,
+                ))
+            } else {
+                None
+            }
+        });
+
         let mut block_map = self.block_map.write(snapshot, edits);
         block_map.insert(
             blocks
                 .into_iter()
-                .map(|(range, height, render, style, priority)| {
+                .map(|(range, render, height, style, priority)| {
                     let start = buffer_snapshot.anchor_before(range.start);
                     let end = buffer_snapshot.anchor_after(range.end);
                     BlockProperties {
                         placement: BlockPlacement::Replace(start..end),
-                        height,
                         render,
+                        height,
                         style,
                         priority,
                     }
@@ -267,9 +279,9 @@ impl DisplayMap {
         );
     }
 
-    pub fn unfold<T: ToOffset>(
+    pub fn unfold<T: Clone + ToOffset>(
         &mut self,
-        ranges: impl IntoIterator<Item = Range<T>>,
+        ranges: Vec<Range<T>>,
         inclusive: bool,
         cx: &mut ModelContext<Self>,
     ) {
@@ -283,12 +295,12 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = fold_map.unfold(ranges, inclusive);
+        let (snapshot, edits) = fold_map.unfold(ranges.iter().cloned(), inclusive);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        self.block_map.write(snapshot, edits);
     }
 
     pub fn insert_creases(
@@ -1501,7 +1513,8 @@ pub mod tests {
                             map.fold(
                                 ranges
                                     .into_iter()
-                                    .map(|range| Crease::simple(range, FoldPlaceholder::test())),
+                                    .map(|range| Crease::simple(range, FoldPlaceholder::test()))
+                                    .collect(),
                                 cx,
                             );
                         });
