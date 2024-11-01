@@ -2479,6 +2479,7 @@ impl ProjectPanel {
     ) -> Stateful<Div> {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
+        let ui_density = ThemeSettings::get_global(cx).ui_density;
         let show_editor = details.is_editing && !details.is_processing;
         let selection = SelectedEntry {
             worktree_id: details.worktree_id,
@@ -2684,72 +2685,84 @@ impl ProjectPanel {
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
-                            h_flex().h_6().w_full().child(editor.clone())
+                            h_flex()
+                                .map(|this| match ui_density {
+                                    theme::UiDensity::Comfortable => this.h_6(),
+                                    _ => this.h_4(),
+                                })
+                                .w_full()
+                                .child(editor.clone())
                         } else {
-                            h_flex().h_6().map(|mut this| {
-                                if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
-                                    let components = Path::new(&file_name)
-                                        .components()
-                                        .map(|comp| {
-                                            let comp_str =
-                                                comp.as_os_str().to_string_lossy().into_owned();
-                                            comp_str
-                                        })
-                                        .collect::<Vec<_>>();
+                            h_flex()
+                                .map(|this| match ui_density {
+                                    theme::UiDensity::Comfortable => this.h_6(),
+                                    _ => this.h_4(),
+                                })
+                                .map(|mut this| {
+                                    if let Some(folded_ancestors) = self.ancestors.get(&entry_id) {
+                                        let components = Path::new(&file_name)
+                                            .components()
+                                            .map(|comp| {
+                                                let comp_str =
+                                                    comp.as_os_str().to_string_lossy().into_owned();
+                                                comp_str
+                                            })
+                                            .collect::<Vec<_>>();
 
-                                    let components_len = components.len();
-                                    let active_index = components_len
-                                        - 1
-                                        - folded_ancestors.current_ancestor_depth;
-                                    const DELIMITER: SharedString =
-                                        SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
-                                    for (index, component) in components.into_iter().enumerate() {
-                                        if index != 0 {
-                                            this = this.child(
-                                                Label::new(DELIMITER.clone())
-                                                    .single_line()
-                                                    .color(filename_text_color),
-                                            );
-                                        }
-                                        let id = SharedString::from(format!(
-                                            "project_panel_path_component_{}_{index}",
-                                            entry_id.to_usize()
-                                        ));
-                                        let label = div()
-                                            .id(id)
-                                            .on_click(cx.listener(move |this, _, cx| {
-                                                if index != active_index {
-                                                    if let Some(folds) =
-                                                        this.ancestors.get_mut(&entry_id)
-                                                    {
-                                                        folds.current_ancestor_depth =
-                                                            components_len - 1 - index;
-                                                        cx.notify();
+                                        let components_len = components.len();
+                                        let active_index = components_len
+                                            - 1
+                                            - folded_ancestors.current_ancestor_depth;
+                                        const DELIMITER: SharedString =
+                                            SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
+                                        for (index, component) in components.into_iter().enumerate()
+                                        {
+                                            if index != 0 {
+                                                this = this.child(
+                                                    Label::new(DELIMITER.clone())
+                                                        .single_line()
+                                                        .color(filename_text_color),
+                                                );
+                                            }
+                                            let id = SharedString::from(format!(
+                                                "project_panel_path_component_{}_{index}",
+                                                entry_id.to_usize()
+                                            ));
+                                            let label = div()
+                                                .id(id)
+                                                .on_click(cx.listener(move |this, _, cx| {
+                                                    if index != active_index {
+                                                        if let Some(folds) =
+                                                            this.ancestors.get_mut(&entry_id)
+                                                        {
+                                                            folds.current_ancestor_depth =
+                                                                components_len - 1 - index;
+                                                            cx.notify();
+                                                        }
                                                     }
-                                                }
-                                            }))
-                                            .child(
-                                                Label::new(component)
-                                                    .single_line()
-                                                    .color(filename_text_color)
-                                                    .when(
-                                                        is_active && index == active_index,
-                                                        |this| this.underline(true),
-                                                    ),
-                                            );
+                                                }))
+                                                .child(
+                                                    Label::new(component)
+                                                        .single_line()
+                                                        .color(filename_text_color)
+                                                        .when(
+                                                            is_active && index == active_index,
+                                                            |this| this.underline(true),
+                                                        ),
+                                                );
 
-                                        this = this.child(label);
+                                            this = this.child(label);
+                                        }
+
+                                        this
+                                    } else {
+                                        this.child(
+                                            Label::new(file_name)
+                                                .single_line()
+                                                .color(filename_text_color),
+                                        )
                                     }
-
-                                    this
-                                } else {
-                                    this.child(
-                                        Label::new(file_name)
-                                            .single_line()
-                                            .color(filename_text_color),
-                                    )
-                                }
-                            })
+                                })
                         }
                         .ml_1(),
                     )
