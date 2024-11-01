@@ -4175,11 +4175,8 @@ dependencies = [
  "ui",
  "url",
  "util",
- "wasm-encoder 0.215.0",
- "wasmparser 0.215.0",
  "wasmtime",
  "wasmtime-wasi",
- "wit-component",
  "workspace",
 ]
 

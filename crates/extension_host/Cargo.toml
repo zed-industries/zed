@@ -46,11 +46,8 @@ toml.workspace = true
 ui.workspace = true
 url.workspace = true
 util.workspace = true
-wasm-encoder.workspace = true
-wasmparser.workspace = true
 wasmtime-wasi.workspace = true
 wasmtime.workspace = true
-wit-component.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]
