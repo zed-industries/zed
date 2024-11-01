@@ -1,13 +1,15 @@
 use std::time::Duration;
 
 use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
+use picker::Picker;
 use repl::{
+    components::{KernelPickerDelegate, KernelSelector},
     ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
     SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
-    Tooltip,
+    PopoverMenuHandle, Tooltip,
 };
 
 use gpui::ElementId;
@@ -31,6 +33,7 @@ struct ReplMenuState {
     // TODO: Persist rotation state so the
     // icon doesn't reset on every state change
     // current_delta: Duration,
+    kernel_selector_menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
 }
 
 impl QuickActionBar {
@@ -248,6 +251,11 @@ impl QuickActionBar {
             h_flex()
                 .child(button)
                 .child(dropdown_menu)
+                .child(self.render_kernel_selector(
+                    menu_state.kernel_name.clone(),
+                    menu_state.kernel_selector_menu_handle,
+                    cx,
+                ))
                 .into_any_element(),
         )
     }
@@ -269,6 +277,42 @@ impl QuickActionBar {
                 .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
                 .into_any_element(),
         )
+    }
+
+    pub fn render_kernel_selector(
+        &self,
+        current_kernel_name: SharedString,
+        menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>>,
+        cx: &mut ViewContext<Self>,
+    ) -> impl IntoElement {
+        KernelSelector::new(
+            ButtonLike::new("kernel-selector")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex()
+                        .w_full()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .overflow_x_hidden()
+                                .flex_grow()
+                                .whitespace_nowrap()
+                                .child(
+                                    Label::new(current_kernel_name)
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted)
+                                        .into_any_element(),
+                                ),
+                        )
+                        .child(
+                            Icon::new(IconName::ChevronDown)
+                                .color(Color::Muted)
+                                .size(IconSize::XSmall),
+                        ),
+                )
+                .tooltip(move |cx| Tooltip::text("Select Kernel", cx)),
+        )
+        .with_handle(menu_handle.clone())
     }
 
     pub fn render_repl_setup(
@@ -299,6 +343,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
         .language
         .clone()
         .into();
+    let kernel_selector_menu_handle = PopoverMenuHandle::default();
 
     let fill_fields = || {
         ReplMenuState {
@@ -313,6 +358,7 @@ fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
             // todo!(): Technically not shutdown, but indeterminate
             status: KernelStatus::Shutdown,
             // current_delta: Duration::default(),
+            kernel_selector_menu_handle,
         }
     };
 

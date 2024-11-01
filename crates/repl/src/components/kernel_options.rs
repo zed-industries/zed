@@ -1,4 +1,5 @@
 use crate::kernels::KernelOption;
+use crate::repl_store::ReplStore;
 use crate::KernelSpecification;
 
 // - [@nate] Add a split button for running/selecting kernels
@@ -206,6 +207,11 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         // TODO: Implement kernel selection logic
         let all_kernels = vec![KernelOption::Jupyter(KernelSpecification::deno_kernel())];
+        // TODO: read specs from store
+        let store = ReplStore::global(cx).read(cx);
+        for kernel_spec in store.kernel_specifications() {
+            dbg!(&kernel_spec);
+        }
 
         let delegate = KernelPickerDelegate {
             all_kernels: all_kernels.clone(),

@@ -1,4 +1,4 @@
-mod components;
+pub mod components;
 mod jupyter_settings;
 mod kernels;
 pub mod notebook;
