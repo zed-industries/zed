@@ -197,7 +197,7 @@ impl DisplayMap {
             other
                 .folds_in_range(0..other.buffer_snapshot.len())
                 .map(|fold| {
-                    (
+                    Crease::simple(
                         fold.range.to_offset(&other.buffer_snapshot),
                         fold.placeholder.clone(),
                     )
@@ -208,25 +208,63 @@ impl DisplayMap {
 
     pub fn fold<T: ToOffset>(
         &mut self,
-        ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
+        creases: impl IntoIterator<Item = Crease<T>>,
         cx: &mut ModelContext<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let buffer_snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
         let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.inlay_map.sync(buffer_snapshot.clone(), edits);
         let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = fold_map.fold(ranges);
+        let mut blocks = Vec::new();
+        let mut inline = Vec::new();
+        for crease in creases {
+            match crease {
+                Crease::Inline {
+                    range, placeholder, ..
+                } => inline.push((range, placeholder)),
+                Crease::Block {
+                    range,
+                    block_height,
+                    render_block,
+                    block_style,
+                    block_priority,
+                    ..
+                } => blocks.push((
+                    range,
+                    block_height,
+                    render_block,
+                    block_style,
+                    block_priority,
+                )),
+            }
+        }
+        let (snapshot, edits) = fold_map.fold(inline);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.insert(
+            blocks
+                .into_iter()
+                .map(|(range, height, render, style, priority)| {
+                    let start = buffer_snapshot.anchor_before(range.start);
+                    let end = buffer_snapshot.anchor_after(range.end);
+                    BlockProperties {
+                        placement: BlockPlacement::Replace(start..end),
+                        height,
+                        render,
+                        style,
+                        priority,
+                    }
+                }),
+        );
     }
 
     pub fn unfold<T: ToOffset>(
@@ -1074,6 +1112,21 @@ impl DisplaySnapshot {
                     render_trailer: render_trailer.clone(),
                     metadata: metadata.clone(),
                 }),
+                Crease::Block {
+                    range,
+                    block_height,
+                    block_style,
+                    render_block,
+                    block_priority,
+                    render_toggle,
+                } => Some(Crease::Block {
+                    range: range.to_point(&self.buffer_snapshot),
+                    block_height: *block_height,
+                    block_style: *block_style,
+                    render_block: render_block.clone(),
+                    block_priority: *block_priority,
+                    render_toggle: render_toggle.clone(),
+                }),
             }
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
@@ -1409,7 +1462,7 @@ pub mod tests {
                                         placement,
                                         style: BlockStyle::Fixed,
                                         height,
-                                        render: Box::new(|_| div().into_any()),
+                                        render: Arc::new(|_| div().into_any()),
                                         priority,
                                     }
                                 })
@@ -1448,7 +1501,7 @@ pub mod tests {
                             map.fold(
                                 ranges
                                     .into_iter()
-                                    .map(|range| (range, FoldPlaceholder::test())),
+                                    .map(|range| Crease::simple(range, FoldPlaceholder::test())),
                                 cx,
                             );
                         });
@@ -1823,7 +1876,7 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![(
+                vec![Crease::simple(
                     MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
                     FoldPlaceholder::test(),
                 )],
@@ -1913,7 +1966,7 @@ pub mod tests {
                     ),
                     height: 1,
                     style: BlockStyle::Sticky,
-                    render: Box::new(|_| div().into_any()),
+                    render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
                 cx,
@@ -2019,7 +2072,7 @@ pub mod tests {
                     ),
                     height: 1,
                     style: BlockStyle::Sticky,
-                    render: Box::new(|_| div().into_any()),
+                    render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
                 cx,
@@ -2095,7 +2148,7 @@ pub mod tests {
                     ),
                     height: 4,
                     style: BlockStyle::Fixed,
-                    render: Box::new(|_| div().into_any()),
+                    render: Arc::new(|_| div().into_any()),
                     priority: 0,
                 }],
                 cx,
@@ -2244,7 +2297,7 @@ pub mod tests {
 
         map.update(cx, |map, cx| {
             map.fold(
-                vec![(
+                vec![Crease::simple(
                     MultiBufferPoint::new(0, 6)..MultiBufferPoint::new(3, 2),
                     FoldPlaceholder::test(),
                 )],

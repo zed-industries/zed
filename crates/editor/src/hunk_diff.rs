@@ -425,7 +425,7 @@ impl Editor {
             height: 1,
             style: BlockStyle::Sticky,
             priority: 0,
-            render: Box::new({
+            render: Arc::new({
                 let editor = cx.view().clone();
                 let hunk = hunk.clone();
 
@@ -707,7 +707,7 @@ impl Editor {
             height,
             style: BlockStyle::Flex,
             priority: 0,
-            render: Box::new(move |cx| {
+            render: Arc::new(move |cx| {
                 let width = EditorElement::diff_hunk_strip_width(cx.line_height());
                 let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
 

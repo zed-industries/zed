@@ -10358,7 +10358,7 @@ impl Editor {
                             style: BlockStyle::Flex,
                             placement: BlockPlacement::Below(range.start),
                             height: 1,
-                            render: Box::new({
+                            render: Arc::new({
                                 let rename_editor = rename_editor.clone();
                                 move |cx: &mut BlockContext| {
                                     let mut text_style = cx.editor_style.text.clone();
@@ -10965,7 +10965,7 @@ impl Editor {
                 .iter()
                 .any(|selection| crease.range().overlaps(&selection.range()));
 
-            self.fold_creases([crease], autoscroll, cx);
+            self.fold_creases(vec![crease], autoscroll, cx);
         }
     }
 
@@ -11038,44 +11038,45 @@ impl Editor {
         let selections = self.selections.all::<Point>(cx);
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let line_mode = self.selections.line_mode;
-        let ranges = selections.into_iter().map(|s| {
-            if line_mode {
-                let start = Point::new(s.start.row, 0);
-                let end = Point::new(
-                    s.end.row,
-                    display_map
-                        .buffer_snapshot
-                        .line_len(MultiBufferRow(s.end.row)),
-                );
-                Crease::simple(start..end, display_map.fold_placeholder.clone())
-            } else {
-                Crease::simple(s.start..s.end, display_map.fold_placeholder.clone())
-            }
-        });
+        let ranges = selections
+            .into_iter()
+            .map(|s| {
+                if line_mode {
+                    let start = Point::new(s.start.row, 0);
+                    let end = Point::new(
+                        s.end.row,
+                        display_map
+                            .buffer_snapshot
+                            .line_len(MultiBufferRow(s.end.row)),
+                    );
+                    Crease::simple(start..end, display_map.fold_placeholder.clone())
+                } else {
+                    Crease::simple(s.start..s.end, display_map.fold_placeholder.clone())
+                }
+            })
+            .collect::<Vec<_>>();
         self.fold_creases(ranges, true, cx);
     }
 
     pub fn fold_creases<T: ToOffset + Clone>(
         &mut self,
-        creases: impl IntoIterator<Item = Crease<T>>,
+        creases: Vec<Crease<T>>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
-        let mut fold_ranges = Vec::new();
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
-        for crease in creases {
+        for crease in &creases {
             if let Some((_, buffer, _)) =
                 multi_buffer.excerpt_containing(crease.range().start.clone(), cx)
             {
                 buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
             };
-            fold_ranges.push((crease.range().clone(), crease.placeholder().clone()));
         }
 
-        let mut ranges = fold_ranges.into_iter().peekable();
-        if ranges.peek().is_some() {
-            self.display_map.update(cx, |map, cx| map.fold(ranges, cx));
+        let mut creases = creases.into_iter().peekable();
+        if creases.peek().is_some() {
+            self.display_map.update(cx, |map, cx| map.fold(creases, cx));
 
             if auto_scroll {
                 self.request_autoscroll(Autoscroll::fit(), cx);
@@ -13712,9 +13713,9 @@ impl EditorSnapshot {
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
+            is_foldable = true;
             match crease {
-                Crease::Inline { render_toggle, .. } => {
-                    is_foldable = true;
+                Crease::Inline { render_toggle, .. } | Crease::Block { render_toggle, .. } => {
                     if let Some(render_toggle) = render_toggle {
                         let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
                             if folded {
@@ -13759,11 +13760,15 @@ impl EditorSnapshot {
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
-        let Crease::Inline { render_trailer, .. } = self
+        if let Crease::Inline { render_trailer, .. } = self
             .crease_snapshot
-            .query_row(buffer_row, &self.buffer_snapshot)?;
-        let render_trailer = render_trailer.as_ref()?;
-        Some(render_trailer(buffer_row, folded, cx))
+            .query_row(buffer_row, &self.buffer_snapshot)?
+        {
+            let render_trailer = render_trailer.as_ref()?;
+            Some(render_trailer(buffer_row, folded, cx))
+        } else {
+            None
+        }
     }
 }
 
@@ -14268,7 +14273,7 @@ pub fn diagnostic_block_renderer(
     let (text_without_backticks, code_ranges) =
         highlight_diagnostic_message(&diagnostic, max_message_rows);
 
-    Box::new(move |cx: &mut BlockContext| {
+    Arc::new(move |cx: &mut BlockContext| {
         let group_id: SharedString = cx.block_id.to_string().into();
 
         let mut text_style = cx.text_style().clone();

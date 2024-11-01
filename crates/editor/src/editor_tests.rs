@@ -593,7 +593,7 @@ fn test_clone(cx: &mut TestAppContext) {
     _ = editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
         editor.fold_creases(
-            [
+            vec![
                 Crease::simple(Point::new(1, 0)..Point::new(2, 0), FoldPlaceholder::test()),
                 Crease::simple(Point::new(3, 0)..Point::new(4, 0), FoldPlaceholder::test()),
             ],
@@ -3976,7 +3976,7 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(snapshot.anchor_after(Point::new(2, 0))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             }],
             Some(Autoscroll::fit()),
@@ -4018,7 +4018,7 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
                 placement,
                 height: 4,
                 style: BlockStyle::Sticky,
-                render: Box::new(|_| gpui::div().into_any_element()),
+                render: Arc::new(|_| gpui::div().into_any_element()),
                 priority: 0,
             }],
             None,

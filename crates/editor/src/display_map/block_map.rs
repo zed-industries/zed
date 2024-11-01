@@ -77,7 +77,7 @@ pub struct BlockRow(pub(super) u32);
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq)]
 struct WrapRow(u32);
 
-pub type RenderBlock = Box<dyn Send + FnMut(&mut BlockContext) -> AnyElement>;
+pub type RenderBlock = Arc<dyn Send + Sync + Fn(&mut BlockContext) -> AnyElement>;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BlockPlacement<T> {
@@ -1709,21 +1709,21 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: 2,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: 3,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -1960,21 +1960,21 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 0))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 2))),
                 height: 2,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(3, 3))),
                 height: 3,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -2062,14 +2062,14 @@ mod tests {
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 12))),
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 height: 1,
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 1))),
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 height: 1,
                 priority: 0,
             },
@@ -2109,7 +2109,7 @@ mod tests {
                     ..buffer_snapshot.anchor_before(Point::new(3, 1)),
             ),
             height: 4,
-            render: Box::new(|_| div().into_any()),
+            render: Arc::new(|_| div().into_any()),
             priority: 0,
         }]);
 
@@ -2162,14 +2162,14 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(1, 3))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(6, 2))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -2183,21 +2183,21 @@ mod tests {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Below(buffer_snapshot.anchor_after(Point::new(1, 3))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(2, 1))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Fixed,
                 placement: BlockPlacement::Above(buffer_snapshot.anchor_after(Point::new(6, 1))),
                 height: 1,
-                render: Box::new(|_| div().into_any()),
+                render: Arc::new(|_| div().into_any()),
                 priority: 0,
             },
         ]);
@@ -2302,7 +2302,7 @@ mod tests {
                                 style: BlockStyle::Fixed,
                                 placement,
                                 height,
-                                render: Box::new(|_| div().into_any()),
+                                render: Arc::new(|_| div().into_any()),
                                 priority: 0,
                             }
                         })
@@ -2321,7 +2321,7 @@ mod tests {
                         placement: props.placement.clone(),
                         height: props.height,
                         style: props.style,
-                        render: Box::new(|_| div().into_any()),
+                        render: Arc::new(|_| div().into_any()),
                         priority: 0,
                     }));
                 }

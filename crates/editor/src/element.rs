@@ -6598,7 +6598,7 @@ mod tests {
                         style: BlockStyle::Fixed,
                         placement: BlockPlacement::Above(Anchor::min()),
                         height: 3,
-                        render: Box::new(|cx| div().h(3. * cx.line_height()).into_any()),
+                        render: Arc::new(|cx| div().h(3. * cx.line_height()).into_any()),
                         priority: 0,
                     }],
                     None,

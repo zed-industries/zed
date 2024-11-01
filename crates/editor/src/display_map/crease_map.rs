@@ -7,7 +7,7 @@ use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
 use ui::{IconName, SharedString, WindowContext};
 
-use crate::FoldPlaceholder;
+use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 
 #[derive(Copy, Clone, Default, Debug, Eq, PartialEq, PartialOrd, Ord, Hash)]
 pub struct CreaseId(usize);
@@ -133,6 +133,14 @@ pub enum Crease<T> {
         render_trailer: Option<RenderTrailerFn>,
         metadata: Option<CreaseMetadata>,
     },
+    Block {
+        range: Range<T>,
+        block_height: u32,
+        block_style: BlockStyle,
+        render_block: RenderBlock,
+        block_priority: usize,
+        render_toggle: Option<RenderToggleFn>,
+    },
 }
 
 /// Metadata about a [`Crease`], that is used for serialization.
@@ -206,18 +214,14 @@ impl<T> Crease<T> {
                 render_trailer,
                 metadata: Some(metadata),
             },
+            Crease::Block { .. } => self,
         }
     }
 
     pub fn range(&self) -> &Range<T> {
         match self {
             Crease::Inline { range, .. } => range,
-        }
-    }
-
-    pub fn placeholder(&self) -> &FoldPlaceholder {
-        match self {
-            Crease::Inline { placeholder, .. } => placeholder,
+            Crease::Block { range, .. } => range,
         }
     }
 }
@@ -234,6 +238,15 @@ where
                 .debug_struct("Crease::Inline")
                 .field("range", range)
                 .field("metadata", metadata)
+                .finish_non_exhaustive(),
+            Crease::Block {
+                range,
+                block_height,
+                ..
+            } => f
+                .debug_struct("Crease::Block")
+                .field("range", range)
+                .field("height", block_height)
                 .finish_non_exhaustive(),
         }
     }

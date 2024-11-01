@@ -2196,7 +2196,7 @@ impl ContextEditor {
                 let patch_end = multibuffer
                     .anchor_in_excerpt(excerpt_id, patch.range.end)
                     .unwrap();
-                let render_block: RenderBlock = Box::new({
+                let render_block: RenderBlock = Arc::new({
                     let this = this.clone();
                     let patch_range = range.clone();
                     move |cx: &mut BlockContext<'_, '_>| {
@@ -2292,7 +2292,7 @@ impl ContextEditor {
                 if should_refold {
                     editor.unfold_ranges([patch_start..patch_end], true, false, cx);
                     editor.fold_creases(
-                        [Crease::simple(patch_start..patch_end, header_placeholder)],
+                        vec![Crease::simple(patch_start..patch_end, header_placeholder)],
                         false,
                         cx,
                     );
@@ -2598,7 +2598,7 @@ impl ContextEditor {
             let mut blocks_to_replace: HashMap<_, RenderBlock> = Default::default();
 
             let render_block = |message: MessageMetadata| -> RenderBlock {
-                Box::new({
+                Arc::new({
                     let context = self.context.clone();
                     move |cx| {
                         let message_id = MessageId(message.timestamp);
@@ -3197,28 +3197,29 @@ impl ContextEditor {
                             &snapshot,
                         )
                         .filter_map(|crease| {
-                            let Crease::Inline {
+                            if let Crease::Inline {
                                 range, metadata, ..
-                            } = &crease;
-                            let metadata = metadata.as_ref()?;
-                            let start = range
-                                .start
-                                .to_offset(&snapshot)
-                                .saturating_sub(selection_start);
-                            let end = range
-                                .end
-                                .to_offset(&snapshot)
-                                .saturating_sub(selection_start);
+                            } = &crease
+                            {
+                                let metadata = metadata.as_ref()?;
+                                let start = range
+                                    .start
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
+                                let end = range
+                                    .end
+                                    .to_offset(&snapshot)
+                                    .saturating_sub(selection_start);
 
-                            let range_relative_to_selection = start..end;
-                            if range_relative_to_selection.is_empty() {
-                                None
-                            } else {
-                                Some(SelectedCreaseMetadata {
-                                    range_relative_to_selection,
-                                    crease: metadata.clone(),
-                                })
+                                let range_relative_to_selection = start..end;
+                                if !range_relative_to_selection.is_empty() {
+                                    return Some(SelectedCreaseMetadata {
+                                        range_relative_to_selection,
+                                        crease: metadata.clone(),
+                                    });
+                                }
                             }
+                            None
                         })
                         .collect::<Vec<_>>()
                 }),
@@ -3393,7 +3394,7 @@ impl ContextEditor {
                         placement: BlockPlacement::Above(anchor),
                         height: MAX_HEIGHT_IN_LINES,
                         style: BlockStyle::Sticky,
-                        render: Box::new(move |cx| {
+                        render: Arc::new(move |cx| {
                             let image_size = size_for_image(
                                 &image,
                                 size(
@@ -5059,7 +5060,7 @@ fn make_lsp_adapter_delegate(
 }
 
 fn slash_command_error_block_renderer(message: String) -> RenderBlock {
-    Box::new(move |_| {
+    Arc::new(move |_| {
         div()
             .pl_6()
             .child(

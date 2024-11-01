@@ -36,6 +36,7 @@ use std::{
     cmp::Ordering,
     mem,
     ops::Range,
+    sync::Arc,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -793,7 +794,7 @@ const DIAGNOSTIC_HEADER: &str = "diagnostic header";
 fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);
     let message: SharedString = message;
-    Box::new(move |cx| {
+    Arc::new(move |cx| {
         let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
         h_flex()
             .id(DIAGNOSTIC_HEADER)
