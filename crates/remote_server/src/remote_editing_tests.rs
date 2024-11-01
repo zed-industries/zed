@@ -2,7 +2,7 @@ use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
 use fs::{FakeFs, Fs};
-use gpui::{Context, Model, TestAppContext};
+use gpui::{Context, Model, SemanticVersion, TestAppContext};
 use http_client::{BlockedHttpClient, FakeHttpClient};
 use language::{
     language_settings::{language_settings, AllLanguageSettings},
@@ -1184,6 +1184,9 @@ pub async fn init_test(
     server_cx: &mut TestAppContext,
 ) -> (Model<Project>, Model<HeadlessProject>) {
     let server_fs = server_fs.clone();
+    cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
     init_logger();
 
     let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
