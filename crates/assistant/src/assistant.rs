@@ -41,24 +41,24 @@ use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
-use slash_command::workflow_command::WorkflowSlashCommand;
 use slash_command::{
     auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
     diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
     prompt_command, search_command, symbols_command, tab_command, terminal_command,
-    workflow_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
 
+use crate::slash_command::streaming_example_command;
 use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
     assistant,
     [
         Assist,
+        Edit,
         Split,
         CopyCode,
         CycleMessageRole,
@@ -444,22 +444,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
     if let Some(prompt_builder) = prompt_builder {
-        cx.observe_global::<SettingsStore>({
-            let slash_command_registry = slash_command_registry.clone();
-            let prompt_builder = prompt_builder.clone();
-            move |cx| {
-                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
-                    slash_command_registry.register_command(
-                        workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
-                        true,
-                    );
-                } else {
-                    slash_command_registry.unregister_command_by_name(WorkflowSlashCommand::NAME);
-                }
-            }
-        })
-        .detach();
-
         cx.observe_flag::<project_command::ProjectSlashCommandFeatureFlag, _>({
             let slash_command_registry = slash_command_registry.clone();
             move |is_enabled, _cx| {
@@ -480,6 +464,19 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
             if is_enabled {
                 // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
                 slash_command_registry.register_command(auto_command::AutoCommand, true);
+            }
+        }
+    })
+    .detach();
+
+    cx.observe_flag::<streaming_example_command::StreamingExampleSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                slash_command_registry.register_command(
+                    streaming_example_command::StreamingExampleSlashCommand,
+                    false,
+                );
             }
         }
     })

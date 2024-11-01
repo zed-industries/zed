@@ -138,7 +138,6 @@ members = [
     "extensions/astro",
     "extensions/clojure",
     "extensions/csharp",
-    "extensions/dart",
     "extensions/deno",
     "extensions/elixir",
     "extensions/elm",
@@ -371,6 +370,7 @@ linkify = "0.10.0"
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
+nbformat = "0.3.2"
 nix = "0.29"
 num-format = "0.4.4"
 once_cell = "1.19.0"
@@ -391,6 +391,7 @@ prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
 rand = "0.8.5"
+rayon = "1.8"
 regex = "1.5"
 repair_json = "0.1.0"
 reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f6998da16bbca97b6dddda9be7827c50e29", default-features = false, features = [
@@ -402,7 +403,7 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.15", default-features = false, features = [
+runtimelib = { version = "0.16.1", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"

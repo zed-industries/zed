@@ -217,6 +217,7 @@ pub(crate) type KeystrokeObserver =
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
+type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
@@ -237,6 +238,7 @@ pub struct AppContext {
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
+    pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
@@ -296,6 +298,7 @@ impl AppContext {
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
+                new_model_observers: SubscriberSet::new(),
                 window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
@@ -1016,6 +1019,7 @@ impl AppContext {
         activate();
         subscription
     }
+
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
@@ -1030,6 +1034,31 @@ impl AppContext {
                     .unwrap()
                     .update(cx, |view_state, cx| {
                         on_new(view_state, cx);
+                    })
+            }),
+        )
+    }
+
+    pub(crate) fn new_model_observer(&self, key: TypeId, value: NewModelListener) -> Subscription {
+        let (subscription, activate) = self.new_model_observers.insert(key, value);
+        activate();
+        subscription
+    }
+
+    /// Arrange for the given function to be invoked whenever a view of the specified type is created.
+    /// The function will be passed a mutable reference to the view along with an appropriate context.
+    pub fn observe_new_models<T: 'static>(
+        &self,
+        on_new: impl 'static + Fn(&mut T, &mut ModelContext<T>),
+    ) -> Subscription {
+        self.new_model_observer(
+            TypeId::of::<T>(),
+            Box::new(move |any_model: AnyModel, cx: &mut AppContext| {
+                any_model
+                    .downcast::<T>()
+                    .unwrap()
+                    .update(cx, |model_state, cx| {
+                        on_new(model_state, cx);
                     })
             }),
         )
@@ -1346,8 +1375,21 @@ impl Context for AppContext {
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
+            let model = slot.clone();
             let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
-            cx.entities.insert(slot, entity)
+            cx.entities.insert(slot, entity);
+
+            // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
+            fn notify_observers(cx: &mut AppContext, tid: TypeId, model: AnyModel) {
+                cx.new_model_observers.clone().retain(&tid, |observer| {
+                    let any_model = model.clone();
+                    (observer)(any_model, cx);
+                    true
+                });
+            }
+            notify_observers(cx, TypeId::of::<T>(), AnyModel::from(model.clone()));
+
+            model
         })
     }
 

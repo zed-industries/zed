@@ -827,7 +827,7 @@ impl Project {
             ssh_proto.add_model_message_handler(Self::handle_toast);
             ssh_proto.add_model_request_handler(Self::handle_language_server_prompt_request);
             ssh_proto.add_model_message_handler(Self::handle_hide_toast);
-            ssh_proto.add_model_request_handler(BufferStore::handle_update_buffer);
+            ssh_proto.add_model_request_handler(Self::handle_update_buffer_from_ssh);
             BufferStore::init(&ssh_proto);
             LspStore::init(&ssh_proto);
             SettingsObserver::init(&ssh_proto);
@@ -2414,6 +2414,11 @@ impl Project {
         self.lsp_store.read(cx).last_formatting_failure()
     }
 
+    pub fn reset_last_formatting_failure(&self, cx: &mut AppContext) {
+        self.lsp_store
+            .update(cx, |store, _| store.reset_last_formatting_failure());
+    }
+
     pub fn update_diagnostics(
         &mut self,
         language_server_id: LanguageServerId,
@@ -3420,7 +3425,7 @@ impl Project {
         buffer: &Model<Buffer>,
         version: Option<clock::Global>,
         cx: &AppContext,
-    ) -> Task<Result<Blame>> {
+    ) -> Task<Result<Option<Blame>>> {
         self.buffer_store.read(cx).blame_buffer(buffer, version, cx)
     }
 
@@ -3651,6 +3656,24 @@ impl Project {
             }
             Ok(())
         })?
+    }
+
+    async fn handle_update_buffer_from_ssh(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateBuffer>,
+        cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        let buffer_store = this.read_with(&cx, |this, cx| {
+            if let Some(remote_id) = this.remote_id() {
+                let mut payload = envelope.payload.clone();
+                payload.project_id = remote_id;
+                cx.background_executor()
+                    .spawn(this.client.request(payload))
+                    .detach_and_log_err(cx);
+            }
+            this.buffer_store.clone()
+        })?;
+        BufferStore::handle_update_buffer(buffer_store, envelope, cx).await
     }
 
     async fn handle_update_buffer(
@@ -4254,17 +4277,6 @@ impl Completion {
         }
     }
 }
-
-#[derive(Debug)]
-pub struct NoRepositoryError {}
-
-impl std::fmt::Display for NoRepositoryError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "no git repository for worktree found")
-    }
-}
-
-impl std::error::Error for NoRepositoryError {}
 
 pub fn sort_worktree_entries(entries: &mut [Entry]) {
     entries.sort_by(|entry_a, entry_b| {

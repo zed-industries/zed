@@ -68,7 +68,6 @@ actions!(
         Hide,
         HideOthers,
         Minimize,
-        OpenDefaultKeymap,
         OpenDefaultSettings,
         OpenProjectSettings,
         OpenProjectTasks,
@@ -474,7 +473,7 @@ pub fn initialize_workspace(
             .register_action(open_project_tasks_file)
             .register_action(
                 move |workspace: &mut Workspace,
-                      _: &OpenDefaultKeymap,
+                      _: &zed_actions::OpenDefaultKeymap,
                       cx: &mut ViewContext<Workspace>| {
                     open_bundled_file(
                         workspace,
@@ -3505,6 +3504,7 @@ mod tests {
                 app_state.client.telemetry().clone(),
                 cx,
             );
+            repl::notebook::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);

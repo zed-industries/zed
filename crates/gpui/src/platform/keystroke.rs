@@ -121,6 +121,32 @@ impl Keystroke {
         })
     }
 
+    /// Produces a representation of this key that Parse can understand.
+    pub fn unparse(&self) -> String {
+        let mut str = String::new();
+        if self.modifiers.control {
+            str.push_str("ctrl-");
+        }
+        if self.modifiers.alt {
+            str.push_str("alt-");
+        }
+        if self.modifiers.platform {
+            #[cfg(target_os = "macos")]
+            str.push_str("cmd-");
+
+            #[cfg(target_os = "linux")]
+            str.push_str("super-");
+
+            #[cfg(target_os = "windows")]
+            str.push_str("win-");
+        }
+        if self.modifiers.shift {
+            str.push_str("shift-");
+        }
+        str.push_str(&self.key);
+        str
+    }
+
     /// Returns true if this keystroke left
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {

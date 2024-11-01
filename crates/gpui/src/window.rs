@@ -3324,17 +3324,18 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
-        self.pending_input_changed();
         self.propagate_event = true;
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref());
             if !self.propagate_event {
                 self.dispatch_keystroke_observers(event, Some(binding.action));
+                self.pending_input_changed();
                 return;
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path)
+        self.finish_dispatch_key_event(event, dispatch_path);
+        self.pending_input_changed();
     }
 
     fn finish_dispatch_key_event(
@@ -3664,6 +3665,22 @@ impl<'a> WindowContext<'a> {
         receiver
     }
 
+    /// Returns the current context stack.
+    pub fn context_stack(&self) -> Vec<KeyContext> {
+        let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
+        let node_id = self
+            .window
+            .focus
+            .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
+            .unwrap_or_else(|| dispatch_tree.root_node_id());
+
+        dispatch_tree
+            .dispatch_path(node_id)
+            .iter()
+            .filter_map(move |&node_id| dispatch_tree.node(node_id).context.clone())
+            .collect()
+    }
+
     /// Returns all available actions for the focused element.
     pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
         let node_id = self
@@ -3702,6 +3719,11 @@ impl<'a> WindowContext<'a> {
                 action,
                 &self.window.rendered_frame.dispatch_tree.context_stack,
             )
+    }
+
+    /// Returns key bindings that invoke the given action on the currently focused element.
+    pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        RefCell::borrow(&self.keymap).all_bindings_for_input(input)
     }
 
     /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.

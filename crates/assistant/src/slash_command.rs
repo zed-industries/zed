@@ -31,10 +31,10 @@ pub mod now_command;
 pub mod project_command;
 pub mod prompt_command;
 pub mod search_command;
+pub mod streaming_example_command;
 pub mod symbols_command;
 pub mod tab_command;
 pub mod terminal_command;
-pub mod workflow_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,

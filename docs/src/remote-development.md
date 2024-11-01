@@ -16,14 +16,14 @@ On your local machine, Zed runs its UI, talks to language models, uses Tree-sitt
 
 ## Setup
 
-1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You need at least Zed v0.159.
+1. Download and install the latest [Zed](https://zed.dev/releases). You need at least Zed v0.159.
 1. Open the remote projects dialogue with <kbd>cmd-shift-p remote</kbd> or <kbd>cmd-control-o</kbd>.
 1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, Zed will download the server on the remote host and start it.
 1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
-For simple cases where you don't need any SSH arguments, you can run `zed ssh://[<user>@]<host>[:<port>]/<path>` to open a remote folder/file directly.
+For simple cases where you don't need any SSH arguments, you can run `zed ssh://[<user>@]<host>[:<port>]/<path>` to open a remote folder/file directly. If you'd like to hotlink into an SSH project, use a link of the format: `zed://ssh/[<user>@]<host>[:<port>]/<path>`.
 
 ## Supported platforms
 

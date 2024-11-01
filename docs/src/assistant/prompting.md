@@ -137,7 +137,7 @@ Zed has the following internal prompt templates:
 
 - `content_prompt.hbs`: Used for generating content in the editor.
 - `terminal_assistant_prompt.hbs`: Used for the terminal assistant feature.
-- `edit_workflow.hbs`: Used for generating the edit workflow prompt.
+- `suggest_edits.hbs`: Used for generating the model instructions for the XML Suggest Edits should return.
 - `step_resolution.hbs`: Used for generating the step resolution prompt.
 
 At this point it is unknown if we will expand templates further to be user-creatable.
@@ -215,7 +215,7 @@ The following templates can be overridden:
    given system information and latest terminal output if relevant.
    ```
 
-3. `edit_workflow.hbs`: Used for generating the edit workflow prompt.
+3. `suggest_edits.hbs`: Used for generating the model instructions for the XML Suggest Edits should return.
 
 4. `step_resolution.hbs`: Used for generating the step resolution prompt.
 

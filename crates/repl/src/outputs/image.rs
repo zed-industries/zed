@@ -16,7 +16,7 @@ pub struct ImageView {
 
 impl ImageView {
     pub fn from(base64_encoded_data: &str) -> Result<Self> {
-        let bytes = BASE64_STANDARD.decode(base64_encoded_data)?;
+        let bytes = BASE64_STANDARD.decode(base64_encoded_data.trim())?;
 
         let format = image::guess_format(&bytes)?;
         let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();

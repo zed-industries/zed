@@ -449,7 +449,8 @@ impl EditorElement {
         register_action(view, cx, Editor::apply_all_diff_hunks);
         register_action(view, cx, Editor::apply_selected_diff_hunks);
         register_action(view, cx, Editor::open_active_item_in_terminal);
-        register_action(view, cx, Editor::reload_file)
+        register_action(view, cx, Editor::reload_file);
+        register_action(view, cx, Editor::spawn_nearest_task);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {
@@ -824,129 +825,131 @@ impl EditorElement {
         let mut selections: Vec<(PlayerColor, Vec<SelectionLayout>)> = Vec::new();
         let mut active_rows = BTreeMap::new();
         let mut newest_selection_head = None;
-        let editor = self.editor.read(cx);
+        self.editor.update(cx, |editor, cx| {
+            if editor.show_local_selections {
+                let mut local_selections: Vec<Selection<Point>> = editor
+                    .selections
+                    .disjoint_in_range(start_anchor..end_anchor, cx);
+                local_selections.extend(editor.selections.pending(cx));
+                let mut layouts = Vec::new();
+                let newest = editor.selections.newest(cx);
+                for selection in local_selections.drain(..) {
+                    let is_empty = selection.start == selection.end;
+                    let is_newest = selection == newest;
 
-        if editor.show_local_selections {
-            let mut local_selections: Vec<Selection<Point>> = editor
-                .selections
-                .disjoint_in_range(start_anchor..end_anchor, cx);
-            local_selections.extend(editor.selections.pending(cx));
-            let mut layouts = Vec::new();
-            let newest = editor.selections.newest(cx);
-            for selection in local_selections.drain(..) {
-                let is_empty = selection.start == selection.end;
-                let is_newest = selection == newest;
+                    let layout = SelectionLayout::new(
+                        selection,
+                        editor.selections.line_mode,
+                        editor.cursor_shape,
+                        &snapshot.display_snapshot,
+                        is_newest,
+                        editor.leader_peer_id.is_none(),
+                        None,
+                    );
+                    if is_newest {
+                        newest_selection_head = Some(layout.head);
+                    }
 
-                let layout = SelectionLayout::new(
-                    selection,
-                    editor.selections.line_mode,
-                    editor.cursor_shape,
-                    &snapshot.display_snapshot,
-                    is_newest,
-                    editor.leader_peer_id.is_none(),
-                    None,
-                );
-                if is_newest {
-                    newest_selection_head = Some(layout.head);
+                    for row in cmp::max(layout.active_rows.start.0, start_row.0)
+                        ..=cmp::min(layout.active_rows.end.0, end_row.0)
+                    {
+                        let contains_non_empty_selection =
+                            active_rows.entry(DisplayRow(row)).or_insert(!is_empty);
+                        *contains_non_empty_selection |= !is_empty;
+                    }
+                    layouts.push(layout);
                 }
 
-                for row in cmp::max(layout.active_rows.start.0, start_row.0)
-                    ..=cmp::min(layout.active_rows.end.0, end_row.0)
-                {
-                    let contains_non_empty_selection =
-                        active_rows.entry(DisplayRow(row)).or_insert(!is_empty);
-                    *contains_non_empty_selection |= !is_empty;
-                }
-                layouts.push(layout);
+                let player = if editor.read_only(cx) {
+                    cx.theme().players().read_only()
+                } else {
+                    self.style.local_player
+                };
+
+                selections.push((player, layouts));
             }
 
-            let player = if editor.read_only(cx) {
-                cx.theme().players().read_only()
-            } else {
-                self.style.local_player
-            };
-
-            selections.push((player, layouts));
-        }
-
-        if let Some(collaboration_hub) = &editor.collaboration_hub {
-            // When following someone, render the local selections in their color.
-            if let Some(leader_id) = editor.leader_peer_id {
-                if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id) {
-                    if let Some(participant_index) = collaboration_hub
-                        .user_participant_indices(cx)
-                        .get(&collaborator.user_id)
+            if let Some(collaboration_hub) = &editor.collaboration_hub {
+                // When following someone, render the local selections in their color.
+                if let Some(leader_id) = editor.leader_peer_id {
+                    if let Some(collaborator) = collaboration_hub.collaborators(cx).get(&leader_id)
                     {
-                        if let Some((local_selection_style, _)) = selections.first_mut() {
-                            *local_selection_style = cx
-                                .theme()
-                                .players()
-                                .color_for_participant(participant_index.0);
+                        if let Some(participant_index) = collaboration_hub
+                            .user_participant_indices(cx)
+                            .get(&collaborator.user_id)
+                        {
+                            if let Some((local_selection_style, _)) = selections.first_mut() {
+                                *local_selection_style = cx
+                                    .theme()
+                                    .players()
+                                    .color_for_participant(participant_index.0);
+                            }
                         }
                     }
                 }
-            }
 
-            let mut remote_selections = HashMap::default();
-            for selection in snapshot.remote_selections_in_range(
-                &(start_anchor..end_anchor),
-                collaboration_hub.as_ref(),
-                cx,
-            ) {
-                let selection_style = Self::get_participant_color(selection.participant_index, cx);
+                let mut remote_selections = HashMap::default();
+                for selection in snapshot.remote_selections_in_range(
+                    &(start_anchor..end_anchor),
+                    collaboration_hub.as_ref(),
+                    cx,
+                ) {
+                    let selection_style =
+                        Self::get_participant_color(selection.participant_index, cx);
 
-                // Don't re-render the leader's selections, since the local selections
-                // match theirs.
-                if Some(selection.peer_id) == editor.leader_peer_id {
-                    continue;
+                    // Don't re-render the leader's selections, since the local selections
+                    // match theirs.
+                    if Some(selection.peer_id) == editor.leader_peer_id {
+                        continue;
+                    }
+                    let key = HoveredCursor {
+                        replica_id: selection.replica_id,
+                        selection_id: selection.selection.id,
+                    };
+
+                    let is_shown =
+                        editor.show_cursor_names || editor.hovered_cursors.contains_key(&key);
+
+                    remote_selections
+                        .entry(selection.replica_id)
+                        .or_insert((selection_style, Vec::new()))
+                        .1
+                        .push(SelectionLayout::new(
+                            selection.selection,
+                            selection.line_mode,
+                            selection.cursor_shape,
+                            &snapshot.display_snapshot,
+                            false,
+                            false,
+                            if is_shown { selection.user_name } else { None },
+                        ));
                 }
-                let key = HoveredCursor {
-                    replica_id: selection.replica_id,
-                    selection_id: selection.selection.id,
+
+                selections.extend(remote_selections.into_values());
+            } else if !editor.is_focused(cx) && editor.show_cursor_when_unfocused {
+                let player = if editor.read_only(cx) {
+                    cx.theme().players().read_only()
+                } else {
+                    self.style.local_player
                 };
-
-                let is_shown =
-                    editor.show_cursor_names || editor.hovered_cursors.contains_key(&key);
-
-                remote_selections
-                    .entry(selection.replica_id)
-                    .or_insert((selection_style, Vec::new()))
-                    .1
-                    .push(SelectionLayout::new(
-                        selection.selection,
-                        selection.line_mode,
-                        selection.cursor_shape,
-                        &snapshot.display_snapshot,
-                        false,
-                        false,
-                        if is_shown { selection.user_name } else { None },
-                    ));
+                let layouts = snapshot
+                    .buffer_snapshot
+                    .selections_in_range(&(start_anchor..end_anchor), true)
+                    .map(move |(_, line_mode, cursor_shape, selection)| {
+                        SelectionLayout::new(
+                            selection,
+                            line_mode,
+                            cursor_shape,
+                            &snapshot.display_snapshot,
+                            false,
+                            false,
+                            None,
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                selections.push((player, layouts));
             }
-
-            selections.extend(remote_selections.into_values());
-        } else if !editor.is_focused(cx) && editor.show_cursor_when_unfocused {
-            let player = if editor.read_only(cx) {
-                cx.theme().players().read_only()
-            } else {
-                self.style.local_player
-            };
-            let layouts = snapshot
-                .buffer_snapshot
-                .selections_in_range(&(start_anchor..end_anchor), true)
-                .map(move |(_, line_mode, cursor_shape, selection)| {
-                    SelectionLayout::new(
-                        selection,
-                        line_mode,
-                        cursor_shape,
-                        &snapshot.display_snapshot,
-                        false,
-                        false,
-                        None,
-                    )
-                })
-                .collect::<Vec<_>>();
-            selections.push((player, layouts));
-        }
+        });
         (selections, active_rows, newest_selection_head)
     }
 
@@ -1848,23 +1851,25 @@ impl EditorElement {
             return Vec::new();
         }
 
-        let editor = self.editor.read(cx);
-        let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
-            let newest = editor.selections.newest::<Point>(cx);
-            SelectionLayout::new(
-                newest,
-                editor.selections.line_mode,
-                editor.cursor_shape,
-                &snapshot.display_snapshot,
-                true,
-                true,
-                None,
-            )
-            .head
+        let (newest_selection_head, is_relative) = self.editor.update(cx, |editor, cx| {
+            let newest_selection_head = newest_selection_head.unwrap_or_else(|| {
+                let newest = editor.selections.newest::<Point>(cx);
+                SelectionLayout::new(
+                    newest,
+                    editor.selections.line_mode,
+                    editor.cursor_shape,
+                    &snapshot.display_snapshot,
+                    true,
+                    true,
+                    None,
+                )
+                .head
+            });
+            let is_relative = editor.should_use_relative_line_numbers(cx);
+            (newest_selection_head, is_relative)
         });
         let font_size = self.style.text.font_size.to_pixels(cx.rem_size());
 
-        let is_relative = editor.should_use_relative_line_numbers(cx);
         let relative_to = if is_relative {
             Some(newest_selection_head.row())
         } else {
