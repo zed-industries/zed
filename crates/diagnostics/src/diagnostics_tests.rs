@@ -986,6 +986,7 @@ fn editor_blocks(
                                     em_width: px(0.),
                                     max_width: px(0.),
                                     block_id,
+                                    selected: false,
                                     editor_style: &editor::EditorStyle::default(),
                                 });
                                 let element = element.downcast_mut::<Stateful<Div>>().unwrap();

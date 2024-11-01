@@ -5282,6 +5282,10 @@ impl LspStore {
         self.last_formatting_failure.as_deref()
     }
 
+    pub fn reset_last_formatting_failure(&mut self) {
+        self.last_formatting_failure = None;
+    }
+
     pub fn environment_for_buffer(
         &self,
         buffer: &Model<Buffer>,

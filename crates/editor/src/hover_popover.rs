@@ -1352,6 +1352,61 @@ mod tests {
     }
 
     #[gpui::test]
+    // https://github.com/zed-industries/zed/issues/15498
+    async fn test_info_hover_with_hrs(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn fuˇnc(abc def: i32) -> u32 {
+            }
+        "});
+
+        cx.lsp.handle_request::<lsp::request::HoverRequest, _, _>({
+            |_, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc!(
+                            r#"
+                    ### function `errands_data_read`
+
+                    ---
+                    → `char *`
+                    Function to read a file into a string
+
+                    ---
+                    ```cpp
+                    static char *errands_data_read()
+                    ```
+                    "#
+                        )
+                        .to_string(),
+                    }),
+                    range: None,
+                }))
+            }
+        });
+        cx.update_editor(|editor, cx| hover(editor, &Default::default(), cx));
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, cx| {
+            let popover = editor.hover_state.info_popovers.first().unwrap();
+            let content = popover.get_rendered_text(cx);
+
+            assert!(content.contains("Function to read a file"));
+        });
+    }
+
+    #[gpui::test]
     async fn test_hover_inlay_label_parts(cx: &mut gpui::TestAppContext) {
         init_test(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {

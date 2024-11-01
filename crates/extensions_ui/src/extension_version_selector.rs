@@ -2,7 +2,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use client::ExtensionMetadata;
-use extension::{ExtensionSettings, ExtensionStore};
+use extension_host::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -167,7 +167,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let candidate_id = self.matches[self.selected_index].candidate_id;
         let extension_version = &self.extension_versions[candidate_id];
 
-        if !extension::is_version_compatible(ReleaseChannel::global(cx), extension_version) {
+        if !extension_host::is_version_compatible(ReleaseChannel::global(cx), extension_version) {
             return;
         }
 
@@ -203,7 +203,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
         let extension_version = &self.extension_versions[version_match.candidate_id];
 
         let is_version_compatible =
-            extension::is_version_compatible(ReleaseChannel::global(cx), extension_version);
+            extension_host::is_version_compatible(ReleaseChannel::global(cx), extension_version);
         let disabled = !is_version_compatible;
 
         Some(

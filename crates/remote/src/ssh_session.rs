@@ -20,7 +20,9 @@ use gpui::{
     AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Global, Model,
     ModelContext, SemanticVersion, Task, WeakModel,
 };
+use itertools::Itertools;
 use parking_lot::Mutex;
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
     AnyProtoClient, EntityMessageSubscriber, ErrorExt, ProtoClient, ProtoMessageHandlerSet,
@@ -33,8 +35,7 @@ use smol::{
 use std::{
     any::TypeId,
     collections::VecDeque,
-    ffi::OsStr,
-    fmt,
+    fmt, iter,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
@@ -67,6 +68,18 @@ pub struct SshConnectionOptions {
 
     pub nickname: Option<String>,
     pub upload_binary_over_ssh: bool,
+}
+
+#[macro_export]
+macro_rules! shell_script {
+    ($fmt:expr, $($name:ident = $arg:expr),+ $(,)?) => {{
+        format!(
+            $fmt,
+            $(
+                $name = shlex::try_quote($arg).unwrap()
+            ),+
+        )
+    }};
 }
 
 impl SshConnectionOptions {
@@ -189,17 +202,6 @@ impl SshConnectionOptions {
             host
         }
     }
-
-    // Uniquely identifies dev server projects on a remote host. Needs to be
-    // stable for the same dev server project.
-    pub fn remote_server_identifier(&self) -> String {
-        let mut identifier = format!("dev-server-{:?}", self.host);
-        if let Some(username) = self.username.as_ref() {
-            identifier.push('-');
-            identifier.push_str(&username);
-        }
-        identifier
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -227,9 +229,18 @@ pub enum ServerBinary {
     ReleaseUrl { url: String, body: String },
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ServerVersion {
     Semantic(SemanticVersion),
     Commit(String),
+}
+impl ServerVersion {
+    pub fn semantic_version(&self) -> Option<SemanticVersion> {
+        match self {
+            Self::Semantic(version) => Some(*version),
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for ServerVersion {
@@ -252,22 +263,43 @@ pub trait SshClientDelegate: Send + Sync {
         platform: SshPlatform,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf>;
-    fn get_server_binary(
+    fn get_download_params(
         &self,
         platform: SshPlatform,
-        upload_binary_over_ssh: bool,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> oneshot::Receiver<Result<(ServerBinary, ServerVersion)>>;
+    ) -> Task<Result<(String, String)>>;
+
+    fn download_server_binary_locally(
+        &self,
+        platform: SshPlatform,
+        release_channel: ReleaseChannel,
+        version: Option<SemanticVersion>,
+        cx: &mut AsyncAppContext,
+    ) -> Task<Result<PathBuf>>;
     fn set_status(&self, status: Option<&str>, cx: &mut AsyncAppContext);
 }
 
 impl SshSocket {
-    fn ssh_command<S: AsRef<OsStr>>(&self, program: S) -> process::Command {
+    // :WARNING: ssh unquotes arguments when executing on the remote :WARNING:
+    // e.g. $ ssh host sh -c 'ls -l' is equivalent to $ ssh host sh -c ls -l
+    // and passes -l as an argument to sh, not to ls.
+    // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
+    fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
         let mut command = process::Command::new("ssh");
+        let to_run = iter::once(&program)
+            .chain(args.iter())
+            .map(|token| shlex::try_quote(token).unwrap())
+            .join(" ");
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
-            .arg(program);
+            .arg(to_run);
         command
+    }
+
+    fn shell_script(&self, script: impl AsRef<str>) -> process::Command {
+        return self.ssh_command("sh", &["-c", script.as_ref()]);
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
@@ -290,7 +322,7 @@ impl SshSocket {
     }
 }
 
-async fn run_cmd(command: &mut process::Command) -> Result<String> {
+async fn run_cmd(mut command: process::Command) -> Result<String> {
     let output = command.output().await?;
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
@@ -477,14 +509,43 @@ pub enum SshRemoteEvent {
 
 impl EventEmitter<SshRemoteEvent> for SshRemoteClient {}
 
+// Identifies the socket on the remote server so that reconnects
+// can re-join the same project.
+pub enum ConnectionIdentifier {
+    Setup,
+    Workspace(i64),
+}
+
+impl ConnectionIdentifier {
+    // This string gets used in a socket name, and so must be relatively short.
+    // The total length of:
+    //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
+    // Must be less than about 100 characters
+    //   https://unix.stackexchange.com/questions/367008/why-is-socket-path-length-limited-to-a-hundred-chars
+    // So our strings should be at most 20 characters or so.
+    fn to_string(&self, cx: &AppContext) -> String {
+        let identifier_prefix = match ReleaseChannel::global(cx) {
+            ReleaseChannel::Stable => "".to_string(),
+            release_channel => format!("{}-", release_channel.dev_name()),
+        };
+        match self {
+            Self::Setup => format!("{identifier_prefix}setup"),
+            Self::Workspace(workspace_id) => {
+                format!("{identifier_prefix}workspace-{workspace_id}",)
+            }
+        }
+    }
+}
+
 impl SshRemoteClient {
     pub fn new(
-        unique_identifier: String,
+        unique_identifier: ConnectionIdentifier,
         connection_options: SshConnectionOptions,
         cancellation: oneshot::Receiver<()>,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AppContext,
     ) -> Task<Result<Option<Model<Self>>>> {
+        let unique_identifier = unique_identifier.to_string(cx);
         cx.spawn(|mut cx| async move {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -1053,7 +1114,15 @@ impl SshRemoteClient {
     ) -> Model<Self> {
         let (_tx, rx) = oneshot::channel();
         client_cx
-            .update(|cx| Self::new("fake".to_string(), opts, rx, Arc::new(fake::Delegate), cx))
+            .update(|cx| {
+                Self::new(
+                    ConnectionIdentifier::Setup,
+                    opts,
+                    rx,
+                    Arc::new(fake::Delegate),
+                    cx,
+                )
+            })
             .await
             .unwrap()
             .unwrap()
@@ -1217,7 +1286,7 @@ impl RemoteConnection for SshRemoteConnection {
         }
 
         let socket = self.socket.clone();
-        run_cmd(socket.ssh_command(&remote_binary_path).arg("version")).await?;
+        run_cmd(socket.ssh_command(&remote_binary_path.to_string_lossy(), &["version"])).await?;
         Ok(remote_binary_path)
     }
 
@@ -1234,22 +1303,33 @@ impl RemoteConnection for SshRemoteConnection {
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Starting proxy"), cx);
 
-        let mut start_proxy_command = format!(
-            "RUST_LOG={} {} {:?} proxy --identifier {}",
-            std::env::var("RUST_LOG").unwrap_or_default(),
-            std::env::var("RUST_BACKTRACE")
-                .map(|b| { format!("RUST_BACKTRACE={}", b) })
-                .unwrap_or_default(),
-            remote_binary_path,
-            unique_identifier,
+        let mut start_proxy_command = shell_script!(
+            "exec {binary_path} proxy --identifier {identifier}",
+            binary_path = &remote_binary_path.to_string_lossy(),
+            identifier = &unique_identifier,
         );
+
+        if let Some(rust_log) = std::env::var("RUST_LOG").ok() {
+            start_proxy_command = format!(
+                "RUST_LOG={} {}",
+                shlex::try_quote(&rust_log).unwrap(),
+                start_proxy_command
+            )
+        }
+        if let Some(rust_backtrace) = std::env::var("RUST_BACKTRACE").ok() {
+            start_proxy_command = format!(
+                "RUST_BACKTRACE={} {}",
+                shlex::try_quote(&rust_backtrace).unwrap(),
+                start_proxy_command
+            )
+        }
         if reconnect {
             start_proxy_command.push_str(" --reconnect");
         }
 
         let ssh_proxy_process = match self
             .socket
-            .ssh_command(start_proxy_command)
+            .shell_script(start_proxy_command)
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -1431,8 +1511,8 @@ impl SshRemoteConnection {
             socket_path,
         };
 
-        let os = run_cmd(socket.ssh_command("uname").arg("-s")).await?;
-        let arch = run_cmd(socket.ssh_command("uname").arg("-m")).await?;
+        let os = run_cmd(socket.ssh_command("uname", &["-s"])).await?;
+        let arch = run_cmd(socket.ssh_command("uname", &["-m"])).await?;
 
         let os = match os.trim() {
             "Darwin" => "macos",
@@ -1630,14 +1710,9 @@ impl SshRemoteConnection {
     }
 
     async fn get_ssh_source_port(&self) -> Result<String> {
-        let output = run_cmd(
-            self.socket
-                .ssh_command("sh")
-                .arg("-c")
-                .arg(r#""echo $SSH_CLIENT | cut -d' ' -f2""#),
-        )
-        .await
-        .context("failed to get source port from SSH_CLIENT on host")?;
+        let output = run_cmd(self.socket.shell_script("echo $SSH_CLIENT | cut -d' ' -f2"))
+            .await
+            .context("failed to get source port from SSH_CLIENT on host")?;
 
         Ok(output.trim().to_string())
     }
@@ -1648,13 +1723,13 @@ impl SshRemoteConnection {
             .ok_or_else(|| anyhow!("Lock file path has no parent directory"))?;
 
         let script = format!(
-            r#"'mkdir -p "{parent_dir}" && [ ! -f "{lock_file}" ] && echo "{content}" > "{lock_file}" && echo "created" || echo "exists"'"#,
+            r#"mkdir -p "{parent_dir}" && [ ! -f "{lock_file}" ] && echo "{content}" > "{lock_file}" && echo "created" || echo "exists""#,
             parent_dir = parent_dir.display(),
             lock_file = lock_file.display(),
             content = content,
         );
 
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(&script))
+        let output = run_cmd(self.socket.shell_script(&script))
             .await
             .with_context(|| format!("failed to create a lock file at {:?}", lock_file))?;
 
@@ -1662,7 +1737,7 @@ impl SshRemoteConnection {
     }
 
     fn generate_stale_check_script(lock_file: &Path, max_age: u64) -> String {
-        format!(
+        shell_script!(
             r#"
             if [ ! -f "{lock_file}" ]; then
                 echo "lock file does not exist"
@@ -1690,18 +1765,15 @@ impl SshRemoteConnection {
             else
                 echo "recent"
             fi"#,
-            lock_file = lock_file.display(),
-            max_age = max_age
+            lock_file = &lock_file.to_string_lossy(),
+            max_age = &max_age.to_string()
         )
     }
 
     async fn is_lock_stale(&self, lock_file: &Path, max_age: &Duration) -> Result<bool> {
-        let script = format!(
-            "'{}'",
-            Self::generate_stale_check_script(lock_file, max_age.as_secs())
-        );
+        let script = Self::generate_stale_check_script(lock_file, max_age.as_secs());
 
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(&script))
+        let output = run_cmd(self.socket.shell_script(script))
             .await
             .with_context(|| {
                 format!("failed to check whether lock file {:?} is stale", lock_file)
@@ -1714,9 +1786,12 @@ impl SshRemoteConnection {
     }
 
     async fn remove_lock_file(&self, lock_file: &Path) -> Result<()> {
-        run_cmd(self.socket.ssh_command("rm").arg("-f").arg(lock_file))
-            .await
-            .context("failed to remove lock file")?;
+        run_cmd(
+            self.socket
+                .ssh_command("rm", &["-f", &lock_file.to_string_lossy()]),
+        )
+        .await
+        .context("failed to remove lock file")?;
         Ok(())
     }
 
@@ -1727,109 +1802,149 @@ impl SshRemoteConnection {
         platform: SshPlatform,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        if std::env::var("ZED_USE_CACHED_REMOTE_SERVER").is_ok() {
-            if let Ok(installed_version) =
-                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
-            {
-                log::info!("using cached server binary version {}", installed_version);
-                return Ok(());
-            }
-        }
-
-        if cfg!(not(debug_assertions)) {
-            // When we're not in dev mode, we don't want to switch out the binary if it's
-            // still open.
-            // In dev mode, that's fine, since we often kill Zed processes with Ctrl-C and want
-            // to still replace the binary.
-            if self.is_binary_in_use(dst_path).await? {
-                log::info!("server binary is opened by another process. not updating");
-                delegate.set_status(
-                    Some("Skipping update of remote development server, since it's still in use"),
-                    cx,
-                );
-                return Ok(());
-            }
-        }
-
-        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
-        let (binary, new_server_version) = delegate
-            .get_server_binary(platform, upload_binary_over_ssh, cx)
-            .await??;
-
-        if cfg!(not(debug_assertions)) {
-            let installed_version = if let Ok(version_output) =
-                run_cmd(self.socket.ssh_command(dst_path).arg("version")).await
-            {
+        let current_version = match run_cmd(
+            self.socket
+                .ssh_command(&dst_path.to_string_lossy(), &["version"]),
+        )
+        .await
+        {
+            Ok(version_output) => {
                 if let Ok(version) = version_output.trim().parse::<SemanticVersion>() {
                     Some(ServerVersion::Semantic(version))
                 } else {
                     Some(ServerVersion::Commit(version_output.trim().to_string()))
                 }
-            } else {
-                None
+            }
+            Err(_) => None,
+        };
+        let (release_channel, wanted_version) = cx.update(|cx| {
+            let release_channel = ReleaseChannel::global(cx);
+            let wanted_version = match release_channel {
+                ReleaseChannel::Nightly => {
+                    AppCommitSha::try_global(cx).map(|sha| ServerVersion::Commit(sha.0))
+                }
+                ReleaseChannel::Dev => None,
+                _ => Some(ServerVersion::Semantic(AppVersion::global(cx))),
             };
+            (release_channel, wanted_version)
+        })?;
 
-            if let Some(installed_version) = installed_version {
-                use ServerVersion::*;
-                match (installed_version, new_server_version) {
-                    (Semantic(installed), Semantic(new)) if installed == new => {
-                        log::info!("remote development server present and matching client version");
-                        return Ok(());
-                    }
-                    (Semantic(installed), Semantic(new)) if installed > new => {
-                        let error = anyhow!("The version of the remote server ({}) is newer than the Zed version ({}). Please update Zed.", installed, new);
-                        return Err(error);
-                    }
-                    (Commit(installed), Commit(new)) if installed == new => {
-                        log::info!(
-                            "remote development server present and matching client version {}",
-                            installed
-                        );
-                        return Ok(());
-                    }
-                    (installed, _) => {
-                        log::info!(
-                            "remote development server has version: {}. updating...",
-                            installed
-                        );
-                    }
+        match (&current_version, &wanted_version) {
+            (Some(current), Some(wanted)) if current == wanted => {
+                log::info!("remote development server present and matching client version");
+                return Ok(());
+            }
+            (Some(ServerVersion::Semantic(current)), Some(ServerVersion::Semantic(wanted)))
+                if current > wanted =>
+            {
+                anyhow::bail!("The version of the remote server ({}) is newer than the Zed version ({}). Please update Zed.", current, wanted);
+            }
+            _ => {
+                log::info!("Installing remote development server");
+            }
+        }
+
+        if self.is_binary_in_use(dst_path).await? {
+            // When we're not in dev mode, we don't want to switch out the binary if it's
+            // still open.
+            // In dev mode, that's fine, since we often kill Zed processes with Ctrl-C and want
+            // to still replace the binary.
+            if cfg!(not(debug_assertions)) {
+                anyhow::bail!("The remote server version ({:?}) does not match the wanted version ({:?}), but is in use by another Zed client so cannot be upgraded.", &current_version, &wanted_version)
+            } else {
+                log::info!("Binary is currently in use, ignoring because this is a dev build")
+            }
+        }
+
+        if wanted_version.is_none() {
+            if std::env::var("ZED_BUILD_REMOTE_SERVER").is_err() {
+                if let Some(current_version) = current_version {
+                    log::warn!(
+                        "In development, using cached remote server binary version ({})",
+                        current_version
+                    );
+
+                    return Ok(());
+                } else {
+                    anyhow::bail!(
+                        "ZED_BUILD_REMOTE_SERVER is not set, but no remote server exists at ({:?})",
+                        dst_path
+                    )
+                }
+            }
+
+            #[cfg(debug_assertions)]
+            {
+                let src_path = self.build_local(platform, delegate, cx).await?;
+
+                return self
+                    .upload_local_server_binary(&src_path, dst_path, delegate, cx)
+                    .await;
+            }
+
+            #[cfg(not(debug_assertions))]
+            anyhow::bail!("Running development build in release mode, cannot cross compile (unset ZED_BUILD_REMOTE_SERVER)")
+        }
+
+        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
+
+        if !upload_binary_over_ssh {
+            let (url, body) = delegate
+                .get_download_params(
+                    platform,
+                    release_channel,
+                    wanted_version.clone().and_then(|v| v.semantic_version()),
+                    cx,
+                )
+                .await?;
+
+            match self
+                .download_binary_on_server(&url, &body, dst_path, delegate, cx)
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    log::error!(
+                        "Failed to download binary on server, attempting to upload server: {}",
+                        e
+                    )
                 }
             }
         }
 
-        match binary {
-            ServerBinary::LocalBinary(src_path) => {
-                self.upload_local_server_binary(&src_path, dst_path, delegate, cx)
-                    .await
-            }
-            ServerBinary::ReleaseUrl { url, body } => {
-                self.download_binary_on_server(&url, &body, dst_path, delegate, cx)
-                    .await
-            }
-        }
+        let src_path = delegate
+            .download_server_binary_locally(
+                platform,
+                release_channel,
+                wanted_version.and_then(|v| v.semantic_version()),
+                cx,
+            )
+            .await?;
+
+        self.upload_local_server_binary(&src_path, dst_path, delegate, cx)
+            .await
     }
 
     async fn is_binary_in_use(&self, binary_path: &Path) -> Result<bool> {
-        let script = format!(
-            r#"'
+        let script = shell_script!(
+            r#"
             if command -v lsof >/dev/null 2>&1; then
-                if lsof "{}" >/dev/null 2>&1; then
+                if lsof "{binary_path}" >/dev/null 2>&1; then
                     echo "in_use"
                     exit 0
                 fi
             elif command -v fuser >/dev/null 2>&1; then
-                if fuser "{}" >/dev/null 2>&1; then
+                if fuser "{binary_path}" >/dev/null 2>&1; then
                     echo "in_use"
                     exit 0
                 fi
             fi
             echo "not_in_use"
-            '"#,
-            binary_path.display(),
-            binary_path.display(),
+            "#,
+            binary_path = &binary_path.to_string_lossy(),
         );
 
-        let output = run_cmd(self.socket.ssh_command("sh").arg("-c").arg(script))
+        let output = run_cmd(self.socket.shell_script(script))
             .await
             .context("failed to check if binary is in use")?;
 
@@ -1848,31 +1963,32 @@ impl SshRemoteConnection {
         dst_path_gz.set_extension("gz");
 
         if let Some(parent) = dst_path.parent() {
-            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+            run_cmd(
+                self.socket
+                    .ssh_command("mkdir", &["-p", &parent.to_string_lossy()]),
+            )
+            .await?;
         }
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
-        let script = format!(
+        let script = shell_script!(
             r#"
-            if command -v wget >/dev/null 2>&1; then
-                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data='{}' '{}' -O '{}' && echo "wget"
-            elif command -v curl >/dev/null 2>&1; then
-                curl -L -X GET -H "Content-Type: application/json" -d '{}' '{}' -o '{}' && echo "curl"
+            if command -v curl >/dev/null 2>&1; then
+                curl -f -L -X GET -H "Content-Type: application/json" -d {body} {url} -o {dst_path} && echo "curl"
+            elif command -v wget >/dev/null 2>&1; then
+                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data={body} {url} -O {dst_path} && echo "wget"
             else
                 echo "Neither curl nor wget is available" >&2
                 exit 1
             fi
             "#,
-            body.replace("'", r#"\'"#),
-            url,
-            dst_path_gz.display(),
-            body.replace("'", r#"\'"#),
-            url,
-            dst_path_gz.display(),
+            body = body,
+            url = url,
+            dst_path = &dst_path_gz.to_string_lossy(),
         );
 
-        let output = run_cmd(self.socket.ssh_command("bash").arg("-c").arg(script))
+        let output = run_cmd(self.socket.shell_script(script))
             .await
             .context("Failed to download server binary")?;
 
@@ -1895,7 +2011,11 @@ impl SshRemoteConnection {
         dst_path_gz.set_extension("gz");
 
         if let Some(parent) = dst_path.parent() {
-            run_cmd(self.socket.ssh_command("mkdir").arg("-p").arg(parent)).await?;
+            run_cmd(
+                self.socket
+                    .ssh_command("mkdir", &["-p", &parent.to_string_lossy()]),
+            )
+            .await?;
         }
 
         let src_stat = fs::metadata(&src_path).await?;
@@ -1923,20 +2043,16 @@ impl SshRemoteConnection {
         delegate.set_status(Some("Extracting remote development server"), cx);
         run_cmd(
             self.socket
-                .ssh_command("gunzip")
-                .arg("--force")
-                .arg(&dst_path_gz),
+                .ssh_command("gunzip", &["-f", &dst_path_gz.to_string_lossy()]),
         )
         .await?;
 
         let server_mode = 0o755;
         delegate.set_status(Some("Marking remote development server executable"), cx);
-        run_cmd(
-            self.socket
-                .ssh_command("chmod")
-                .arg(format!("{:o}", server_mode))
-                .arg(dst_path),
-        )
+        run_cmd(self.socket.ssh_command(
+            "chmod",
+            &[&format!("{:o}", server_mode), &dst_path.to_string_lossy()],
+        ))
         .await?;
 
         Ok(())
@@ -1973,6 +2089,113 @@ impl SshRemoteConnection {
                 String::from_utf8_lossy(&output.stderr)
             ))
         }
+    }
+
+    #[cfg(debug_assertions)]
+    async fn build_local(
+        &self,
+        platform: SshPlatform,
+        delegate: &Arc<dyn SshClientDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<PathBuf> {
+        use smol::process::{Command, Stdio};
+
+        async fn run_cmd(command: &mut Command) -> Result<()> {
+            let output = command
+                .kill_on_drop(true)
+                .stderr(Stdio::inherit())
+                .output()
+                .await?;
+            if !output.status.success() {
+                Err(anyhow!("Failed to run command: {:?}", command))?;
+            }
+            Ok(())
+        }
+
+        if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
+            delegate.set_status(Some("Building remote server binary from source"), cx);
+            log::info!("building remote server binary from source");
+            run_cmd(Command::new("cargo").args([
+                "build",
+                "--package",
+                "remote_server",
+                "--features",
+                "debug-embed",
+                "--target-dir",
+                "target/remote_server",
+            ]))
+            .await?;
+
+            delegate.set_status(Some("Compressing binary"), cx);
+
+            run_cmd(Command::new("gzip").args([
+                "-9",
+                "-f",
+                "target/remote_server/debug/remote_server",
+            ]))
+            .await?;
+
+            let path = std::env::current_dir()?.join("target/remote_server/debug/remote_server.gz");
+            return Ok(path);
+        }
+        let Some(triple) = platform.triple() else {
+            anyhow::bail!("can't cross compile for: {:?}", platform);
+        };
+        smol::fs::create_dir_all("target/remote_server").await?;
+
+        delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
+        log::info!("installing cross");
+        run_cmd(Command::new("cargo").args([
+            "install",
+            "cross",
+            "--git",
+            "https://github.com/cross-rs/cross",
+        ]))
+        .await?;
+
+        delegate.set_status(
+            Some(&format!(
+                "Building remote server binary from source for {} with Docker",
+                &triple
+            )),
+            cx,
+        );
+        log::info!("building remote server binary from source for {}", &triple);
+        run_cmd(
+            Command::new("cross")
+                .args([
+                    "build",
+                    "--package",
+                    "remote_server",
+                    "--features",
+                    "debug-embed",
+                    "--target-dir",
+                    "target/remote_server",
+                    "--target",
+                    &triple,
+                ])
+                .env(
+                    "CROSS_CONTAINER_OPTS",
+                    "--mount type=bind,src=./target,dst=/app/target",
+                ),
+        )
+        .await?;
+
+        delegate.set_status(Some("Compressing binary"), cx);
+
+        run_cmd(Command::new("gzip").args([
+            "-9",
+            "-f",
+            &format!("target/remote_server/{}/debug/remote_server", triple),
+        ]))
+        .await?;
+
+        let path = std::env::current_dir()?.join(format!(
+            "target/remote_server/{}/debug/remote_server.gz",
+            triple
+        ));
+
+        return Ok(path);
     }
 }
 
@@ -2295,12 +2518,12 @@ mod fake {
         },
         select_biased, FutureExt, SinkExt, StreamExt,
     };
-    use gpui::{AsyncAppContext, Task, TestAppContext};
+    use gpui::{AsyncAppContext, SemanticVersion, Task, TestAppContext};
+    use release_channel::ReleaseChannel;
     use rpc::proto::Envelope;
 
     use super::{
-        ChannelClient, RemoteConnection, ServerBinary, ServerVersion, SshClientDelegate,
-        SshConnectionOptions, SshPlatform,
+        ChannelClient, RemoteConnection, SshClientDelegate, SshConnectionOptions, SshPlatform,
     };
 
     pub(super) struct FakeRemoteConnection {
@@ -2412,23 +2635,36 @@ mod fake {
         ) -> oneshot::Receiver<Result<String>> {
             unreachable!()
         }
-        fn remote_server_binary_path(
+
+        fn download_server_binary_locally(
             &self,
             _: SshPlatform,
+            _: ReleaseChannel,
+            _: Option<SemanticVersion>,
             _: &mut AsyncAppContext,
-        ) -> Result<PathBuf> {
+        ) -> Task<Result<PathBuf>> {
             unreachable!()
         }
-        fn get_server_binary(
+
+        fn get_download_params(
             &self,
-            _: SshPlatform,
-            _: bool,
-            _: &mut AsyncAppContext,
-        ) -> oneshot::Receiver<Result<(ServerBinary, ServerVersion)>> {
+            _platform: SshPlatform,
+            _release_channel: ReleaseChannel,
+            _version: Option<SemanticVersion>,
+            _cx: &mut AsyncAppContext,
+        ) -> Task<Result<(String, String)>> {
             unreachable!()
         }
 
         fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {}
+
+        fn remote_server_binary_path(
+            &self,
+            _platform: SshPlatform,
+            _cx: &mut AsyncAppContext,
+        ) -> Result<PathBuf> {
+            unreachable!()
+        }
     }
 }
 

@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use extension::ExtensionStore;
+use extension_host::ExtensionStore;
 use gpui::{Model, VisualContext};
 use language::Buffer;
 use ui::{SharedString, ViewContext};

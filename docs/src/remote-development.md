@@ -16,7 +16,7 @@ On your local machine, Zed runs its UI, talks to language models, uses Tree-sitt
 
 ## Setup
 
-1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You need at least Zed v0.159.
+1. Download and install the latest [Zed](https://zed.dev/releases). You need at least Zed v0.159.
 1. Open the remote projects dialogue with <kbd>cmd-shift-p remote</kbd> or <kbd>cmd-control-o</kbd>.
 1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
 1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, Zed will download the server on the remote host and start it.

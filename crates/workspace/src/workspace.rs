@@ -9,6 +9,7 @@ pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
+mod theme_preview;
 mod toolbar;
 mod workspace_settings;
 
@@ -63,8 +64,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
-use release_channel::ReleaseChannel;
-use remote::{SshClientDelegate, SshConnectionOptions};
+use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -329,6 +329,7 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
+    theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -5524,26 +5525,14 @@ pub fn open_ssh_project(
     paths: Vec<PathBuf>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
-    let release_channel = ReleaseChannel::global(cx);
-
     cx.spawn(|mut cx| async move {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
             serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
 
-        let identifier_prefix = match release_channel {
-            ReleaseChannel::Stable => None,
-            _ => Some(format!("{}-", release_channel.dev_name())),
-        };
-        let unique_identifier = format!(
-            "{}workspace-{}",
-            identifier_prefix.unwrap_or_default(),
-            workspace_id.0
-        );
-
         let session = match cx
             .update(|cx| {
                 remote::SshRemoteClient::new(
-                    unique_identifier,
+                    ConnectionIdentifier::Workspace(workspace_id.0),
                     connection_options,
                     cancel_rx,
                     delegate,

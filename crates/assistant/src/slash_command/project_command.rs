@@ -24,7 +24,8 @@ use std::{
     ops::DerefMut,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{BorrowAppContext as _, IconName};
+
+use ui::prelude::*;
 use workspace::Workspace;
 
 pub struct ProjectSlashCommand {
@@ -48,6 +49,10 @@ impl SlashCommand for ProjectSlashCommand {
 
     fn description(&self) -> String {
         "Generate a semantic search based on context".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Folder
     }
 
     fn menu_text(&self) -> String {

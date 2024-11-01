@@ -3990,6 +3990,76 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        &"
+            ˇzero
+            one
+            two
+            three
+            four
+            five
+        "
+        .unindent(),
+    );
+
+    // Create a four-line block that replaces three lines of text.
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let snapshot = &snapshot.buffer_snapshot;
+        let placement = BlockPlacement::Replace(
+            snapshot.anchor_after(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 0)),
+        );
+        editor.insert_blocks(
+            [BlockProperties {
+                placement,
+                height: 4,
+                style: BlockStyle::Sticky,
+                render: Box::new(|_| gpui::div().into_any_element()),
+                priority: 0,
+            }],
+            None,
+            cx,
+        );
+    });
+
+    // Move down so that the cursor touches the block.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.assert_editor_state(
+        &"
+            zero
+            «one
+            two
+            threeˇ»
+            four
+            five
+        "
+        .unindent(),
+    );
+
+    // Move down past the block.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.assert_editor_state(
+        &"
+            zero
+            one
+            two
+            three
+            ˇfour
+            five
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 fn test_transpose(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -4182,7 +4252,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇˇˇˇ
+            // porttitor id. Aliquam id accumsan eros.ˇ
         "};
 
         cx.set_state(unwrapped_text);
@@ -4212,7 +4282,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         let wrapped_text = indoc! {"
             // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque.ˇˇ
+            // auctor, eu lacinia sapien scelerisque.ˇ
             //
             // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
             // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
@@ -4220,7 +4290,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
             // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
             // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
-            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇˇ
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ
         "};
 
         cx.set_state(unwrapped_text);
@@ -8534,6 +8604,131 @@ async fn test_toggle_comment(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_toggle_comment_ignore_indent(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let language = Arc::new(Language::new(
+        LanguageConfig {
+            line_comments: vec!["// ".into(), "//! ".into(), "/// ".into()],
+            ..Default::default()
+        },
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    cx.update_buffer(|buffer, cx| buffer.set_language(Some(language), cx));
+
+    let toggle_comments = &ToggleComments {
+        advance_downwards: false,
+        ignore_indent: true,
+    };
+
+    // If multiple selections intersect a line, the line is only toggled once.
+    cx.set_state(indoc! {"
+        fn a() {
+        //    «b();
+        //    c();
+        //    ˇ» d();
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            «b();
+            c();
+            ˇ» d();
+        }
+    "});
+
+    // The comment prefix is inserted at the beginning of each line
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «b();
+        //    c();
+        //    ˇ» d();
+        }
+    "});
+
+    // If a selection ends at the beginning of a line, that line is not toggled.
+    cx.set_selections_state(indoc! {"
+        fn a() {
+        //    b();
+        //    «c();
+        ˇ»//     d();
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    b();
+            «c();
+        ˇ»//     d();
+        }
+    "});
+
+    // If a selection span a single line and is empty, the line is toggled.
+    cx.set_state(indoc! {"
+        fn a() {
+            a();
+            b();
+        ˇ
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            a();
+            b();
+        //ˇ
+        }
+    "});
+
+    // If a selection span multiple lines, empty lines are not toggled.
+    cx.set_state(indoc! {"
+        fn a() {
+            «a();
+
+            c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+        //    «a();
+
+        //    c();ˇ»
+        }
+    "});
+
+    // If a selection includes multiple comment prefixes, all lines are uncommented.
+    cx.set_state(indoc! {"
+        fn a() {
+        //    «a();
+        ///    b();
+        //!    c();ˇ»
+        }
+    "});
+
+    cx.update_editor(|e, cx| e.toggle_comments(toggle_comments, cx));
+
+    cx.assert_editor_state(indoc! {"
+        fn a() {
+            «a();
+            b();
+            c();ˇ»
+        }
+    "});
+}
+
+#[gpui::test]
 async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
@@ -8554,6 +8749,7 @@ async fn test_advance_downward_on_toggle_comment(cx: &mut gpui::TestAppContext) 
 
     let toggle_comments = &ToggleComments {
         advance_downwards: true,
+        ignore_indent: false,
     };
 
     // Single cursor on one line -> advance
@@ -13201,6 +13397,89 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
             references_fallback_text, "fn one() {\n    let mut a = two();\n}",
             "Should use the range from the references response and not the GoToDefinition one"
         );
+    });
+}
+
+#[gpui::test]
+async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+
+    let text = r#"
+        #[cfg(test)]
+        mod tests() {
+            #[test]
+            fn runnable_1() {
+                let a = 1;
+            }
+
+            #[test]
+            fn runnable_2() {
+                let a = 1;
+                let b = 2;
+            }
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_file("/file.rs", Default::default()).await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+
+    let editor = cx.new_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            multi_buffer,
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
+
+    editor.update(cx, |editor, cx| {
+        editor.tasks.insert(
+            (buffer.read(cx).remote_id(), 3),
+            RunnableTasks {
+                templates: vec![],
+                offset: MultiBufferOffset(43),
+                column: 0,
+                extra_variables: HashMap::default(),
+                context_range: BufferOffset(43)..BufferOffset(85),
+            },
+        );
+        editor.tasks.insert(
+            (buffer.read(cx).remote_id(), 8),
+            RunnableTasks {
+                templates: vec![],
+                offset: MultiBufferOffset(86),
+                column: 0,
+                extra_variables: HashMap::default(),
+                context_range: BufferOffset(86)..BufferOffset(191),
+            },
+        );
+
+        // Test finding task when cursor is inside function body
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
+        });
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
+        assert_eq!(row, 3, "Should find task for cursor inside runnable_1");
+
+        // Test finding task when cursor is on function name
+        editor.change_selections(None, cx, |s| {
+            s.select_ranges([Point::new(8, 4)..Point::new(8, 4)])
+        });
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
+        assert_eq!(row, 8, "Should find task when cursor is on function name");
     });
 }
 
