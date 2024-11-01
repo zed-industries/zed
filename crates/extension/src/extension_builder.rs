@@ -1,6 +1,6 @@
-use crate::wasm_host::parse_wasm_extension_version;
-use crate::ExtensionManifest;
-use crate::{extension_manifest::ExtensionLibraryKind, GrammarManifestEntry};
+use crate::{
+    parse_wasm_extension_version, ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry,
+};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;

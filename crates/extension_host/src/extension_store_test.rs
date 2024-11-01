@@ -1,4 +1,3 @@
-use crate::extension_manifest::SchemaVersion;
 use crate::extension_settings::ExtensionSettings;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
@@ -8,6 +7,7 @@ use crate::{
 use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
+use extension::SchemaVersion;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
