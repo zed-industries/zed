@@ -1446,7 +1446,7 @@ struct ScrollPosition {
 }
 
 struct PatchViewState {
-    footer_block_id: CustomBlockId,
+    block_id: CustomBlockId,
     crease_id: CreaseId,
     editor: Option<PatchEditorState>,
     update_task: Option<Task<()>>,
@@ -2173,7 +2173,7 @@ impl ContextEditor {
         for range in removed {
             if let Some(state) = self.patches.remove(range) {
                 editors_to_close.extend(state.editor.and_then(|state| state.editor.upgrade()));
-                removed_block_ids.insert(state.footer_block_id);
+                removed_block_ids.insert(state.block_id);
                 removed_crease_ids.push(state.crease_id);
             }
         }
@@ -2203,12 +2203,14 @@ impl ContextEditor {
                         let max_width = cx.max_width;
                         let gutter_width = cx.gutter_dimensions.full_width();
                         let block_id = cx.block_id;
+                        let selected = cx.selected;
                         this.update(&mut **cx, |this, cx| {
-                            this.render_patch_footer(
+                            this.render_patch_block(
                                 patch_range.clone(),
                                 max_width,
                                 gutter_width,
                                 block_id,
+                                selected,
                                 cx,
                             )
                         })
@@ -2218,26 +2220,17 @@ impl ContextEditor {
                     }
                 });
 
-                let header_placeholder = FoldPlaceholder {
-                    render: {
-                        let this = this.clone();
-                        let patch_range = range.clone();
-                        Arc::new(move |fold_id, _range, cx| {
-                            this.update(cx, |this, cx| {
-                                this.render_patch_header(patch_range.clone(), fold_id, cx)
-                            })
-                            .ok()
-                            .flatten()
-                            .unwrap_or_else(|| Empty.into_any())
-                        })
-                    },
-                    constrain_width: false,
-                    merge_adjacent: false,
-                };
+                let height = path_count as u32 + 1;
+                let crease = Crease::block(
+                    patch_start..patch_end,
+                    height,
+                    BlockStyle::Flex,
+                    render_block.clone(),
+                );
 
                 let should_refold;
                 if let Some(state) = self.patches.get_mut(&range) {
-                    replaced_blocks.insert(state.footer_block_id, render_block);
+                    replaced_blocks.insert(state.block_id, render_block);
                     if let Some(editor_state) = &state.editor {
                         if editor_state.opened_patch != patch {
                             state.update_task = Some({
@@ -2254,9 +2247,9 @@ impl ContextEditor {
                     should_refold =
                         snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
-                    let block_ids = editor.insert_blocks(
+                    let block_id = editor.insert_blocks(
                         [BlockProperties {
-                            height: path_count as u32 + 1,
+                            height,
                             style: BlockStyle::Flex,
                             render: render_block,
                             placement: BlockPlacement::Below(patch_start),
@@ -2264,23 +2257,15 @@ impl ContextEditor {
                         }],
                         None,
                         cx,
-                    );
+                    )[0];
 
-                    let new_crease_ids = editor.insert_creases(
-                        [Crease::inline(
-                            patch_start..patch_end,
-                            header_placeholder.clone(),
-                            fold_toggle("patch-header"),
-                            |_, _, _| Empty.into_any_element(),
-                        )],
-                        cx,
-                    );
+                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
 
                     self.patches.insert(
                         range.clone(),
                         PatchViewState {
-                            footer_block_id: block_ids[0],
-                            crease_id: new_crease_ids[0],
+                            block_id,
+                            crease_id,
                             editor: None,
                             update_task: None,
                         },
@@ -2291,11 +2276,7 @@ impl ContextEditor {
 
                 if should_refold {
                     editor.unfold_ranges(vec![patch_start..patch_end], true, false, cx);
-                    editor.fold_creases(
-                        vec![Crease::simple(patch_start..patch_end, header_placeholder)],
-                        false,
-                        cx,
-                    );
+                    editor.fold_creases(vec![crease], false, cx);
                 }
             }
 
@@ -3451,33 +3432,13 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
-    fn render_patch_header(
-        &self,
-        range: Range<text::Anchor>,
-        _id: FoldId,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<AnyElement> {
-        let patch = self.context.read(cx).patch_for_range(&range, cx)?;
-        let theme = cx.theme().clone();
-        Some(
-            h_flex()
-                .px_1()
-                .py_0p5()
-                .border_b_1()
-                .border_color(theme.status().info_border)
-                .gap_1()
-                .child(Icon::new(IconName::Diff).size(IconSize::Small))
-                .child(Label::new(patch.title.clone()).size(LabelSize::Small))
-                .into_any(),
-        )
-    }
-
-    fn render_patch_footer(
+    fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
         max_width: Pixels,
         gutter_width: Pixels,
         id: BlockId,
+        selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let snapshot = self.editor.update(cx, |editor, cx| editor.snapshot(cx));
@@ -3488,10 +3449,7 @@ impl ContextEditor {
             .anchor_in_excerpt(excerpt_id, range.start)
             .unwrap();
 
-        if !snapshot.intersects_fold(anchor) {
-            return None;
-        }
-
+        let theme = cx.theme().clone();
         let patch = self.context.read(cx).patch_for_range(&range, cx)?;
         let paths = patch
             .paths()
@@ -3501,8 +3459,12 @@ impl ContextEditor {
         Some(
             v_flex()
                 .id(id)
-                .pl(gutter_width)
-                .w(max_width)
+                .ml(gutter_width)
+                .w(max_width - gutter_width)
+                .rounded_md()
+                .border_1()
+                .when(selected, |this| this.bg(theme.players().local().selection))
+                .border_color(theme.colors().border)
                 .py_2()
                 .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _, cx| {
@@ -3513,6 +3475,13 @@ impl ContextEditor {
                     });
                     this.focus_active_patch(cx);
                 }))
+                .child(
+                    h_flex()
+                        .pl_1()
+                        .child(Label::new(patch.title.clone()).size(LabelSize::Small))
+                        .border_b_1()
+                        .border_color(theme.colors().border),
+                )
                 .children(paths.into_iter().map(|path| {
                     h_flex()
                         .pl_1()

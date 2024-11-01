@@ -161,6 +161,17 @@ impl<T> Crease<T> {
         }
     }
 
+    pub fn block(range: Range<T>, height: u32, style: BlockStyle, render: RenderBlock) -> Self {
+        Self::Block {
+            range,
+            block_height: height,
+            block_style: style,
+            render_block: render,
+            block_priority: 0,
+            render_toggle: None,
+        }
+    }
+
     pub fn inline<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
         range: Range<T>,
         placeholder: FoldPlaceholder,
