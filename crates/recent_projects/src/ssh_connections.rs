@@ -63,7 +63,7 @@ impl SshSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct SshConnection {
     pub host: SharedString,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,7 +100,7 @@ impl From<SshConnection> for SshConnectionOptions {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, PartialEq, Deserialize, JsonSchema)]
 pub struct SshProject {
     pub paths: Vec<String>,
 }
