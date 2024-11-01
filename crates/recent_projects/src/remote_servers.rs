@@ -1198,7 +1198,7 @@ impl RemoteServerProjects {
 
     fn render_default(
         &mut self,
-        state: DefaultState,
+        mut state: DefaultState,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         if SshSettings::get_global(cx)
@@ -1213,9 +1213,9 @@ impl RemoteServerProjects {
             })
         {
             self.mode = Mode::default_mode(cx);
-            cx.notify();
-
-            return div().into_any_element();
+            if let Mode::Default(new_state) = &self.mode {
+                state = new_state.clone();
+            }
         }
         let scroll_state = state.scrollbar.parent_view(cx.view());
         let connect_button = div()
