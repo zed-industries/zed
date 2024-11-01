@@ -56,6 +56,12 @@ pub struct ProjectSettings {
     /// Configuration for session-related features
     #[serde(default)]
     pub session: SessionSettings,
+
+    /// Whether or not to allow Zed to download binaries
+    ///
+    /// Default: true
+    #[serde(default = "true_value")]
+    pub allow_binary_download: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, JsonSchema)]

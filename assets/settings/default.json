@@ -619,6 +619,8 @@
   // Automatically update Zed. This setting may be ignored on Linux if
   // installed through a package manager.
   "auto_update": true,
+  // Allows Zed to download binaries like LSPs
+  "allow_binary_download": true,
   // Diagnostics configuration.
   "diagnostics": {
     // Whether to show warnings or not by default.
