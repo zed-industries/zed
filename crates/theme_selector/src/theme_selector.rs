@@ -1,4 +1,5 @@
 use client::telemetry::Telemetry;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -95,9 +96,10 @@ impl ThemeSelectorDelegate {
     ) -> Self {
         let original_theme = cx.theme().clone();
 
+        let staff_mode = cx.is_staff();
         let registry = <dyn ThemeRegistry>::global(cx);
         let mut themes = registry
-            .list()
+            .list(staff_mode)
             .into_iter()
             .filter(|meta| {
                 if let Some(theme_filter) = themes_filter {

@@ -85,7 +85,7 @@ impl RenderOnce for ThemeControl {
             ContextMenu::build(cx, |mut menu, cx| {
                 let theme_registry = <dyn ThemeRegistry>::global(cx);
 
-                for theme in theme_registry.list_names() {
+                for theme in theme_registry.list_names(false) {
                     menu = menu.custom_entry(
                         {
                             let theme = theme.clone();
