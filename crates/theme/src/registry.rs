@@ -112,14 +112,14 @@ impl ThemeRegistry {
     }
 
     /// Returns the names of all themes in the registry.
-    pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+    pub fn list_names(&self) -> Vec<SharedString> {
         let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
         names.sort();
         names
     }
 
     /// Returns the metadata of all themes in the registry.
-    pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+    pub fn list(&self) -> Vec<ThemeMeta> {
         self.state
             .read()
             .themes
