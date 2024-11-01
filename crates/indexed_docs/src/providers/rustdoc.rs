@@ -2,7 +2,7 @@ mod item;
 mod to_markdown;
 
 use cargo_metadata::MetadataCommand;
-use extension::DocsDatabase;
+use extension_host::DocsDatabase;
 use futures::future::BoxFuture;
 pub use item::*;
 use parking_lot::RwLock;

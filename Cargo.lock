@@ -9,7 +9,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "editor",
- "extension",
+ "extension_host",
  "futures 0.3.30",
  "gpui",
  "language",
@@ -4090,7 +4090,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "extension"
+name = "extension_cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "env_logger 0.11.5",
+ "extension_host",
+ "fs",
+ "language",
+ "log",
+ "reqwest_client",
+ "rpc",
+ "serde",
+ "serde_json",
+ "theme",
+ "tokio",
+ "toml 0.8.19",
+ "tree-sitter",
+ "wasmtime",
+]
+
+[[package]]
+name = "extension_host"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -4134,28 +4156,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "extension_cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "env_logger 0.11.5",
- "extension",
- "fs",
- "language",
- "log",
- "reqwest_client",
- "rpc",
- "serde",
- "serde_json",
- "theme",
- "tokio",
- "toml 0.8.19",
- "tree-sitter",
- "wasmtime",
-]
-
-[[package]]
 name = "extensions_ui"
 version = "0.1.0"
 dependencies = [
@@ -4170,7 +4170,7 @@ dependencies = [
  "db",
  "editor",
  "env_logger 0.11.5",
- "extension",
+ "extension_host",
  "fs",
  "futures 0.3.30",
  "fuzzy",
@@ -5814,7 +5814,7 @@ dependencies = [
  "cargo_metadata",
  "collections",
  "derive_more",
- "extension",
+ "extension_host",
  "fs",
  "futures 0.3.30",
  "fuzzy",
@@ -9577,7 +9577,7 @@ dependencies = [
  "client",
  "clock",
  "env_logger 0.11.5",
- "extension",
+ "extension_host",
  "fork",
  "fs",
  "futures 0.3.30",
@@ -15081,7 +15081,7 @@ dependencies = [
  "diagnostics",
  "editor",
  "env_logger 0.11.5",
- "extension",
+ "extension_host",
  "extensions_ui",
  "feature_flags",
  "feedback",

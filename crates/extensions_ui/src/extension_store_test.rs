@@ -1,9 +1,9 @@
 use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
-use extension::ExtensionSettings;
-use extension::SchemaVersion;
-use extension::{
+use extension_host::ExtensionSettings;
+use extension_host::SchemaVersion;
+use extension_host::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
     RELOAD_DEBOUNCE_DURATION,
@@ -616,7 +616,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let executor = cx.executor();
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
-            if let extension::Event::StartedReloading = event {
+            if let extension_host::Event::StartedReloading = event {
                 executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }

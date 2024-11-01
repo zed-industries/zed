@@ -12,13 +12,13 @@ use ui::prelude::*;
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
 
-use extension::wasm_host::{WasmExtension, WasmHost};
+use extension_host::wasm_host::{WasmExtension, WasmHost};
 
 pub struct ExtensionSlashCommand {
     pub(crate) extension: WasmExtension,
     #[allow(unused)]
     pub(crate) host: Arc<WasmHost>,
-    pub(crate) command: extension::wasm_host::SlashCommand,
+    pub(crate) command: extension_host::wasm_host::SlashCommand,
 }
 
 impl SlashCommand for ExtensionSlashCommand {

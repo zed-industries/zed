@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use assistant_slash_command::SlashCommandRegistry;
-use extension::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
+use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Task};
 use indexed_docs::{IndexedDocsRegistry, ProviderId};
@@ -30,7 +30,7 @@ impl ExtensionApi {
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
         cx: &AppContext,
-    ) -> Arc<dyn extension::ExtensionApi> {
+    ) -> Arc<dyn extension_host::ExtensionApi> {
         Arc::new(Self {
             theme_registry,
             slash_command_registry,
@@ -42,7 +42,7 @@ impl ExtensionApi {
     }
 }
 
-impl extension::ExtensionApi for ExtensionApi {
+impl extension_host::ExtensionApi for ExtensionApi {
     fn remove_user_themes(&self, themes: Vec<SharedString>) {
         self.theme_registry.remove_user_themes(&themes);
     }

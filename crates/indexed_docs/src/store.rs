@@ -326,7 +326,7 @@ impl IndexedDocsDatabase {
     }
 }
 
-impl extension::DocsDatabase for IndexedDocsDatabase {
+impl extension_host::DocsDatabase for IndexedDocsDatabase {
     fn insert(&self, key: String, docs: String) -> Task<Result<()>> {
         let env = self.env.clone();
         let entries = self.entries;

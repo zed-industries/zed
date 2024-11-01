@@ -413,7 +413,7 @@ fn main() {
             app_state.languages.clone(),
             cx,
         );
-        extension::init(
+        extension_host::init(
             api,
             app_state.fs.clone(),
             app_state.client.clone(),

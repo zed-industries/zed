@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use extension::{
+use extension_host::{
     extension_lsp_adapter::ExtensionLspAdapter, ExtensionApi, ExtensionVersion,
     HeadlessExtensionStore,
 };
