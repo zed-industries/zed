@@ -496,7 +496,7 @@
     }
   },
   {
-    "context": "vim_operator == ^V",
+    "context": "vim_mode == literal",
     "bindings": {
       "ctrl-@": ["vim::Literal", ["ctrl-@", "\u0000"]],
       "ctrl-a": ["vim::Literal", ["ctrl-a", "\u0001"]],

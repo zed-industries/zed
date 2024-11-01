@@ -608,15 +608,19 @@ impl Vim {
         }
 
         if let Some(active_operator) = active_operator {
-            operator_id = active_operator.id();
             if active_operator.is_waiting(self.mode) {
-                mode = "waiting".to_string();
+                if matches!(active_operator, Operator::Literal { .. }) {
+                    mode = "literal".to_string();
+                } else {
+                    mode = "waiting".to_string();
+                }
             } else {
+                operator_id = active_operator.id();
                 mode = "operator".to_string();
             }
         }
 
-        if mode != "waiting" && mode != "insert" && mode != "replace" {
+        if mode == "normal" || mode == "visual" || mode == "operator" {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
