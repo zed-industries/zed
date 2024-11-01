@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::{fmt::Debug, path::Path};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use derive_more::{Deref, DerefMut};
@@ -231,4 +231,32 @@ impl ThemeRegistry for RealThemeRegistry {
             .themes
             .retain(|name, _| !themes_to_remove.contains(name))
     }
+}
+
+/// A theme registry that doesn't have any behavior.
+pub struct VoidThemeRegistry;
+
+#[async_trait]
+impl ThemeRegistry for VoidThemeRegistry {
+    fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+        Vec::new()
+    }
+
+    fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+        Vec::new()
+    }
+
+    fn get(&self, name: &str) -> Result<Arc<Theme>> {
+        bail!("cannot retrieve theme {name:?} from a void theme registry")
+    }
+
+    async fn load_user_theme(&self, _theme_path: &Path, _fs: Arc<dyn Fs>) -> Result<()> {
+        Ok(())
+    }
+
+    async fn load_user_themes(&self, _themes_path: &Path, _fs: Arc<dyn Fs>) -> Result<()> {
+        Ok(())
+    }
+
+    fn remove_user_themes(&self, _themes_to_remove: &[SharedString]) {}
 }
