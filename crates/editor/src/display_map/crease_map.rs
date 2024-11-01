@@ -129,8 +129,8 @@ pub enum Crease<T> {
     Inline {
         range: Range<T>,
         placeholder: FoldPlaceholder,
-        render_toggle: RenderToggleFn,
-        render_trailer: RenderTrailerFn,
+        render_toggle: Option<RenderToggleFn>,
+        render_trailer: Option<RenderTrailerFn>,
         metadata: Option<CreaseMetadata>,
     },
 }
@@ -143,6 +143,16 @@ pub struct CreaseMetadata {
 }
 
 impl<T> Crease<T> {
+    pub fn simple(range: Range<T>, placeholder: FoldPlaceholder) -> Self {
+        Crease::Inline {
+            range,
+            placeholder,
+            render_toggle: None,
+            render_trailer: None,
+            metadata: None,
+        }
+    }
+
     pub fn inline<RenderToggle, ToggleElement, RenderTrailer, TrailerElement>(
         range: Range<T>,
         placeholder: FoldPlaceholder,
@@ -171,12 +181,12 @@ impl<T> Crease<T> {
         Crease::Inline {
             range,
             placeholder,
-            render_toggle: Arc::new(move |row, folded, toggle, cx| {
+            render_toggle: Some(Arc::new(move |row, folded, toggle, cx| {
                 render_toggle(row, folded, toggle, cx).into_any_element()
-            }),
-            render_trailer: Arc::new(move |row, folded, cx| {
+            })),
+            render_trailer: Some(Arc::new(move |row, folded, cx| {
                 render_trailer(row, folded, cx).into_any_element()
-            }),
+            })),
             metadata: None,
         }
     }
@@ -202,6 +212,12 @@ impl<T> Crease<T> {
     pub fn range(&self) -> &Range<T> {
         match self {
             Crease::Inline { range, .. } => range,
+        }
+    }
+
+    pub fn placeholder(&self) -> &FoldPlaceholder {
+        match self {
+            Crease::Inline { placeholder, .. } => placeholder,
         }
     }
 }

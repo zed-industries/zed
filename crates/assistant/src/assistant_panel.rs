@@ -2267,7 +2267,7 @@ impl ContextEditor {
                     );
 
                     let new_crease_ids = editor.insert_creases(
-                        [Crease::new(
+                        [Crease::inline(
                             patch_start..patch_end,
                             header_placeholder.clone(),
                             fold_toggle("patch-header"),
@@ -2291,7 +2291,11 @@ impl ContextEditor {
 
                 if should_refold {
                     editor.unfold_ranges([patch_start..patch_end], true, false, cx);
-                    editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
+                    editor.fold_creases(
+                        [Crease::simple(patch_start..patch_end, header_placeholder)],
+                        false,
+                        cx,
+                    );
                 }
             }
 
@@ -3193,30 +3197,27 @@ impl ContextEditor {
                             &snapshot,
                         )
                         .filter_map(|crease| {
-                            if let Some(metadata) = &crease.metadata {
-                                let start = crease
-                                    .range
-                                    .start
-                                    .to_offset(&snapshot)
-                                    .saturating_sub(selection_start);
-                                let end = crease
-                                    .range
-                                    .end
-                                    .to_offset(&snapshot)
-                                    .saturating_sub(selection_start);
+                            let Crease::Inline {
+                                range, metadata, ..
+                            } = &crease;
+                            let metadata = metadata.as_ref()?;
+                            let start = range
+                                .start
+                                .to_offset(&snapshot)
+                                .saturating_sub(selection_start);
+                            let end = range
+                                .end
+                                .to_offset(&snapshot)
+                                .saturating_sub(selection_start);
 
-                                let range_relative_to_selection = start..end;
-
-                                if range_relative_to_selection.is_empty() {
-                                    None
-                                } else {
-                                    Some(SelectedCreaseMetadata {
-                                        range_relative_to_selection,
-                                        crease: metadata.clone(),
-                                    })
-                                }
-                            } else {
+                            let range_relative_to_selection = start..end;
+                            if range_relative_to_selection.is_empty() {
                                 None
+                            } else {
+                                Some(SelectedCreaseMetadata {
+                                    range_relative_to_selection,
+                                    crease: metadata.clone(),
+                                })
                             }
                         })
                         .collect::<Vec<_>>()

@@ -1113,7 +1113,7 @@ impl DisplaySnapshot {
 
             Some(Crease::Inline {
                 range: start..row_before_line_breaks,
-                placeholder: self.fold_placeholder,
+                placeholder: self.fold_placeholder.clone(),
                 render_toggle: None,
                 render_trailer: None,
                 metadata: None,

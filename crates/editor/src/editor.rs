@@ -6724,7 +6724,7 @@ impl Editor {
 
         let mut edits = Vec::new();
         let mut unfold_ranges = Vec::new();
-        let mut refold_ranges = Vec::new();
+        let mut refold_creases = Vec::new();
 
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
@@ -6799,7 +6799,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row -= row_delta;
                         end.row -= row_delta;
-                        refold_ranges.push((start..end, fold.placeholder.clone()));
+                        refold_creases.push(Crease::simple(start..end, fold.placeholder.clone()));
                     }
                 }
             }
@@ -6815,7 +6815,7 @@ impl Editor {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_creases(refold_ranges, true, cx);
+            this.fold_creases(refold_creases, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| {
                 s.select(new_selections);
             })
@@ -6828,7 +6828,7 @@ impl Editor {
 
         let mut edits = Vec::new();
         let mut unfold_ranges = Vec::new();
-        let mut refold_ranges = Vec::new();
+        let mut refold_creases = Vec::new();
 
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
@@ -6893,7 +6893,7 @@ impl Editor {
                         let mut end = fold.range.end.to_point(&buffer);
                         start.row += row_delta;
                         end.row += row_delta;
-                        refold_ranges.push((start..end, fold.placeholder.clone()));
+                        refold_creases.push(Crease::simple(start..end, fold.placeholder.clone()));
                     }
                 }
             }
@@ -6909,7 +6909,7 @@ impl Editor {
                     buffer.edit([(range, text)], None, cx);
                 }
             });
-            this.fold_creases(refold_ranges, true, cx);
+            this.fold_creases(refold_creases, true, cx);
             this.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(new_selections));
         });
     }
@@ -11047,9 +11047,9 @@ impl Editor {
                         .buffer_snapshot
                         .line_len(MultiBufferRow(s.end.row)),
                 );
-                (start..end, display_map.fold_placeholder.clone())
+                Crease::simple(start..end, display_map.fold_placeholder.clone())
             } else {
-                (s.start..s.end, display_map.fold_placeholder.clone())
+                Crease::simple(s.start..s.end, display_map.fold_placeholder.clone())
             }
         });
         self.fold_creases(ranges, true, cx);
@@ -11057,20 +11057,20 @@ impl Editor {
 
     pub fn fold_creases<T: ToOffset + Clone>(
         &mut self,
-        ranges: impl IntoIterator<Item = Crease<T>>,
+        creases: impl IntoIterator<Item = Crease<T>>,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         let mut fold_ranges = Vec::new();
         let mut buffers_affected = HashMap::default();
         let multi_buffer = self.buffer().read(cx);
-        for (fold_range, fold_text) in ranges {
+        for crease in creases {
             if let Some((_, buffer, _)) =
-                multi_buffer.excerpt_containing(fold_range.start.clone(), cx)
+                multi_buffer.excerpt_containing(crease.range().start.clone(), cx)
             {
                 buffers_affected.insert(buffer.read(cx).remote_id(), buffer);
             };
-            fold_ranges.push((fold_range, fold_text));
+            fold_ranges.push((crease.range().clone(), crease.placeholder().clone()));
         }
 
         let mut ranges = fold_ranges.into_iter().peekable();
@@ -13706,6 +13706,7 @@ impl EditorSnapshot {
         cx: &mut WindowContext,
     ) -> Option<AnyElement> {
         let folded = self.is_line_folded(buffer_row);
+        let mut is_foldable = false;
 
         if let Some(crease) = self
             .crease_snapshot
@@ -13713,23 +13714,28 @@ impl EditorSnapshot {
         {
             match crease {
                 Crease::Inline { render_toggle, .. } => {
-                    let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
-                        if folded {
-                            editor.update(cx, |editor, cx| {
-                                editor.fold_at(&crate::FoldAt { buffer_row }, cx)
-                            });
-                        } else {
-                            editor.update(cx, |editor, cx| {
-                                editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
-                            });
-                        }
-                    });
-                    Some((render_toggle)(buffer_row, folded, toggle_callback, cx))
+                    is_foldable = true;
+                    if let Some(render_toggle) = render_toggle {
+                        let toggle_callback = Arc::new(move |folded, cx: &mut WindowContext| {
+                            if folded {
+                                editor.update(cx, |editor, cx| {
+                                    editor.fold_at(&crate::FoldAt { buffer_row }, cx)
+                                });
+                            } else {
+                                editor.update(cx, |editor, cx| {
+                                    editor.unfold_at(&crate::UnfoldAt { buffer_row }, cx)
+                                });
+                            }
+                        });
+                        return Some((render_toggle)(buffer_row, folded, toggle_callback, cx));
+                    }
                 }
             }
-        } else if folded
-            || (self.starts_indent(buffer_row) && (row_contains_cursor || self.gutter_hovered))
-        {
+        }
+
+        is_foldable |= self.starts_indent(buffer_row);
+
+        if folded || (is_foldable && (row_contains_cursor || self.gutter_hovered)) {
             Some(
                 Disclosure::new(("indent-fold-indicator", buffer_row.0), !folded)
                     .selected(folded)
@@ -13756,7 +13762,8 @@ impl EditorSnapshot {
         let Crease::Inline { render_trailer, .. } = self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)?;
-        Some((render_trailer)(buffer_row, folded, cx))
+        let render_trailer = render_trailer.as_ref()?;
+        Some(render_trailer(buffer_row, folded, cx))
     }
 }
 
