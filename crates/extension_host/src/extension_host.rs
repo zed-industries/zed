@@ -1356,7 +1356,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let Some(theme_family) = ThemeRegistry::read_user_theme(&theme_path, fs.clone())
+                let Some(theme_family) = theme::read_user_theme(&theme_path, fs.clone())
                     .await
                     .log_err()
                 else {
