@@ -4252,7 +4252,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇˇˇˇ
+            // porttitor id. Aliquam id accumsan eros.ˇ
         "};
 
         cx.set_state(unwrapped_text);
@@ -4282,7 +4282,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         let wrapped_text = indoc! {"
             // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque.ˇˇ
+            // auctor, eu lacinia sapien scelerisque.ˇ
             //
             // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
             // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
@@ -4290,7 +4290,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
             // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
             // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
-            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇˇ
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ
         "};
 
         cx.set_state(unwrapped_text);

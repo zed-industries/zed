@@ -343,14 +343,15 @@ impl SelectionsCollection {
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn display_ranges(&self, cx: &mut AppContext) -> Vec<Range<DisplayPoint>> {
-        self.all_display(cx)
-            .1
-            .into_iter()
-            .map(|selection| {
-                if selection.reversed {
-                    selection.end..selection.start
+        let display_map = self.display_map(cx);
+        self.disjoint_anchors()
+            .iter()
+            .chain(self.pending_anchor().as_ref())
+            .map(|s| {
+                if s.reversed {
+                    s.end.to_display_point(&display_map)..s.start.to_display_point(&display_map)
                 } else {
-                    selection.start..selection.end
+                    s.start.to_display_point(&display_map)..s.end.to_display_point(&display_map)
                 }
             })
             .collect()
