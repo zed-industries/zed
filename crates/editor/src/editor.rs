@@ -131,7 +131,9 @@ use project::{
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
-use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
+use selections_collection::{
+    resolve_selections, MutableSelectionsCollection, SelectionsCollection,
+};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
@@ -3484,8 +3486,8 @@ impl Editor {
             }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
-            let snapshot = this.buffer.read(cx).read(cx);
-            let new_selections = resolve_multiple::<usize, _>(new_anchor_selections, &snapshot)
+            let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let new_selections = resolve_selections::<usize, _>(new_anchor_selections, &map)
                 .zip(new_selection_deltas)
                 .map(|(selection, delta)| Selection {
                     id: selection.id,
@@ -3498,18 +3500,20 @@ impl Editor {
 
             let mut i = 0;
             for (position, delta, selection_id, pair) in new_autoclose_regions {
-                let position = position.to_offset(&snapshot) + delta;
-                let start = snapshot.anchor_before(position);
-                let end = snapshot.anchor_after(position);
+                let position = position.to_offset(&map.buffer_snapshot) + delta;
+                let start = map.buffer_snapshot.anchor_before(position);
+                let end = map.buffer_snapshot.anchor_after(position);
                 while let Some(existing_state) = this.autoclose_regions.get(i) {
-                    match existing_state.range.start.cmp(&start, &snapshot) {
+                    match existing_state.range.start.cmp(&start, &map.buffer_snapshot) {
                         Ordering::Less => i += 1,
                         Ordering::Greater => break,
-                        Ordering::Equal => match end.cmp(&existing_state.range.end, &snapshot) {
-                            Ordering::Less => i += 1,
-                            Ordering::Equal => break,
-                            Ordering::Greater => break,
-                        },
+                        Ordering::Equal => {
+                            match end.cmp(&existing_state.range.end, &map.buffer_snapshot) {
+                                Ordering::Less => i += 1,
+                                Ordering::Equal => break,
+                                Ordering::Greater => break,
+                            }
+                        }
                     }
                 }
                 this.autoclose_regions.insert(
@@ -3522,7 +3526,6 @@ impl Editor {
                 );
             }
 
-            drop(snapshot);
             let had_active_inline_completion = this.has_active_inline_completion(cx);
             this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
                 s.select(new_selections)
@@ -4038,7 +4041,7 @@ impl Editor {
                 }
             }
 
-            (selection.clone(), enclosing)
+            (selection, enclosing)
         })
     }
 
