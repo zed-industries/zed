@@ -13,7 +13,6 @@ path = "src/workspace.rs"
 doctest = false
 
 [features]
-no-webrtc = ["call/no-webrtc"]
 test-support = [
     "call/test-support",
     "client/test-support",
