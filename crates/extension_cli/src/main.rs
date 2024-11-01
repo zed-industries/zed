@@ -9,7 +9,7 @@ use std::{
 use ::fs::{copy_recursive, CopyOptions, Fs, RealFs};
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
-use extension_host::{
+use extension::{
     extension_builder::{CompileExtensionOptions, ExtensionBuilder},
     ExtensionManifest,
 };

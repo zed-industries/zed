@@ -1,0 +1,31 @@
+[package]
+name = "extension"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/extension.rs"
+
+[dependencies]
+anyhow.workspace = true
+async-compression.workspace = true
+async-tar.workspace = true
+collections.workspace = true
+fs.workspace = true
+futures.workspace = true
+http_client.workspace = true
+language.workspace = true
+log.workspace = true
+lsp.workspace = true
+semantic_version.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+wasm-encoder.workspace = true
+wasmparser.workspace = true
+wit-component.workspace = true

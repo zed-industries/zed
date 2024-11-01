@@ -1,7 +1,4 @@
-pub mod extension_builder;
-
 pub mod extension_lsp_adapter;
-pub mod extension_manifest;
 pub mod extension_settings;
 pub mod wasm_host;
 
@@ -11,8 +8,8 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashMap, HashSet};
-use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
-pub use extension_manifest::ExtensionManifest;
+use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+pub use extension::ExtensionManifest;
 use fs::{Fs, RemoveOptions, RenameOptions};
 use futures::{
     channel::{
@@ -52,10 +49,10 @@ use wasm_host::{
     WasmExtension, WasmHost,
 };
 
-pub use extension_manifest::{ExtensionLibraryKind, GrammarManifestEntry, OldExtensionManifest};
+pub use extension::{
+    ExtensionLibraryKind, GrammarManifestEntry, OldExtensionManifest, SchemaVersion,
+};
 pub use extension_settings::ExtensionSettings;
-
-pub use extension_manifest::SchemaVersion;
 
 pub const RELOAD_DEBOUNCE_DURATION: Duration = Duration::from_millis(200);
 const FS_WATCH_LATENCY: Duration = Duration::from_millis(100);
