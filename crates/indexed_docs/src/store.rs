@@ -359,3 +359,12 @@ impl IndexedDocsDatabase for RealIndexedDocsDatabase {
         })
     }
 }
+
+/// An [`IndexedDocsDatabase`] that doesn't have any behavior.
+pub struct VoidIndexedDocsDatabase;
+
+impl IndexedDocsDatabase for VoidIndexedDocsDatabase {
+    fn insert(&self, _key: String, _docs: String) -> Task<Result<()>> {
+        Task::ready(Ok(()))
+    }
+}
