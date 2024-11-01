@@ -1368,7 +1368,7 @@ impl BlockSnapshot {
                 if bias == Bias::Left {
                     BlockPoint::new(cursor.start().1 .0, 0)
                 } else {
-                    BlockPoint::new(cursor.end(&()).1 .0 - 1, 0)
+                    BlockPoint::new(cursor.end(&()).1 .0, 0)
                 }
             } else {
                 let (input_start_row, output_start_row) = cursor.start();

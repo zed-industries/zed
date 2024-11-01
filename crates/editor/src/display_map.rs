@@ -2089,16 +2089,18 @@ pub mod tests {
             map.snapshot(cx)
         });
 
+        assert_eq!(snapshot.text(), "abcde\n\n\n\n\npqrst");
+
         let point_to_display_points = [
             (
                 Point::new(1, 0),
                 DisplayPoint::new(DisplayRow(1), 0),
-                DisplayPoint::new(DisplayRow(4), 0),
+                DisplayPoint::new(DisplayRow(5), 0),
             ),
             (
                 Point::new(2, 0),
                 DisplayPoint::new(DisplayRow(1), 0),
-                DisplayPoint::new(DisplayRow(4), 0),
+                DisplayPoint::new(DisplayRow(5), 0),
             ),
             (
                 Point::new(3, 0),
