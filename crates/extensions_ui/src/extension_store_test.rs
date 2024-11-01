@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use theme::ThemeRegistry;
+use theme::{RealThemeRegistry, ThemeRegistry};
 use util::test::temp_tree;
 
 #[cfg(test)]
@@ -260,7 +260,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     };
 
     let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let theme_registry = Arc::new(RealThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());
@@ -301,7 +301,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["ERB", "Plain Text", "Ruby"]
         );
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Monokai Dark",
                 "Monokai Light",
@@ -382,7 +382,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(index.themes, expected_index.themes);
 
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Gruvbox",
                 "Monokai Dark",
@@ -434,7 +434,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["embedded_template".into(), "ruby".into()]
         );
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Gruvbox",
                 "Monokai Dark",
@@ -496,7 +496,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let project = Project::test(fs.clone(), [project_dir.as_path()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _cx| project.languages().clone());
-    let theme_registry = Arc::new(ThemeRegistry::new(Box::new(())));
+    let theme_registry = Arc::new(RealThemeRegistry::new(Box::new(())));
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());

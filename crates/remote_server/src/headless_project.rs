@@ -200,7 +200,7 @@ impl HeadlessProject {
         )
         .detach();
 
-        let extensions = extension::HeadlessExtensionStore::new(
+        let extensions = extension_host::HeadlessExtensionStore::new(
             fs.clone(),
             http_client.clone(),
             Arc::new(HeadlessExtensionsApi::new(languages.clone())),
