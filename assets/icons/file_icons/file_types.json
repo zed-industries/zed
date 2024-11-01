@@ -200,9 +200,6 @@
     "zshrc": "terminal"
   },
   "types": {
-    "ansible": {
-      "icon": "icons/file_icons/ansible.svg"
-    },
     "astro": {
       "icon": "icons/file_icons/astro.svg"
     },
