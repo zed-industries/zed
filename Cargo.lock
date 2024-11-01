@@ -12098,7 +12098,6 @@ name = "theme"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "collections",
  "derive_more",
  "fs",

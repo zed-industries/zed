@@ -112,7 +112,7 @@ pub struct ExtensionStore {
     outstanding_operations: BTreeMap<Arc<str>, ExtensionOperation>,
     index_path: PathBuf,
     language_registry: Arc<LanguageRegistry>,
-    theme_registry: Arc<dyn ThemeRegistry>,
+    theme_registry: Arc<ThemeRegistry>,
     slash_command_registry: Arc<SlashCommandRegistry>,
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
@@ -177,7 +177,7 @@ pub fn init(
     client: Arc<Client>,
     node_runtime: NodeRuntime,
     language_registry: Arc<LanguageRegistry>,
-    theme_registry: Arc<dyn ThemeRegistry>,
+    theme_registry: Arc<ThemeRegistry>,
     cx: &mut AppContext,
 ) {
     ExtensionSettings::register(cx);
@@ -228,7 +228,7 @@ impl ExtensionStore {
         telemetry: Option<Arc<Telemetry>>,
         node_runtime: NodeRuntime,
         language_registry: Arc<LanguageRegistry>,
-        theme_registry: Arc<dyn ThemeRegistry>,
+        theme_registry: Arc<ThemeRegistry>,
         slash_command_registry: Arc<SlashCommandRegistry>,
         indexed_docs_registry: Arc<IndexedDocsRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
