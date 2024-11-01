@@ -12,7 +12,7 @@ use workspace::{item::Item, Workspace};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
-use crate::KernelSpecification;
+use crate::{KernelSpecification, KERNEL_DOCS_URL};
 
 actions!(
     repl,
@@ -262,7 +262,7 @@ impl Render for ReplSessionsPage {
                             .child(Label::new("REPL documentation"))
                             .child(Icon::new(IconName::Link))
                             .on_click(move |_, cx| {
-                                cx.open_url("https://zed.dev/docs/repl#changing-kernels")
+                                cx.open_url(KERNEL_DOCS_URL)
                             }),
                     ),
             )

@@ -26,6 +26,8 @@ use crate::repl_store::ReplStore;
 pub use crate::session::Session;
 use client::telemetry::Telemetry;
 
+pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";
+
 pub fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
     set_dispatcher(zed_dispatcher(cx));
     JupyterSettings::register(cx);

@@ -1,5 +1,6 @@
 use crate::kernels::KernelOption;
 use crate::repl_store::ReplStore;
+use crate::KERNEL_DOCS_URL;
 
 // - [@nate] Add a split button for running/selecting kernels
 //   - In REPL editor mode show the REPL icon
@@ -26,12 +27,10 @@ use crate::repl_store::ReplStore;
 //   - [ ] Consider storing user's remote servers in their Zed.dev account
 //   - [ ] Treat kernel selection settings as the global default that gets overriden by project settings, a notebook, or selecting in the selector
 // ---
-use gpui::Action;
 use gpui::DismissEvent;
 
 use picker::Picker;
 use picker::PickerDelegate;
-use workspace::ShowConfiguration;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
@@ -186,16 +185,13 @@ impl PickerDelegate for KernelPickerDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .p_1()
                 .gap_4()
-                .justify_between()
                 .child(
-                    Button::new("configure", "Configure")
-                        .icon(IconName::Settings)
-                        .icon_size(IconSize::Small)
+                    Button::new("kernel-docs", "Kernel Docs")
+                        .icon(IconName::ExternalLink)
+                        .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .icon_position(IconPosition::Start)
-                        .on_click(|_, cx| {
-                            cx.dispatch_action(ShowConfiguration.boxed_clone());
-                        }),
+                        .icon_position(IconPosition::End)
+                        .on_click(move |_, cx| cx.open_url(KERNEL_DOCS_URL)),
                 )
                 .into_any(),
         )
