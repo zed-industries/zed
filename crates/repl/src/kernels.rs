@@ -19,12 +19,37 @@ use std::{
     path::PathBuf,
     sync::Arc,
 };
+use ui::SharedString;
 use uuid::Uuid;
+
+#[derive(Debug, Clone)]
+pub enum KernelOption {
+    // TODO: Remote(RemoteKernelSpecification)
+    Jupyter(KernelSpecification),
+    PythonEnv(KernelSpecification),
+}
+
+impl KernelOption {
+    pub fn name(&self) -> SharedString {
+        match self {
+            Self::Jupyter(spec) => spec.name.clone().into(),
+            Self::PythonEnv(spec) => spec.name.clone().into(),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct KernelSpecification {
     pub name: String,
     pub path: PathBuf,
+    pub kernelspec: JupyterKernelspec,
+}
+
+#[derive(Debug, Clone)]
+pub struct RemoteKernelSpecification {
+    pub name: String,
+    pub url: String,
+    pub token: String,
     pub kernelspec: JupyterKernelspec,
 }
 
@@ -62,6 +87,31 @@ impl KernelSpecification {
         }
 
         Ok(cmd)
+    }
+
+    pub(crate) fn deno_kernel() -> Self {
+        let kernelspec = JupyterKernelspec {
+            display_name: "Deno".to_string(),
+            language: "typescript".to_string(),
+            argv: vec![
+                "deno".to_string(),
+                "--unstable-ffi".to_string(),
+                "--unstable".to_string(),
+                "jupyter".to_string(),
+                "--kernel".to_string(),
+                "--conn".to_string(),
+                "{connection_file}".to_string(),
+            ],
+            env: None,
+            metadata: None,
+            interrupt_mode: None,
+        };
+
+        Self {
+            name: "deno".to_string(),
+            path: PathBuf::from("deno"),
+            kernelspec,
+        }
     }
 }
 
