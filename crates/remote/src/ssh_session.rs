@@ -202,17 +202,6 @@ impl SshConnectionOptions {
             host
         }
     }
-
-    // Uniquely identifies dev server projects on a remote host. Needs to be
-    // stable for the same dev server project.
-    pub fn remote_server_identifier(&self) -> String {
-        let mut identifier = format!("dev-server-{:?}", self.host);
-        if let Some(username) = self.username.as_ref() {
-            identifier.push('-');
-            identifier.push_str(&username);
-        }
-        identifier
-    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -520,14 +509,43 @@ pub enum SshRemoteEvent {
 
 impl EventEmitter<SshRemoteEvent> for SshRemoteClient {}
 
+// Identifies the socket on the remote server so that reconnects
+// can re-join the same project.
+pub enum ConnectionIdentifier {
+    Setup,
+    Workspace(i64),
+}
+
+impl ConnectionIdentifier {
+    // This string gets used in a socket name, and so must be relatively short.
+    // The total length of:
+    //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
+    // Must be less than about 100 characters
+    //   https://unix.stackexchange.com/questions/367008/why-is-socket-path-length-limited-to-a-hundred-chars
+    // So our strings should be at most 20 characters or so.
+    fn to_string(&self, cx: &AppContext) -> String {
+        let identifier_prefix = match ReleaseChannel::global(cx) {
+            ReleaseChannel::Stable => "".to_string(),
+            release_channel => format!("{}-", release_channel.dev_name()),
+        };
+        match self {
+            Self::Setup => format!("{identifier_prefix}setup"),
+            Self::Workspace(workspace_id) => {
+                format!("{identifier_prefix}workspace-{workspace_id}",)
+            }
+        }
+    }
+}
+
 impl SshRemoteClient {
     pub fn new(
-        unique_identifier: String,
+        unique_identifier: ConnectionIdentifier,
         connection_options: SshConnectionOptions,
         cancellation: oneshot::Receiver<()>,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AppContext,
     ) -> Task<Result<Option<Model<Self>>>> {
+        let unique_identifier = unique_identifier.to_string(cx);
         cx.spawn(|mut cx| async move {
             let success = Box::pin(async move {
                 let (outgoing_tx, outgoing_rx) = mpsc::unbounded::<Envelope>();
@@ -1096,7 +1114,15 @@ impl SshRemoteClient {
     ) -> Model<Self> {
         let (_tx, rx) = oneshot::channel();
         client_cx
-            .update(|cx| Self::new("fake".to_string(), opts, rx, Arc::new(fake::Delegate), cx))
+            .update(|cx| {
+                Self::new(
+                    ConnectionIdentifier::Setup,
+                    opts,
+                    rx,
+                    Arc::new(fake::Delegate),
+                    cx,
+                )
+            })
             .await
             .unwrap()
             .unwrap()

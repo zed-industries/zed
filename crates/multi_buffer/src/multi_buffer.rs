@@ -3083,6 +3083,58 @@ impl MultiBufferSnapshot {
         summaries
     }
 
+    pub fn dimensions_from_points<'a, D>(
+        &'a self,
+        points: impl 'a + IntoIterator<Item = Point>,
+    ) -> impl 'a + Iterator<Item = D>
+    where
+        D: TextDimension,
+    {
+        let mut cursor = self.excerpts.cursor::<TextSummary>(&());
+        let mut memoized_source_start: Option<Point> = None;
+        let mut points = points.into_iter();
+        std::iter::from_fn(move || {
+            let point = points.next()?;
+
+            // Clear the memoized source start if the point is in a different excerpt than previous.
+            if memoized_source_start.map_or(false, |_| point >= cursor.end(&()).lines) {
+                memoized_source_start = None;
+            }
+
+            // Now determine where the excerpt containing the point starts in its source buffer.
+            // We'll use this value to calculate overshoot next.
+            let source_start = if let Some(source_start) = memoized_source_start {
+                source_start
+            } else {
+                cursor.seek_forward(&point, Bias::Right, &());
+                if let Some(excerpt) = cursor.item() {
+                    let source_start = excerpt.range.context.start.to_point(&excerpt.buffer);
+                    memoized_source_start = Some(source_start);
+                    source_start
+                } else {
+                    return Some(D::from_text_summary(cursor.start()));
+                }
+            };
+
+            // First, assume the output dimension is at least the start of the excerpt containing the point
+            let mut output = D::from_text_summary(cursor.start());
+
+            // If the point lands within its excerpt, calculate and add the overshoot in dimension D.
+            if let Some(excerpt) = cursor.item() {
+                let overshoot = point - cursor.start().lines;
+                if !overshoot.is_zero() {
+                    let end_in_excerpt = source_start + overshoot;
+                    output.add_assign(
+                        &excerpt
+                            .buffer
+                            .text_summary_for_range::<D, _>(source_start..end_in_excerpt),
+                    );
+                }
+            }
+            Some(output)
+        })
+    }
+
     pub fn refresh_anchors<'a, I>(&'a self, anchors: I) -> Vec<(usize, Anchor, bool)>
     where
         I: 'a + IntoIterator<Item = &'a Anchor>,
@@ -4703,6 +4755,12 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
 impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for usize {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(self, &cursor_location.text.len)
+    }
+}
+
+impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, TextSummary> for Point {
+    fn cmp(&self, cursor_location: &TextSummary, _: &()) -> cmp::Ordering {
+        Ord::cmp(self, &cursor_location.lines)
     }
 }
 
