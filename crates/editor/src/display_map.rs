@@ -255,7 +255,7 @@ impl DisplayMap {
 
     pub fn insert_creases(
         &mut self,
-        creases: impl IntoIterator<Item = Crease>,
+        creases: impl IntoIterator<Item = Crease<Anchor>>,
         cx: &mut ModelContext<Self>,
     ) -> Vec<CreaseId> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -1054,19 +1054,27 @@ impl DisplaySnapshot {
             .unwrap_or(false)
     }
 
-    pub fn foldable_range(
-        &self,
-        buffer_row: MultiBufferRow,
-    ) -> Option<(Range<Point>, FoldPlaceholder)> {
+    pub fn crease_for_buffer_row(&self, buffer_row: MultiBufferRow) -> Option<Crease<Point>> {
         let start = MultiBufferPoint::new(buffer_row.0, self.buffer_snapshot.line_len(buffer_row));
         if let Some(crease) = self
             .crease_snapshot
             .query_row(buffer_row, &self.buffer_snapshot)
         {
-            Some((
-                crease.range().to_point(&self.buffer_snapshot),
-                crease.placeholder.clone(),
-            ))
+            match crease {
+                Crease::Inline {
+                    range,
+                    placeholder,
+                    render_toggle,
+                    render_trailer,
+                    metadata,
+                } => Some(Crease::Inline {
+                    range: range.to_point(&self.buffer_snapshot),
+                    placeholder: placeholder.clone(),
+                    render_toggle: render_toggle.clone(),
+                    render_trailer: render_trailer.clone(),
+                    metadata: metadata.clone(),
+                }),
+            }
         } else if self.starts_indent(MultiBufferRow(start.row))
             && !self.is_line_folded(MultiBufferRow(start.row))
         {
@@ -1103,7 +1111,13 @@ impl DisplaySnapshot {
                     .line_len(MultiBufferRow(row_before_line_breaks.row)),
             );
 
-            Some((start..row_before_line_breaks, self.fold_placeholder.clone()))
+            Some(Crease::Inline {
+                range: start..row_before_line_breaks,
+                placeholder: self.fold_placeholder,
+                render_toggle: None,
+                render_trailer: None,
+                metadata: None,
+            })
         } else {
             None
         }

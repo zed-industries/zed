@@ -592,7 +592,7 @@ fn test_clone(cx: &mut TestAppContext) {
 
     _ = editor.update(cx, |editor, cx| {
         editor.change_selections(None, cx, |s| s.select_ranges(selection_ranges.clone()));
-        editor.fold_ranges(
+        editor.fold_creases(
             [
                 (Point::new(1, 0)..Point::new(2, 0), FoldPlaceholder::test()),
                 (Point::new(3, 0)..Point::new(4, 0), FoldPlaceholder::test()),
@@ -1279,7 +1279,7 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     assert_eq!('α'.len_utf8(), 2);
 
     _ = view.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
                 (Point::new(0, 6)..Point::new(0, 12), FoldPlaceholder::test()),
                 (Point::new(1, 2)..Point::new(1, 4), FoldPlaceholder::test()),
@@ -3871,7 +3871,7 @@ fn test_move_line_up_down(cx: &mut TestAppContext) {
         build_editor(buffer, cx)
     });
     _ = view.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
                 (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
                 (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
@@ -4770,7 +4770,7 @@ fn test_split_selection_into_lines(cx: &mut TestAppContext) {
         build_editor(buffer, cx)
     });
     _ = view.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
                 (Point::new(0, 2)..Point::new(1, 2), FoldPlaceholder::test()),
                 (Point::new(2, 3)..Point::new(4, 1), FoldPlaceholder::test()),
@@ -5451,7 +5451,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     // Ensure that we keep expanding the selection if the larger selection starts or ends within
     // a fold.
     editor.update(cx, |view, cx| {
-        view.fold_ranges(
+        view.fold_creases(
             vec![
                 (
                     Point::new(0, 21)..Point::new(0, 24),
