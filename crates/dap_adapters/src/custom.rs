@@ -43,6 +43,7 @@ impl DebugAdapter for CustomDebugAdapter {
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
+        _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         Ok(DebugAdapterBinary {
             command: self.custom_args.command.clone(),
@@ -68,6 +69,7 @@ impl DebugAdapter for CustomDebugAdapter {
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
+        _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         bail!("Custom debug adapters cannot be installed")
     }

@@ -29,6 +29,7 @@ impl DebugAdapter for LldbDebugAdapter {
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
+        _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         #[cfg(target_os = "macos")]
         {
@@ -68,6 +69,7 @@ impl DebugAdapter for LldbDebugAdapter {
         &self,
         _: &dyn DapDelegate,
         _: &DebugAdapterConfig,
+        _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         bail!("LLDB debug adapter cannot be installed")
     }

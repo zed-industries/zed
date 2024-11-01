@@ -1,6 +1,6 @@
-use std::net::Ipv4Addr;
-
 use dap::transport::{TcpTransport, Transport};
+use std::net::Ipv4Addr;
+use util::maybe;
 
 use crate::*;
 
@@ -49,6 +49,7 @@ impl DebugAdapter for JsDebugAdapter {
         &self,
         delegate: &dyn DapDelegate,
         _: &DebugAdapterConfig,
+        user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         let node_runtime = delegate
             .node_runtime()
@@ -57,18 +58,29 @@ impl DebugAdapter for JsDebugAdapter {
         let adapter_path = paths::debug_adapters_dir().join(self.name());
         let file_name_prefix = format!("{}_", self.name());
 
-        let adapter_path = util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
-            file_name.starts_with(&file_name_prefix)
-        })
-        .await
-        .ok_or_else(|| anyhow!("Couldn't find Javascript dap directory"))?;
+        let adapter_info: Result<_> = maybe!(async {
+            let adapter_path =
+                util::fs::find_file_name_in_dir(adapter_path.as_path(), |file_name| {
+                    file_name.starts_with(&file_name_prefix)
+                })
+                .await
+                .ok_or_else(|| anyhow!("Couldn't find Php dap directory"))?;
 
-        let version = adapter_path
-            .file_name()
-            .and_then(|file_name| file_name.to_str())
-            .and_then(|file_name| file_name.strip_prefix(&file_name_prefix))
-            .ok_or_else(|| anyhow!("Javascript debug adapter has invalid file name"))?
-            .to_string();
+            let version = adapter_path
+                .file_name()
+                .and_then(|file_name| file_name.to_str())
+                .and_then(|file_name| file_name.strip_prefix(&file_name_prefix))
+                .ok_or_else(|| anyhow!("PHP debug adapter has invalid file name"))?
+                .to_string();
+
+            Ok((adapter_path, version))
+        })
+        .await;
+
+        let (adapter_path, version) = match user_installed_path {
+            Some(path) => (path, "N/A".into()),
+            None => adapter_info?,
+        };
 
         Ok(DebugAdapterBinary {
             command: node_runtime

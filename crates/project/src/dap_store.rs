@@ -1,3 +1,4 @@
+use crate::project_settings::ProjectSettings;
 use crate::ProjectPath;
 use anyhow::{anyhow, Context as _, Result};
 use dap::adapters::{DapDelegate, DapStatus, DebugAdapterName};
@@ -29,7 +30,7 @@ use language::{
 };
 use node_runtime::NodeRuntime;
 use serde_json::{json, Value};
-use settings::WorktreeId;
+use settings::{Settings, WorktreeId};
 use smol::lock::Mutex;
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
@@ -245,6 +246,7 @@ impl DapStore {
     ) {
         let client_id = self.next_client_id();
         let adapter_delegate = self.delegate.clone();
+
         let start_client_task = cx.spawn(|this, mut cx| async move {
             let dap_store = this.clone();
             let client = maybe!(async {
@@ -254,7 +256,19 @@ impl DapStore {
                         .context("Creating debug adapter")?,
                 );
 
-                let binary = match adapter.get_binary(adapter_delegate.as_ref(), &config).await {
+                let path = cx.update(|cx| {
+                    let name = LanguageServerName::from(adapter.name().as_ref());
+
+                    ProjectSettings::get_global(cx)
+                        .dap
+                        .get(&name)
+                        .and_then(|s| s.path.as_ref().map(PathBuf::from))
+                })?;
+
+                let binary = match adapter
+                    .get_binary(adapter_delegate.as_ref(), &config, path)
+                    .await
+                {
                     Err(error) => {
                         adapter_delegate.update_status(
                             adapter.name(),
