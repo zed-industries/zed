@@ -248,9 +248,9 @@ impl QuickActionBar {
 
         Some(
             h_flex()
+                .child(self.render_kernel_selector(Some(menu_state.kernel_name.clone()), cx))
                 .child(button)
                 .child(dropdown_menu)
-                .child(self.render_kernel_selector(Some(menu_state.kernel_name.clone()), cx))
                 .into_any_element(),
         )
     }
@@ -264,6 +264,7 @@ impl QuickActionBar {
 
         Some(
             h_flex()
+                .child(self.render_kernel_selector(None, cx))
                 .child(
                     IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
                         .size(ButtonSize::Compact)
@@ -272,7 +273,6 @@ impl QuickActionBar {
                         .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                         .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))),
                 )
-                .child(self.render_kernel_selector(None, cx))
                 .into_any_element(),
         )
     }
@@ -280,7 +280,7 @@ impl QuickActionBar {
     pub fn render_kernel_selector(
         &self,
         current_kernel_name: Option<SharedString>,
-        cx: &mut ViewContext<Self>,
+        _cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
         let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
             PopoverMenuHandle::default();

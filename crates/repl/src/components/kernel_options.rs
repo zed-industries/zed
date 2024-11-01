@@ -1,6 +1,5 @@
 use crate::kernels::KernelOption;
 use crate::repl_store::ReplStore;
-use crate::KernelSpecification;
 
 // - [@nate] Add a split button for running/selecting kernels
 //   - In REPL editor mode show the REPL icon
@@ -126,10 +125,10 @@ impl PickerDelegate for KernelPickerDelegate {
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(kernel) = self.filtered_kernels.get(self.selected_index) {
             let kernel = kernel.clone();
-
-            todo!();
+            println!("Selected kernel: {:?}", kernel);
 
             cx.emit(DismissEvent);
+            todo!();
         }
     }
 
@@ -139,7 +138,7 @@ impl PickerDelegate for KernelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let kernel = self.filtered_kernels.get(ix)?;
         let kernel_name = kernel.name();
