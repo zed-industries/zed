@@ -854,7 +854,7 @@ dependencies = [
  "chrono",
  "futures-util",
  "http-types",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "hyper-rustls 0.24.2",
  "serde",
  "serde_json",
@@ -1350,7 +1350,7 @@ dependencies = [
  "http-body 0.4.6",
  "http-body 1.0.1",
  "httparse",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "hyper-rustls 0.24.2",
  "once_cell",
  "pin-project-lite",
@@ -1441,7 +1441,7 @@ dependencies = [
  "headers",
  "http 0.2.12",
  "http-body 0.4.6",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "itoa",
  "matchit",
  "memchr",
@@ -1587,7 +1587,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "lazy_static",
  "lazycell",
  "proc-macro2",
@@ -2366,7 +2366,7 @@ dependencies = [
  "clickhouse-derive",
  "clickhouse-rs-cityhash-sys",
  "futures 0.3.30",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "hyper-tls",
  "lz4",
  "sealed",
@@ -2569,7 +2569,7 @@ dependencies = [
  "gpui",
  "hex",
  "http_client",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "indoc",
  "jsonwebtoken",
  "language",
@@ -3718,6 +3718,7 @@ dependencies = [
  "tree-sitter-rust",
  "tree-sitter-typescript",
  "ui",
+ "unicode-segmentation",
  "unindent",
  "url",
  "util",
@@ -4909,12 +4910,13 @@ dependencies = [
  "git",
  "gpui",
  "http_client",
+ "indoc",
  "pretty_assertions",
  "regex",
  "serde",
  "serde_json",
- "unindent",
  "url",
+ "util",
 ]
 
 [[package]]
@@ -5568,9 +5570,9 @@ checksum = "9a3a5bfb195931eeb336b2a7b4d761daec841b97f947d34394601737a7bba5e4"
 
 [[package]]
 name = "hyper"
-version = "0.14.30"
+version = "0.14.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a152ddd61dfaec7273fe8419ab357f33aee0d914c5f4efbf0d96fa749eea5ec9"
+checksum = "8c08302e8fa335b151b788c775ff56e7a03ae64ff85c548ee820fecb70356e85"
 dependencies = [
  "bytes 1.7.2",
  "futures-channel",
@@ -5618,7 +5620,7 @@ checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
 dependencies = [
  "futures-util",
  "http 0.2.12",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "log",
  "rustls 0.21.12",
  "rustls-native-certs 0.6.3",
@@ -5651,7 +5653,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6183ddfa99b85da61a140bea0efc93fdf56ceaa041b37d553518030827f9905"
 dependencies = [
  "bytes 1.7.2",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "native-tls",
  "tokio",
  "tokio-native-tls",
@@ -6154,6 +6156,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jupyter-serde"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a444fb3f87ee6885eb316028cc998c7d84811663ef95d78c419419423d5a054"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
+]
+
+[[package]]
 name = "khronos-egl"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6330,6 +6346,7 @@ dependencies = [
  "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
+ "itertools 0.13.0",
  "language",
  "lsp",
  "project",
@@ -6341,6 +6358,7 @@ dependencies = [
  "ui",
  "util",
  "workspace",
+ "zed_actions",
 ]
 
 [[package]]
@@ -7134,6 +7152,21 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "tempfile",
+]
+
+[[package]]
+name = "nbformat"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "146074ad45cab20f5d98ccded164826158471f21d04f96e40b9872529e10979d"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "jupyter-serde",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "uuid",
 ]
 
 [[package]]
@@ -9506,6 +9539,7 @@ dependencies = [
  "log",
  "parking_lot",
  "prost",
+ "release_channel",
  "rpc",
  "serde",
  "serde_json",
@@ -9583,6 +9617,7 @@ dependencies = [
  "command_palette_hooks",
  "editor",
  "env_logger 0.11.5",
+ "feature_flags",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -9592,7 +9627,9 @@ dependencies = [
  "languages",
  "log",
  "markdown_preview",
+ "menu",
  "multi_buffer",
+ "nbformat",
  "project",
  "runtimelib",
  "schemars",
@@ -9627,7 +9664,7 @@ dependencies = [
  "h2 0.3.26",
  "http 0.2.12",
  "http-body 0.4.6",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "hyper-tls",
  "ipnet",
  "js-sys",
@@ -9866,6 +9903,7 @@ dependencies = [
  "gpui",
  "log",
  "rand 0.8.5",
+ "rayon",
  "smallvec",
  "sum_tree",
  "unicode-segmentation",
@@ -9931,9 +9969,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.15.0"
+version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7d76d28b882a7b889ebb04e79bc2b160b3061821ea596ff0f4a838fc7a76db0"
+checksum = "263588fe9593333c4bfde258c9021fc64e766ea434e070c6b67c7100536d6499"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -9945,6 +9983,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures 0.3.30",
  "glob",
+ "jupyter-serde",
  "rand 0.8.5",
  "ring 0.17.8",
  "serde",
@@ -12055,6 +12094,7 @@ dependencies = [
  "serde_json_lenient",
  "serde_repr",
  "settings",
+ "strum 0.25.0",
  "util",
  "uuid",
 ]
@@ -13417,7 +13457,7 @@ dependencies = [
  "futures-util",
  "headers",
  "http 0.2.12",
- "hyper 0.14.30",
+ "hyper 0.14.31",
  "log",
  "mime",
  "mime_guess",
@@ -14130,7 +14170,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14735,6 +14775,7 @@ dependencies = [
  "fuzzy",
  "git",
  "git2",
+ "git_hosting_providers",
  "gpui",
  "http_client",
  "ignore",
@@ -14997,7 +15038,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.159.6"
+version = "0.161.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -15133,13 +15174,6 @@ dependencies = [
 [[package]]
 name = "zed_csharp"
 version = "0.0.2"
-dependencies = [
- "zed_extension_api 0.1.0",
-]
-
-[[package]]
-name = "zed_dart"
-version = "0.1.2"
 dependencies = [
  "zed_extension_api 0.1.0",
 ]
