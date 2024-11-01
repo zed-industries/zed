@@ -47,14 +47,18 @@ pub trait IndexedDocsProvider {
     async fn suggest_packages(&self) -> Result<Vec<PackageName>>;
 
     /// Indexes the package with the given name.
-    async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()>;
+    async fn index(
+        &self,
+        package: PackageName,
+        database: Arc<dyn IndexedDocsDatabase>,
+    ) -> Result<()>;
 }
 
 /// A store for indexed docs.
 pub struct IndexedDocsStore {
     executor: BackgroundExecutor,
     database_future:
-        Shared<BoxFuture<'static, Result<Arc<IndexedDocsDatabase>, Arc<anyhow::Error>>>>,
+        Shared<BoxFuture<'static, Result<Arc<RealIndexedDocsDatabase>, Arc<anyhow::Error>>>>,
     provider: Box<dyn IndexedDocsProvider + Send + Sync + 'static>,
     indexing_tasks_by_package:
         RwLock<HashMap<PackageName, Shared<Task<Result<(), Arc<anyhow::Error>>>>>>,
@@ -77,7 +81,7 @@ impl IndexedDocsStore {
             .spawn({
                 let executor = executor.clone();
                 let database_path = provider.database_path();
-                async move { IndexedDocsDatabase::new(database_path, executor) }
+                async move { RealIndexedDocsDatabase::new(database_path, executor) }
             })
             .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
             .boxed()
@@ -232,13 +236,17 @@ impl IndexedDocsStore {
 #[derive(Debug, PartialEq, Eq, Clone, Display, Serialize, Deserialize)]
 pub struct MarkdownDocs(pub String);
 
-pub struct IndexedDocsDatabase {
+pub trait IndexedDocsDatabase: Send + Sync + 'static {
+    fn insert(&self, key: String, docs: String) -> Task<Result<()>>;
+}
+
+pub struct RealIndexedDocsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
     entries: Database<SerdeBincode<String>, SerdeBincode<MarkdownDocs>>,
 }
 
-impl IndexedDocsDatabase {
+impl RealIndexedDocsDatabase {
     pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
         std::fs::create_dir_all(&path)?;
 
@@ -326,6 +334,20 @@ impl IndexedDocsDatabase {
     }
 
     pub fn insert(&self, key: String, docs: String) -> Task<Result<()>> {
+        let env = self.env.clone();
+        let entries = self.entries;
+
+        self.executor.spawn(async move {
+            let mut txn = env.write_txn()?;
+            entries.put(&mut txn, &key, &MarkdownDocs(docs))?;
+            txn.commit()?;
+            Ok(())
+        })
+    }
+}
+
+impl IndexedDocsDatabase for RealIndexedDocsDatabase {
+    fn insert(&self, key: String, docs: String) -> Task<Result<()>> {
         let env = self.env.clone();
         let entries = self.entries;
 

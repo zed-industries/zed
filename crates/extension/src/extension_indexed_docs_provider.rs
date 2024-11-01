@@ -52,7 +52,11 @@ impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
             .await
     }
 
-    async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
+    async fn index(
+        &self,
+        package: PackageName,
+        database: Arc<dyn IndexedDocsDatabase>,
+    ) -> Result<()> {
         self.extension
             .call({
                 let id = self.id.clone();

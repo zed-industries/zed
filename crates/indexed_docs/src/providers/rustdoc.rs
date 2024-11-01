@@ -82,7 +82,11 @@ impl IndexedDocsProvider for LocalRustdocProvider {
         Ok(workspace_crates.iter().cloned().collect())
     }
 
-    async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
+    async fn index(
+        &self,
+        package: PackageName,
+        database: Arc<dyn IndexedDocsDatabase>,
+    ) -> Result<()> {
         index_rustdoc(package, database, {
             move |crate_name, item| {
                 let fs = self.fs.clone();
@@ -159,7 +163,11 @@ impl IndexedDocsProvider for DocsDotRsProvider {
         Ok(POPULAR_CRATES.clone())
     }
 
-    async fn index(&self, package: PackageName, database: Arc<IndexedDocsDatabase>) -> Result<()> {
+    async fn index(
+        &self,
+        package: PackageName,
+        database: Arc<dyn IndexedDocsDatabase>,
+    ) -> Result<()> {
         index_rustdoc(package, database, {
             move |crate_name, item| {
                 let http_client = self.http_client.clone();
@@ -208,7 +216,7 @@ impl IndexedDocsProvider for DocsDotRsProvider {
 
 async fn index_rustdoc(
     package: PackageName,
-    database: Arc<IndexedDocsDatabase>,
+    database: Arc<dyn IndexedDocsDatabase>,
     fetch_page: impl Fn(&PackageName, Option<&RustdocItem>) -> BoxFuture<'static, Result<Option<String>>>
         + Send
         + Sync,

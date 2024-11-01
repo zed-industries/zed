@@ -43,7 +43,7 @@ mod settings {
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
-pub type ExtensionKeyValueStore = Arc<IndexedDocsDatabase>;
+pub type ExtensionKeyValueStore = Arc<dyn IndexedDocsDatabase>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
 pub fn linker() -> &'static Linker<WasmState> {

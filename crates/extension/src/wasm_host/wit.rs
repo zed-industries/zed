@@ -376,7 +376,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         provider: &str,
         package_name: &str,
-        database: Resource<Arc<IndexedDocsDatabase>>,
+        database: Resource<Arc<dyn IndexedDocsDatabase>>,
     ) -> Result<Result<(), String>> {
         match self {
             Extension::V020(ext) => {
