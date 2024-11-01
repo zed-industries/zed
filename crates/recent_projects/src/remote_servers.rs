@@ -1234,6 +1234,22 @@ impl RemoteServerProjects {
         state: DefaultState,
         cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        if SshSettings::get_global(cx)
+            .ssh_connections
+            .as_ref()
+            .map_or(false, |connections| {
+                state
+                    .servers
+                    .iter()
+                    .map(|server| &server.connection)
+                    .ne(connections.iter())
+            })
+        {
+            self.mode = Mode::default_mode(cx);
+            cx.notify();
+
+            return div().into_any_element();
+        }
         let scroll_state = state.scrollbar.parent_view(cx.view());
         let connect_button = div()
             .id("ssh-connect-new-server-container")
@@ -1344,6 +1360,7 @@ impl RemoteServerProjects {
                         ),
                 ),
             )
+            .into_any_element()
     }
 }
 
