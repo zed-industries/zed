@@ -5587,7 +5587,13 @@ impl LspStore {
             adapter.name.0
         );
 
-        let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), true, cx);
+        let allow_binary_download = ProjectSettings::get_global(cx).allow_binary_download;
+        let binary = self.get_language_server_binary(
+            adapter.clone(),
+            delegate.clone(),
+            allow_binary_download,
+            cx,
+        );
 
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
