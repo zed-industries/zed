@@ -143,11 +143,13 @@ pub struct DebugTaskDefinition {
 impl DebugTaskDefinition {
     fn to_zed_format(self) -> anyhow::Result<TaskTemplate> {
         let command = "".to_string();
+        let cwd = self.cwd.clone().map(PathBuf::from).take_if(|p| p.exists());
+
         let task_type = TaskType::Debug(DebugAdapterConfig {
             kind: self.adapter,
             request: self.session_type,
             program: self.program,
-            cwd: self.cwd.clone().map(PathBuf::from),
+            cwd: cwd.clone(),
             initialize_args: self.initialize_args,
         });
 
@@ -158,7 +160,7 @@ impl DebugTaskDefinition {
             command,
             args,
             task_type,
-            cwd: self.cwd,
+            cwd: if cwd.is_some() { self.cwd } else { None },
             ..Default::default()
         })
     }
