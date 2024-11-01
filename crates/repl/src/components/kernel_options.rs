@@ -206,11 +206,10 @@ impl PickerDelegate for KernelPickerDelegate {
 impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         // TODO: Implement kernel selection logic
-        let all_kernels = vec![KernelOption::Jupyter(KernelSpecification::deno_kernel())];
-        // TODO: read specs from store
+        let mut all_kernels = Vec::new();
         let store = ReplStore::global(cx).read(cx);
         for kernel_spec in store.kernel_specifications() {
-            dbg!(&kernel_spec);
+            all_kernels.push(KernelOption::Jupyter(kernel_spec.clone()));
         }
 
         let delegate = KernelPickerDelegate {
