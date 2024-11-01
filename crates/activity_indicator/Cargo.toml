@@ -23,6 +23,7 @@ language.workspace = true
 project.workspace = true
 smallvec.workspace = true
 ui.workspace = true
+util.workspace = true
 workspace.workspace = true
 
 [dev-dependencies]

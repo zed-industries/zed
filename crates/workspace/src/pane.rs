@@ -2574,7 +2574,7 @@ impl Render for Pane {
 
         v_flex()
             .key_context(key_context)
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .flex_none()
             .overflow_hidden()
@@ -2696,6 +2696,7 @@ impl Render for Pane {
                     .flex_1()
                     .relative()
                     .group("")
+                    .overflow_hidden()
                     .on_drag_move::<DraggedTab>(cx.listener(Self::handle_drag_move))
                     .on_drag_move::<DraggedSelection>(cx.listener(Self::handle_drag_move))
                     .when(is_local, |div| {
@@ -2704,6 +2705,8 @@ impl Render for Pane {
                     .map(|div| {
                         if let Some(item) = self.active_item() {
                             div.v_flex()
+                                .size_full()
+                                .overflow_hidden()
                                 .child(self.toolbar.clone())
                                 .child(item.to_any())
                         } else {

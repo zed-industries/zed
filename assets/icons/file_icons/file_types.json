@@ -58,6 +58,7 @@
     "gitignore": "vcs",
     "gitkeep": "vcs",
     "gitmodules": "vcs",
+    "gleam": "gleam",
     "go": "go",
     "gql": "graphql",
     "graphql": "graphql",
@@ -83,6 +84,7 @@
     "j2k": "image",
     "java": "java",
     "jfif": "image",
+    "jl": "julia",
     "jp2": "image",
     "jpeg": "image",
     "jpg": "image",
@@ -90,7 +92,6 @@
     "json": "storage",
     "jsonc": "storage",
     "jsx": "react",
-    "julia": "julia",
     "jxl": "image",
     "kt": "kotlin",
     "ldf": "storage",
@@ -263,6 +264,9 @@
     },
     "fsharp": {
       "icon": "icons/file_icons/fsharp.svg"
+    },
+    "gleam": {
+      "icon": "icons/file_icons/gleam.svg"
     },
     "go": {
       "icon": "icons/file_icons/go.svg"

@@ -1,4 +1,10 @@
+pub mod blame;
+pub mod commit;
+pub mod diff;
 mod hosting_provider;
+mod remote;
+pub mod repository;
+pub mod status;
 
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
@@ -7,15 +13,9 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::LazyLock;
 
-pub use git2 as libgit;
-
 pub use crate::hosting_provider::*;
-
-pub mod blame;
-pub mod commit;
-pub mod diff;
-pub mod repository;
-pub mod status;
+pub use crate::remote::*;
+pub use git2 as libgit;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
 pub static COOKIES: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("cookies"));

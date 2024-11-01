@@ -449,6 +449,10 @@ async fn check_usage_limit(
     model_name: &str,
     claims: &LlmTokenClaims,
 ) -> Result<()> {
+    if claims.is_staff {
+        return Ok(());
+    }
+
     let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
@@ -513,11 +517,6 @@ async fn check_usage_limit(
     ];
 
     for (used, limit, usage_measure) in checks {
-        // Temporarily bypass rate-limiting for staff members.
-        if claims.is_staff {
-            continue;
-        }
-
         if used > limit {
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",

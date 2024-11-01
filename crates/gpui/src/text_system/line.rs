@@ -261,10 +261,10 @@ fn paint_line(
                     }
                 }
 
-                if let Some((background_origin, background_color)) = finished_background {
+                if let Some((mut background_origin, background_color)) = finished_background {
                     let mut width = glyph_origin.x - background_origin.x;
-                    if width == px(0.) {
-                        width = px(5.)
+                    if background_origin.x == glyph_origin.x {
+                        background_origin.x -= max_glyph_size.width.half();
                     };
                     cx.paint_quad(fill(
                         Bounds {
@@ -275,7 +275,10 @@ fn paint_line(
                     ));
                 }
 
-                if let Some((underline_origin, underline_style)) = finished_underline {
+                if let Some((mut underline_origin, underline_style)) = finished_underline {
+                    if underline_origin.x == glyph_origin.x {
+                        underline_origin.x -= max_glyph_size.width.half();
+                    };
                     cx.paint_underline(
                         underline_origin,
                         glyph_origin.x - underline_origin.x,
@@ -283,7 +286,12 @@ fn paint_line(
                     );
                 }
 
-                if let Some((strikethrough_origin, strikethrough_style)) = finished_strikethrough {
+                if let Some((mut strikethrough_origin, strikethrough_style)) =
+                    finished_strikethrough
+                {
+                    if strikethrough_origin.x == glyph_origin.x {
+                        strikethrough_origin.x -= max_glyph_size.width.half();
+                    };
                     cx.paint_strikethrough(
                         strikethrough_origin,
                         glyph_origin.x - strikethrough_origin.x,

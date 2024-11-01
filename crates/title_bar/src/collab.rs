@@ -282,6 +282,13 @@ impl TitleBar {
             return Vec::new();
         };
 
+        let is_connecting_to_project = self
+            .workspace
+            .update(cx, |workspace, cx| {
+                recent_projects::is_connecting_over_ssh(workspace, cx)
+            })
+            .unwrap_or(false);
+
         let room = room.read(cx);
         let project = self.project.read(cx);
         let is_local = project.is_local() || project.is_via_ssh();
@@ -298,7 +305,7 @@ impl TitleBar {
 
         let mut children = Vec::new();
 
-        if is_local && can_share_projects {
+        if is_local && can_share_projects && !is_connecting_to_project {
             children.push(
                 Button::new(
                     "toggle_sharing",

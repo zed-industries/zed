@@ -8,18 +8,22 @@ Remote Development allows you to code at the speed of thought, even when your co
 
 Remote development requires two computers, your local machine that runs the Zed UI and the remote server which runs a Zed headless server. The two communicate over SSH, so you will need to be able to SSH from your local machine into the remote server to use this feature.
 
-> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use this mode.
+![Architectural overview of Zed Remote Development](https://zed.dev/img/remote-development/diagram.png)
+
+On your local machine, Zed runs its UI, talks to language models, uses Tree-sitter to parse and syntax-highlight code, and store unsaved changes and recent projects. The source code, language servers, tasks, and the terminal all run on the remote server.
+
+> **Note:** The original version of remote development sent traffic via Zed's servers. As of Zed v0.157 you can no-longer use that mode.
 
 ## Setup
 
-1. Download and install the latest [Zed Preview](https://zed.dev/releases/preview). You need at least Zed v0.159.
+1. Download and install the latest [Zed](https://zed.dev/releases). You need at least Zed v0.159.
 1. Open the remote projects dialogue with <kbd>cmd-shift-p remote</kbd> or <kbd>cmd-control-o</kbd>.
 1. Click "Connect New Server" and enter the command you use to SSH into the server. See [Supported SSH options](#supported-ssh-options) for options you can pass.
-1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, it will download the latest version of the Zed server and upload it to the remote over SSH.
+1. Your local machine will attempt to connect to the remote server using the `ssh` binary on your path. Assuming the connection is successful, Zed will download the server on the remote host and start it.
 1. Once the Zed server is running, you will be prompted to choose a path to open on the remote server.
    > **Note:** Zed does not currently handle opening very large directories (for example, `/` or `~` that may have >100,000 files) very well. We are working on improving this, but suggest in the meantime opening only specific projects, or subfolders of very large mono-repos.
 
-For simple cases where you don't need any SSH arguments, you can run `zed ssh://[<user>@]<host>[:<port>]/<path>` to open a remote folder/file directly.
+For simple cases where you don't need any SSH arguments, you can run `zed ssh://[<user>@]<host>[:<port>]/<path>` to open a remote folder/file directly. If you'd like to hotlink into an SSH project, use a link of the format: `zed://ssh/[<user>@]<host>[:<port>]/<path>`.
 
 ## Supported platforms
 
@@ -29,7 +33,63 @@ The remote machine must be able to run Zed's server. The following platforms sho
 - Linux (x86_64 or arm64, we do not yet support 32-bit platforms)
 - Windows is not yet supported.
 
-## Settings
+## Configuration
+
+The list of remote servers is stored in your settings file {#kb zed::OpenSettings}. You can edit this list using the Remote Projects dialogue {#kb projects::OpenRemote}, which provides some robustness - for example it checks that the connection can be established before writing it to the settings file.
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "projects": ["~/code/zed/zed"]
+    }
+  ]
+}
+```
+
+Zed shells out to the `ssh` on your path, and so it will inherit any configuration you have in `~/.ssh/config` for the given host. That said, if you need to override anything you can configure the following additional options on each connection:
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "projects": ["~/code/zed/zed"],
+      // any argument to pass to the ssh master process
+      "args": ["-i", "~/.ssh/work_id_file"],
+      "port": 22, // defaults to 22
+      // defaults to your username on your local machine
+      "username": "me"
+    }
+  ]
+}
+```
+
+There are two additional Zed-specific options per connection, `upload_binary_over_ssh` and `nickname`:
+
+```json
+{
+  "ssh_connections": [
+    {
+      "host": "192.168.1.10",
+      "projects": ["~/code/zed/zed"],
+      // by default Zed will download the server binary from the internet on the remote.
+      // When this is true, it'll be downloaded to your laptop and uploaded over SSH.
+      // This is useful when your remote server has restricted internet access.
+      "upload_binary_over_ssh": true,
+      // Shown in the Zed UI to help distinguish multiple hosts.
+      "nickname": "lil-linux"
+    }
+  ]
+}
+```
+
+If you use the command line to open a connection to a host by doing `zed ssh://192.168.1.10/~/.vimrc`, then extra options are read from your settings file by finding the first connection that matches the host/username/port of the URL on the command line.
+
+Additionally it's worth noting that while you can pass a password on the command line `zed ssh://user:password@host/~`, we do not support writing a password to your settings file. If you're connecting repeatedly to the same host, you should configure key-based authentication.
+
+## Zed settings
 
 When opening a remote project there are three relevant settings locations:
 
@@ -53,7 +113,9 @@ Any prompts that SSH needs will be shown in the UI, so you can verify host keys,
 
 Once the master connection is established, Zed will check to see if the remote server binary is present in `~/.zed_server` on the remote, and that its version matches the current version of Zed that you're using.
 
-If it is not there or the version mismatches, Zed will try to download the latest version. By default, it will download from `https://zed.dev` directly, but if you set: `{"remote_server": {"download":false}}` in your local settings, it will download the binary to your local machine and then upload it to the remote server.
+If it is not there or the version mismatches, Zed will try to download the latest version. By default, it will download from `https://zed.dev` directly, but if you set: `{"upload_binary_over_ssh":true}` in your settings for that server, it will download the binary to your local machine and then upload it to the remote server.
+
+If you'd like to maintain the server binary yourself you can. You can either download our prebuilt versions from [Github](https://github.com/zed-industries/zed/releases), or [build your own](https://zed.dev/docs/development) with `cargo build -p remote_server --release`. If you do this, you must upload it to `~/.zed_server/zed-remote-server-{RELEASE_CHANNEL}-{OS}-{ARCH}` on the server, for example `.zed-server/zed-remote-server-preview-linux-x86_64`. The version must exactly match the version of Zed itself you are using.
 
 ## Maintaining the SSH connection
 

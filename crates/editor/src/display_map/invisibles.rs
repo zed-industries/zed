@@ -1,11 +1,7 @@
-use std::sync::LazyLock;
-
-use collections::HashMap;
-
 // Invisibility in a Unicode context is not well defined, so we have to guess.
 //
 // We highlight all ASCII control codes, and unicode whitespace because they are likely
-// confused with a normal space (U+0020).
+// confused with an ASCII space in a programming context (U+0020).
 //
 // We also highlight the handful of blank non-space characters:
 //   U+2800 BRAILLE PATTERN BLANK - Category: So
@@ -38,62 +34,38 @@ pub fn is_invisible(c: char) -> bool {
     if c <= '\u{1f}' {
         c != '\t' && c != '\n' && c != '\r'
     } else if c >= '\u{7f}' {
-        c <= '\u{9f}' || c.is_whitespace() || contains(c, &FORMAT) || contains(c, &OTHER)
+        c <= '\u{9f}'
+            || (c.is_whitespace() && c != IDEOGRAPHIC_SPACE)
+            || contains(c, &FORMAT)
+            || contains(c, &OTHER)
     } else {
         false
     }
 }
-
+// ASCII control characters have fancy unicode glyphs, everything else
+// is replaced by a space - unless it is used in combining characters in
+// which case we need to leave it in the string.
 pub(crate) fn replacement(c: char) -> Option<&'static str> {
-    if !is_invisible(c) {
-        return None;
-    }
-    if c <= '\x7f' {
-        REPLACEMENTS.get(&c).copied()
+    if c <= '\x1f' {
+        Some(C0_SYMBOLS[c as usize])
+    } else if c == '\x7f' {
+        Some(DEL)
     } else if contains(c, &PRESERVE) {
         None
     } else {
-        Some(" ")
+        Some("\u{2007}") // fixed width space
     }
 }
+// IDEOGRAPHIC SPACE is common alongside Chinese and other wide character sets.
+// We don't highlight this for now (as it already shows up wide in the editor),
+// but could if we tracked state in the classifier.
+const IDEOGRAPHIC_SPACE: char = '\u{3000}';
 
-const REPLACEMENTS: LazyLock<HashMap<char, &'static str>> = LazyLock::new(|| {
-    [
-        ('\x00', "␀"),
-        ('\x01', "␁"),
-        ('\x02', "␂"),
-        ('\x03', "␃"),
-        ('\x04', "␄"),
-        ('\x05', "␅"),
-        ('\x06', "␆"),
-        ('\x07', "␇"),
-        ('\x08', "␈"),
-        ('\x0B', "␋"),
-        ('\x0C', "␌"),
-        ('\x0D', "␍"),
-        ('\x0E', "␎"),
-        ('\x0F', "␏"),
-        ('\x10', "␐"),
-        ('\x11', "␑"),
-        ('\x12', "␒"),
-        ('\x13', "␓"),
-        ('\x14', "␔"),
-        ('\x15', "␕"),
-        ('\x16', "␖"),
-        ('\x17', "␗"),
-        ('\x18', "␘"),
-        ('\x19', "␙"),
-        ('\x1A', "␚"),
-        ('\x1B', "␛"),
-        ('\x1C', "␜"),
-        ('\x1D', "␝"),
-        ('\x1E', "␞"),
-        ('\x1F', "␟"),
-        ('\u{007F}', "␡"),
-    ]
-    .into_iter()
-    .collect()
-});
+const C0_SYMBOLS: &'static [&'static str] = &[
+    "␀", "␁", "␂", "␃", "␄", "␅", "␆", "␇", "␈", "␉", "␊", "␋", "␌", "␍", "␎", "␏", "␐", "␑", "␒",
+    "␓", "␔", "␕", "␖", "␗", "␘", "␙", "␚", "␛", "␜", "␝", "␞", "␟",
+];
+const DEL: &'static str = "␡";
 
 // generated using ucd-generate: ucd-generate general-category --include Format --chars ucd-16.0.0
 pub const FORMAT: &'static [(char, char)] = &[
