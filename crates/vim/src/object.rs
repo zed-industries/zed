@@ -1402,7 +1402,7 @@ mod test {
 
         // Generic arguments
         cx.set_state("fn boop<A: ˇDebug, B>() {}", Mode::Normal);
-        cx.simulate_keystrokes("v i a");
+        cx.simulate_keystrokes("v i g");
         cx.assert_state("fn boop<«A: Debugˇ», B>() {}", Mode::Visual);
 
         // Function arguments
@@ -1410,11 +1410,11 @@ mod test {
             "fn boop(ˇarg_a: (Tuple, Of, Types), arg_b: String) {}",
             Mode::Normal,
         );
-        cx.simulate_keystrokes("d a a");
+        cx.simulate_keystrokes("d a g");
         cx.assert_state("fn boop(ˇarg_b: String) {}", Mode::Normal);
 
         cx.set_state("std::namespace::test(\"strinˇg\", a.b.c())", Mode::Normal);
-        cx.simulate_keystrokes("v a a");
+        cx.simulate_keystrokes("v a g");
         cx.assert_state("std::namespace::test(«\"string\", ˇ»a.b.c())", Mode::Visual);
 
         // Tuple, vec, and array arguments
@@ -1422,34 +1422,34 @@ mod test {
             "fn boop(arg_a: (Tuple, Ofˇ, Types), arg_b: String) {}",
             Mode::Normal,
         );
-        cx.simulate_keystrokes("c i a");
+        cx.simulate_keystrokes("c i g");
         cx.assert_state(
             "fn boop(arg_a: (Tuple, ˇ, Types), arg_b: String) {}",
             Mode::Insert,
         );
 
         cx.set_state("let a = (test::call(), 'p', my_macro!{ˇ});", Mode::Normal);
-        cx.simulate_keystrokes("c a a");
+        cx.simulate_keystrokes("c a g");
         cx.assert_state("let a = (test::call(), 'p'ˇ);", Mode::Insert);
 
         cx.set_state("let a = [test::call(ˇ), 300];", Mode::Normal);
-        cx.simulate_keystrokes("c i a");
+        cx.simulate_keystrokes("c i g");
         cx.assert_state("let a = [ˇ, 300];", Mode::Insert);
 
         cx.set_state(
             "let a = vec![Vec::new(), vecˇ![test::call(), 300]];",
             Mode::Normal,
         );
-        cx.simulate_keystrokes("c a a");
+        cx.simulate_keystrokes("c a g");
         cx.assert_state("let a = vec![Vec::new()ˇ];", Mode::Insert);
 
         // Cursor immediately before / after brackets
         cx.set_state("let a = [test::call(first_arg)ˇ]", Mode::Normal);
-        cx.simulate_keystrokes("v i a");
+        cx.simulate_keystrokes("v i g");
         cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
 
         cx.set_state("let a = [test::callˇ(first_arg)]", Mode::Normal);
-        cx.simulate_keystrokes("v i a");
+        cx.simulate_keystrokes("v i g");
         cx.assert_state("let a = [«test::call(first_arg)ˇ»]", Mode::Visual);
     }
 
