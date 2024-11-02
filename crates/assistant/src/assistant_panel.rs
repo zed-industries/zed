@@ -4415,13 +4415,28 @@ impl ContextEditorToolbarItem {
 impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
-            .pl_1()
-            .gap_2()
-            .flex_1()
-            .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
-            .when(self.active_context_editor.is_some(), |left_side| {
-                left_side.child(self.model_summary_editor.clone())
-            });
+            .group("test-group")
+            .pl_0p5()
+            .gap_1()
+            .flex_grow()
+            .child(
+                div()
+                    .w_full()
+                    .when(self.active_context_editor.is_some(), |left_side| {
+                        left_side.child(self.model_summary_editor.clone())
+                    }),
+            )
+            .child(
+                div().visible_on_hover("test-group").child(
+                    IconButton::new("regenerate-context", IconName::ArrowCircle)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_color(Color::Muted)
+                        .tooltip(|cx| Tooltip::text("Regenerate Title", cx))
+                        .on_click(cx.listener(move |_, _, cx| {
+                            cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
+                        })),
+                ),
+            );
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
         let weak_self = cx.view().downgrade();
@@ -4437,7 +4452,6 @@ impl Render for ContextEditorToolbarItem {
             //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
             //         project.and_then(|project| db.remaining_summaries(&project, cx))
             //     });
-
             //     scan_items_remaining
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
@@ -4459,9 +4473,13 @@ impl Render for ContextEditorToolbarItem {
                                             (Some(provider), Some(model)) => h_flex()
                                                 .gap_1()
                                                 .child(
-                                                    Icon::new(model.icon().unwrap_or_else(|| provider.icon()))
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::XSmall),
+                                                    Icon::new(
+                                                        model
+                                                            .icon()
+                                                            .unwrap_or_else(|| provider.icon()),
+                                                    )
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::XSmall),
                                                 )
                                                 .child(
                                                     Label::new(model.name().0)
@@ -4487,71 +4505,7 @@ impl Render for ContextEditorToolbarItem {
                 )
                 .with_handle(self.model_selector_menu_handle.clone()),
             )
-            .children(self.render_remaining_tokens(cx))
-            .child(
-                PopoverMenu::new("context-editor-popover")
-                    .trigger(
-                        IconButton::new("context-editor-trigger", IconName::EllipsisVertical)
-                            .icon_size(IconSize::Small)
-                            .tooltip(|cx| Tooltip::text("Open Context Options", cx)),
-                    )
-                    .menu({
-                        let weak_self = weak_self.clone();
-                        move |cx| {
-                            let weak_self = weak_self.clone();
-                            Some(ContextMenu::build(cx, move |menu, cx| {
-                                let context = weak_self
-                                    .update(cx, |this, cx| {
-                                        active_editor_focus_handle(&this.workspace, cx)
-                                    })
-                                    .ok()
-                                    .flatten();
-                                menu.when_some(context, |menu, context| menu.context(context))
-                                    .entry("Regenerate Context Title", None, {
-                                        let weak_self = weak_self.clone();
-                                        move |cx| {
-                                            weak_self
-                                                .update(cx, |_, cx| {
-                                                    cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
-                                                })
-                                                .ok();
-                                        }
-                                    })
-                                    .custom_entry(
-                                        |_| {
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .gap_2()
-                                                .child(Label::new("Add Context"))
-                                                .child(Label::new("/ command").color(Color::Muted))
-                                                .into_any()
-                                        },
-                                        {
-                                            let weak_self = weak_self.clone();
-                                            move |cx| {
-                                                weak_self
-                                                    .update(cx, |this, cx| {
-                                                        if let Some(editor) =
-                                                        &this.active_context_editor
-                                                        {
-                                                            editor
-                                                                .update(cx, |this, cx| {
-                                                                    this.slash_menu_handle
-                                                                        .toggle(cx);
-                                                                })
-                                                                .ok();
-                                                        }
-                                                    })
-                                                    .ok();
-                                            }
-                                        },
-                                    )
-                                    .action("Add Selection", QuoteSelection.boxed_clone())
-                            }))
-                        }
-                    }),
-            );
+            .children(self.render_remaining_tokens(cx));
 
         h_flex()
             .size_full()
