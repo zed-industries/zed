@@ -4424,7 +4424,6 @@ impl Render for ContextEditorToolbarItem {
             );
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let weak_self = cx.view().downgrade();
         let right_side = h_flex()
             .gap_2()
             // TODO display this in a nicer way, once we have a design for it.
