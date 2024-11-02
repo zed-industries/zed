@@ -3787,7 +3787,7 @@ impl Render for OutlinePanel {
                     }
                 }),
             )
-            .track_focus(&self.focus_handle(cx));
+            .track_focus(&self.focus_handle);
 
         if self.cached_entries.is_empty() {
             let header = if self.updating_fs_entries {
