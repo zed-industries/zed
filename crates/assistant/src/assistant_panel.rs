@@ -441,13 +441,21 @@ impl AssistantPanel {
                             .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
                     );
                 let _pane = cx.view().clone();
-                let right_children = h_flex()
-                    .gap(Spacing::Small.rems(cx))
-                    .child(
-                        IconButton::new("new-context", IconName::Plus)
-                            .on_click(
-                                cx.listener(|_, _, cx| {
+                let right_children =
+                    h_flex()
+                        .gap(Spacing::Small.rems(cx))
+                        .child(
+                            IconButton::new("new-context", IconName::Plus)
+                                .on_click(cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())
+                                }))
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action_in(
+                                        "New Context",
+                                        &NewContext,
+                                        &focus_handle,
+                                        cx,
+                                    )
                                 }),
                         )
                         .child(
@@ -457,32 +465,25 @@ impl AssistantPanel {
                                         .icon_size(IconSize::Small)
                                         .tooltip(|cx| Tooltip::text("Toggle Assistant Menu", cx)),
                                 )
-                            }),
-                    )
-                    .child(
-                        PopoverMenu::new("assistant-panel-popover-menu")
-                            .trigger(
-                                IconButton::new("menu", IconName::Menu).icon_size(IconSize::Small),
-                            )
-                            .menu(move |cx| {
-                                let zoom_label = if _pane.read(cx).is_zoomed() {
-                                    "Zoom Out"
-                                } else {
-                                    "Zoom In"
-                                };
-                                let focus_handle = _pane.focus_handle(cx);
-                                Some(ContextMenu::build(cx, move |menu, _| {
-                                    menu.context(focus_handle.clone())
-                                        .action("New Context", Box::new(NewContext))
-                                        .action("History", Box::new(DeployHistory))
-                                        .action("Prompt Library", Box::new(DeployPromptLibrary))
-                                        .action("Configure", Box::new(ShowConfiguration))
-                                        .action(zoom_label, Box::new(ToggleZoom))
-                                }))
-                            }),
-                    )
-                    .into_any_element()
-                    .into();
+                                .menu(move |cx| {
+                                    let zoom_label = if _pane.read(cx).is_zoomed() {
+                                        "Zoom Out"
+                                    } else {
+                                        "Zoom In"
+                                    };
+                                    let focus_handle = _pane.focus_handle(cx);
+                                    Some(ContextMenu::build(cx, move |menu, _| {
+                                        menu.context(focus_handle.clone())
+                                            .action("New Context", Box::new(NewContext))
+                                            .action("History", Box::new(DeployHistory))
+                                            .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                            .action("Configure", Box::new(ShowConfiguration))
+                                            .action(zoom_label, Box::new(ToggleZoom))
+                                    }))
+                                }),
+                        )
+                        .into_any_element()
+                        .into();
 
                 (Some(left_children.into_any_element()), right_children)
             });
