@@ -4,6 +4,7 @@ pub mod http_client;
 pub mod settings;
 
 use core::fmt;
+use std::path::PathBuf;
 
 use wit::*;
 
@@ -146,6 +147,16 @@ pub trait Extension: Send + Sync {
         _database: &KeyValueStore,
     ) -> Result<(), String> {
         Err("`index_docs` not implemented".to_string())
+    }
+
+    /// Extension work dir.
+    fn work_dir() -> Result<PathBuf>
+    where
+        Self: Sized,
+    {
+        std::env::var("PWD")
+            .map(|p| PathBuf::new().join(p))
+            .map_err(|e| e.to_string())
     }
 }
 
