@@ -1,5 +1,8 @@
 use dap::transport::{TcpTransport, Transport};
-use std::net::Ipv4Addr;
+use regex::Regex;
+use std::{collections::HashMap, net::Ipv4Addr};
+use sysinfo::{Pid, Process};
+use task::DebugRequestType;
 use util::maybe;
 
 use crate::*;
@@ -124,10 +127,39 @@ impl DebugAdapter for JsDebugAdapter {
     }
 
     fn request_args(&self, config: &DebugAdapterConfig) -> Value {
+        let pid = if let DebugRequestType::Attach(attach_config) = &config.request {
+            attach_config.process_id
+        } else {
+            None
+        };
+
         json!({
             "program": config.program,
             "type": "pwa-node",
+            "request": match config.request {
+                DebugRequestType::Launch => "launch",
+                DebugRequestType::Attach(_) => "attach",
+            },
+            "processId": pid,
             "cwd": config.cwd,
         })
+    }
+
+    fn supports_attach(&self) -> bool {
+        true
+    }
+
+    fn attach_processes<'a>(
+        &self,
+        processes: &'a HashMap<Pid, Process>,
+    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
+        let regex = Regex::new(r"(?i)^(?:node|bun|iojs)(?:$|\b)").unwrap();
+
+        Some(
+            processes
+                .iter()
+                .filter(|(_, process)| regex.is_match(&process.name().to_string_lossy()))
+                .collect::<Vec<_>>(),
+        )
     }
 }

@@ -15,6 +15,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use sysinfo::{Pid, Process};
 use task::DebugAdapterConfig;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -210,7 +211,7 @@ pub trait DebugAdapter: 'static + Send + Sync {
                 );
 
                 let binary = self
-                    .get_installed_binary(delegate, config, Some(adapter_path))
+                    .get_installed_binary(delegate, &config, Some(adapter_path))
                     .await;
 
                 if binary.is_ok() {
@@ -240,14 +241,14 @@ pub trait DebugAdapter: 'static + Send + Sync {
         {
             log::info!("Using cached debug adapter binary {}", self.name());
 
-            return self.get_installed_binary(delegate, config, None).await;
+            return self.get_installed_binary(delegate, &config, None).await;
         }
 
         log::info!("Getting latest version of debug adapter {}", self.name());
         delegate.update_status(self.name(), DapStatus::CheckingForUpdate);
         let version = self.fetch_latest_adapter_version(delegate).await.ok();
 
-        let mut binary = self.get_installed_binary(delegate, config, None).await;
+        let mut binary = self.get_installed_binary(delegate, &config, None).await;
 
         if let Some(version) = version {
             if binary
@@ -265,7 +266,8 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
             delegate.update_status(self.name(), DapStatus::Downloading);
             self.install_binary(version, delegate).await?;
-            binary = self.get_installed_binary(delegate, config, None).await;
+
+            binary = self.get_installed_binary(delegate, &config, None).await;
         } else {
             log::error!(
                 "Failed getting latest version of debug adapter {}",
@@ -309,4 +311,18 @@ pub trait DebugAdapter: 'static + Send + Sync {
 
     /// Should return base configuration to make the debug adapter work
     fn request_args(&self, config: &DebugAdapterConfig) -> Value;
+
+    /// Whether the adapter supports `attach` request,
+    /// if not support and the request is selected we will show an error message
+    fn supports_attach(&self) -> bool {
+        false
+    }
+
+    /// Filters out the processes that the adapter can attach to for debugging
+    fn attach_processes<'a>(
+        &self,
+        _: &'a HashMap<Pid, Process>,
+    ) -> Option<Vec<(&'a Pid, &'a Process)>> {
+        None
+    }
 }

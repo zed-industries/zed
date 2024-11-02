@@ -158,7 +158,7 @@ actions!(
         ReloadActiveItem,
         SaveAs,
         SaveWithoutFormat,
-        StopDebugAdapters,
+        ShutdownDebugAdapters,
         ToggleBottomDock,
         ToggleCenteredLayout,
         ToggleLeftDock,

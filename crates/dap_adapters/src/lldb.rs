@@ -50,7 +50,6 @@ impl DebugAdapter for LldbDebugAdapter {
     async fn get_binary(
         &self,
         _: &dyn DapDelegate,
-        _: &DebugAdapterConfig,
         _: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
         Err(anyhow::anyhow!(

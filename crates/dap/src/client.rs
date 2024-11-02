@@ -3,19 +3,17 @@ use crate::{
     transport::{IoKind, LogKind, TransportDelegate},
 };
 use anyhow::{anyhow, Result};
-
 use dap_types::{
     messages::{Message, Response},
     requests::Request,
 };
 use gpui::{AppContext, AsyncAppContext};
-use serde_json::Value;
 use smol::channel::{bounded, Receiver, Sender};
 use std::{
     hash::Hash,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 use task::{DebugAdapterConfig, DebugRequestType};
@@ -35,27 +33,26 @@ pub struct DebugAdapterClientId(pub usize);
 
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
-    adapter_id: String,
-    request_args: Value,
     sequence_count: AtomicU64,
-    config: DebugAdapterConfig,
+    adapter: Arc<Box<dyn DebugAdapter>>,
     transport_delegate: TransportDelegate,
+    config: Arc<Mutex<DebugAdapterConfig>>,
 }
 
 impl DebugAdapterClient {
     pub fn new(
         id: DebugAdapterClientId,
-        request_args: Value,
         config: DebugAdapterConfig,
         adapter: Arc<Box<dyn DebugAdapter>>,
     ) -> Self {
+        let transport_delegate = TransportDelegate::new(adapter.transport());
+
         Self {
             id,
-            config,
-            request_args,
+            adapter,
+            transport_delegate,
             sequence_count: AtomicU64::new(1),
-            adapter_id: adapter.name().to_string(),
-            transport_delegate: TransportDelegate::new(adapter.transport()),
+            config: Arc::new(Mutex::new(config)),
         }
     }
 
@@ -141,19 +138,23 @@ impl DebugAdapterClient {
     }
 
     pub fn config(&self) -> DebugAdapterConfig {
-        self.config.clone()
+        self.config.lock().unwrap().clone()
+    }
+
+    pub fn adapter(&self) -> &Arc<Box<dyn DebugAdapter>> {
+        &self.adapter
     }
 
     pub fn adapter_id(&self) -> String {
-        self.adapter_id.clone()
+        self.adapter.name().to_string()
     }
 
-    pub fn request_args(&self) -> Value {
-        self.request_args.clone()
-    }
+    pub fn set_process_id(&self, process_id: u32) {
+        let mut config = self.config.lock().unwrap();
 
-    pub fn request_type(&self) -> DebugRequestType {
-        self.config.request.clone()
+        config.request = DebugRequestType::Attach(task::AttachConfig {
+            process_id: Some(process_id),
+        });
     }
 
     /// Get the next sequence id to be used in a request

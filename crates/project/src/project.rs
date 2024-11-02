@@ -85,6 +85,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+
 use task_store::TaskStore;
 use terminals::Terminals;
 use text::{Anchor, BufferId};
@@ -1224,8 +1225,9 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(adapter_config) = debug_task.debug_adapter_config() {
-            self.dap_store
-                .update(cx, |store, cx| store.start_client(adapter_config, None, cx));
+            self.dap_store.update(cx, |store, cx| {
+                store.start_client(adapter_config, cx);
+            });
         }
     }
 
@@ -2270,10 +2272,6 @@ impl Project {
         match event {
             DapStoreEvent::DebugClientStarted(client_id) => {
                 cx.emit(Event::DebugClientStarted(*client_id));
-
-                self.dap_store.update(cx, |store, cx| {
-                    store.initialize(client_id, cx).detach_and_log_err(cx);
-                });
             }
             DapStoreEvent::DebugClientStopped(client_id) => {
                 cx.emit(Event::DebugClientStopped(*client_id));

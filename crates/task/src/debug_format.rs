@@ -37,20 +37,28 @@ impl TCPHost {
     }
 }
 
+/// Represents the attach request information of the debug adapter
+#[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
+pub struct AttachConfig {
+    /// The processId to attach to, if left empty we will show a process picker
+    #[serde(default)]
+    pub process_id: Option<u32>,
+}
+
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "lowercase", tag = "request")]
 pub enum DebugRequestType {
     /// Call the `launch` request on the debug adapter
     #[default]
     Launch,
     /// Call the `attach` request on the debug adapter
-    Attach,
+    Attach(AttachConfig),
 }
 
 /// The Debug adapter to use
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase", tag = "kind")]
+#[serde(rename_all = "lowercase", tag = "adapter")]
 pub enum DebugAdapterKind {
     /// Manually setup starting a debug adapter
     /// The argument within is used to start the DAP
@@ -58,7 +66,7 @@ pub enum DebugAdapterKind {
     /// Use debugpy
     Python(TCPHost),
     /// Use vscode-php-debug
-    PHP(TCPHost),
+    Php(TCPHost),
     /// Use vscode-js-debug
     Javascript(TCPHost),
     /// Use lldb
@@ -71,7 +79,7 @@ impl DebugAdapterKind {
         match self {
             Self::Custom(_) => "Custom",
             Self::Python(_) => "Python",
-            Self::PHP(_) => "PHP",
+            Self::Php(_) => "PHP",
             Self::Javascript(_) => "JavaScript",
             Self::Lldb => "LLDB",
         }
@@ -96,13 +104,11 @@ pub struct CustomArgs {
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugAdapterConfig {
-    /// Unique id of for the debug adapter,
-    /// that will be send with the `initialize` request
+    /// The type of adapter you want to use
     #[serde(flatten)]
     pub kind: DebugAdapterKind,
-    /// The type of connection the adapter should use
     /// The type of request that should be called on the debug adapter
-    #[serde(default)]
+    #[serde(default, flatten)]
     pub request: DebugRequestType,
     /// The program that you trying to debug
     pub program: Option<String>,
@@ -125,17 +131,18 @@ pub enum DebugConnectionType {
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugTaskDefinition {
-    /// Name of the debug tasks
+    /// Name of the debug task
     label: String,
     /// Program to run the debugger on
     program: Option<String>,
     /// The current working directory of your project
     cwd: Option<String>,
-    /// Launch | Request depending on the session the adapter should be ran as
-    #[serde(default)]
-    session_type: DebugRequestType,
+    /// The type of request that should be called on the debug adapter
+    #[serde(default, flatten)]
+    request: DebugRequestType,
     /// The adapter to run
-    adapter: DebugAdapterKind,
+    #[serde(flatten)]
+    kind: DebugAdapterKind,
     /// Additional initialization arguments to be sent on DAP initialization
     initialize_args: Option<serde_json::Value>,
 }
@@ -146,8 +153,8 @@ impl DebugTaskDefinition {
         let cwd = self.cwd.clone().map(PathBuf::from).take_if(|p| p.exists());
 
         let task_type = TaskType::Debug(DebugAdapterConfig {
-            kind: self.adapter,
-            request: self.session_type,
+            kind: self.kind,
+            request: self.request,
             program: self.program,
             cwd: cwd.clone(),
             initialize_args: self.initialize_args,
