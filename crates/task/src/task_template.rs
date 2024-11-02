@@ -100,7 +100,7 @@ mod deserialization_tests {
         };
         let json = json!({
             "type": "debug",
-            "kind": "python",
+            "adapter": "python",
             "request": "launch",
             "program": "main"
         });
