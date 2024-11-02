@@ -449,13 +449,13 @@ impl AssistantPanel {
                                 cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())
                                 }),
-                            )
-                            .tooltip(move |cx| {
-                                Tooltip::for_action_in(
-                                    "New Context",
-                                    &NewContext,
-                                    &focus_handle,
-                                    cx,
+                        )
+                        .child(
+                            PopoverMenu::new("assistant-panel-popover-menu")
+                                .trigger(
+                                    IconButton::new("menu", IconName::Menu)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(|cx| Tooltip::text("Toggle Assistant Menu", cx)),
                                 )
                             }),
                     )
