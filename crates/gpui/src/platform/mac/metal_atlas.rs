@@ -43,16 +43,16 @@ impl MetalAtlas {
             AtlasTextureKind::Path => &mut lock.path_textures,
         };
         for texture in textures {
-            texture.clear();
+            texture.as_mut().unwrap().clear();
         }
     }
 }
 
 struct MetalAtlasState {
     device: AssertSend<Device>,
-    monochrome_textures: Vec<MetalAtlasTexture>,
-    polychrome_textures: Vec<MetalAtlasTexture>,
-    path_textures: Vec<MetalAtlasTexture>,
+    monochrome_textures: Vec<Option<MetalAtlasTexture>>,
+    polychrome_textures: Vec<Option<MetalAtlasTexture>>,
+    path_textures: Vec<Option<MetalAtlasTexture>>,
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
 }
 
@@ -78,6 +78,43 @@ impl PlatformAtlas for MetalAtlas {
             Ok(Some(tile))
         }
     }
+
+    fn remove(&self, key: &AtlasKey) -> Result<bool> {
+        let mut lock = self.0.lock();
+        let id = lock.tiles_by_key.get(key).map(|v| v.texture_id);
+
+        if let Some(id) = id {
+            let textures = match id.kind {
+                AtlasTextureKind::Monochrome => &mut lock.monochrome_textures,
+                AtlasTextureKind::Polychrome => &mut lock.polychrome_textures,
+                AtlasTextureKind::Path => &mut lock.polychrome_textures,
+            };
+            let texture_idx = textures.iter().position(|v| {
+                if let Some(texture) = v {
+                    texture.id == id
+                } else {
+                    false
+                }
+            });
+
+            if let Some(idx) = texture_idx {
+                let mut texture = textures[idx].as_mut().unwrap();
+                texture.remove_allocation();
+
+                if texture.is_empty() {
+                    textures[idx].take();
+                    lock.tiles_by_key.remove(key);
+                    Ok(true)
+                } else {
+                    Ok(true)
+                }
+            } else {
+                Ok(false)
+            }
+        } else {
+            Ok(false)
+        }
+    }
 }
 
 impl MetalAtlasState {
@@ -95,7 +132,13 @@ impl MetalAtlasState {
         textures
             .iter_mut()
             .rev()
-            .find_map(|texture| texture.allocate(size))
+            .find_map(|texture| {
+                if let Some(texture) = texture {
+                    texture.allocate(size)
+                } else {
+                    None
+                }
+            })
             .or_else(|| {
                 let texture = self.push_texture(size, texture_kind);
                 texture.allocate(size)
@@ -145,16 +188,25 @@ impl MetalAtlasState {
             AtlasTextureKind::Polychrome => &mut self.polychrome_textures,
             AtlasTextureKind::Path => &mut self.path_textures,
         };
+        let index = textures
+            .iter()
+            .position(|v| v.is_none())
+            .unwrap_or(textures.len()) as u32;
+
         let atlas_texture = MetalAtlasTexture {
-            id: AtlasTextureId {
-                index: textures.len() as u32,
-                kind,
-            },
+            id: AtlasTextureId { index, kind },
             allocator: etagere::BucketedAtlasAllocator::new(size.into()),
             metal_texture: AssertSend(metal_texture),
+            allocations: 0,
         };
-        textures.push(atlas_texture);
-        textures.last_mut().unwrap()
+
+        if index == textures.len() as u32 {
+            textures.push(Some(atlas_texture));
+        } else {
+            textures[index as usize] = Some(atlas_texture);
+        }
+
+        textures[index as usize].as_mut().unwrap()
     }
 
     fn texture(&self, id: AtlasTextureId) -> &MetalAtlasTexture {
@@ -163,7 +215,7 @@ impl MetalAtlasState {
             crate::AtlasTextureKind::Polychrome => &self.polychrome_textures,
             crate::AtlasTextureKind::Path => &self.path_textures,
         };
-        &textures[id.index as usize]
+        textures[id.index as usize].as_ref().unwrap()
     }
 }
 
@@ -171,6 +223,7 @@ struct MetalAtlasTexture {
     id: AtlasTextureId,
     allocator: BucketedAtlasAllocator,
     metal_texture: AssertSend<metal::Texture>,
+    allocations: u32,
 }
 
 impl MetalAtlasTexture {
@@ -189,6 +242,7 @@ impl MetalAtlasTexture {
             },
             padding: 0,
         };
+        self.allocations += 1;
         Some(tile)
     }
 
@@ -214,6 +268,14 @@ impl MetalAtlasTexture {
             RGBA8Unorm | BGRA8Unorm => 4,
             _ => unimplemented!(),
         }
+    }
+
+    fn remove_allocation(&mut self) {
+        self.allocations -= 1;
+    }
+
+    fn is_empty(&mut self) -> bool {
+        self.allocations == 0
     }
 }
 

@@ -339,4 +339,13 @@ impl PlatformAtlas for TestAtlas {
 
         Ok(Some(state.tiles[key].clone()))
     }
+
+    fn remove(&self, key: &AtlasKey) -> anyhow::Result<bool> {
+        let mut state = self.0.lock();
+        if state.tiles.remove(key).is_some() {
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
 }
