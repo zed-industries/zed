@@ -1229,7 +1229,6 @@ impl EditorElement {
             });
         }
 
-        // Using point for this is really dumb but it'll work for now
         let track_bounds = axis_pair(
             axes.horizontal.then(|| {
                 Bounds::from_corners(
@@ -1256,6 +1255,15 @@ impl EditorElement {
             }),
         );
 
+        let text_units_per_page = axis_pair(
+            track_bounds
+                .horizontal
+                .map_or(text_units_per_page.horizontal, |bounds_x| {
+                    bounds_x.size.width / em_width
+                }),
+            text_units_per_page.vertical,
+        );
+
         let settings = EditorSettings::get_global(cx);
         let scroll_beyond_last_line: AxisPair<f32> = match settings.scroll_beyond_last_line {
             ScrollBeyondLastLine::OnePage => text_units_per_page.clone(),
@@ -1268,17 +1276,22 @@ impl EditorElement {
 
         let total_text_units = {
             let total_text_units_x = {
-                let ems_in_bounds = track_bounds
-                    .horizontal
-                    .map(|bounds| bounds.size.width / em_width);
+                // TODO: Cleanup
+                // let ems_in_bounds = track_bounds
+                //     .horizontal
+                //     .map(|bounds| bounds.size.width / em_width);
 
-                let longest_line = ems_in_bounds
-                    .map(|ems| (snapshot.line_len(snapshot.longest_row()) as f32 - ems).max(0.0));
-
-                longest_line.map(|longest| {
-                    (longest + scroll_beyond_last_line.horizontal)
-                        .max(text_units_per_page.horizontal)
-                })
+                // TODO: Fix the scroll sideways (and possibly down too)
+                // The text render range shouldn't include the scroll to the side.
+                let longest_line = (snapshot.line_len(snapshot.longest_row()) as f32);
+                Some(
+                    (longest_line/* + scroll_beyond_last_line.horizontal */)
+                        .max(text_units_per_page.horizontal),
+                )
+                // longest_line.map(|longest| {
+                //     (longest + scroll_beyond_last_line.horizontal)
+                //         .max(text_units_per_page.horizontal)
+                // })
             };
 
             let total_text_units_y = axes.vertical.then(|| {
@@ -1301,10 +1314,16 @@ impl EditorElement {
         );
 
         let thumb_size = axis_pair(
-            px_per_text_unit.horizontal.map(|px_per_unit| {
-                (px_per_unit * text_units_per_page.horizontal)
-                    .max(ScrollbarLayout::MIN_THUMB_HEIGHT)
-            }),
+            px_per_text_unit
+                .horizontal
+                .zip(total_text_units.horizontal)
+                .zip(track_bounds.horizontal)
+                .map(|((px_per_unit, total_text_units_x), track_bounds_x)| {
+                    (track_bounds_x.size.width
+                        - (total_text_units_x - text_units_per_page.horizontal).max(0.)
+                            * px_per_unit)
+                        .max(ScrollbarLayout::MIN_THUMB_HEIGHT)
+                }),
             px_per_text_unit.vertical.map(|px_per_unit| {
                 (px_per_unit * text_units_per_page.vertical).max(ScrollbarLayout::MIN_THUMB_HEIGHT)
             }),
@@ -3801,12 +3820,14 @@ impl EditorElement {
                             );
 
                             let x = event.position.x;
+
                             if x < thumb_bounds.left() || thumb_bounds.right() < x {
                                 let center_row =
                                     ((x - hitbox.left()) / text_unit_size).round() as u32;
                                 let top_row = center_row.saturating_sub(
                                     (visible_range.end - visible_range.start) as u32 / 2,
                                 );
+
                                 let mut position = editor.scroll_position(cx);
                                 position.x = top_row as f32;
                                 editor.set_scroll_position(position, cx);
