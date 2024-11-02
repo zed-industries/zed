@@ -52,7 +52,7 @@ impl Vim {
                         newline: false,
                     },
                 };
-                let surround = pair.end != *text;
+                let surround = pair.end != surround_alias((*text).as_ref());
                 let (display_map, display_selections) = editor.selections.all_adjusted_display(cx);
                 let mut edits = Vec::new();
                 let mut anchors = Vec::new();
@@ -245,7 +245,7 @@ impl Vim {
                             newline: false,
                         },
                     };
-                    let surround = pair.end != *text;
+                    let surround = pair.end != surround_alias((*text).as_ref());
                     let (display_map, selections) = editor.selections.all_adjusted_display(cx);
                     let mut edits = Vec::new();
                     let mut anchors = Vec::new();
@@ -393,7 +393,19 @@ impl Vim {
 }
 
 fn find_surround_pair<'a>(pairs: &'a [BracketPair], ch: &str) -> Option<&'a BracketPair> {
-    pairs.iter().find(|pair| pair.start == ch || pair.end == ch)
+    pairs
+        .iter()
+        .find(|pair| pair.start == surround_alias(ch) || pair.end == surround_alias(ch))
+}
+
+fn surround_alias(ch: &str) -> &str {
+    match ch {
+        "b" => ")",
+        "B" => "}",
+        "a" => ">",
+        "r" => "]",
+        _ => ch,
+    }
 }
 
 fn all_support_surround_pair() -> Vec<BracketPair> {
@@ -1166,6 +1178,238 @@ mod test {
         cx.assert_state(
             indoc! {"
             The ˇ{quick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+    }
+
+    #[gpui::test]
+    async fn test_surround_aliases(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        // add aliases
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s i w b");
+        cx.assert_state(
+            indoc! {"
+            The ˇ(quick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s i w B");
+        cx.assert_state(
+            indoc! {"
+            The ˇ{quick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s i w a");
+        cx.assert_state(
+            indoc! {"
+            The ˇ<quick> brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("y s i w r");
+        cx.assert_state(
+            indoc! {"
+            The ˇ[quick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // change aliases
+        cx.set_state(
+            indoc! {"
+            The {quˇick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s { b");
+        cx.assert_state(
+            indoc! {"
+            The ˇ(quick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The (quˇick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s ( B");
+        cx.assert_state(
+            indoc! {"
+            The ˇ{quick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The (quˇick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s ( a");
+        cx.assert_state(
+            indoc! {"
+            The ˇ<quick> brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The <quˇick> brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s < b");
+        cx.assert_state(
+            indoc! {"
+            The ˇ(quick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The (quˇick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s ( r");
+        cx.assert_state(
+            indoc! {"
+            The ˇ[quick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The [quˇick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("c s [ b");
+        cx.assert_state(
+            indoc! {"
+            The ˇ(quick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        // delete alias
+        cx.set_state(
+            indoc! {"
+            The {quˇick} brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("d s B");
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The (quˇick) brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("d s b");
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The [quˇick] brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("d s r");
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+
+        cx.set_state(
+            indoc! {"
+            The <quˇick> brown
+            fox jumps over
+            the lazy dog."},
+            Mode::Normal,
+        );
+        cx.simulate_keystrokes("d s a");
+        cx.assert_state(
+            indoc! {"
+            The ˇquick brown
             fox jumps over
             the lazy dog."},
             Mode::Normal,
