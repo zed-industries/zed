@@ -1855,12 +1855,27 @@ impl Pane {
         let mut git_status = None;
         let mut is_ignored = false;
 
-        if let Some(entry) = project_path
+        let entry = if let Some(entry) = project_path
             .as_ref()
             .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
         {
             git_status = entry.git_status;
             is_ignored = entry.is_ignored;
+
+            Some(entry)
+        } else {
+            None
+        };
+
+        let canonical_path = if let Some(entry) = entry {
+            Some(
+                entry
+                    .canonical_path
+                    .as_ref()
+                    .map(|f| f.to_string_lossy().to_string()),
+            )
+        } else {
+            None
         };
 
         let icon_color = if ItemSettings::get_global(cx).git_status {
@@ -1948,43 +1963,73 @@ impl Pane {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
             .start_slot(
-                div()
-                    .id("git_symbol")
-                    .when(git_symbols_settings.enabled, |this| {
-                        this.when_some(git_status, |this, git_status| {
-                            this.tooltip(move |cx| {
-                                Tooltip::text(
-                                    match git_status {
-                                        GitFileStatus::Added => "Untracked".to_string(),
-                                        GitFileStatus::Modified => "Modified".to_string(),
-                                        GitFileStatus::Conflict => "Conflict".to_string(),
-                                    },
-                                    cx,
-                                )
-                            })
-                            .child(
-                                Label::new(match git_status {
-                                    GitFileStatus::Added => "U",
-                                    GitFileStatus::Modified => "M",
-                                    GitFileStatus::Conflict => "C",
-                                })
-                                .weight(FontWeight::BOLD)
-                                .size(LabelSize::XSmall)
-                                .color(
-                                    if git_symbols_settings.colored {
-                                        match git_status {
-                                            GitFileStatus::Added => Color::Created,
-                                            GitFileStatus::Modified => Color::Modified,
-                                            GitFileStatus::Conflict => Color::Conflict,
-                                        }
-                                    } else if is_active {
-                                        Color::Default
-                                    } else {
-                                        Color::Muted
-                                    },
-                                ),
+                h_flex()
+                    .size_3()
+                    .justify_center()
+                    .when_some(canonical_path, |this, canonical_path| {
+                        this.when_some(canonical_path, |this, path| {
+                            this.child(
+                                div()
+                                    .id("symlink_icon")
+                                    .tooltip(move |cx| {
+                                        Tooltip::with_meta(
+                                            path.to_string(),
+                                            None,
+                                            "Symbolic Link",
+                                            cx,
+                                        )
+                                    })
+                                    .child(
+                                        Icon::new(IconName::ArrowUpRight)
+                                            .size(IconSize::Indicator)
+                                            .color(if is_active {
+                                                Color::Default
+                                            } else {
+                                                Color::Muted
+                                            }),
+                                    )
+                                    .into_any_element(),
                             )
                         })
+                    })
+                    .when(git_symbols_settings.enabled, |this| {
+                        this.child(div().id("git_symbol").when_some(
+                            git_status,
+                            |this, git_status| {
+                                this.tooltip(move |cx| {
+                                    Tooltip::text(
+                                        match git_status {
+                                            GitFileStatus::Added => "Untracked".to_string(),
+                                            GitFileStatus::Modified => "Modified".to_string(),
+                                            GitFileStatus::Conflict => "Conflict".to_string(),
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .child(
+                                    Label::new(match git_status {
+                                        GitFileStatus::Added => "U",
+                                        GitFileStatus::Modified => "M",
+                                        GitFileStatus::Conflict => "C",
+                                    })
+                                    .weight(FontWeight::BOLD)
+                                    .size(LabelSize::XSmall)
+                                    .color(
+                                        if git_symbols_settings.colored {
+                                            match git_status {
+                                                GitFileStatus::Added => Color::Created,
+                                                GitFileStatus::Modified => Color::Modified,
+                                                GitFileStatus::Conflict => Color::Conflict,
+                                            }
+                                        } else if is_active {
+                                            Color::Default
+                                        } else {
+                                            Color::Muted
+                                        },
+                                    ),
+                                )
+                            },
+                        ))
                     }),
             )
             .map(|this| {
