@@ -2608,22 +2608,24 @@ impl ContextEditor {
                                 None,
                             ),
                             Role::Assistant => {
-                                let label = Label::new("Assistant").color(Color::Info);
-                                let label = if llm_loading {
-                                    label
+                                let base_label = Label::new("Assistant").color(Color::Info);
+                                let mut spinner = None;
+                                let mut note = None;
+                                let animated_label = if llm_loading {
+                                    base_label
                                         .with_animation(
                                             "pulsating-label",
                                             Animation::new(Duration::from_secs(2))
                                                 .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                                .with_easing(pulsating_between(0.3, 0.9)),
                                             |label, delta| label.alpha(delta),
                                         )
                                         .into_any_element()
                                 } else {
-                                    label.into_any_element()
+                                    base_label.into_any_element()
                                 };
-                                let spinner = if llm_loading {
-                                    Some(
+                                if llm_loading {
+                                    spinner = Some(
                                         Icon::new(IconName::ArrowCircle)
                                             .size(IconSize::XSmall)
                                             .color(Color::Muted)
@@ -2637,21 +2639,15 @@ impl ContextEditor {
                                                 },
                                             )
                                             .into_any_element(),
-                                    )
-                                } else {
-                                    None
-                                };
-                                let note = if llm_loading {
-                                    Some(
+                                    );
+                                    note = Some(
                                         Label::new("Press 'esc' to cancel")
                                             .color(Color::Muted)
                                             .size(LabelSize::XSmall)
                                             .into_any_element(),
-                                    )
-                                } else {
-                                    None
-                                };
-                                (label, spinner, note)
+                                    );
+                                }
+                                (animated_label, spinner, note)
                             }
                             Role::System => (
                                 Label::new("System")
