@@ -2598,16 +2598,18 @@ impl ContextEditor {
                     let context = self.context.clone();
                     move |cx| {
                         let message_id = MessageId(message.timestamp);
-                        let show_spinner = message.role == Role::Assistant
+                        let llm_loading = message.role == Role::Assistant
                             && message.status == MessageStatus::Pending;
 
-                        let label = match message.role {
-                            Role::User => {
-                                Label::new("You").color(Color::Default).into_any_element()
-                            }
+                        let (label, spinner, note) = match message.role {
+                            Role::User => (
+                                Label::new("You").color(Color::Default).into_any_element(),
+                                None,
+                                None,
+                            ),
                             Role::Assistant => {
                                 let label = Label::new("Assistant").color(Color::Info);
-                                if show_spinner {
+                                let label = if llm_loading {
                                     label
                                         .with_animation(
                                             "pulsating-label",
@@ -2619,36 +2621,81 @@ impl ContextEditor {
                                         .into_any_element()
                                 } else {
                                     label.into_any_element()
-                                }
+                                };
+                                let spinner = if llm_loading {
+                                    Some(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted)
+                                            .with_animation(
+                                                "arrow-circle",
+                                                Animation::new(Duration::from_secs(2)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            )
+                                            .into_any_element(),
+                                    )
+                                } else {
+                                    None
+                                };
+                                let note = if llm_loading {
+                                    Some(
+                                        Label::new("Press 'esc' to cancel")
+                                            .color(Color::Muted)
+                                            .size(LabelSize::XSmall)
+                                            .into_any_element(),
+                                    )
+                                } else {
+                                    None
+                                };
+                                (label, spinner, note)
                             }
-
-                            Role::System => Label::new("System")
-                                .color(Color::Warning)
-                                .into_any_element(),
+                            Role::System => (
+                                Label::new("System")
+                                    .color(Color::Warning)
+                                    .into_any_element(),
+                                None,
+                                None,
+                            ),
                         };
 
-                        let sender = ButtonLike::new("role")
-                            .style(ButtonStyle::Filled)
-                            .child(label)
-                            .tooltip(|cx| {
-                                Tooltip::with_meta(
-                                    "Toggle message role",
-                                    None,
-                                    "Available roles: You (User), Assistant, System",
-                                    cx,
-                                )
-                            })
-                            .on_click({
-                                let context = context.clone();
-                                move |_, cx| {
-                                    context.update(cx, |context, cx| {
-                                        context.cycle_message_roles(
-                                            HashSet::from_iter(Some(message_id)),
+                        let sender = h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                ButtonLike::new("role")
+                                    .style(ButtonStyle::Filled)
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(label)
+                                            .children(spinner.into_iter()),
+                                    )
+                                    .tooltip(|cx| {
+                                        Tooltip::with_meta(
+                                            "Toggle message role",
+                                            None,
+                                            "Available roles: You (User), Assistant, System",
                                             cx,
                                         )
                                     })
-                                }
-                            });
+                                    .on_click({
+                                        let context = context.clone();
+                                        move |_, cx| {
+                                            context.update(cx, |context, cx| {
+                                                context.cycle_message_roles(
+                                                    HashSet::from_iter(Some(message_id)),
+                                                    cx,
+                                                )
+                                            })
+                                        }
+                                    }),
+                            )
+                            .children(note.into_iter());
 
                         h_flex()
                             .id(("message_header", message_id.as_u64()))
