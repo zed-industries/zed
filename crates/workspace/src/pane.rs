@@ -280,6 +280,7 @@ pub struct Pane {
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
+    end_slot_hover_state: bool,
 }
 
 pub struct ActivationHistoryEntry {
@@ -479,6 +480,7 @@ impl Pane {
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
+            end_slot_hover_state: false,
         }
     }
 
@@ -1996,8 +1998,18 @@ impl Pane {
                     }
                 });
 
-                if indicator.is_some() {
-                    this.end_slot::<Indicator>(indicator)
+                if let Some(indicator) = indicator {
+                    this.end_slot(
+                        div()
+                            .when(self.end_slot_hover_state == false, |this| {
+                                this.child(indicator)
+                            })
+                            .when(self.end_slot_hover_state == true, |this| {
+                                this.child(end_slot)
+                            })
+                    ).on_hover(cx.listener(|this, hovered, _| {
+                        this.end_slot_hover_state = *hovered;
+                    }))
                 } else {
                     this.end_slot(end_slot)
                 }
