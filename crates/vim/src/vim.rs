@@ -437,6 +437,16 @@ impl Vim {
     }
 
     pub fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut ViewContext<Self>) {
+        if self.temp_mode && mode == Mode::Normal {
+            self.temp_mode = false;
+            self.insert_after(&normal::InsertAfter, cx);
+            return;
+        } else if self.temp_mode
+            && !matches!(mode, Mode::Visual | Mode::VisualLine | Mode::VisualBlock)
+        {
+            self.temp_mode = false;
+        }
+
         let last_mode = self.mode;
         let prior_mode = self.last_mode;
         let prior_tx = self.current_tx;

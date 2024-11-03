@@ -260,7 +260,7 @@ impl Vim {
         });
     }
 
-    fn insert_after(&mut self, _: &InsertAfter, cx: &mut ViewContext<Self>) {
+    pub fn insert_after(&mut self, _: &InsertAfter, cx: &mut ViewContext<Self>) {
         self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, cx);
         self.update_editor(cx, |_, editor, cx| {
