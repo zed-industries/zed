@@ -3022,16 +3022,26 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize>
 
 pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> Option<Indicator> {
     maybe!({
-        let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
-            (true, _) => Color::Warning,
-            (_, true) => {
-                if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
-                    return None;
-                } else {
-                    Color::Muted
-                }
+        // let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
+        //     (true, _) => Color::Warning,
+        //     (_, true) => {
+        //         if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
+        //             return None;
+        //         } else {
+        //             Color::Muted
+        //         }
+        //     }
+        //     (false, false) => return None,
+        // };
+
+        let indicator_color = if item.is_dirty(cx) {
+            if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
+                return None;
+            } else {
+                Color::Muted
             }
-            (false, false) => return None,
+        } else {
+            return None;
         };
 
         Some(Indicator::dot().color(indicator_color))
