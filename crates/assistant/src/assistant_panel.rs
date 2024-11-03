@@ -2641,9 +2641,17 @@ impl ContextEditor {
                                             .into_any_element(),
                                     );
                                     note = Some(
-                                        Label::new("Press 'esc' to cancel")
-                                            .color(Color::Muted)
-                                            .size(LabelSize::XSmall)
+                                        div()
+                                            .font(
+                                                theme::ThemeSettings::get_global(cx)
+                                                    .buffer_font
+                                                    .clone(),
+                                            )
+                                            .child(
+                                                Label::new("Press 'esc' to cancel")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall),
+                                            )
                                             .into_any_element(),
                                     );
                                 }
