@@ -1,8 +1,8 @@
 use crate::Oid;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
+use one_command::Command;
 use std::path::Path;
-use std::process::Command;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;

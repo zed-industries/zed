@@ -1,8 +1,9 @@
 use crate::repository::{GitFileStatus, RepoPath};
 use anyhow::{anyhow, Result};
+use one_command::Command;
 use std::{
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
 };
 

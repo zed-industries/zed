@@ -16,12 +16,13 @@ use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
 };
 use messages::*;
+use one_command::Command;
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smol::{
     io::AsyncWriteExt,
-    process::{Child, ChildStdin, ChildStdout, Command},
+    process::{Child, ChildStdin, ChildStdout},
 };
 use std::{path::PathBuf, process::Stdio, sync::Arc};
 use ui::prelude::*;
@@ -269,7 +270,7 @@ impl SupermavenAgent {
         client: Arc<Client>,
         cx: &mut ModelContext<Supermaven>,
     ) -> Result<Self> {
-        let mut process = Command::new(&binary_path);
+        let mut process = Command::new_async(&binary_path);
         process
             .arg("stdio")
             .stdin(Stdio::piped())

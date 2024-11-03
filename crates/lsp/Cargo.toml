@@ -23,6 +23,7 @@ futures.workspace = true
 gpui.workspace = true
 log.workspace = true
 lsp-types = { git = "https://github.com/zed-industries/lsp-types", rev = "72357d6f6d212bdffba3b5ef4b31d8ca856058e7" }
+one-command.workspace = true
 parking_lot.workspace = true
 postage.workspace = true
 serde.workspace = true

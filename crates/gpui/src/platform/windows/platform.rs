@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
+use one_command::Command;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{
@@ -284,7 +285,7 @@ impl Platform for WindowsPlatform {
             pid,
             app_path.display(),
         );
-        let restart_process = std::process::Command::new("powershell.exe")
+        let restart_process = Command::new("powershell.exe")
             .arg("-command")
             .arg(script)
             .spawn();

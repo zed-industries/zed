@@ -21,6 +21,7 @@ use gpui::{
     ModelContext, SemanticVersion, Task, WeakModel,
 };
 use itertools::Itertools;
+use one_command::Command;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
@@ -298,7 +299,7 @@ impl SshSocket {
     // and passes -l as an argument to sh, not to ls.
     // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
-        let mut command = process::Command::new("ssh");
+        let mut command = Command::new_async("ssh");
         let to_run = iter::once(&program)
             .chain(args.iter())
             .map(|token| shlex::try_quote(token).unwrap())
@@ -1411,7 +1412,7 @@ impl SshRemoteConnection {
         // via a control socket.
         let socket_path = temp_dir.path().join("ssh.sock");
 
-        let mut master_process = process::Command::new("ssh")
+        let mut master_process = Command::new_async("ssh")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2033,7 +2034,7 @@ impl SshRemoteConnection {
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
-        let mut command = process::Command::new("scp");
+        let mut command = Command::new_async("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
@@ -2072,9 +2073,9 @@ impl SshRemoteConnection {
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
-        use smol::process::{Command, Stdio};
+        use smol::process::Stdio;
 
-        async fn run_cmd(command: &mut Command) -> Result<()> {
+        async fn run_cmd(command: &mut smol::process::Command) -> Result<()> {
             let output = command
                 .kill_on_drop(true)
                 .stderr(Stdio::inherit())
@@ -2089,7 +2090,7 @@ impl SshRemoteConnection {
         if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
             delegate.set_status(Some("Building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
-            run_cmd(Command::new("cargo").args([
+            run_cmd(Command::new_async("cargo").args([
                 "build",
                 "--package",
                 "remote_server",
@@ -2102,7 +2103,7 @@ impl SshRemoteConnection {
 
             delegate.set_status(Some("Compressing binary"), cx);
 
-            run_cmd(Command::new("gzip").args([
+            run_cmd(Command::new_async("gzip").args([
                 "-9",
                 "-f",
                 "target/remote_server/debug/remote_server",
@@ -2119,7 +2120,7 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
         log::info!("installing cross");
-        run_cmd(Command::new("cargo").args([
+        run_cmd(Command::new_async("cargo").args([
             "install",
             "cross",
             "--git",
@@ -2136,7 +2137,7 @@ impl SshRemoteConnection {
         );
         log::info!("building remote server binary from source for {}", &triple);
         run_cmd(
-            Command::new("cross")
+            Command::new_async("cross")
                 .args([
                     "build",
                     "--package",
@@ -2157,7 +2158,7 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Compressing binary"), cx);
 
-        run_cmd(Command::new("gzip").args([
+        run_cmd(Command::new_async("gzip").args([
             "-9",
             "-f",
             &format!("target/remote_server/{}/debug/remote_server", triple),

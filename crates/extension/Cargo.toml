@@ -32,6 +32,7 @@ language.workspace = true
 log.workspace = true
 lsp.workspace = true
 node_runtime.workspace = true
+one-command.workspace = true
 paths.workspace = true
 project.workspace = true
 release_channel.workspace = true

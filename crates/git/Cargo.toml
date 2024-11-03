@@ -21,6 +21,7 @@ git2.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 log.workspace = true
+one-command.workspace = true
 parking_lot.workspace = true
 rope.workspace = true
 serde.workspace = true

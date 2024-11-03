@@ -29,6 +29,7 @@ use reqwest_client::ReqwestClient;
 
 use assets::Assets;
 use node_runtime::{NodeBinaryOptions, NodeRuntime};
+use one_command::Command;
 use parking_lot::Mutex;
 use project::project_settings::ProjectSettings;
 use recent_projects::{open_ssh_project, SshSettings};
@@ -38,7 +39,6 @@ use settings::{
     handle_settings_file_changes, watch_config_file, InvalidSettingsError, Settings, SettingsStore,
 };
 use simplelog::ConfigBuilder;
-use smol::process::Command;
 use std::{
     env,
     fs::OpenOptions,
@@ -1051,7 +1051,7 @@ async fn load_login_shell_environment() -> Result<()> {
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
-    let output = Command::new(&shell)
+    let output = Command::new_async(&shell)
         .args(["-l", "-i", "-c", &shell_cmd])
         .output()
         .await

@@ -7,11 +7,12 @@ use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
 use http_client::{self, AsyncBody, HttpClient};
+use one_command::Command;
 use serde::Deserialize;
 use std::{
     env, fs, mem,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::Arc,
 };
 use wasm_encoder::{ComponentSectionId, Encode as _, RawSection, Section as _};

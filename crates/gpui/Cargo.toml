@@ -83,6 +83,7 @@ itertools.workspace = true
 linkme = "0.3"
 log.workspace = true
 num_cpus = "1.13"
+one-command.workspace = true
 parking = "2.0.0"
 parking_lot.workspace = true
 postage.workspace = true

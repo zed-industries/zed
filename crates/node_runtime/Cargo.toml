@@ -25,6 +25,7 @@ async_zip.workspace = true
 futures.workspace = true
 http_client.workspace = true
 log.workspace = true
+one-command.workspace = true
 paths.workspace = true
 semver.workspace = true
 serde.workspace = true

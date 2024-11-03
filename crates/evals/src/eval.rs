@@ -10,6 +10,7 @@ use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
+use one_command::Command;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
 use reqwest_client::ReqwestClient;
@@ -27,7 +28,7 @@ use std::time::Duration;
 use std::{
     fs,
     path::Path,
-    process::{exit, Command, Stdio},
+    process::{exit, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,

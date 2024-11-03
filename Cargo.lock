@@ -1008,6 +1008,7 @@ dependencies = [
  "log",
  "markdown_preview",
  "menu",
+ "one-command",
  "paths",
  "release_channel",
  "schemars",
@@ -4015,6 +4016,7 @@ dependencies = [
  "language",
  "languages",
  "node_runtime",
+ "one-command",
  "open_ai",
  "project",
  "reqwest_client",
@@ -4111,6 +4113,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "one-command",
  "parking_lot",
  "paths",
  "project",
@@ -4872,6 +4875,7 @@ dependencies = [
  "gpui",
  "http_client",
  "log",
+ "one-command",
  "parking_lot",
  "pretty_assertions",
  "rope",
@@ -5075,6 +5079,7 @@ dependencies = [
  "metal",
  "num_cpus",
  "objc",
+ "one-command",
  "oo7",
  "open",
  "parking",
@@ -6379,6 +6384,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "one-command",
  "paths",
  "pet",
  "pet-conda",
@@ -6686,6 +6692,7 @@ dependencies = [
  "gpui",
  "log",
  "lsp-types",
+ "one-command",
  "parking_lot",
  "postage",
  "release_channel",
@@ -7232,6 +7239,7 @@ dependencies = [
  "futures 0.3.30",
  "http_client",
  "log",
+ "one-command",
  "paths",
  "semver",
  "serde",
@@ -7571,6 +7579,13 @@ name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
+
+[[package]]
+name = "one-command"
+version = "0.1.1"
+dependencies = [
+ "async-process 1.8.1",
+]
 
 [[package]]
 name = "oo7"
@@ -8859,6 +8874,7 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
+ "one-command",
  "parking_lot",
  "pathdiff",
  "paths",
@@ -9538,6 +9554,7 @@ dependencies = [
  "gpui",
  "itertools 0.13.0",
  "log",
+ "one-command",
  "parking_lot",
  "prost",
  "release_channel",
@@ -11559,6 +11576,7 @@ dependencies = [
  "http_client",
  "language",
  "log",
+ "one-command",
  "postage",
  "project",
  "serde",
@@ -15096,6 +15114,7 @@ dependencies = [
  "nix",
  "node_runtime",
  "notifications",
+ "one-command",
  "outline",
  "outline_panel",
  "parking_lot",

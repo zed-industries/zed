@@ -7,6 +7,7 @@ use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
+use one_command::Command;
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{
@@ -566,7 +567,7 @@ fn package_name_and_bin_name_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<(String, String)> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = Command::new("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -612,7 +613,7 @@ fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = Command::new("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
