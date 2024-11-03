@@ -2669,7 +2669,7 @@ impl ContextEditor {
                                             .items_center()
                                             .gap_1p5()
                                             .child(label)
-                                            .children(spinner.into_iter()),
+                                            .children(spinner),
                                     )
                                     .tooltip(|cx| {
                                         Tooltip::with_meta(
@@ -2691,7 +2691,7 @@ impl ContextEditor {
                                         }
                                     }),
                             )
-                            .children(note.into_iter());
+                            .children(note);
 
                         h_flex()
                             .id(("message_header", message_id.as_u64()))
