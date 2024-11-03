@@ -2,7 +2,7 @@ mod project_panel_settings;
 
 use client::{ErrorCode, ErrorExt};
 use settings::{Settings, SettingsStore};
-use ui::{Scrollbar, ScrollbarState};
+use ui::{Indicator, Scrollbar, ScrollbarState};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
@@ -16,13 +16,7 @@ use anyhow::{anyhow, Context as _, Result};
 use collections::{hash_map, BTreeSet, HashMap};
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
-    InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
-    WeakView, WindowContext,
+    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView, FontWeight, InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _, WeakView, WindowContext
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -119,6 +113,8 @@ struct EntryDetails {
     path: Arc<Path>,
     depth: usize,
     kind: EntryKind,
+    is_folder: bool,
+    is_file: bool,
     is_ignored: bool,
     is_expanded: bool,
     is_selected: bool,
@@ -2267,10 +2263,9 @@ impl ProjectPanel {
             }
 
             let end_ix = range.end.min(ix + visible_worktree_entries.len());
-            let (git_status_setting, show_file_icons, show_folder_icons) = {
+            let (show_file_icons, show_folder_icons) = {
                 let settings = ProjectPanelSettings::get_global(cx);
                 (
-                    settings.git_status,
                     settings.file_icons,
                     settings.folder_icons,
                 )
@@ -2292,10 +2287,15 @@ impl ProjectPanel {
                         .collect()
                 });
                 for entry in visible_worktree_entries[entry_range].iter() {
-                    let status = git_status_setting.then_some(entry.git_status).flatten();
+                    let status = entry.git_status;
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
+                    let mut is_folder = false;
+                    let mut is_file = false;
+
                     let icon = match entry.kind {
                         EntryKind::File => {
+                            is_file = true;
+
                             if show_file_icons {
                                 FileIcons::get_icon(&entry.path, cx)
                             } else {
@@ -2303,6 +2303,8 @@ impl ProjectPanel {
                             }
                         }
                         _ => {
+                            is_folder = true;
+
                             if show_folder_icons {
                                 FileIcons::get_folder_icon(is_expanded, cx)
                             } else {
@@ -2339,6 +2341,8 @@ impl ProjectPanel {
                         path: entry.path.clone(),
                         depth,
                         kind: entry.kind,
+                        is_folder,
+                        is_file,
                         is_ignored: entry.is_ignored,
                         is_expanded,
                         is_selected: self.selection == Some(selection),
@@ -2469,8 +2473,11 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color =
-            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked);
+        let filename_text_color = if settings.git_status {
+            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked)
+        } else {
+            entry_git_aware_label_color(None, details.is_ignored, is_marked)
+        };
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
@@ -2479,6 +2486,9 @@ impl ProjectPanel {
                 icon = FileIcons::get_icon(Path::new(&filename), cx);
             }
         }
+
+        let git_status = details.git_status;
+        let git_symbols_settings = settings.git_symbols;
 
         let canonical_path = details
             .canonical_path
@@ -2495,6 +2505,9 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
+
+        let entry_details = details.clone();
+
         div()
             .id(entry_id.to_proto() as usize)
             .when(is_local, |div| {
@@ -2569,20 +2582,90 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_marked || is_active)
-                    .when_some(canonical_path, |this, path| {
-                        this.end_slot::<AnyElement>(
-                            div()
-                                .id("symlink_icon")
-                                .pr_3()
-                                .tooltip(move |cx| {
-                                    Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
+                    .when(canonical_path.is_some() || git_symbols_settings.enabled, |this| {
+                        this.end_slot(
+                            h_flex()
+                                .id("git_symbol")
+                                .size_3()
+                                .justify_center()
+                                .mr_3()
+                                .when_some(canonical_path, |this, path| {
+                                    this.child(
+                                        div()
+                                            .id("symlink_icon")
+                                            .tooltip(move |cx| {
+                                                Tooltip::with_meta(path.to_string(), None, "Symbolic Link", cx)
+                                            })
+                                            .child(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::Indicator)
+                                                    .color(filename_text_color),
+                                            )
+                                            .into_any_element(),
+                                    )
                                 })
-                                .child(
-                                    Icon::new(IconName::ArrowUpRight)
-                                        .size(IconSize::Indicator)
-                                        .color(filename_text_color),
-                                )
-                                .into_any_element(),
+                                .when_some(git_status, |this, git_status| {
+                                    this.when(entry_details.is_folder, |this| {
+                                        this.tooltip(move |cx| {
+                                            Tooltip::text(
+                                                match git_status {
+                                                    GitFileStatus::Added => "Untracked".to_string(),
+                                                    GitFileStatus::Modified => "Modified".to_string(),
+                                                    GitFileStatus::Conflict => "Conflict".to_string(),
+                                                },
+                                                cx,
+                                            )
+                                        }).child(
+                                                Indicator::dot().color(
+                                                    if git_symbols_settings.colored {
+                                                        match git_status {
+                                                            GitFileStatus::Added => Color::Created,
+                                                            GitFileStatus::Modified => Color::Modified,
+                                                            GitFileStatus::Conflict => Color::Conflict,
+                                                        }
+                                                    } else if is_active {
+                                                        Color::Default
+                                                    } else {
+                                                        Color::Muted
+                                                    }
+                                                )
+                                            )
+                                            .opacity(0.5)
+                                        })
+                                        .when(entry_details.is_file, |this| {
+                                            this.tooltip(move |cx| {
+                                                    Tooltip::text(
+                                                        match git_status {
+                                                            GitFileStatus::Added => "Untracked".to_string(),
+                                                            GitFileStatus::Modified => "Modified".to_string(),
+                                                            GitFileStatus::Conflict => "Conflict".to_string(),
+                                                        },
+                                                        cx,
+                                                    )
+                                                }).child(
+                                                Label::new(match git_status {
+                                                    GitFileStatus::Added => "U",
+                                                    GitFileStatus::Modified => "M",
+                                                    GitFileStatus::Conflict => "C",
+                                                })
+                                                .weight(FontWeight::BOLD)
+                                                .size(LabelSize::XSmall)
+                                                .color(
+                                                    if git_symbols_settings.colored {
+                                                        match git_status {
+                                                            GitFileStatus::Added => Color::Created,
+                                                            GitFileStatus::Modified => Color::Modified,
+                                                            GitFileStatus::Conflict => Color::Conflict,
+                                                        }
+                                                    } else if is_active {
+                                                        Color::Default
+                                                    } else {
+                                                        Color::Muted
+                                                    },
+                                                )
+                                            )
+                                    })
+                                })
                         )
                     })
                     .child(if let Some(icon) = &icon {

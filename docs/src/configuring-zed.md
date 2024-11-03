@@ -2083,7 +2083,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "dock": "left",
     "file_icons": true,
     "folder_icons": true,
-    "git_status": true,
+    "git_status": false,
     "indent_size": 20,
     "indent_guides": true,
     "auto_reveal_entries": true,
@@ -2122,11 +2122,24 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
+### Git Symbols
+
+- Description: Whether to show git symbols in the project panel.
+- Setting: `git_symbols`
+- Default:
+
+```json
+"git_symbols": {
+  "enabled": true,
+  "colored": true
+}
+```
+
 ### Git Status
 
 - Description: Indicates newly created and updated files
 - Setting: `git_status`
-- Default: `true`
+- Default: `false`
 
 **Options**
 
