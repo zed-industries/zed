@@ -30,6 +30,7 @@ members = [
     "crates/extension",
     "crates/extension_api",
     "crates/extension_cli",
+    "crates/extension_host",
     "crates/extensions_ui",
     "crates/feature_flags",
     "crates/feedback",
@@ -202,6 +203,7 @@ db = { path = "crates/db" }
 diagnostics = { path = "crates/diagnostics" }
 editor = { path = "crates/editor" }
 extension = { path = "crates/extension" }
+extension_host = { path = "crates/extension_host" }
 extensions_ui = { path = "crates/extensions_ui" }
 feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }

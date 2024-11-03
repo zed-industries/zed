@@ -2,7 +2,6 @@ use schemars::schema::{ArrayValidation, InstanceType, RootSchema, Schema, Schema
 use serde_json::Value;
 
 pub struct SettingsJsonSchemaParams<'a> {
-    pub staff_mode: bool,
     pub language_names: &'a [String],
     pub font_names: &'a [String],
 }

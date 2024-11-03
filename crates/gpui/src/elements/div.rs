@@ -915,6 +915,12 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Track the scroll state of this element with the given handle.
+    fn anchor_scroll(mut self, scroll_anchor: Option<ScrollAnchor>) -> Self {
+        self.interactivity().scroll_anchor = scroll_anchor;
+        self
+    }
+
     /// Set the given styles to be applied when this element is active.
     fn active(mut self, f: impl FnOnce(StyleRefinement) -> StyleRefinement) -> Self
     where
@@ -1156,6 +1162,9 @@ impl Element for Div {
     ) -> Option<Hitbox> {
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
+        if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
+            *handle.last_origin.borrow_mut() = bounds.origin - cx.element_offset();
+        }
         let content_size = if request_layout.child_layout_ids.is_empty() {
             bounds.size
         } else if let Some(scroll_handle) = self.interactivity.tracked_scroll_handle.as_ref() {
@@ -1245,6 +1254,7 @@ pub struct Interactivity {
     pub(crate) focusable: bool,
     pub(crate) tracked_focus_handle: Option<FocusHandle>,
     pub(crate) tracked_scroll_handle: Option<ScrollHandle>,
+    pub(crate) scroll_anchor: Option<ScrollAnchor>,
     pub(crate) scroll_offset: Option<Rc<RefCell<Point<Pixels>>>>,
     pub(crate) group: Option<SharedString>,
     /// The base style of the element, before any modifications are applied
@@ -2091,7 +2101,6 @@ impl Interactivity {
                     }
                     scroll_offset.y += delta_y;
                     scroll_offset.x += delta_x;
-
                     cx.stop_propagation();
                     if *scroll_offset != old_scroll_offset {
                         cx.refresh();
@@ -2454,6 +2463,34 @@ where
     }
 }
 
+/// Represents an element that can be scrolled *to* in its parent element.
+///
+/// Contrary to [ScrollHandle::scroll_to_item], an anchored element does not have to be an immediate child of the parent.
+#[derive(Clone)]
+pub struct ScrollAnchor {
+    handle: ScrollHandle,
+    last_origin: Rc<RefCell<Point<Pixels>>>,
+}
+
+impl ScrollAnchor {
+    /// Creates a [ScrollAnchor] associated with a given [ScrollHandle].
+    pub fn for_handle(handle: ScrollHandle) -> Self {
+        Self {
+            handle,
+            last_origin: Default::default(),
+        }
+    }
+    /// Request scroll to this item on the next frame.
+    pub fn scroll_to(&self, cx: &mut WindowContext<'_>) {
+        let this = self.clone();
+
+        cx.on_next_frame(move |_| {
+            let viewport_bounds = this.handle.bounds();
+            let self_bounds = *this.last_origin.borrow();
+            this.handle.set_offset(viewport_bounds.origin - self_bounds);
+        });
+    }
+}
 #[derive(Default, Debug)]
 struct ScrollHandleState {
     offset: Rc<RefCell<Point<Pixels>>>,

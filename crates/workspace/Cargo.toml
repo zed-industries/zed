@@ -13,7 +13,6 @@ path = "src/workspace.rs"
 doctest = false
 
 [features]
-no-webrtc = ["call/no-webrtc"]
 test-support = [
     "call/test-support",
     "client/test-support",
@@ -50,7 +49,6 @@ parking_lot.workspace = true
 postage.workspace = true
 project.workspace = true
 task.workspace = true
-release_channel.workspace = true
 remote.workspace = true
 schemars.workspace = true
 serde.workspace = true

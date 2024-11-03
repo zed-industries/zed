@@ -3990,6 +3990,76 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+    cx.set_state(
+        &"
+            ˇzero
+            one
+            two
+            three
+            four
+            five
+        "
+        .unindent(),
+    );
+
+    // Create a four-line block that replaces three lines of text.
+    cx.update_editor(|editor, cx| {
+        let snapshot = editor.snapshot(cx);
+        let snapshot = &snapshot.buffer_snapshot;
+        let placement = BlockPlacement::Replace(
+            snapshot.anchor_after(Point::new(1, 0))..snapshot.anchor_after(Point::new(3, 0)),
+        );
+        editor.insert_blocks(
+            [BlockProperties {
+                placement,
+                height: 4,
+                style: BlockStyle::Sticky,
+                render: Box::new(|_| gpui::div().into_any_element()),
+                priority: 0,
+            }],
+            None,
+            cx,
+        );
+    });
+
+    // Move down so that the cursor touches the block.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.assert_editor_state(
+        &"
+            zero
+            «one
+            two
+            threeˇ»
+            four
+            five
+        "
+        .unindent(),
+    );
+
+    // Move down past the block.
+    cx.update_editor(|editor, cx| {
+        editor.move_down(&Default::default(), cx);
+    });
+    cx.assert_editor_state(
+        &"
+            zero
+            one
+            two
+            three
+            ˇfour
+            five
+        "
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 fn test_transpose(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
@@ -4182,7 +4252,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇˇˇˇ
+            // porttitor id. Aliquam id accumsan eros.ˇ
         "};
 
         cx.set_state(unwrapped_text);
@@ -4212,7 +4282,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         let wrapped_text = indoc! {"
             // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque.ˇˇ
+            // auctor, eu lacinia sapien scelerisque.ˇ
             //
             // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
             // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
@@ -4220,7 +4290,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
             // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
             // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
-            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇˇ
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ
         "};
 
         cx.set_state(unwrapped_text);
