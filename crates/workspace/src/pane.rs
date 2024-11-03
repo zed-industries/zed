@@ -15,7 +15,12 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement, AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, FontWeight, KeyContext, Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
+    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
+    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, FontWeight, KeyContext,
+    Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
+    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
+    WindowContext,
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -1852,9 +1857,10 @@ impl Pane {
 
         if let Some(entry) = project_path
             .as_ref()
-            .and_then(|path| self.project.read(cx).entry_for_path(path, cx)) {
-                git_status = entry.git_status;
-                is_ignored = entry.is_ignored;
+            .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
+        {
+            git_status = entry.git_status;
+            is_ignored = entry.is_ignored;
         };
 
         let icon_color = if ItemSettings::get_global(cx).git_status {
@@ -1946,24 +1952,17 @@ impl Pane {
                     .id("git_symbol")
                     .when(git_symbols_settings.enabled, |this| {
                         this.when_some(git_status, |this, git_status| {
-                            this
-                                .tooltip(move |cx| {
-                                    Tooltip::text(
-                                        match git_status {
-                                            GitFileStatus::Added => {
-                                                format!("Untracked")
-                                            }
-                                            GitFileStatus::Modified => {
-                                                format!("Modified")
-                                            }
-                                            GitFileStatus::Conflict => {
-                                                format!("Conflict")
-                                            }
-                                        },
-                                        cx,
-                                    )
-                                })
-                                .child(
+                            this.tooltip(move |cx| {
+                                Tooltip::text(
+                                    match git_status {
+                                        GitFileStatus::Added => "Untracked".to_string(),
+                                        GitFileStatus::Modified => "Modified".to_string(),
+                                        GitFileStatus::Conflict => "Conflict".to_string(),
+                                    },
+                                    cx,
+                                )
+                            })
+                            .child(
                                 Label::new(match git_status {
                                     GitFileStatus::Added => "U",
                                     GitFileStatus::Modified => "M",
@@ -1986,7 +1985,7 @@ impl Pane {
                                 ),
                             )
                         })
-                    })
+                    }),
             )
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
@@ -2047,13 +2046,10 @@ impl Pane {
                 if let Some(indicator) = indicator {
                     this.end_slot(
                         div()
-                            .when(self.end_slot_hover_state == false, |this| {
-                                this.child(indicator)
-                            })
-                            .when(self.end_slot_hover_state == true, |this| {
-                                this.child(end_slot)
-                            })
-                    ).on_hover(cx.listener(|this, hovered, _| {
+                            .when(!self.end_slot_hover_state, |this| this.child(indicator))
+                            .when(self.end_slot_hover_state, |this| this.child(end_slot)),
+                    )
+                    .on_hover(cx.listener(|this, hovered, _| {
                         this.end_slot_hover_state = *hovered;
                     }))
                 } else {
