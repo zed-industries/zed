@@ -77,6 +77,7 @@ pub enum Operator {
     Uppercase,
     OppositeCase,
     Digraph { first_char: Option<char> },
+    Literal { prefix: Option<String> },
     Register,
     RecordRegister,
     ReplayRegister,
@@ -281,7 +282,7 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        cx: &ViewContext<Editor>,
+        cx: &mut ViewContext<Editor>,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
@@ -444,6 +445,7 @@ impl Operator {
             Operator::Yank => "y",
             Operator::Replace => "r",
             Operator::Digraph { .. } => "^K",
+            Operator::Literal { .. } => "^V",
             Operator::FindForward { before: false } => "f",
             Operator::FindForward { before: true } => "t",
             Operator::FindBackward { after: false } => "F",
@@ -467,6 +469,18 @@ impl Operator {
         }
     }
 
+    pub fn status(&self) -> String {
+        match self {
+            Operator::Digraph {
+                first_char: Some(first_char),
+            } => format!("^K{first_char}"),
+            Operator::Literal {
+                prefix: Some(prefix),
+            } => format!("^V{prefix}"),
+            _ => self.id().to_string(),
+        }
+    }
+
     pub fn is_waiting(&self, mode: Mode) -> bool {
         match self {
             Operator::AddSurrounds { target } => target.is_some() || mode.is_visual(),
@@ -479,6 +493,7 @@ impl Operator {
             | Operator::ReplayRegister
             | Operator::Replace
             | Operator::Digraph { .. }
+            | Operator::Literal { .. }
             | Operator::ChangeSurrounds { target: Some(_) }
             | Operator::DeleteSurrounds => true,
             Operator::Change

@@ -1,6 +1,8 @@
-use super::{file_command::append_buffer_to_output, SlashCommand, SlashCommandOutput};
 use anyhow::{Context, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;
@@ -10,9 +12,11 @@ use std::{
     path::PathBuf,
     sync::{atomic::AtomicBool, Arc},
 };
-use ui::{ActiveTheme, WindowContext};
+use ui::{prelude::*, ActiveTheme, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
+
+use crate::slash_command::file_command::append_buffer_to_output;
 
 pub(crate) struct TabSlashCommand;
 
@@ -25,6 +29,10 @@ impl SlashCommand for TabSlashCommand {
 
     fn description(&self) -> String {
         "Insert open tabs (active tab by default)".to_owned()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::FileTree
     }
 
     fn menu_text(&self) -> String {
@@ -132,7 +140,7 @@ impl SlashCommand for TabSlashCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let tab_items_search = tab_items_for_queries(
             Some(workspace),
             arguments,
@@ -146,7 +154,7 @@ impl SlashCommand for TabSlashCommand {
             for (full_path, buffer, _) in tab_items_search.await? {
                 append_buffer_to_output(&buffer, full_path.as_deref(), &mut output).log_err();
             }
-            Ok(output)
+            Ok(output.to_event_stream())
         })
     }
 }

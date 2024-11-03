@@ -11,6 +11,13 @@ pub enum ProjectPanelDockPosition {
     Right,
 }
 
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowIndentGuides {
+    Always,
+    Never,
+}
+
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub button: bool,
@@ -20,10 +27,22 @@ pub struct ProjectPanelSettings {
     pub folder_icons: bool,
     pub git_status: bool,
     pub indent_size: f32,
+    pub indent_guides: IndentGuidesSettings,
     pub auto_reveal_entries: bool,
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettings {
+    pub show: ShowIndentGuides,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct IndentGuidesSettingsContent {
+    /// When to show the scrollbar in the project panel.
+    pub show: Option<ShowIndentGuides>,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -104,6 +123,8 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: all
     pub show_diagnostics: Option<ShowDiagnostics>,
+    /// Settings related to indent guides in the project panel.
+    pub indent_guides: Option<IndentGuidesSettingsContent>,
 }
 
 impl Settings for ProjectPanelSettings {

@@ -29,13 +29,13 @@ pub struct AnthropicModelCacheConfiguration {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
-    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-20240620")]
+    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
-    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-20240229")]
+    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
     Claude3Opus,
-    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-20240229")]
+    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-latest")]
     Claude3Sonnet,
-    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-20240307")]
+    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-latest")]
     Claude3Haiku,
     #[serde(rename = "custom")]
     Custom {
@@ -69,10 +69,10 @@ impl Model {
 
     pub fn id(&self) -> &str {
         match self {
-            Model::Claude3_5Sonnet => "claude-3-5-sonnet-20240620",
-            Model::Claude3Opus => "claude-3-opus-20240229",
-            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
-            Model::Claude3Haiku => "claude-3-haiku-20240307",
+            Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
+            Model::Claude3Opus => "claude-3-opus-latest",
+            Model::Claude3Sonnet => "claude-3-sonnet-latest",
+            Model::Claude3Haiku => "claude-3-haiku-latest",
             Self::Custom { name, .. } => name,
         }
     }

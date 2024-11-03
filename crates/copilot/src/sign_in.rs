@@ -185,7 +185,7 @@ impl Render for CopilotCodeVerification {
 
         v_flex()
             .id("copilot code verification")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .elevation_3(cx)
             .w_96()
             .items_center()

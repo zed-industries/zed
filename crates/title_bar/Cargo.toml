@@ -23,7 +23,6 @@ test-support = [
     "gpui/test-support",
     "http_client/test-support",
     "project/test-support",
-    "settings/test-support",
     "util/test-support",
     "workspace/test-support",
 ]
@@ -33,7 +32,6 @@ auto_update.workspace = true
 call.workspace = true
 client.workspace = true
 command_palette.workspace = true
-dev_server_projects.workspace = true
 extensions_ui.workspace = true
 feedback.workspace = true
 feature_flags.workspace = true

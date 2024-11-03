@@ -4,7 +4,9 @@ use futures::{future, StreamExt};
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
+    language_settings::{
+        language_settings, AllLanguageSettings, LanguageSettingsContent, SoftWrap,
+    },
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
@@ -15,7 +17,7 @@ use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
 
-use std::{mem, ops::Range, task::Poll};
+use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
@@ -92,6 +94,107 @@ async fn test_symlinks(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let dir = temp_tree(json!({
+        ".editorconfig": r#"
+        root = true
+        [*.rs]
+            indent_style = tab
+            indent_size = 3
+            end_of_line = lf
+            insert_final_newline = true
+            trim_trailing_whitespace = true
+            max_line_length = 80
+        [*.js]
+            tab_width = 10
+        "#,
+        ".zed": {
+            "settings.json": r#"{
+                "tab_size": 8,
+                "hard_tabs": false,
+                "ensure_final_newline_on_save": false,
+                "remove_trailing_whitespace_on_save": false,
+                "preferred_line_length": 64,
+                "soft_wrap": "editor_width"
+            }"#,
+        },
+        "a.rs": "fn a() {\n    A\n}",
+        "b": {
+            ".editorconfig": r#"
+            [*.rs]
+                indent_size = 2
+                max_line_length = off
+            "#,
+            "b.rs": "fn b() {\n    B\n}",
+        },
+        "c.js": "def c\n  C\nend",
+        "README.json": "tabs are better\n",
+    }));
+
+    let path = dir.path();
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree_from_real_fs(path, path).await;
+    let project = Project::test(fs, [path], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(js_lang());
+    language_registry.add(json_lang());
+    language_registry.add(rust_lang());
+
+    let worktree = project.update(cx, |project, cx| project.worktrees(cx).next().unwrap());
+
+    cx.executor().run_until_parked();
+
+    cx.update(|cx| {
+        let tree = worktree.read(cx);
+        let settings_for = |path: &str| {
+            let file_entry = tree.entry_for_path(path).unwrap().clone();
+            let file = File::for_entry(file_entry, worktree.clone());
+            let file_language = project
+                .read(cx)
+                .languages()
+                .language_for_file_path(file.path.as_ref());
+            let file_language = cx
+                .background_executor()
+                .block(file_language)
+                .expect("Failed to get file language");
+            let file = file as _;
+            language_settings(Some(file_language.name()), Some(&file), cx).into_owned()
+        };
+
+        let settings_a = settings_for("a.rs");
+        let settings_b = settings_for("b/b.rs");
+        let settings_c = settings_for("c.js");
+        let settings_readme = settings_for("README.json");
+
+        // .editorconfig overrides .zed/settings
+        assert_eq!(Some(settings_a.tab_size), NonZeroU32::new(3));
+        assert_eq!(settings_a.hard_tabs, true);
+        assert_eq!(settings_a.ensure_final_newline_on_save, true);
+        assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
+        assert_eq!(settings_a.preferred_line_length, 80);
+
+        // "max_line_length" also sets "soft_wrap"
+        assert_eq!(settings_a.soft_wrap, SoftWrap::PreferredLineLength);
+
+        // .editorconfig in b/ overrides .editorconfig in root
+        assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
+
+        // "indent_size" is not set, so "tab_width" is used
+        assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
+
+        // When max_line_length is "off", default to .zed/settings.json
+        assert_eq!(settings_b.preferred_line_length, 64);
+        assert_eq!(settings_b.soft_wrap, SoftWrap::EditorWidth);
+
+        // README.md should not be affected by .editorconfig's globe "*.rs"
+        assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
+    });
+}
+
+#[gpui::test]
 async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) {
     init_test(cx);
     TaskStore::init(None);
@@ -146,26 +249,16 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
         .update(|cx| {
             let tree = worktree.read(cx);
 
-            let settings_a = language_settings(
-                None,
-                Some(
-                    &(File::for_entry(
-                        tree.entry_for_path("a/a.rs").unwrap().clone(),
-                        worktree.clone(),
-                    ) as _),
-                ),
-                cx,
-            );
-            let settings_b = language_settings(
-                None,
-                Some(
-                    &(File::for_entry(
-                        tree.entry_for_path("b/b.rs").unwrap().clone(),
-                        worktree.clone(),
-                    ) as _),
-                ),
-                cx,
-            );
+            let file_a = File::for_entry(
+                tree.entry_for_path("a/a.rs").unwrap().clone(),
+                worktree.clone(),
+            ) as _;
+            let settings_a = language_settings(None, Some(&file_a), cx);
+            let file_b = File::for_entry(
+                tree.entry_for_path("b/b.rs").unwrap().clone(),
+                worktree.clone(),
+            ) as _;
+            let settings_b = language_settings(None, Some(&file_b), cx);
 
             assert_eq!(settings_a.tab_size.get(), 8);
             assert_eq!(settings_b.tab_size.get(), 2);

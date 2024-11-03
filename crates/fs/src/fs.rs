@@ -813,6 +813,7 @@ struct FakeFsState {
     root: Arc<Mutex<FakeFsEntry>>,
     next_inode: u64,
     next_mtime: SystemTime,
+    git_event_tx: smol::channel::Sender<PathBuf>,
     event_txs: Vec<smol::channel::Sender<Vec<PathEvent>>>,
     events_paused: bool,
     buffered_events: Vec<PathEvent>,
@@ -865,14 +866,22 @@ impl FakeFsState {
         let mut entry_stack = Vec::new();
         'outer: loop {
             let mut path_components = path.components().peekable();
+            let mut prefix = None;
             while let Some(component) = path_components.next() {
                 match component {
-                    Component::Prefix(_) => panic!("prefix paths aren't supported"),
+                    Component::Prefix(prefix_component) => prefix = Some(prefix_component),
                     Component::RootDir => {
                         entry_stack.clear();
                         entry_stack.push(self.root.clone());
                         canonical_path.clear();
-                        canonical_path.push("/");
+                        match prefix {
+                            Some(prefix_component) => {
+                                canonical_path = PathBuf::from(prefix_component.as_os_str());
+                                // Prefixes like `C:\\` are represented without their trailing slash, so we have to re-add it.
+                                canonical_path.push(std::path::MAIN_SEPARATOR_STR);
+                            }
+                            None => canonical_path = PathBuf::from(std::path::MAIN_SEPARATOR_STR),
+                        }
                     }
                     Component::CurDir => {}
                     Component::ParentDir => {
@@ -894,7 +903,7 @@ impl FakeFsState {
                                 }
                             }
                             entry_stack.push(entry.clone());
-                            canonical_path.push(name);
+                            canonical_path = canonical_path.join(name);
                         } else {
                             return None;
                         }
@@ -956,9 +965,15 @@ pub static FS_DOT_GIT: std::sync::LazyLock<&'static OsStr> =
 
 #[cfg(any(test, feature = "test-support"))]
 impl FakeFs {
+    /// We need to use something large enough for Windows and Unix to consider this a new file.
+    /// https://doc.rust-lang.org/nightly/std/time/struct.SystemTime.html#platform-specific-behavior
+    const SYSTEMTIME_INTERVAL: u64 = 100;
+
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        Arc::new(Self {
-            executor,
+        let (tx, mut rx) = smol::channel::bounded::<PathBuf>(10);
+
+        let this = Arc::new(Self {
+            executor: executor.clone(),
             state: Mutex::new(FakeFsState {
                 root: Arc::new(Mutex::new(FakeFsEntry::Dir {
                     inode: 0,
@@ -967,6 +982,7 @@ impl FakeFs {
                     entries: Default::default(),
                     git_repo_state: None,
                 })),
+                git_event_tx: tx,
                 next_mtime: SystemTime::UNIX_EPOCH,
                 next_inode: 1,
                 event_txs: Default::default(),
@@ -975,7 +991,22 @@ impl FakeFs {
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
             }),
-        })
+        });
+
+        executor.spawn({
+            let this = this.clone();
+            async move {
+                while let Some(git_event) = rx.next().await {
+                    if let Some(mut state) = this.state.try_lock() {
+                        state.emit_event([(git_event, None)]);
+                    } else {
+                        panic!("Failed to lock file system state, this execution would have caused a test hang");
+                    }
+                }
+            }
+        }).detach();
+
+        this
     }
 
     pub fn set_next_mtime(&self, next_mtime: SystemTime) {
@@ -989,7 +1020,7 @@ impl FakeFs {
         let new_mtime = state.next_mtime;
         let new_inode = state.next_inode;
         state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         state
             .write_path(path, move |entry| {
                 match entry {
@@ -1042,7 +1073,7 @@ impl FakeFs {
         let inode = state.next_inode;
         let mtime = state.next_mtime;
         state.next_inode += 1;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
             mtime,
@@ -1169,7 +1200,12 @@ impl FakeFs {
         let mut entry = entry.lock();
 
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
-            let repo_state = git_repo_state.get_or_insert_with(Default::default);
+            let repo_state = git_repo_state.get_or_insert_with(|| {
+                Arc::new(Mutex::new(FakeGitRepositoryState::new(
+                    dot_git.to_path_buf(),
+                    state.git_event_tx.clone(),
+                )))
+            });
             let mut repo_state = repo_state.lock();
 
             f(&mut repo_state);
@@ -1184,7 +1220,22 @@ impl FakeFs {
 
     pub fn set_branch_name(&self, dot_git: &Path, branch: Option<impl Into<String>>) {
         self.with_git_state(dot_git, true, |state| {
-            state.branch_name = branch.map(Into::into)
+            let branch = branch.map(Into::into);
+            state.branches.extend(branch.clone());
+            state.current_branch_name = branch.map(Into::into)
+        })
+    }
+
+    pub fn insert_branches(&self, dot_git: &Path, branches: &[&str]) {
+        self.with_git_state(dot_git, true, |state| {
+            if let Some(first) = branches.first() {
+                if state.current_branch_name.is_none() {
+                    state.current_branch_name = Some(first.to_string())
+                }
+            }
+            state
+                .branches
+                .extend(branches.iter().map(ToString::to_string));
         })
     }
 
@@ -1384,15 +1435,16 @@ impl Fs for FakeFs {
         let mut created_dirs = Vec::new();
         let mut cur_path = PathBuf::new();
         for component in path.components() {
-            let mut state = self.state.lock();
+            let should_skip = matches!(component, Component::Prefix(..) | Component::RootDir);
             cur_path.push(component);
-            if cur_path == Path::new("/") {
+            if should_skip {
                 continue;
             }
+            let mut state = self.state.lock();
 
             let inode = state.next_inode;
             let mtime = state.next_mtime;
-            state.next_mtime += Duration::from_nanos(1);
+            state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
             state.next_inode += 1;
             state.write_path(&cur_path, |entry| {
                 entry.or_insert_with(|| {
@@ -1418,7 +1470,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let inode = state.next_inode;
         let mtime = state.next_mtime;
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         state.next_inode += 1;
         let file = Arc::new(Mutex::new(FakeFsEntry::File {
             inode,
@@ -1553,7 +1605,7 @@ impl Fs for FakeFs {
         let mut state = self.state.lock();
         let mtime = state.next_mtime;
         let inode = util::post_inc(&mut state.next_inode);
-        state.next_mtime += Duration::from_nanos(1);
+        state.next_mtime += Duration::from_nanos(Self::SYSTEMTIME_INTERVAL);
         let source_entry = state.read_path(&source)?;
         let content = source_entry.lock().file_content(&source)?.clone();
         let mut kind = Some(PathEventKind::Created);
@@ -1823,7 +1875,12 @@ impl Fs for FakeFs {
         let mut entry = entry.lock();
         if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
             let state = git_repo_state
-                .get_or_insert_with(|| Arc::new(Mutex::new(FakeGitRepositoryState::default())))
+                .get_or_insert_with(|| {
+                    Arc::new(Mutex::new(FakeGitRepositoryState::new(
+                        abs_dot_git.to_path_buf(),
+                        state.git_event_tx.clone(),
+                    )))
+                })
                 .clone();
             Some(git::repository::FakeGitRepository::open(state))
         } else {

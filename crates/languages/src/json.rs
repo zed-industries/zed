@@ -3,11 +3,12 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
 use collections::HashMap;
-use feature_flags::FeatureFlagAppExt;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
-use language::{LanguageRegistry, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::{
+    LanguageRegistry, LanguageServerName, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
+};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
@@ -75,13 +76,11 @@ impl JsonLspAdapter {
 
     fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
         let action_names = cx.all_action_names();
-        let staff_mode = cx.is_staff();
 
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {
                 language_names: &language_names,
-                staff_mode,
                 font_names,
             },
             cx,
@@ -198,6 +197,7 @@ impl LspAdapter for JsonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         _: &Arc<dyn LspAdapterDelegate>,
+        _: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
         cx.update(|cx| {

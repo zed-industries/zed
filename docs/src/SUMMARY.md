@@ -85,6 +85,7 @@
 - [JavaScript](./languages/javascript.md)
 - [Julia](./languages/julia.md)
 - [JSON](./languages/json.md)
+- [Jsonnet](./languages/jsonnet.md)
 - [Kotlin](./languages/kotlin.md)
 - [Lua](./languages/lua.md)
 - [Luau](./languages/luau.md)
@@ -128,10 +129,3 @@
   - [Local Collaboration](./development/local-collaboration.md)
 - [Release Process](./development/releases.md)
 - [Debugging Crashes](./development/debugging-crashes.md)
-
-# Community
-
-- [Code of Conduct](./code-of-conduct.md)
-- [Contributing to Zed](./contribute-to-zed.md)
-- [Conversations](./conversations.md)
-- [Feedback and Support](./feedback-and-support.md)

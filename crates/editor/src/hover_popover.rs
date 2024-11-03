@@ -1,5 +1,5 @@
 use crate::{
-    display_map::{InlayOffset, ToDisplayPoint},
+    display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
@@ -11,7 +11,7 @@ use gpui::{
     StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
 use itertools::Itertools;
-use language::{DiagnosticEntry, Language, LanguageRegistry};
+use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
@@ -259,7 +259,7 @@ fn show_hover(
             }
 
             // If there's a diagnostic, assign it on the hover state and notify
-            let local_diagnostic = snapshot
+            let mut local_diagnostic = snapshot
                 .buffer_snapshot
                 .diagnostics_in_range::<_, usize>(anchor..anchor, false)
                 // Find the entry with the most specific range
@@ -280,6 +280,41 @@ fn show_hover(
                         range: entry.range.to_anchors(&snapshot.buffer_snapshot),
                     })
             });
+            if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let after = snapshot.buffer_snapshot.anchor_after(
+                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: anchor..after,
+                })
+            } else if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .reversed_chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let before = snapshot.buffer_snapshot.anchor_before(
+                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
+                );
+                local_diagnostic = Some(DiagnosticEntry {
+                    diagnostic: Diagnostic {
+                        severity: DiagnosticSeverity::HINT,
+                        message: format!("Unicode character U+{:02X}", invisible as u32),
+                        ..Default::default()
+                    },
+                    range: before..anchor,
+                })
+            }
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -1313,6 +1348,61 @@ mod tests {
         cx.background_executor.run_until_parked();
         cx.editor(|Editor { hover_state, .. }, _| {
             hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+        });
+    }
+
+    #[gpui::test]
+    // https://github.com/zed-industries/zed/issues/15498
+    async fn test_info_hover_with_hrs(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn fuˇnc(abc def: i32) -> u32 {
+            }
+        "});
+
+        cx.lsp.handle_request::<lsp::request::HoverRequest, _, _>({
+            |_, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc!(
+                            r#"
+                    ### function `errands_data_read`
+
+                    ---
+                    → `char *`
+                    Function to read a file into a string
+
+                    ---
+                    ```cpp
+                    static char *errands_data_read()
+                    ```
+                    "#
+                        )
+                        .to_string(),
+                    }),
+                    range: None,
+                }))
+            }
+        });
+        cx.update_editor(|editor, cx| hover(editor, &Default::default(), cx));
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, cx| {
+            let popover = editor.hover_state.info_popovers.first().unwrap();
+            let content = popover.get_rendered_text(cx);
+
+            assert!(content.contains("Function to read a file"));
         });
     }
 

@@ -1241,7 +1241,6 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             Some(AutoindentMode::EachLine),
             cx,
         );
-
         assert_eq!(
             buffer.text(),
             "
@@ -1256,6 +1255,74 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             "
             .unindent()
         );
+
+        // Insert a newline after the open brace. It is auto-indented
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {«
+            »
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+                ˇ
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+            .replace("ˇ", "")
+        );
+
+        // Manually outdent the line. It stays outdented.
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+            «»
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+        );
+
         buffer
     });
 
@@ -1651,6 +1718,69 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
                 }
             }
             "#
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
+fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.new_model(|cx| {
+        let (text, ranges_to_replace) = marked_text_ranges(
+            &"
+            mod numbers {
+                «fn one() {
+                    1
+                }
+            »
+                «fn two() {
+                    2
+                }
+            »
+                «fn three() {
+                    3
+                }
+            »}
+            "
+            .unindent(),
+            false,
+        );
+
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        buffer.edit(
+            [
+                (ranges_to_replace[0].clone(), "fn one() {\n    101\n}\n"),
+                (ranges_to_replace[1].clone(), "fn two() {\n    102\n}\n"),
+                (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
+            ],
+            Some(AutoindentMode::Block {
+                original_indent_columns: vec![0, 0, 0],
+            }),
+            cx,
+        );
+
+        pretty_assertions::assert_eq!(
+            buffer.text(),
+            "
+            mod numbers {
+                fn one() {
+                    101
+                }
+
+                fn two() {
+                    102
+                }
+
+                fn three() {
+                    103
+                }
+            }
+            "
             .unindent()
         );
 

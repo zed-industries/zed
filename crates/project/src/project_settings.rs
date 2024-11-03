@@ -5,7 +5,7 @@ use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, M
 use language::LanguageServerName;
 use paths::{
     local_settings_file_relative_path, local_tasks_file_relative_path,
-    local_vscode_tasks_file_relative_path,
+    local_vscode_tasks_file_relative_path, EDITORCONFIG_NAME,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use schemars::JsonSchema;
@@ -111,6 +111,16 @@ impl GitSettings {
             _ => None,
         }
     }
+
+    pub fn show_inline_commit_summary(&self) -> bool {
+        match self.inline_blame {
+            Some(InlineBlameSettings {
+                show_commit_summary,
+                ..
+            }) => show_commit_summary,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -141,10 +151,19 @@ pub struct InlineBlameSettings {
     ///
     /// Default: 0
     pub min_column: Option<u32>,
+    /// Whether to show commit summary as part of the inline blame.
+    ///
+    /// Default: false
+    #[serde(default = "false_value")]
+    pub show_commit_summary: bool,
 }
 
 const fn true_value() -> bool {
     true
+}
+
+const fn false_value() -> bool {
+    false
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -196,7 +215,6 @@ impl Settings for ProjectSettings {
 
 pub enum SettingsObserverMode {
     Local(Arc<dyn Fs>),
-    Ssh(AnyProtoClient),
     Remote,
 }
 
@@ -223,7 +241,6 @@ pub struct SettingsObserver {
 impl SettingsObserver {
     pub fn init(client: &AnyProtoClient) {
         client.add_model_message_handler(Self::handle_update_worktree_settings);
-        client.add_model_message_handler(Self::handle_update_user_settings)
     }
 
     pub fn new_local(
@@ -242,23 +259,6 @@ impl SettingsObserver {
             downstream_client: None,
             project_id: 0,
         }
-    }
-
-    pub fn new_ssh(
-        client: AnyProtoClient,
-        worktree_store: Model<WorktreeStore>,
-        task_store: Model<TaskStore>,
-        cx: &mut ModelContext<Self>,
-    ) -> Self {
-        let this = Self {
-            worktree_store,
-            task_store,
-            mode: SettingsObserverMode::Ssh(client.clone()),
-            downstream_client: None,
-            project_id: 0,
-        };
-        this.maintain_ssh_settings(client, cx);
-        this
     }
 
     pub fn new_remote(
@@ -287,14 +287,29 @@ impl SettingsObserver {
         let store = cx.global::<SettingsStore>();
         for worktree in self.worktree_store.read(cx).worktrees() {
             let worktree_id = worktree.read(cx).id().to_proto();
-            for (path, kind, content) in store.local_settings(worktree.read(cx).id()) {
+            for (path, content) in store.local_settings(worktree.read(cx).id()) {
                 downstream_client
                     .send(proto::UpdateWorktreeSettings {
                         project_id,
                         worktree_id,
                         path: path.to_string_lossy().into(),
                         content: Some(content),
-                        kind: Some(local_settings_kind_to_proto(kind).into()),
+                        kind: Some(
+                            local_settings_kind_to_proto(LocalSettingsKind::Settings).into(),
+                        ),
+                    })
+                    .log_err();
+            }
+            for (path, content, _) in store.local_editorconfig_settings(worktree.read(cx).id()) {
+                downstream_client
+                    .send(proto::UpdateWorktreeSettings {
+                        project_id,
+                        worktree_id,
+                        path: path.to_string_lossy().into(),
+                        content: Some(content),
+                        kind: Some(
+                            local_settings_kind_to_proto(LocalSettingsKind::Editorconfig).into(),
+                        ),
                     })
                     .log_err();
             }
@@ -336,62 +351,6 @@ impl SettingsObserver {
             );
         })?;
         Ok(())
-    }
-
-    pub async fn handle_update_user_settings(
-        settings_observer: Model<Self>,
-        envelope: TypedEnvelope<proto::UpdateUserSettings>,
-        mut cx: AsyncAppContext,
-    ) -> anyhow::Result<()> {
-        match envelope.payload.kind() {
-            proto::update_user_settings::Kind::Settings => {
-                cx.update_global(move |settings_store: &mut SettingsStore, cx| {
-                    settings_store.set_user_settings(&envelope.payload.content, cx)
-                })
-            }
-            proto::update_user_settings::Kind::Tasks => {
-                settings_observer.update(&mut cx, |settings_observer, cx| {
-                    settings_observer.task_store.update(cx, |task_store, cx| {
-                        task_store.update_user_tasks(None, Some(&envelope.payload.content), cx)
-                    })
-                })
-            }
-        }??;
-
-        Ok(())
-    }
-
-    pub fn maintain_ssh_settings(&self, ssh: AnyProtoClient, cx: &mut ModelContext<Self>) {
-        let settings_store = cx.global::<SettingsStore>();
-
-        let mut settings = settings_store.raw_user_settings().clone();
-        if let Some(content) = serde_json::to_string(&settings).log_err() {
-            ssh.send(proto::UpdateUserSettings {
-                project_id: 0,
-                content,
-                kind: Some(proto::LocalSettingsKind::Settings.into()),
-            })
-            .log_err();
-        }
-
-        let weak_client = ssh.downgrade();
-        cx.observe_global::<SettingsStore>(move |_, cx| {
-            let new_settings = cx.global::<SettingsStore>().raw_user_settings();
-            if &settings != new_settings {
-                settings = new_settings.clone()
-            }
-            if let Some(content) = serde_json::to_string(&settings).log_err() {
-                if let Some(ssh) = weak_client.upgrade() {
-                    ssh.send(proto::UpdateUserSettings {
-                        project_id: 0,
-                        content,
-                        kind: Some(proto::LocalSettingsKind::Settings.into()),
-                    })
-                    .log_err();
-                }
-            }
-        })
-        .detach();
     }
 
     fn on_worktree_store_event(
@@ -453,6 +412,11 @@ impl SettingsObserver {
                         .unwrap(),
                 );
                 (settings_dir, LocalSettingsKind::Tasks)
+            } else if path.ends_with(EDITORCONFIG_NAME) {
+                let Some(settings_dir) = path.parent().map(Arc::from) else {
+                    continue;
+                };
+                (settings_dir, LocalSettingsKind::Editorconfig)
             } else {
                 continue;
             };

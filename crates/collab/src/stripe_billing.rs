@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::{llm, Cents, Result};
 use anyhow::Context;
-use chrono::Utc;
+use chrono::{Datelike, Utc};
 use collections::HashMap;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
@@ -349,10 +349,20 @@ impl StripeBilling {
         model: &StripeModel,
         success_url: &str,
     ) -> Result<String> {
+        let first_of_next_month = Utc::now()
+            .checked_add_months(chrono::Months::new(1))
+            .unwrap()
+            .with_day(1)
+            .unwrap();
+
         let mut params = stripe::CreateCheckoutSession::new();
         params.mode = Some(stripe::CheckoutSessionMode::Subscription);
         params.customer = Some(customer_id);
         params.client_reference_id = Some(github_login);
+        params.subscription_data = Some(stripe::CreateCheckoutSessionSubscriptionData {
+            billing_cycle_anchor: Some(first_of_next_month.timestamp()),
+            ..Default::default()
+        });
         params.line_items = Some(
             [
                 &model.input_tokens_price.id,

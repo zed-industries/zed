@@ -198,10 +198,6 @@ impl Config {
         }
     }
 
-    pub fn is_llm_billing_enabled(&self) -> bool {
-        self.stripe_api_key.is_some()
-    }
-
     #[cfg(test)]
     pub fn test() -> Self {
         Self {

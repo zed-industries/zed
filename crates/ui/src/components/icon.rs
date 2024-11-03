@@ -171,6 +171,7 @@ pub enum IconName {
     Dash,
     DatabaseZap,
     Delete,
+    Diff,
     Disconnected,
     Download,
     Ellipsis,
@@ -213,6 +214,7 @@ pub enum IconName {
     LineHeight,
     Link,
     ListTree,
+    ListX,
     MagnifyingGlass,
     MailOpen,
     Maximize,
@@ -285,6 +287,7 @@ pub enum IconName {
     Update,
     UserGroup,
     Visible,
+    Wand,
     Warning,
     WholeWord,
     X,
@@ -292,6 +295,12 @@ pub enum IconName {
     ZedAssistant,
     ZedAssistantFilled,
     ZedXCopilot,
+}
+
+impl From<IconName> for Icon {
+    fn from(icon: IconName) -> Self {
+        Icon::new(icon)
+    }
 }
 
 #[derive(IntoElement)]
@@ -478,13 +487,12 @@ impl RenderOnce for IconWithIndicator {
                 this.child(
                     div()
                         .absolute()
-                        .w_2()
-                        .h_2()
-                        .border_1()
+                        .size_2p5()
+                        .border_2()
                         .border_color(indicator_border_color)
                         .rounded_full()
                         .bottom_neg_0p5()
-                        .right_neg_1()
+                        .right_neg_0p5()
                         .child(indicator),
                 )
             })
