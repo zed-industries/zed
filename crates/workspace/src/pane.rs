@@ -3026,11 +3026,11 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> O
             (true, _) => Color::Warning,
             (_, true) => {
                 if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
-                    return None
+                    return None;
                 } else {
                     Color::Muted
                 }
-            },
+            }
             (false, false) => return None,
         };
 
