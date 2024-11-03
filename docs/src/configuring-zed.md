@@ -574,6 +574,10 @@ List of `string` values
   "close_position": "right",
   "file_icons": false,
   "git_status": false,
+  "git_symbols": {
+    "enabled": true,
+    "colored": true
+  },
   "activate_on_close": "history"
 },
 ```
@@ -613,6 +617,19 @@ List of `string` values
 - Description: Whether or not to show Git file status in tab.
 - Setting: `git_status`
 - Default: `false`
+
+### Git Symbols
+
+- Description: Whether to show git symbols in a tab.
+- Setting: `git_symbols`
+- Default:
+
+```json
+"git_symbols": {
+  "enabled": true,
+  "colored": true,
+}
+```
 
 ### Activate on close
 

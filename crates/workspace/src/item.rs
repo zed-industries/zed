@@ -39,6 +39,7 @@ pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
 #[derive(Deserialize)]
 pub struct ItemSettings {
     pub git_status: bool,
+    pub git_symbols: GitSymbolSettings,
     pub close_position: ClosePosition,
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
@@ -67,9 +68,25 @@ pub enum ActivateOnClose {
     Neighbour,
 }
 
+#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
+pub struct GitSymbolSettings {
+    /// Enable git symbols in the editor tabs.
+    ///
+    /// Default: true
+    pub enabled: bool,
+    /// Whether the git symbols should be colored.
+    ///
+    /// Default: true
+    pub colored: bool,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
 pub struct ItemSettingsContent {
-    /// Whether to show the Git file status on a tab item.
+    /// Whether to show git symbols in a tab.
+    ///
+    /// Default on
+    git_symbols: Option<GitSymbolSettings>,
+    /// Whether to show git status coloring in a tab.
     ///
     /// Default: false
     git_status: Option<bool>,

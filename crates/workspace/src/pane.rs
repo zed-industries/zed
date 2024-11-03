@@ -15,12 +15,7 @@ use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use git::repository::GitFileStatus;
 use gpui::{
-    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
-    MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
-    WindowContext,
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement, AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId, EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, FontWeight, KeyContext, Model, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render, ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView, WindowContext
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
@@ -1852,18 +1847,23 @@ impl Pane {
             cx,
         );
 
+        let mut git_status = None;
+        let mut is_ignored = false;
+
+        if let Some(entry) = project_path
+            .as_ref()
+            .and_then(|path| self.project.read(cx).entry_for_path(path, cx)) {
+                git_status = entry.git_status;
+                is_ignored = entry.is_ignored;
+        };
+
         let icon_color = if ItemSettings::get_global(cx).git_status {
-            project_path
-                .as_ref()
-                .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
-                .map(|entry| {
-                    Self::git_aware_icon_color(entry.git_status, entry.is_ignored, is_active)
-                })
-                .unwrap_or_else(|| Self::icon_color(is_active))
+            Self::git_aware_icon_color(git_status, is_ignored, is_active)
         } else {
             Self::icon_color(is_active)
         };
 
+        let git_symbols_settings = ItemSettings::get_global(cx).git_symbols;
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
@@ -1941,7 +1941,53 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            // .start_slot::<Indicator>(indicator)
+            .start_slot(
+                div()
+                    .id("git_symbol")
+                    .when(git_symbols_settings.enabled, |this| {
+                        this.when_some(git_status, |this, git_status| {
+                            this
+                                .tooltip(move |cx| {
+                                    Tooltip::text(
+                                        match git_status {
+                                            GitFileStatus::Added => {
+                                                format!("Untracked")
+                                            }
+                                            GitFileStatus::Modified => {
+                                                format!("Modified")
+                                            }
+                                            GitFileStatus::Conflict => {
+                                                format!("Conflict")
+                                            }
+                                        },
+                                        cx,
+                                    )
+                                })
+                                .child(
+                                Label::new(match git_status {
+                                    GitFileStatus::Added => "U",
+                                    GitFileStatus::Modified => "M",
+                                    GitFileStatus::Conflict => "C",
+                                })
+                                .weight(FontWeight::BOLD)
+                                .size(LabelSize::XSmall)
+                                .color(
+                                    if git_symbols_settings.colored {
+                                        match git_status {
+                                            GitFileStatus::Added => Color::Created,
+                                            GitFileStatus::Modified => Color::Modified,
+                                            GitFileStatus::Conflict => Color::Conflict,
+                                        }
+                                    } else if is_active {
+                                        Color::Default
+                                    } else {
+                                        Color::Muted
+                                    },
+                                ),
+                            )
+                        })
+                    })
+            )
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
@@ -1961,7 +2007,7 @@ impl Pane {
                     end_slot_tooltip_text = "Close Tab";
                     IconButton::new("close tab", IconName::Close)
                         .shape(IconButtonShape::Square)
-                        .icon_color(Color::Muted)
+                        .icon_color(Color::Default)
                         .size(ButtonSize::None)
                         .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, cx| {
@@ -1974,7 +2020,7 @@ impl Pane {
                     IconButton::new("close tab", IconName::Close)
                         .visible_on_hover("")
                         .shape(IconButtonShape::Square)
-                        .icon_color(Color::Hidden)
+                        .icon_color(Color::Muted)
                         .size(ButtonSize::None)
                         .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, cx| {
@@ -3050,7 +3096,7 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> O
             if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
                 return None;
             } else {
-                Color::Muted
+                Color::Accent
             }
         } else {
             return None;
