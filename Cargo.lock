@@ -4115,6 +4115,7 @@ dependencies = [
  "serde",
  "serde_json",
  "toml 0.8.19",
+ "util",
  "wasm-encoder 0.215.0",
  "wasmparser 0.215.0",
  "wit-component",
