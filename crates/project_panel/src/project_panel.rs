@@ -3490,9 +3490,9 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -3506,11 +3506,11 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b  <== selected",
                 "        > 3",
                 "        > 4",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -3522,7 +3522,7 @@ mod tests {
             visible_entries_as_strings(&panel, 6..9, cx),
             &[
                 //
-                "    > C",
+                "        > 4",
                 "      .dockerignore",
                 "v root2",
             ]
@@ -3586,9 +3586,9 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -3601,10 +3601,10 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > C",
                 "    > a",
                 "    v b  <== selected",
                 "        > 3",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -3617,10 +3617,10 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    v d  <== selected",
@@ -3633,10 +3633,10 @@ mod tests {
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
                 "v root1",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    v d",
@@ -3820,9 +3820,9 @@ mod tests {
             &[
                 "v root1  <== selected",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -3841,9 +3841,9 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      [EDITOR: '']  <== selected",
                 "      .dockerignore",
                 "v root2",
@@ -3863,9 +3863,9 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      [PROCESSING: 'the-new-filename']  <== selected",
                 "      .dockerignore",
                 "v root2",
@@ -3880,9 +3880,9 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      .dockerignore",
                 "      the-new-filename  <== selected  <== marked",
                 "v root2",
@@ -3898,12 +3898,12 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
                 "        > 4",
                 "          [EDITOR: '']  <== selected",
-                "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
@@ -3923,12 +3923,12 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
                 "        > 4",
                 "          another-filename.txt  <== selected  <== marked",
-                "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
@@ -3941,12 +3941,12 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
                 "        > 4",
                 "          [EDITOR: 'another-filename.txt']  <== selected  <== marked",
-                "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
@@ -3969,12 +3969,12 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
                 "        > 4",
                 "          [PROCESSING: 'a-different-filename.tar.gz']  <== selected  <== marked",
-                "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
@@ -3986,12 +3986,12 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
                 "        > 4",
                 "          a-different-filename.tar.gz  <== selected",
-                "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
@@ -4003,12 +4003,12 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
                 "        > 3",
                 "        > 4",
                 "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
-                "    > C",
                 "      .dockerignore",
                 "      the-new-filename",
             ]
@@ -4032,13 +4032,13 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
+                "        > [EDITOR: '']  <== selected",
                 "        > 3",
                 "        > 4",
-                "        > [EDITOR: '']  <== selected",
                 "          a-different-filename.tar.gz",
-                "    > C",
                 "      .dockerignore",
             ]
         );
@@ -4055,13 +4055,13 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
-                "        > 3",
-                "        > 4",
                 "        > [PROCESSING: 'new-dir']",
-                "          a-different-filename.tar.gz  <== selected",
-                "    > C",
+                "        > 3  <== selected",
+                "        > 4",
+                "          a-different-filename.tar.gz",
                 "      .dockerignore",
             ]
         );
@@ -4072,13 +4072,13 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
-                "        > 3",
+                "        > 3  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz  <== selected",
-                "    > C",
+                "          a-different-filename.tar.gz",
                 "      .dockerignore",
             ]
         );
@@ -4089,13 +4089,13 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
-                "        > 3",
+                "        > [EDITOR: '3']  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          [EDITOR: 'a-different-filename.tar.gz']  <== selected",
-                "    > C",
+                "          a-different-filename.tar.gz",
                 "      .dockerignore",
             ]
         );
@@ -4107,14 +4107,61 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    v b",
-                "        > 3",
+                "        > 3  <== selected",
                 "        > 4",
                 "        > new-dir",
-                "          a-different-filename.tar.gz  <== selected",
-                "    > C",
+                "          a-different-filename.tar.gz",
                 "      .dockerignore",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_natural_sort_order(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root1",
+            json!({
+                "file1.txt": "",
+                "file2.txt": "",
+                "file10.txt": "",
+                "section-1-part-2": "",
+                "section-1-part-10": "",
+                "version1.0.0": "",
+                "version1.0.10": "",
+                "version1.10.0": "",
+                "a1b2c": "",
+                "a1b10c": "",
+                "a10b1c": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..50, cx),
+            &[
+                "v root1",
+                "      a1b2c",
+                "      a1b10c",
+                "      a10b1c",
+                "      file1.txt",
+                "      file2.txt",
+                "      file10.txt",
+                "      section-1-part-2",
+                "      section-1-part-10",
+                "      version1.0.0",
+                "      version1.0.10",
+                "      version1.10.0",
             ]
         );
     }
@@ -4177,9 +4224,9 @@ mod tests {
             &[
                 "v root1  <== selected",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    > d",
@@ -4198,9 +4245,9 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      [EDITOR: '']  <== selected",
                 "      .dockerignore",
                 "v root2",
@@ -4221,9 +4268,9 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
-                "    > C",
                 "      [PROCESSING: '/bdir1/dir2/the-new-filename']  <== selected",
                 "      .dockerignore",
                 "v root2",
@@ -4238,12 +4285,12 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
+                "    > C",
                 "    > a",
                 "    > b",
                 "    v bdir1",
                 "        v dir2",
                 "              the-new-filename  <== selected  <== marked",
-                "    > C",
                 "      .dockerignore",
                 "v root2",
                 "    > d",

@@ -1,4 +1,4 @@
-use std::cmp;
+use std::cmp::{self, Ordering};
 use std::sync::OnceLock;
 use std::{
     ffi::OsStr,
@@ -9,8 +9,6 @@ use std::{
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-
-use crate::NumericPrefixWithSuffix;
 
 /// Returns the path to the user's home directory.
 pub fn home_dir() -> &'static PathBuf {
@@ -344,17 +342,76 @@ impl PathMatcher {
     }
 }
 
+fn sort_filenames(a: &str, b: &str) -> std::cmp::Ordering {
+    // Split strings into alternating text and number parts
+    fn split_alpha_numeric(s: &str) -> Vec<(bool, &str)> {
+        let mut result = Vec::new();
+        let mut start = 0;
+        let mut is_numeric = s.chars().next().map_or(false, |c| c.is_ascii_digit());
+
+        for (i, c) in s.char_indices() {
+            let current_is_numeric = c.is_ascii_digit();
+            if current_is_numeric != is_numeric {
+                result.push((is_numeric, &s[start..i]));
+                start = i;
+                is_numeric = current_is_numeric;
+            }
+        }
+        result.push((is_numeric, &s[start..]));
+        result
+    }
+
+    let parts_a = split_alpha_numeric(a);
+    let parts_b = split_alpha_numeric(b);
+
+    for (part_a, part_b) in parts_a.iter().zip(parts_b.iter()) {
+        match (part_a, part_b) {
+            ((true, a), (true, b)) => {
+                // Compare numeric parts as numbers
+                match (a.parse::<u64>(), b.parse::<u64>()) {
+                    (Ok(num_a), Ok(num_b)) => {
+                        let ord = num_a.cmp(&num_b);
+                        if ord != std::cmp::Ordering::Equal {
+                            return ord;
+                        }
+                    }
+                    _ => {
+                        // Fall back to string comparison if parsing fails
+                        let ord = a.cmp(b);
+                        if ord != std::cmp::Ordering::Equal {
+                            return ord;
+                        }
+                    }
+                }
+            }
+            ((_, a), (_, b)) => {
+                // Compare non-numeric parts as strings
+                let ord = a.cmp(b);
+                if ord != std::cmp::Ordering::Equal {
+                    return ord;
+                }
+            }
+        }
+    }
+
+    // If all parts are equal up to the length of the shorter string,
+    // compare lengths
+    parts_a.len().cmp(&parts_b.len())
+}
+
 pub fn compare_paths(
     (path_a, a_is_file): (&Path, bool),
     (path_b, b_is_file): (&Path, bool),
 ) -> cmp::Ordering {
     let mut components_a = path_a.components().peekable();
     let mut components_b = path_b.components().peekable();
+
     loop {
         match (components_a.next(), components_b.next()) {
             (Some(component_a), Some(component_b)) => {
                 let a_is_file = components_a.peek().is_none() && a_is_file;
                 let b_is_file = components_b.peek().is_none() && b_is_file;
+
                 let ordering = a_is_file.cmp(&b_is_file).then_with(|| {
                     let path_a = Path::new(component_a.as_os_str());
                     let path_string_a = if a_is_file {
@@ -363,9 +420,6 @@ pub fn compare_paths(
                         path_a.file_name()
                     }
                     .map(|s| s.to_string_lossy());
-                    let num_and_remainder_a = path_string_a
-                        .as_deref()
-                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
 
                     let path_b = Path::new(component_b.as_os_str());
                     let path_string_b = if b_is_file {
@@ -374,12 +428,15 @@ pub fn compare_paths(
                         path_b.file_name()
                     }
                     .map(|s| s.to_string_lossy());
-                    let num_and_remainder_b = path_string_b
-                        .as_deref()
-                        .map(NumericPrefixWithSuffix::from_numeric_prefixed_str);
 
-                    num_and_remainder_a.cmp(&num_and_remainder_b)
+                    match (path_string_a, path_string_b) {
+                        (Some(a), Some(b)) => sort_filenames(&a, &b),
+                        (Some(_), None) => Ordering::Greater,
+                        (None, Some(_)) => Ordering::Less,
+                        (None, None) => Ordering::Equal,
+                    }
                 });
+
                 if !ordering.is_eq() {
                     return ordering;
                 }
