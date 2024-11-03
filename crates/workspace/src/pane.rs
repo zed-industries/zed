@@ -1939,7 +1939,7 @@ impl Pane {
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
                 tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
             })
-            .start_slot::<Indicator>(indicator)
+            // .start_slot::<Indicator>(indicator)
             .map(|this| {
                 let end_slot_action: &'static dyn Action;
                 let end_slot_tooltip_text: &'static str;
@@ -1950,9 +1950,21 @@ impl Pane {
                         .shape(IconButtonShape::Square)
                         .icon_color(Color::Muted)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, cx| {
                             pane.unpin_tab_at(ix, cx);
+                        }))
+                } else if is_active {
+                    end_slot_action = &CloseActiveItem { save_intent: None };
+                    end_slot_tooltip_text = "Close Tab";
+                    IconButton::new("close tab", IconName::Close)
+                        .shape(IconButtonShape::Square)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::None)
+                        .icon_size(IconSize::Small)
+                        .on_click(cx.listener(move |pane, _, cx| {
+                            pane.close_item_by_id(item_id, SaveIntent::Close, cx)
+                                .detach_and_log_err(cx);
                         }))
                 } else {
                     end_slot_action = &CloseActiveItem { save_intent: None };
@@ -1960,9 +1972,9 @@ impl Pane {
                     IconButton::new("close tab", IconName::Close)
                         .visible_on_hover("")
                         .shape(IconButtonShape::Square)
-                        .icon_color(Color::Muted)
+                        .icon_color(Color::Hidden)
                         .size(ButtonSize::None)
-                        .icon_size(IconSize::XSmall)
+                        .icon_size(IconSize::Small)
                         .on_click(cx.listener(move |pane, _, cx| {
                             pane.close_item_by_id(item_id, SaveIntent::Close, cx)
                                 .detach_and_log_err(cx);
@@ -1983,7 +1995,12 @@ impl Pane {
                         this.tooltip(move |cx| Tooltip::text(end_slot_tooltip_text, cx))
                     }
                 });
-                this.end_slot(end_slot)
+
+                if indicator.is_some() {
+                    this.end_slot::<Indicator>(indicator)
+                } else {
+                    this.end_slot(end_slot)
+                }
             })
             .child(
                 h_flex()
@@ -3011,7 +3028,7 @@ pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> O
                 if let AutosaveSetting::AfterDelay { .. } = item.workspace_settings(cx).autosave {
                     return None
                 } else {
-                    Color::Accent
+                    Color::Muted
                 }
             },
             (false, false) => return None,
