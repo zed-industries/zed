@@ -56,6 +56,8 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("prisma", &["prisma"]),
     ("proto", &["proto"]),
     ("purescript", &["purs"]),
+    ("idris2", &["idr", "lidr"]),
+    ("ipkg", &["ipkg"]),
     ("r", &["r", "R"]),
     ("racket", &["rkt"]),
     ("rescript", &["res", "resi"]),

@@ -1,0 +1,4 @@
+name = "IPKG"
+grammar = "ipkg"
+path_suffixes = ["ipkg"]
+line_comments = ["-- "]

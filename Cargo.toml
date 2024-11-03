@@ -147,6 +147,7 @@ members = [
     "extensions/glsl",
     "extensions/haskell",
     "extensions/html",
+    "extensions/idris2",
     "extensions/lua",
     "extensions/ocaml",
     "extensions/php",

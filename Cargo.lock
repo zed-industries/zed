@@ -15274,6 +15274,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "zed_idris2"
+version = "0.0.1"
+dependencies = [
+ "zed_extension_api 0.1.0",
+]
+
+[[package]]
 name = "zed_lua"
 version = "0.1.0"
 dependencies = [

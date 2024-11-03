@@ -1,0 +1,19 @@
+id = "idris2"
+name = "Idris2"
+description = "Idris2 support."
+version = "0.0.1"
+schema_version = 1
+authors = ["Serhii Khoma Yuriyovich <srghma@gmail.com>"]
+repository = "https://github.com/zed-industries/zed"
+
+[language_servers.idris2-lsp]
+name = "Idris2 Language Server"
+language = "Idris2"
+
+[grammars.idris2]
+repository = "https://github.com/srghma/tree-sitter-idris"
+commit = "901b55d5851a98859f9aa632577f0036b80a87f8"
+
+[grammars.ipkg]
+repository = "https://github.com/srghma/tree-sitter-ipkg"
+commit = "367aab22ad78c1c17d7bf79ec30d0566f7d9b6d6"

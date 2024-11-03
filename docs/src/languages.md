@@ -28,6 +28,8 @@ Zed supports hundreds of programming languages and text formats. Some work out-o
 - [Groovy](./languages/groovy.md)
 - [Haskell](./languages/haskell.md)
 - [HTML](./languages/html.md)
+- [Idris2](./languages/idris2.md)
+- [Ipkg](./languages/ipkg.md)
 - [Java](./languages/java.md)
 - [JavaScript](./languages/javascript.md)
 - [Julia](./languages/julia.md)
