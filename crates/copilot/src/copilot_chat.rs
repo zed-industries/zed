@@ -46,12 +46,8 @@ pub enum Model {
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
-            Self::Gpt4o => true,
-            Self::Gpt4 => true,
-            Self::Gpt3_5Turbo => true,
-            Self::O1Mini => false,
-            Self::O1Preview => false,
-            Self::Claude3_5Sonnet => true,
+            Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
+            Self::O1Mini | Self::O1Preview => false,
         }
     }
 
