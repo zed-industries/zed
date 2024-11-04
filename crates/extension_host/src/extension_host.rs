@@ -171,11 +171,12 @@ pub struct HeadlessExtensionStore {
     pub fs: Arc<dyn Fs>,
     pub extension_dir: PathBuf,
     pub wasm_host: Arc<WasmHost>,
+    pub loaded_extensions: HashMap<Arc<str>, Arc<str>>,
     pub loaded_languages: HashMap<Arc<str>, Vec<LanguageName>>,
     pub loaded_language_servers: HashMap<Arc<str>, Vec<(LanguageServerName, LanguageName)>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ExtensionVersion {
     pub id: String,
     pub version: String,
@@ -202,6 +203,7 @@ impl HeadlessExtensionStore {
                 cx,
             ),
             extension_dir,
+            loaded_extensions: Default::default(),
             loaded_languages: Default::default(),
             loaded_language_servers: Default::default(),
         })
@@ -212,10 +214,35 @@ impl HeadlessExtensionStore {
         extensions: Vec<ExtensionVersion>,
         cx: &ModelContext<Self>,
     ) -> Task<Result<Vec<ExtensionVersion>>> {
+        let on_client = HashSet::from_iter(extensions.iter().map(|e| e.id.as_str()));
+        let to_remove: Vec<Arc<str>> = self
+            .loaded_extensions
+            .keys()
+            .filter(|id| !on_client.contains(id.as_ref()))
+            .cloned()
+            .collect();
+        let to_load: Vec<ExtensionVersion> = extensions
+            .into_iter()
+            .filter(|e| {
+                !self
+                    .loaded_extensions
+                    .get(e.id.as_str())
+                    .is_some_and(|loaded| loaded.as_ref() == e.version.as_str())
+            })
+            .collect();
+
         cx.spawn(|this, mut cx| async move {
             let mut missing = Vec::new();
 
-            for extension in extensions {
+            for extension_id in to_remove {
+                log::info!("removing extension: {}", extension_id);
+                this.update(&mut cx, |this, cx| {
+                    this.uninstall_extension(&extension_id, cx)
+                })?
+                .await?;
+            }
+
+            for extension in to_load {
                 if let Err(e) = Self::load_extension(this.clone(), extension.clone(), &mut cx).await
                 {
                     log::info!("failed to load extension: {}, {:?}", extension.id, e);
@@ -233,6 +260,10 @@ impl HeadlessExtensionStore {
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
         let (fs, wasm_host, extension_dir) = this.update(cx, |this, _cx| {
+            this.loaded_extensions.insert(
+                extension.id.clone().into(),
+                extension.version.clone().into(),
+            );
             (
                 this.fs.clone(),
                 this.wasm_host.clone(),
@@ -255,7 +286,7 @@ impl HeadlessExtensionStore {
         for language_path in &manifest.languages {
             let language_path = extension_dir.join(language_path);
             let config = fs.load(&language_path.join("config.toml")).await?;
-            let config = ::toml::from_str::<LanguageConfig>(&config)?;
+            let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
 
             this.update(cx, |this, _cx| {
                 this.loaded_languages
@@ -263,39 +294,17 @@ impl HeadlessExtensionStore {
                     .or_default()
                     .push(config.name.clone());
 
-                this.registration_hooks.register_wasm_grammars(
-                    manifest
-                        .grammars
-                        .keys()
-                        .map(|grammar_name| {
-                            let mut grammar_path =
-                                extension_dir.join("grammars").join(grammar_name.as_ref());
-                            grammar_path.set_extension("wasm");
-                            (grammar_name.clone(), grammar_path)
-                        })
-                        .collect(),
-                );
+                config.grammar = None;
 
                 this.registration_hooks.register_language(
                     config.name.clone(),
-                    config.grammar.clone(),
+                    None,
                     config.matcher.clone(),
                     Arc::new(move || {
-                        let queries = load_plugin_queries(&language_path);
-                        let context_provider =
-                            std::fs::read_to_string(language_path.join("tasks.json"))
-                                .ok()
-                                .and_then(|contents| {
-                                    let definitions =
-                                        serde_json_lenient::from_str(&contents).log_err()?;
-                                    Some(Arc::new(ContextProviderWithTasks::new(definitions))
-                                        as Arc<_>)
-                                });
-
                         Ok(LoadedLanguage {
                             config: config.clone(),
-                            queries,
-                            context_provider,
+                            queries: LanguageQueries::default(),
+                            context_provider: None,
                             toolchain_provider: None,
                         })
                     }),
@@ -336,6 +345,41 @@ impl HeadlessExtensionStore {
         Ok(())
     }
 
+    fn uninstall_extension(
+        &mut self,
+        extension_id: &Arc<str>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        self.loaded_extensions.remove(extension_id);
+        let languages_to_remove = self
+            .loaded_languages
+            .remove(extension_id)
+            .unwrap_or_default();
+        self.registration_hooks
+            .remove_languages(&languages_to_remove, &[]);
+        for (language_server_name, language) in self
+            .loaded_language_servers
+            .remove(extension_id)
+            .unwrap_or_default()
+        {
+            self.registration_hooks
+                .remove_lsp_adapter(&language, &language_server_name);
+        }
+
+        let path = self.extension_dir.join(&extension_id.to_string());
+        let fs = self.fs.clone();
+        cx.spawn(|_, _| async move {
+            fs.remove_dir(
+                &path,
+                RemoveOptions {
+                    recursive: true,
+                    ignore_if_not_exists: true,
+                },
+            )
+            .await
+        })
+    }
+
     pub fn install_extension(
         &mut self,
         extension: ExtensionVersion,
@@ -347,33 +391,10 @@ impl HeadlessExtensionStore {
 
         cx.spawn(|this, mut cx| async move {
             if fs.is_dir(&path).await {
-                fs.remove_dir(
-                    &path,
-                    RemoveOptions {
-                        recursive: true,
-                        ignore_if_not_exists: true,
-                    },
-                )
+                this.update(&mut cx, |this, cx| {
+                    this.uninstall_extension(&extension.id.clone().into(), cx)
+                })?
                 .await?;
-
-                let extension_id: Arc<str> = extension.id.clone().into();
-                this.update(&mut cx, |this, _cx| {
-                    let languages_to_remove = this
-                        .loaded_languages
-                        .remove(&extension_id)
-                        .unwrap_or_default();
-                    // todo!() unregister grammars.
-                    this.registration_hooks
-                        .remove_languages(&languages_to_remove, &[]);
-                    for (language_server_name, language) in this
-                        .loaded_language_servers
-                        .remove(&extension_id)
-                        .unwrap_or_default()
-                    {
-                        this.registration_hooks
-                            .remove_lsp_adapter(&language, &language_server_name);
-                    }
-                })?;
             }
 
             fs.rename(&tmp_path, &path, RenameOptions::default())
@@ -616,7 +637,8 @@ impl ExtensionStore {
                                 index_changed = false;
                             }
 
-                            Self::update_ssh_clients(&this, &mut cx).await?;
+                            dbg!("starting");
+                            dbg!(Self::update_ssh_clients(&this, &mut cx).await)?;
                         }
                         _ = connection_registered_rx.next() => {
                             debounce_timer = cx
@@ -1682,6 +1704,9 @@ impl ExtensionStore {
                 .iter()
                 .filter_map(|(id, entry)| {
                     if entry.manifest.language_servers.is_empty() {
+                        return None;
+                    }
+                    if entry.dev {
                         return None;
                     }
                     Some(proto::Extension {
