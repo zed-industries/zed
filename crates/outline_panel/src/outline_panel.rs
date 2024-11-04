@@ -1672,7 +1672,7 @@ impl OutlinePanel {
                 "{buffer_id:?}|{excerpt_id:?}{:?}|{:?}",
                 rendered_outline.range, &rendered_outline.text,
             ))),
-            language::render_item(
+            outline::render_item(
                 rendered_outline,
                 string_match
                     .map(|string_match| string_match.ranges().collect::<Vec<_>>())
@@ -1911,7 +1911,7 @@ impl OutlinePanel {
         } else {
             &search_matches
         };
-        let label_element = language::render_item(
+        let label_element = outline::render_item(
             &OutlineItem {
                 depth,
                 annotation_range: None,
