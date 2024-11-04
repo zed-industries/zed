@@ -13488,39 +13488,85 @@ async fn test_align_cursor(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
-    cx.set_state(
-        &r#"
-        let zero ˇ= 0;
-        let one ˇ= 1;
-        let two ˇ= 2;
-        let three ˇ= 3;
-        let four ˇ= 4;
-        let five ˇ= 5;
-        let six ˇ= 6;
-        let seven ˇ= 7;
-        let eight ˇ= 8;
-        let nine ˇ= 9;
-        "#
-        .unindent(),
-    );
+    {
+        cx.set_state(
+            &r#"
+                let zero ˇ= 0;
+                let one ˇ= 1;
+                let two ˇ= 2;
+                let three ˇ= 3;
+                let four ˇ= 4;
+                let five ˇ= 5;
+                let six ˇ= 6;
+                let seven ˇ= 7;
+                let eight ˇ= 8;
+                let nine ˇ= 9;
+            "#,
+        );
 
-    cx.update_editor(|editor, cx| editor.align_cursor(&AlignCursor, cx));
+        cx.update_editor(|editor, cx| editor.align_cursor(&AlignCursor, cx));
 
-    cx.assert_editor_state(
-        &r#"
-        let zero  ˇ= 0;
-        let one   ˇ= 1;
-        let two   ˇ= 2;
-        let three ˇ= 3;
-        let four  ˇ= 4;
-        let five  ˇ= 5;
-        let six   ˇ= 6;
-        let seven ˇ= 7;
-        let eight ˇ= 8;
-        let nine  ˇ= 9;
-        "#
-        .unindent(),
-    );
+        cx.assert_editor_state(
+            &r#"
+                let zero  ˇ= 0;
+                let one   ˇ= 1;
+                let two   ˇ= 2;
+                let three ˇ= 3;
+                let four  ˇ= 4;
+                let five  ˇ= 5;
+                let six   ˇ= 6;
+                let seven ˇ= 7;
+                let eight ˇ= 8;
+                let nine  ˇ= 9;
+            "#,
+        );
+    }
+
+    {
+        cx.set_state(
+            &r#"
+                let zero ˇ= 0; let one ˇ= 1;
+                let two ˇ= 2; let three ˇ= 3;
+                let four ˇ= 4; let five ˇ= 5;
+                let six ˇ= 6; let seven ˇ= 7;
+                let eight ˇ= 8; let nine ˇ= 9;
+            "#,
+        );
+
+        cx.update_editor(|editor, cx| editor.align_cursor(&AlignCursor, cx));
+
+        cx.assert_editor_state(
+            &r#"
+                let zero  ˇ= 0; let one   ˇ= 1;
+                let two   ˇ= 2; let three ˇ= 3;
+                let four  ˇ= 4; let five  ˇ= 5;
+                let six   ˇ= 6; let seven ˇ= 7;
+                let eight ˇ= 8; let nine  ˇ= 9;
+            "#,
+        );
+    }
+
+    {
+        cx.set_state(
+            &r#"
+                let zero ˇ= 0; let one ˇ= 1; let two ˇ= 2; let three ˇ= 3;
+                let four ˇ= 4; let five ˇ= 5; let six ˇ= 6;
+                let seven ˇ= 7; let eight ˇ= 8;
+                let nine ˇ= 9;
+            "#,
+        );
+
+        cx.update_editor(|editor, cx| editor.align_cursor(&AlignCursor, cx));
+
+        cx.assert_editor_state(
+            &r#"
+                let zero  ˇ= 0; let one   ˇ= 1; let two ˇ= 2; let three ˇ= 3;
+                let four  ˇ= 4; let five  ˇ= 5; let six ˇ= 6;
+                let seven ˇ= 7; let eight ˇ= 8;
+                let nine  ˇ= 9;
+            "#,
+        );
+    }
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

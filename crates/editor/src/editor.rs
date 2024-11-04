@@ -6380,19 +6380,64 @@ impl Editor {
 
     pub fn align_cursor(&mut self, _: &AlignCursor, cx: &mut ViewContext<Self>) {
         self.transact(cx, |this, cx| {
-            let max_len = this
+            let cursors = this
                 .selections
                 .all::<Point>(cx)
                 .iter()
-                .map(|s| s.start.column)
-                .max()
-                .unwrap_or(0);
+                .map(|s| s.start)
+                .collect_vec();
 
-            let mut changes = Vec::new();
-            for s in this.selections.all::<Point>(cx).iter() {
-                let spaces = " ".repeat((max_len - s.start.column) as usize);
-                changes.push((s.start..s.start, spaces));
-            }
+            let xs: Vec<Vec<u32>> = cursors
+                .iter()
+                .chunk_by(|c| c.row)
+                .into_iter()
+                .map(|(_, group)| group.map(|cursor| cursor.column).collect_vec())
+                .collect_vec();
+
+            let transpose = |a: Vec<Vec<u32>>| -> Vec<Vec<u32>> {
+                let mut b: Vec<Vec<u32>> = Vec::new();
+                for row in a.into_iter() {
+                    for (i, x) in row.into_iter().enumerate() {
+                        match b.get_mut(i) {
+                            Some(r) => r.push(x),
+                            None => b.push(vec![x]),
+                        }
+                    }
+                }
+                b
+            };
+
+            let offsets = |mut a: Vec<Vec<u32>>| -> Vec<Vec<u32>> {
+                let mut b = Vec::new();
+                for i in 0..a.len() {
+                    let max = a[i].iter().max().cloned().unwrap_or(0);
+
+                    b.push(Vec::new());
+                    for j in 0..a[i].len() {
+                        if a.get(i+1).is_some_and(|row| row.get(j).is_some()) {
+                            a[i+1][j] += max - a[i][j];
+                        }
+                        b[i].push(max - a[i][j]);
+                        a[i][j] = max;
+                    }
+                }
+                b
+            };
+
+            let colwise_offsets = |a: Vec<Vec<u32>>| -> Vec<Vec<u32>> {
+                let a = transpose(a);
+                let a = offsets(a);
+                let a = transpose(a);
+                a
+            };
+
+            let offsets = colwise_offsets(xs);
+
+            let changes = cursors
+                .into_iter()
+                .zip(offsets.into_iter().flatten())
+                .map(|(c, o)| (c..c, " ".repeat(o as usize)))
+                .collect_vec();
 
             this.buffer
                 .update(cx, |buffer, cx| buffer.edit(changes, None, cx));
