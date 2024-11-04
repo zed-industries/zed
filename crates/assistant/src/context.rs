@@ -2202,7 +2202,7 @@ impl Context {
         }
 
         if let RequestType::SuggestEdits = request_type {
-            if let Ok(preamble) = self.prompt_builder.generate_workflow_prompt() {
+            if let Ok(preamble) = dbg!(self.prompt_builder.generate_suggest_edits_prompt()) {
                 let last_elem_index = completion_request.messages.len();
 
                 completion_request
