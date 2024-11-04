@@ -3398,7 +3398,7 @@ impl OutlinePanel {
             };
 
             let mut previous_matches = HashMap::default();
-            update_cached_entries = match &self.mode {
+            update_cached_entries = match &mut self.mode {
                 ItemsDisplayMode::Search(current_search_state) => {
                     let update = current_search_state.query != new_search_query
                         || current_search_state.kind != kind
@@ -3407,7 +3407,7 @@ impl OutlinePanel {
                             |(i, (match_range, _))| new_search_matches.get(i) != Some(match_range),
                         );
                     if current_search_state.kind == kind {
-                        previous_matches = current_search_state.matches.iter().cloned().collect();
+                        previous_matches.extend(current_search_state.matches.drain(..));
                     }
                     update
                 }
