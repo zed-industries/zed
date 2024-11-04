@@ -1001,6 +1001,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "client",
+ "command",
  "db",
  "editor",
  "gpui",
@@ -1008,7 +1009,6 @@ dependencies = [
  "log",
  "markdown_preview",
  "menu",
- "one-command",
  "paths",
  "release_channel",
  "schemars",
@@ -2706,6 +2706,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "command"
+version = "0.1.0"
+dependencies = [
+ "smol",
+]
+
+[[package]]
 name = "command_palette"
 version = "0.1.0"
 dependencies = [
@@ -4007,6 +4014,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "command",
  "env_logger 0.11.5",
  "feature_flags",
  "fs",
@@ -4016,7 +4024,6 @@ dependencies = [
  "language",
  "languages",
  "node_runtime",
- "one-command",
  "open_ai",
  "project",
  "reqwest_client",
@@ -4099,13 +4106,13 @@ dependencies = [
  "async-compression",
  "async-tar",
  "collections",
+ "command",
  "fs",
  "futures 0.3.30",
  "http_client",
  "language",
  "log",
  "lsp",
- "one-command",
  "semantic_version",
  "serde",
  "serde_json",
@@ -4891,12 +4898,12 @@ dependencies = [
  "async-trait",
  "clock",
  "collections",
+ "command",
  "derive_more",
  "git2",
  "gpui",
  "http_client",
  "log",
- "one-command",
  "parking_lot",
  "pretty_assertions",
  "rope",
@@ -5075,6 +5082,7 @@ dependencies = [
  "cbindgen",
  "cocoa 0.26.0",
  "collections",
+ "command",
  "core-foundation 0.9.4",
  "core-foundation-sys",
  "core-graphics 0.23.2",
@@ -5100,7 +5108,6 @@ dependencies = [
  "metal",
  "num_cpus",
  "objc",
- "one-command",
  "oo7",
  "open",
  "parking",
@@ -6397,6 +6404,7 @@ dependencies = [
  "async-tar",
  "async-trait",
  "collections",
+ "command",
  "futures 0.3.30",
  "gpui",
  "http_client",
@@ -6404,7 +6412,6 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "one-command",
  "paths",
  "pet",
  "pet-conda",
@@ -6706,13 +6713,13 @@ dependencies = [
  "anyhow",
  "async-pipe",
  "collections",
+ "command",
  "ctor",
  "env_logger 0.11.5",
  "futures 0.3.30",
  "gpui",
  "log",
  "lsp-types",
- "one-command",
  "parking_lot",
  "postage",
  "release_channel",
@@ -7256,10 +7263,10 @@ dependencies = [
  "async-trait",
  "async-watch",
  "async_zip",
+ "command",
  "futures 0.3.30",
  "http_client",
  "log",
- "one-command",
  "paths",
  "semver",
  "serde",
@@ -7599,13 +7606,6 @@ name = "once_cell"
 version = "1.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
-
-[[package]]
-name = "one-command"
-version = "0.2.1"
-dependencies = [
- "async-process 1.8.1",
-]
 
 [[package]]
 name = "oo7"
@@ -8880,6 +8880,7 @@ dependencies = [
  "client",
  "clock",
  "collections",
+ "command",
  "env_logger 0.11.5",
  "fs",
  "futures 0.3.30",
@@ -8894,7 +8895,6 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "one-command",
  "parking_lot",
  "pathdiff",
  "paths",
@@ -9569,12 +9569,12 @@ dependencies = [
  "anyhow",
  "async-trait",
  "collections",
+ "command",
  "fs",
  "futures 0.3.30",
  "gpui",
  "itertools 0.13.0",
  "log",
- "one-command",
  "parking_lot",
  "prost",
  "release_channel",
@@ -11589,6 +11589,7 @@ dependencies = [
  "anyhow",
  "client",
  "collections",
+ "command",
  "editor",
  "env_logger 0.11.5",
  "futures 0.3.30",
@@ -11596,7 +11597,6 @@ dependencies = [
  "http_client",
  "language",
  "log",
- "one-command",
  "postage",
  "project",
  "serde",
@@ -15095,6 +15095,7 @@ dependencies = [
  "client",
  "collab_ui",
  "collections",
+ "command",
  "command_palette",
  "command_palette_hooks",
  "copilot",
@@ -15132,7 +15133,6 @@ dependencies = [
  "nix",
  "node_runtime",
  "notifications",
- "one-command",
  "outline",
  "outline_panel",
  "parking_lot",

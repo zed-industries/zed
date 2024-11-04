@@ -284,7 +284,7 @@ impl LanguageServer {
             &binary.arguments
         );
 
-        let mut command = one_command::Command::new(&binary.path);
+        let mut command = command::Command::new(&binary.path);
         command
             .current_dir(working_dir)
             .args(&binary.arguments)

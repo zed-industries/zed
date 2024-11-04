@@ -50,7 +50,7 @@ use lsp::{
     SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
-use one_command::Command;
+use command::Command;
 use parking_lot::{Mutex, RwLock};
 use postage::watch;
 use rand::prelude::*;

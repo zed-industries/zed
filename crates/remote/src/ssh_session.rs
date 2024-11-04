@@ -21,7 +21,7 @@ use gpui::{
     ModelContext, SemanticVersion, Task, WeakModel,
 };
 use itertools::Itertools;
-use one_command::Command;
+use command::Command;
 use parking_lot::Mutex;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{

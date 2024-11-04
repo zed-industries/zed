@@ -7,7 +7,7 @@ use gpui::{AppContext, AsyncAppContext};
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
-use one_command::blocking::Command;
+use command::blocking::Command;
 use regex::Regex;
 use smol::fs::{self, File};
 use std::{

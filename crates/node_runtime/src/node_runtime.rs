@@ -6,7 +6,7 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use futures::AsyncReadExt;
 use http_client::{HttpClient, Uri};
-use one_command::Command;
+use command::Command;
 use semver::Version;
 use serde::Deserialize;
 use smol::io::BufReader;

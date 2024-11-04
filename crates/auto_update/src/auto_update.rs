@@ -11,7 +11,7 @@ use gpui::{
 };
 
 use markdown_preview::markdown_preview_view::{MarkdownPreviewMode, MarkdownPreviewView};
-use one_command::{blocking, Command};
+use command::{blocking, Command};
 use paths::remote_servers_dir;
 use schemars::JsonSchema;
 use serde::Deserialize;

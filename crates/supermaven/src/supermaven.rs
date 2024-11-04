@@ -16,7 +16,7 @@ use language::{
     language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, ToOffset,
 };
 use messages::*;
-use one_command::Command;
+use command::Command;
 use postage::watch;
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
