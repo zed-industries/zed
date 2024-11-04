@@ -364,12 +364,14 @@
       "b": "vim::Parentheses",
       "[": "vim::SquareBrackets",
       "]": "vim::SquareBrackets",
+      "r": "vim::SquareBrackets",
       "{": "vim::CurlyBrackets",
       "}": "vim::CurlyBrackets",
       "shift-b": "vim::CurlyBrackets",
       "<": "vim::AngleBrackets",
       ">": "vim::AngleBrackets",
-      "a": "vim::Argument"
+      "a": "vim::AngleBrackets",
+      "g": "vim::Argument"
     }
   },
   {
