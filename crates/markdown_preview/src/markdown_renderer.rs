@@ -370,12 +370,13 @@ fn render_markdown_code_block(
         StyledText::new(parsed.contents.clone())
     };
 
-    let body_layout = body.layout().clone();
-
-    let copy_block_button = IconButton::new(" ", IconName::Copy)
+    let copy_block_button = IconButton::new("copy-code", IconName::Copy)
         .icon_size(IconSize::Small)
-        .on_click(move |_, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(body_layout.text()));
+        .on_click({
+            let contents = parsed.contents.clone();
+            move |_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
+            }
         })
         .visible_on_hover("markdown-block");
 
