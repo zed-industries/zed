@@ -20,7 +20,9 @@ use wasmtime::{
 #[cfg(test)]
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
-    zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind, CompletionLabelDetails},
+    zed::extension::lsp::{
+        Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind
+    },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
     CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
