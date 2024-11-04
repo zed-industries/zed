@@ -98,9 +98,9 @@ Usage: `/terminal [<number>]`
 
 ## `/selection`
 
-The `/selection` command inserts the selected text into the context. This is useful for referencing specific parts of your code.
+The `/selection` command inserts the selected text in the editor into the context. This is useful for referencing specific parts of your code.
 
-This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}). (see [Interacting with the Assistant](./assistant-panel.md#interacting-with-the-assistant)))
+This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}). See [Interacting with the Assistant](./assistant-panel.md#interacting-with-the-assistant)).
 
 Usage: `/selection`
 
