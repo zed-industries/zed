@@ -2214,7 +2214,7 @@ impl Project {
         match event {
             BufferEvent::ReloadNeeded => {
                 if !self.is_via_collab() {
-                    self.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
+                    self.reload_buffers([buffer.clone()].into_iter().collect(), true, cx)
                         .detach_and_log_err(cx);
                 }
             }
