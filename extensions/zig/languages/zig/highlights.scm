@@ -13,7 +13,7 @@
   type: (identifier) @type)
 
 ((identifier) @type
-  (#lua-match? @type "^[A-Z_][a-zA-Z0-9_]*"))
+  (#match? @type "^[A-Z_][a-zA-Z0-9_]*"))
 
 (variable_declaration
   (identifier) @type
@@ -33,7 +33,7 @@
 ; Constants
 
 ((identifier) @constant
-  (#lua-match? @constant "^[A-Z][A-Z_0-9]+$"))
+  (#match? @constant "^[A-Z][A-Z_0-9]+$"))
 
 [
   "null"
@@ -63,16 +63,20 @@
 
 (field_expression
   (_)
-  member: (identifier) @variable.member)
+  member: (identifier) @property)
+
+(field_expression
+  (_)
+  member: (identifier) @type (#match? @type "^[A-Z_][a-zA-Z0-9_]*"))
 
 (container_field
-  name: (identifier) @variable.member)
+  name: (identifier) @property)
 
 (initializer_list
   (assignment_expression
       left: (field_expression
               .
-              member: (identifier) @variable.member)))
+              member: (identifier) @property)))
 
 ; Functions
 
@@ -285,7 +289,7 @@
 
 ; Comments
 
-(comment) @comment @spell
+(comment) @comment
 
 ((comment) @comment.documentation
-  (#lua-match? @comment.documentation "^//!"))
+  (#match? @comment.documentation "^//(/|!)"))
