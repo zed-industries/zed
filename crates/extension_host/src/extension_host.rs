@@ -514,7 +514,7 @@ impl ExtensionStore {
         let index_path = extensions_dir.join("index.json");
 
         let (reload_tx, mut reload_rx) = unbounded();
-        let (connection_registered_tx, mut connection_registed_rx) = unbounded();
+        let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
             registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
@@ -618,7 +618,7 @@ impl ExtensionStore {
 
                             Self::update_ssh_clients(&this, &mut cx).await?;
                         }
-                        _ = connection_registed_rx.next() => {
+                        _ = connection_registered_rx.next() => {
                             debounce_timer = cx
                                 .background_executor()
                                 .timer(RELOAD_DEBOUNCE_DURATION)
@@ -1705,9 +1705,7 @@ impl ExtensionStore {
                 this.extensions_dir().join(missing_extension.clone().id)
             })?;
             let dest_dir = PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id);
-
-            dbg!(&missing_extension);
-            dbg!("uploading...", &src_dir, &dest_dir);
+            log::info!("Uploading extension {}", missing_extension.clone().id);
 
             client
                 .update(cx, |client, cx| {
@@ -1723,8 +1721,6 @@ impl ExtensionStore {
                     })
                 })?
                 .await?;
-
-            dbg!("uploaded!");
         }
 
         anyhow::Ok(())
