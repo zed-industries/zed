@@ -264,7 +264,11 @@ impl Extension {
                     .await
             }
             Extension::V010(ext) => Ok(ext
-                .call_labels_for_completions(store, &language_server_id.0, &completions)
+                .call_labels_for_completions(
+                    store,
+                    &language_server_id.0,
+                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -273,7 +277,11 @@ impl Extension {
                         .collect()
                 })),
             Extension::V006(ext) => Ok(ext
-                .call_labels_for_completions(store, &language_server_id.0, &completions)
+                .call_labels_for_completions(
+                    store,
+                    &language_server_id.0,
+                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -297,7 +305,11 @@ impl Extension {
                     .await
             }
             Extension::V010(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -306,7 +318,11 @@ impl Extension {
                         .collect()
                 })),
             Extension::V006(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
