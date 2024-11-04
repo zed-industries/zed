@@ -10,7 +10,7 @@ use language::{BufferSnapshot, Language, LanguageName, Point};
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
-use crate::{KernelSpecification, Session};
+use crate::{KernelOption, Session};
 
 pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) -> Result<()> {
     let store = ReplStore::global(cx);
@@ -98,7 +98,7 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
 
 pub enum SessionSupport {
     ActiveSession(View<Session>),
-    Inactive(Box<KernelSpecification>),
+    Inactive(Box<KernelOption>),
     RequiresSetup(LanguageName),
     Unsupported,
 }

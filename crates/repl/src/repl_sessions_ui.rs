@@ -12,7 +12,7 @@ use workspace::{item::Item, Workspace};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
-use crate::{KernelOption, KernelSpecification, KERNEL_DOCS_URL};
+use crate::{KernelOption, KERNEL_DOCS_URL};
 
 actions!(
     repl,
@@ -238,16 +238,13 @@ impl Render for ReplSessionsPage {
                 );
         }
 
-        let mut kernels_by_language: HashMap<String, Vec<KernelOption>> = HashMap::default();
-        for spec in kernel_specifications {
-            let language = match spec {
-                KernelOption::Jupyter(spec) => spec.kernelspec.language.clone(),
-                // todo!(): handle other kernel types
-                _ => continue,
-            };
-
-            kernels_by_language.entry(language).or_default().push(spec);
-        }
+        let kernels_by_language: HashMap<SharedString, Vec<&KernelOption>> = kernel_specifications
+            .iter()
+            .map(|spec| (spec.language(), spec))
+            .fold(HashMap::new(), |mut acc, (language, spec)| {
+                acc.entry(language).or_default().push(spec);
+                acc
+            });
 
         let kernels_available = v_flex()
             .child(Label::new("Kernels available").size(LabelSize::Large))
@@ -282,7 +279,7 @@ impl Render for ReplSessionsPage {
                             false
                         };
 
-                        let path = SharedString::from(spec.path.to_string_lossy().to_string());
+                        let path = spec.path();
 
                         ListItem::new(path.clone())
                             .selectable(false)
@@ -292,7 +289,7 @@ impl Render for ReplSessionsPage {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .child(div().id(path.clone()).child(Label::new(spec.name.clone())))
+                                    .child(div().id(path.clone()).child(Label::new(spec.name())))
                                     .when(is_choice, |el| {
 
                                         let language = language.clone();

@@ -43,6 +43,20 @@ impl KernelOption {
             Self::PythonEnv(_) => "Python Environment".into(),
         }
     }
+
+    pub fn path(&self) -> SharedString {
+        SharedString::from(match self {
+            Self::Jupyter(spec) => spec.path.to_string_lossy().to_string(),
+            Self::PythonEnv(spec) => spec.path.to_string_lossy().to_string(),
+        })
+    }
+
+    pub fn language(&self) -> SharedString {
+        SharedString::from(match self {
+            Self::Jupyter(spec) => spec.kernelspec.language.clone(),
+            Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
+        })
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -265,12 +279,17 @@ impl Debug for RunningKernel {
 
 impl RunningKernel {
     pub fn new(
-        kernel_specification: KernelSpecification,
+        kernel_specification: KernelOption,
         entity_id: EntityId,
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Task<Result<(Self, JupyterMessageChannel)>> {
+        let kernel_specification = match kernel_specification {
+            KernelOption::Jupyter(spec) => spec,
+            KernelOption::PythonEnv(spec) => spec,
+        };
+
         cx.spawn(|cx| async move {
             let ip = IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1));
             let ports = peek_ports(ip).await?;
