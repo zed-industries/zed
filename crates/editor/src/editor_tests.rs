@@ -8386,6 +8386,74 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "Range".into(),
+                    sort_text: Some("a".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "r".into(),
+                    sort_text: Some("b".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "ret".into(),
+                    sort_text: Some("c".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "return".into(),
+                    sort_text: Some("d".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "slice".into(),
+                    sort_text: Some("d".into()),
+                    ..Default::default()
+                },
+            ])))
+        });
+    cx.set_state("rˇ");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: Some("r".into()),
+            },
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["r", "ret", "Range", "return"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
+}
+
+#[gpui::test]
 async fn test_no_duplicated_completion_requests(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
