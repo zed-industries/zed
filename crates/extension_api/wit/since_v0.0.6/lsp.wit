@@ -5,6 +5,7 @@ interface lsp {
         detail: option<string>,
         kind: option<completion-kind>,
         insert-text-format: option<insert-text-format>,
+        label-details: option<completion-label-details>,
     }
 
     /// The kind of an LSP completion.
@@ -79,5 +80,11 @@ interface lsp {
         operator,
         type-parameter,
         other(s32),
+    }
+
+    /// Label details for a LSP completion
+    record completion-label-details {
+        detail: option<string>,
+        description: option<string>,
     }
 }

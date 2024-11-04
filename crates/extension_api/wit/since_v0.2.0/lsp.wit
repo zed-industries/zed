@@ -5,7 +5,7 @@ interface lsp {
         detail: option<string>,
         kind: option<completion-kind>,
         insert-text-format: option<insert-text-format>,
-        label-details: option<completion-item-label-details>,
+        label-details: option<completion-label-details>,
     }
 
     /// The kind of an LSP completion.
@@ -83,7 +83,7 @@ interface lsp {
     }
 
     /// Label details for a LSP completion
-    record completion-item-label-details {
+    record completion-label-details {
         detail: option<string>,
         description: option<string>,
     }
