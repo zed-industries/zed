@@ -202,6 +202,8 @@ const MAX_SELECTION_HISTORY_LEN: usize = 1024;
 pub(crate) const CURSORS_VISIBLE_FOR: Duration = Duration::from_millis(2000);
 #[doc(hidden)]
 pub const CODE_ACTIONS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
+#[doc(hidden)]
+pub const DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT: Duration = Duration::from_millis(250);
 
 pub(crate) const CODE_ACTION_TIMEOUT: Duration = Duration::from_secs(5);
 pub(crate) const FORMAT_TIMEOUT: Duration = Duration::from_secs(5);
@@ -761,6 +763,7 @@ pub struct Editor {
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
     serialize_selections: Task<()>,
+    _pull_document_diagnostics_task: Task<()>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1487,6 +1490,7 @@ impl Editor {
             serialize_selections: Task::ready(()),
             text_style_refinement: None,
             load_diff_task: load_uncommitted_diff,
+            _pull_document_diagnostics_task: Task::ready(()),
         };
         this.tasks_update_task = Some(this.refresh_runnables(window, cx));
         this._subscriptions.extend(project_subscriptions);
@@ -12828,6 +12832,30 @@ impl Editor {
         });
     }
 
+    fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
+        let project = self.project.clone()?;
+        let buffer = self.buffer.read(cx);
+        let newest_selection = self.selections.newest_anchor().clone();
+        let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
+        let (end_buffer, _) = buffer.text_anchor_for_position(newest_selection.end, cx)?;
+        if start_buffer != end_buffer {
+            return None;
+        }
+
+        self._pull_document_diagnostics_task = cx.spawn(|editor, mut cx| async move {
+            cx.background_executor()
+                .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
+                .await;
+
+            editor
+                .update(&mut cx, |_, cx| {
+                    project.diagnostics(&start_buffer, start, cx);
+                })
+                .ok();
+        });
+        None
+    }
+
     pub fn set_selections_from_remote(
         &mut self,
         selections: Vec<Selection<Anchor>>,
@@ -15245,6 +15273,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
+                self.refresh_diagnostics(cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 if self.has_active_inline_completion() {
@@ -16699,6 +16728,15 @@ pub trait CodeActionProvider {
     ) -> Task<Result<ProjectTransaction>>;
 }
 
+pub trait DiagnosticsProvider {
+    fn diagnostics(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<Vec<lsp::Diagnostic>>>>;
+}
+
 impl CodeActionProvider for Entity<Project> {
     fn id(&self) -> Arc<str> {
         "project".into()
@@ -17068,6 +17106,19 @@ impl SemanticsProvider for Entity<Project> {
     ) -> Option<Task<Result<ProjectTransaction>>> {
         Some(self.update(cx, |project, cx| {
             project.perform_rename(buffer.clone(), position, new_name, cx)
+        }))
+    }
+}
+
+impl DiagnosticsProvider for Model<Project> {
+    fn diagnostics(
+        &self,
+        buffer: &Model<Buffer>,
+        position: text::Anchor,
+        cx: &mut WindowContext,
+    ) -> Option<Task<Result<Vec<lsp::Diagnostic>>>> {
+        Some(self.update(cx, |project, cx| {
+            project.document_diagnostics(buffer, position, cx)
         }))
     }
 }
