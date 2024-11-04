@@ -4451,7 +4451,7 @@ impl ContextEditorToolbarItem {
 impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
-            .group("test-group")
+            .group("chat-title-group")
             .pl_0p5()
             .gap_1()
             .flex_grow()
@@ -4463,10 +4463,9 @@ impl Render for ContextEditorToolbarItem {
                     }),
             )
             .child(
-                div().visible_on_hover("test-group").child(
-                    IconButton::new("regenerate-context", IconName::ArrowCircle)
+                div().visible_on_hover("chat-title-group").child(
+                    IconButton::new("regenerate-context", IconName::RefreshTitle)
                         .shape(ui::IconButtonShape::Square)
-                        .icon_color(Color::Muted)
                         .tooltip(|cx| Tooltip::text("Regenerate Title", cx))
                         .on_click(cx.listener(move |_, _, cx| {
                             cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
