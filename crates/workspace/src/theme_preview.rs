@@ -3,7 +3,7 @@ use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
+    prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar, Avatar2,
     AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, ElevationIndex, Facepile,
     TintColor, Tooltip,
 };
@@ -99,6 +99,8 @@ impl Item for ThemePreview {
 
 const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1714999?v=4";
 
+const PLAYER_HANDLES: [&str; 4] = ["iamnbutler", "Danilo Leal", "zed-fan-89", ""];
+
 impl ThemePreview {
     fn preview_bg(cx: &WindowContext) -> Hsla {
         cx.theme().colors().editor_background
@@ -107,6 +109,24 @@ impl ThemePreview {
     fn render_avatars(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .gap_1()
+            .child(
+                Headline::new("Avatar2")
+                    .size(HeadlineSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                h_flex()
+                    .items_start()
+                    .gap_4()
+                    .child(Avatar2::new())
+                    .child(Avatar2::from_image(AVATAR_URL))
+                    .children((0..=5).map(|ix| Avatar2::new_anonymous(ix)))
+                    .children(
+                        PLAYER_HANDLES
+                            .iter()
+                            .map(|handle| Avatar2::new_fallback(handle.to_string())),
+                    ),
+            )
             .child(
                 Headline::new("Avatars")
                     .size(HeadlineSize::Small)
