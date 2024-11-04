@@ -3099,9 +3099,7 @@ impl Render for ProjectPanel {
                     loop {
                         let should_stop_scrolling = this
                             .update(&mut cx, |this, cx| {
-                                if this.hover_scroll_task.is_none() {
-                                    return None;
-                                }
+                                this.hover_scroll_task.as_ref()?;
                                 let handle = this.scroll_handle.0.borrow_mut();
                                 let offset = handle.base_handle.offset();
 
