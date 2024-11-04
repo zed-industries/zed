@@ -1,4 +1,5 @@
 mod avatar;
+mod avatar2;
 mod avatar_audio_status_indicator;
 mod avatar_availability_indicator;
 

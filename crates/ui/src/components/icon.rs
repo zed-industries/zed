@@ -119,6 +119,13 @@ impl IconSize {
 #[strum(serialize_all = "snake_case")]
 #[path_str(prefix = "icons", suffix = ".svg")]
 pub enum IconName {
+    AnonymousCrown,
+    AnonymousCat,
+    AnonymousDragon,
+    AnonymousAlien,
+    AnonymousGhost,
+    AnonymousCrab,
+    AnonymousInvader,
     Ai,
     AiAnthropic,
     AiAnthropicHosted,
