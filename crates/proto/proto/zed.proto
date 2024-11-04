@@ -2288,6 +2288,7 @@ message MultiLspQuery {
         GetHover get_hover = 5;
         GetCodeActions get_code_actions = 6;
         GetSignatureHelp get_signature_help = 7;
+        GetDocumentDiagnostics get_document_diagnostics = 8;
     }
 }
 
@@ -2307,6 +2308,7 @@ message LspResponse {
         GetHoverResponse get_hover_response = 1;
         GetCodeActionsResponse get_code_actions_response = 2;
         GetSignatureHelpResponse get_signature_help_response = 3;
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 4;
     }
 }
 
@@ -2779,10 +2781,10 @@ message OpenCommitMessageBuffer {
 message GetDocumentDiagnostics {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    uint64 language_server_id = 3;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message GetDocumentDiagnosticsResponse {
-    string result_id = 1;
-    repeated Diagnostic diagnostics = 2;
+    repeated Diagnostic diagnostics = 1;
 }
