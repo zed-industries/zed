@@ -1,3 +1,6 @@
+#[cfg(target_os = "macos")]
+mod mac_watcher;
+
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
 
@@ -530,14 +533,21 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use fsevent::{EventStream, StreamFlags};
+        use fsevent::StreamFlags;
 
-        let (tx, rx) = smol::channel::unbounded();
-        let (stream, handle) = EventStream::new(&[path], latency);
-        std::thread::spawn(move || {
-            stream.run(move |events| {
-                smol::block_on(
-                    tx.send(
+        let (events_tx, events_rx) = smol::channel::unbounded();
+        let handles = Arc::new(parking_lot::Mutex::new(collections::BTreeMap::default()));
+        let watcher = Arc::new(mac_watcher::MacWatcher::new(
+            events_tx,
+            Arc::downgrade(&handles),
+            latency,
+        ));
+        watcher.add(path).expect("handles can't be dropped");
+
+        (
+            Box::pin(
+                events_rx
+                    .map(|events| {
                         events
                             .into_iter()
                             .map(|event| {
@@ -555,19 +565,14 @@ impl Fs for RealFs {
                                     kind,
                                 }
                             })
-                            .collect(),
-                    ),
-                )
-                .is_ok()
-            });
-        });
-
-        (
-            Box::pin(rx.chain(futures::stream::once(async move {
-                drop(handle);
-                vec![]
-            }))),
-            Arc::new(RealWatcher {}),
+                            .collect()
+                    })
+                    .chain(futures::stream::once(async move {
+                        drop(handles);
+                        vec![]
+                    })),
+            ),
+            watcher,
         )
     }
 
