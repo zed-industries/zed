@@ -136,7 +136,7 @@ pub struct GenerateContentResponse {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GenerateContentCandidate {
-    pub index: usize,
+    pub index: Option<usize>,
     pub content: Content,
     pub finish_reason: Option<String>,
     pub finish_message: Option<String>,
