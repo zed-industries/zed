@@ -46,7 +46,7 @@
     (module
         (class_definition
             name: (identifier) @run @_pytest_class_name
-            (#match? @_pytest_class_name "^Test.*")
+            (#match? @_pytest_class_name "^Test")
         )
         (#set! tag python-pytest-class)
     )
