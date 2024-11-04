@@ -238,13 +238,24 @@ impl Render for ReplSessionsPage {
                 );
         }
 
-        let kernels_by_language: HashMap<SharedString, Vec<&KernelOption>> = kernel_specifications
-            .iter()
-            .map(|spec| (spec.language(), spec))
-            .fold(HashMap::new(), |mut acc, (language, spec)| {
-                acc.entry(language).or_default().push(spec);
-                acc
-            });
+        let mut kernels_by_language: HashMap<SharedString, Vec<&KernelOption>> =
+            kernel_specifications
+                .iter()
+                .map(|spec| (spec.language(), spec))
+                .fold(HashMap::new(), |mut acc, (language, spec)| {
+                    acc.entry(language).or_default().push(spec);
+                    acc
+                });
+
+        // Sort each language's kernels by name
+        for kernels in kernels_by_language.values_mut() {
+            kernels.sort_by(|a, b| a.name().cmp(&b.name()));
+        }
+
+        // Convert to a sorted Vec of tuples
+        let mut sorted_kernels: Vec<(SharedString, Vec<&KernelOption>)> =
+            kernels_by_language.into_iter().collect();
+        sorted_kernels.sort_by(|a, b| a.0.cmp(&b.0));
 
         let kernels_available = v_flex()
             .child(Label::new("Kernels available").size(LabelSize::Large))
@@ -266,7 +277,7 @@ impl Render for ReplSessionsPage {
                             }),
                     ),
             )
-            .children(kernels_by_language.into_iter().map(|(language, specs)| {
+            .children(sorted_kernels.into_iter().map(|(language, specs)| {
                 let chosen_kernel = store.read(cx).kernelspec(&language, cx);
 
                 v_flex()
