@@ -133,6 +133,7 @@ enum ItemsDisplayMode {
 struct SearchState {
     kind: SearchKind,
     query: String,
+    previous_matches: HashMap<Range<editor::Anchor>, OnceCell<Arc<SearchData>>>,
     matches: Vec<(Range<editor::Anchor>, OnceCell<Arc<SearchData>>)>,
     highlight_search_match_tx: channel::Sender<HighlightArguments>,
     _search_match_highlighter: Task<()>,
@@ -148,6 +149,7 @@ impl SearchState {
     fn new(
         kind: SearchKind,
         query: String,
+        previous_matches: HashMap<Range<editor::Anchor>, OnceCell<Arc<SearchData>>>,
         new_matches: Vec<Range<editor::Anchor>>,
         theme: Arc<SyntaxTheme>,
         cx: &mut ViewContext<'_, OutlinePanel>,
@@ -157,6 +159,7 @@ impl SearchState {
         Self {
             kind,
             query,
+            previous_matches,
             matches: new_matches
                 .into_iter()
                 .map(|range| (range, OnceCell::new()))
@@ -3381,20 +3384,26 @@ impl OutlinePanel {
                 )
             };
 
+            let mut previous_matches = HashMap::default();
             update_cached_entries = match &self.mode {
                 ItemsDisplayMode::Search(current_search_state) => {
-                    current_search_state.query != new_search_query
+                    let update = current_search_state.query != new_search_query
                         || current_search_state.kind != kind
                         || current_search_state.matches.is_empty()
                         || current_search_state.matches.iter().enumerate().any(
                             |(i, (match_range, _))| new_search_matches.get(i) != Some(match_range),
-                        )
+                        );
+                    if current_search_state.kind == kind {
+                        previous_matches = current_search_state.matches.iter().cloned().collect();
+                    }
+                    update
                 }
                 ItemsDisplayMode::Outline => true,
             };
             self.mode = ItemsDisplayMode::Search(SearchState::new(
                 kind,
                 new_search_query,
+                previous_matches,
                 new_search_matches,
                 cx.theme().syntax().clone(),
                 cx,
@@ -3499,27 +3508,12 @@ impl OutlinePanel {
                 || related_excerpts.contains(&match_range.end.excerpt_id)
         });
 
-        let previous_search_matches = self
-            .cached_entries
-            .iter()
-            .filter_map(|entry| {
-                if let PanelEntry::Search(search_entry) = &entry.entry {
-                    Some(search_entry)
-                } else {
-                    None
-                }
-            })
-            .filter(|search_entry| search_entry.kind == kind)
-            .filter(|search_entry| {
-                related_excerpts.contains(&search_entry.match_range.start.excerpt_id)
-                    || related_excerpts.contains(&search_entry.match_range.end.excerpt_id)
-            })
-            .map(|search_entry| (&search_entry.match_range, &search_entry.render_data))
-            .collect::<HashMap<_, _>>();
-
         let new_search_entries = new_search_matches
             .map(|(match_range, search_data)| {
-                let previous_search_data = previous_search_matches.get(&match_range).copied();
+                let previous_search_data = search_state
+                    .previous_matches
+                    .get(&match_range)
+                    .and_then(|data| data.get());
                 let render_data = search_data
                     .get()
                     .or(previous_search_data)
