@@ -57,7 +57,7 @@
     (module
         (class_definition
             name: (identifier) @_pytest_class_name
-            (#match? @_pytest_class_name "^Test.*")
+            (#match? @_pytest_class_name "^Test")
             body: (block
                     (function_definition
                         name: (identifier) @run @_pytest_method_name
