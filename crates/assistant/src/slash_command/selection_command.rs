@@ -4,8 +4,8 @@ use assistant_slash_command::{SlashCommand, SlashCommandContent, SlashCommandEve
 use futures::stream;
 use gpui::Task;
 use smol::stream::StreamExt;
-use ui::IconName;
 
+use ui::IconName;
 pub(crate) struct SelectionCommand;
 
 impl SlashCommand for SelectionCommand {
@@ -14,11 +14,7 @@ impl SlashCommand for SelectionCommand {
     }
 
     fn description(&self) -> String {
-        "Insert editor selection".into()
-    }
-
-    fn icon(&self) -> IconName {
-        IconName::Quote
+        "Quote your active selection".into()
     }
 
     fn menu_text(&self) -> String {
