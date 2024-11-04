@@ -8404,18 +8404,27 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
             Ok(Some(lsp::CompletionResponse::Array(vec![
                 lsp::CompletionItem {
                     label: "Range".into(),
+                    sort_text: Some("a".into()),
                     ..Default::default()
                 },
                 lsp::CompletionItem {
                     label: "r".into(),
+                    sort_text: Some("b".into()),
                     ..Default::default()
                 },
                 lsp::CompletionItem {
                     label: "ret".into(),
+                    sort_text: Some("c".into()),
                     ..Default::default()
                 },
                 lsp::CompletionItem {
                     label: "return".into(),
+                    sort_text: Some("d".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "slice".into(),
+                    sort_text: Some("d".into()),
                     ..Default::default()
                 },
             ])))
