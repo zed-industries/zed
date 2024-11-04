@@ -2,10 +2,10 @@ interface lsp {
     /// An LSP completion.
     record completion {
         label: string,
+        label-details: option<completion-label-details>,
         detail: option<string>,
         kind: option<completion-kind>,
         insert-text-format: option<insert-text-format>,
-        label-details: option<completion-label-details>,
     }
 
     /// The kind of an LSP completion.
