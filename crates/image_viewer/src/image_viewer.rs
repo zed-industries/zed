@@ -6,6 +6,7 @@ use gpui::{
     WindowContext,
 };
 use persistence::IMAGE_VIEWER;
+use theme::Theme;
 use ui::prelude::*;
 
 use file_icons::FileIcons;
@@ -13,8 +14,8 @@ use project::{Project, ProjectEntryId, ProjectPath};
 use settings::Settings;
 use std::{ffi::OsStr, path::PathBuf};
 use workspace::{
-    item::{Item, ProjectItem, SerializableItem, TabContentParams},
-    ItemId, ItemSettings, Pane, Workspace, WorkspaceId,
+    item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
+    ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
 };
 
 const IMAGE_VIEWER_KIND: &str = "ImageView";
@@ -23,6 +24,7 @@ pub struct ImageItem {
     id: ProjectEntryId,
     path: PathBuf,
     project_path: ProjectPath,
+    project: Model<Project>,
 }
 
 impl project::Item for ImageItem {
@@ -56,6 +58,7 @@ impl project::Item for ImageItem {
                     .id;
 
                 cx.new_model(|_| ImageItem {
+                    project,
                     path: abs_path,
                     project_path: path,
                     id,
@@ -118,6 +121,19 @@ impl Item for ImageView {
             .map(Icon::from_path)
     }
 
+    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+        ToolbarItemLocation::PrimaryLeft
+    }
+
+    fn breadcrumbs(&self, _theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
+        let text = breadcrumbs_text_for_image(self.image.read(cx), cx);
+        Some(vec![BreadcrumbText {
+            text,
+            highlights: None,
+            font: None,
+        }])
+    }
+
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
@@ -131,6 +147,25 @@ impl Item for ImageView {
             focus_handle: cx.focus_handle(),
         }))
     }
+}
+
+fn breadcrumbs_text_for_image(image: &ImageItem, cx: &AppContext) -> String {
+    let path = &image.project_path.path;
+    let project = image.project.read(cx);
+
+    if project.visible_worktrees(cx).count() <= 1 {
+        return path.to_string_lossy().to_string();
+    }
+
+    project
+        .worktree_for_entry(image.id, cx)
+        .map(|worktree| {
+            PathBuf::from(worktree.read(cx).root_name())
+                .join(path)
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
 impl SerializableItem for ImageView {
@@ -175,6 +210,7 @@ impl SerializableItem for ImageView {
                     id,
                     path: image_path,
                     project_path,
+                    project,
                 });
 
                 Ok(cx.new_view(|cx| ImageView {
