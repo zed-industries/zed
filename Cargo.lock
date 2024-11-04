@@ -14776,6 +14776,7 @@ dependencies = [
  "settings",
  "smallvec",
  "sqlez",
+ "strum 0.25.0",
  "task",
  "tempfile",
  "theme",
