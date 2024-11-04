@@ -121,11 +121,10 @@ impl ThemePreview {
                     .child(Avatar2::new())
                     .child(Avatar2::from_image(AVATAR_URL))
                     .children((0..=5).map(|ix| Avatar2::new_anonymous(ix)))
-                    .children(
-                        PLAYER_HANDLES
-                            .iter()
-                            .map(|handle| Avatar2::new_fallback(handle.to_string())),
-                    ),
+                    .children(PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
+                        let ix_u32 = ix as u32;
+                        Avatar2::new_fallback(ix_u32, handle.to_string())
+                    })),
             )
             .child(
                 Headline::new("Avatars")
