@@ -451,6 +451,7 @@ impl EditorElement {
         register_action(view, cx, Editor::open_active_item_in_terminal);
         register_action(view, cx, Editor::reload_file);
         register_action(view, cx, Editor::spawn_nearest_task);
+        register_action(view, cx, Editor::align_cursor);
     }
 
     fn register_key_listeners(&self, cx: &mut WindowContext, layout: &EditorLayout) {

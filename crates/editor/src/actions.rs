@@ -208,6 +208,7 @@ gpui::actions!(
         AcceptPartialInlineCompletion,
         AddSelectionAbove,
         AddSelectionBelow,
+        AlignCursor,
         ApplyAllDiffHunks,
         ApplyDiffHunk,
         Backspace,

@@ -6378,6 +6378,27 @@ impl Editor {
         self.reload(project, cx).detach_and_notify_err(cx);
     }
 
+    pub fn align_cursor(&mut self, _: &AlignCursor, cx: &mut ViewContext<Self>) {
+        self.transact(cx, |this, cx| {
+            let max_len = this
+                .selections
+                .all::<Point>(cx)
+                .iter()
+                .map(|s| s.start.column)
+                .max()
+                .unwrap_or(0);
+
+            let mut changes = Vec::new();
+            for s in this.selections.all::<Point>(cx).iter() {
+                let spaces = " ".repeat((max_len - s.start.column) as usize);
+                changes.push((s.start..s.start, spaces));
+            }
+
+            this.buffer
+                .update(cx, |buffer, cx| buffer.edit(changes, None, cx));
+        });
+    }
+
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
         let revert_changes = self.gather_revert_changes(&self.selections.disjoint_anchors(), cx);
         if !revert_changes.is_empty() {
