@@ -6414,8 +6414,8 @@ impl Editor {
 
                     b.push(Vec::new());
                     for j in 0..a[i].len() {
-                        if a.get(i+1).is_some_and(|row| row.get(j).is_some()) {
-                            a[i+1][j] += max - a[i][j];
+                        if a.get(i + 1).is_some_and(|row| row.get(j).is_some()) {
+                            a[i + 1][j] += max - a[i][j];
                         }
                         b[i].push(max - a[i][j]);
                         a[i][j] = max;
