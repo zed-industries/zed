@@ -2079,56 +2079,64 @@ impl OutlinePanel {
 
         let auto_fold_dirs = OutlinePanelSettings::get_global(cx).auto_fold_dirs;
         let active_multi_buffer = active_editor.read(cx).buffer().clone();
-        let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
-        let mut new_collapsed_entries = self.collapsed_entries.clone();
-        let mut new_unfolded_dirs = self.unfolded_dirs.clone();
-        let mut root_entries = HashSet::default();
-        let mut new_excerpts = HashMap::<BufferId, HashMap<ExcerptId, Excerpt>>::default();
-        let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
-            HashMap::default(),
-            |mut buffer_excerpts, (excerpt_id, buffer_snapshot, excerpt_range)| {
-                let buffer_id = buffer_snapshot.remote_id();
-                let file = File::from_dyn(buffer_snapshot.file());
-                let entry_id = file.and_then(|file| file.project_entry_id(cx));
-                let worktree = file.map(|file| file.worktree.read(cx).snapshot());
-                let is_new =
-                    new_entries.contains(&excerpt_id) || !self.excerpts.contains_key(&buffer_id);
-                buffer_excerpts
-                    .entry(buffer_id)
-                    .or_insert_with(|| (is_new, Vec::new(), entry_id, worktree))
-                    .1
-                    .push(excerpt_id);
-
-                let outlines = match self
-                    .excerpts
-                    .get(&buffer_id)
-                    .and_then(|excerpts| excerpts.get(&excerpt_id))
-                {
-                    Some(old_excerpt) => match &old_excerpt.outlines {
-                        ExcerptOutlines::Outlines(outlines) => {
-                            ExcerptOutlines::Outlines(outlines.clone())
-                        }
-                        ExcerptOutlines::Invalidated(_) => ExcerptOutlines::NotFetched,
-                        ExcerptOutlines::NotFetched => ExcerptOutlines::NotFetched,
-                    },
-                    None => ExcerptOutlines::NotFetched,
-                };
-                new_excerpts.entry(buffer_id).or_default().insert(
-                    excerpt_id,
-                    Excerpt {
-                        range: excerpt_range,
-                        outlines,
-                    },
-                );
-                buffer_excerpts
-            },
-        );
-
         self.updating_fs_entries = true;
         self.fs_entries_update_task = cx.spawn(|outline_panel, mut cx| async move {
             if let Some(debounce) = debounce {
                 cx.background_executor().timer(debounce).await;
             }
+
+            let mut new_collapsed_entries = HashSet::default();
+            let mut new_unfolded_dirs = HashMap::default();
+            let mut root_entries = HashSet::default();
+            let mut new_excerpts = HashMap::<BufferId, HashMap<ExcerptId, Excerpt>>::default();
+            let Ok(buffer_excerpts) = outline_panel.update(&mut cx, |outline_panel, cx| {
+                new_collapsed_entries = outline_panel.collapsed_entries.clone();
+                new_unfolded_dirs = outline_panel.unfolded_dirs.clone();
+                let multi_buffer_snapshot = active_multi_buffer.read(cx).snapshot(cx);
+                let buffer_excerpts = multi_buffer_snapshot.excerpts().fold(
+                    HashMap::default(),
+                    |mut buffer_excerpts, (excerpt_id, buffer_snapshot, excerpt_range)| {
+                        let buffer_id = buffer_snapshot.remote_id();
+                        let file = File::from_dyn(buffer_snapshot.file());
+                        let entry_id = file.and_then(|file| file.project_entry_id(cx));
+                        let worktree = file.map(|file| file.worktree.read(cx).snapshot());
+                        let is_new = new_entries.contains(&excerpt_id)
+                            || !outline_panel.excerpts.contains_key(&buffer_id);
+                        buffer_excerpts
+                            .entry(buffer_id)
+                            .or_insert_with(|| (is_new, Vec::new(), entry_id, worktree))
+                            .1
+                            .push(excerpt_id);
+
+                        let outlines = match outline_panel
+                            .excerpts
+                            .get(&buffer_id)
+                            .and_then(|excerpts| excerpts.get(&excerpt_id))
+                        {
+                            Some(old_excerpt) => match &old_excerpt.outlines {
+                                ExcerptOutlines::Outlines(outlines) => {
+                                    ExcerptOutlines::Outlines(outlines.clone())
+                                }
+                                ExcerptOutlines::Invalidated(_) => ExcerptOutlines::NotFetched,
+                                ExcerptOutlines::NotFetched => ExcerptOutlines::NotFetched,
+                            },
+                            None => ExcerptOutlines::NotFetched,
+                        };
+                        new_excerpts.entry(buffer_id).or_default().insert(
+                            excerpt_id,
+                            Excerpt {
+                                range: excerpt_range,
+                                outlines,
+                            },
+                        );
+                        buffer_excerpts
+                    },
+                );
+                buffer_excerpts
+            }) else {
+                return;
+            };
+
             let Some((
                 new_collapsed_entries,
                 new_unfolded_dirs,
