@@ -6,7 +6,7 @@ use ui::{Indicator, Scrollbar, ScrollbarState};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    items::entry_git_aware_label_color,
+    items::git_aware_color,
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
@@ -2476,11 +2476,13 @@ impl ProjectPanel {
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
         let width = self.size(cx);
-        let filename_text_color = if settings.git_status {
-            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked)
+
+        let color = if settings.git_colors {
+            git_aware_color(details.git_status, details.is_ignored, is_marked)
         } else {
-            entry_git_aware_label_color(None, details.is_ignored, is_marked)
+            git_aware_color(None, details.is_ignored, is_marked)
         };
+
         let file_name = details.filename.clone();
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
@@ -2491,7 +2493,6 @@ impl ProjectPanel {
         }
 
         let git_status = details.git_status;
-        let git_symbols_settings = settings.git_symbols;
 
         let canonical_path = details
             .canonical_path
@@ -2586,7 +2587,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_marked || is_active)
                     .when(
-                        canonical_path.is_some() || git_symbols_settings.enabled,
+                        canonical_path.is_some() || settings.git_status,
                         |this| {
                             this.end_slot(
                                 h_flex()
@@ -2609,7 +2610,7 @@ impl ProjectPanel {
                                                 .child(
                                                     Icon::new(IconName::ArrowUpRight)
                                                         .size(IconSize::Indicator)
-                                                        .color(filename_text_color),
+                                                        .color(color),
                                                 )
                                                 .into_any_element(),
                                         )
@@ -2632,19 +2633,7 @@ impl ProjectPanel {
                                                     cx,
                                                 )
                                             })
-                                            .child(Indicator::dot().color(
-                                                if git_symbols_settings.colored {
-                                                    match git_status {
-                                                        GitFileStatus::Added => Color::Created,
-                                                        GitFileStatus::Modified => Color::Modified,
-                                                        GitFileStatus::Conflict => Color::Conflict,
-                                                    }
-                                                } else if is_active {
-                                                    Color::Default
-                                                } else {
-                                                    Color::Muted
-                                                },
-                                            ))
+                                            .child(Indicator::dot().color(color))
                                             .opacity(0.5)
                                         })
                                         .when(
@@ -2674,21 +2663,7 @@ impl ProjectPanel {
                                                     })
                                                     .weight(FontWeight::BOLD)
                                                     .size(LabelSize::XSmall)
-                                                    .color(if git_symbols_settings.colored {
-                                                        match git_status {
-                                                            GitFileStatus::Added => Color::Created,
-                                                            GitFileStatus::Modified => {
-                                                                Color::Modified
-                                                            }
-                                                            GitFileStatus::Conflict => {
-                                                                Color::Conflict
-                                                            }
-                                                        }
-                                                    } else if is_active {
-                                                        Color::Default
-                                                    } else {
-                                                        Color::Muted
-                                                    }),
+                                                    .color(color),
                                                 )
                                             },
                                         )
@@ -2697,7 +2672,7 @@ impl ProjectPanel {
                         },
                     )
                     .child(if let Some(icon) = &icon {
-                        h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
+                        h_flex().child(Icon::from_path(icon.to_string()).color(color))
                     } else {
                         h_flex()
                             .size(IconSize::default().rems())
@@ -2730,7 +2705,7 @@ impl ProjectPanel {
                                             this = this.child(
                                                 Label::new(DELIMITER.clone())
                                                     .single_line()
-                                                    .color(filename_text_color),
+                                                    .color(color),
                                             );
                                         }
                                         let id = SharedString::from(format!(
@@ -2753,7 +2728,7 @@ impl ProjectPanel {
                                             .child(
                                                 Label::new(component)
                                                     .single_line()
-                                                    .color(filename_text_color)
+                                                    .color(color)
                                                     .when(
                                                         is_active && index == active_index,
                                                         |this| this.underline(true),
@@ -2768,7 +2743,7 @@ impl ProjectPanel {
                                     this.child(
                                         Label::new(file_name)
                                             .single_line()
-                                            .color(filename_text_color),
+                                            .color(color),
                                     )
                                 }
                             })

@@ -608,18 +608,18 @@ impl Item for Editor {
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
-        let label_color = if ItemSettings::get_global(cx).git_status {
+        let label_color = if ItemSettings::get_global(cx).git_colors {
             self.buffer()
                 .read(cx)
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).project_path(cx))
                 .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
                 .map(|entry| {
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, params.selected)
+                    git_aware_color(entry.git_status, entry.is_ignored, params.selected)
                 })
-                .unwrap_or_else(|| entry_label_color(params.selected))
+                .unwrap_or_else(|| regular_color(params.selected))
         } else {
-            entry_label_color(params.selected)
+            regular_color(params.selected)
         };
 
         let description = params.detail.and_then(|detail| {
@@ -1504,7 +1504,7 @@ pub fn active_match_index(
     }
 }
 
-pub fn entry_label_color(selected: bool) -> Color {
+pub fn regular_color(selected: bool) -> Color {
     if selected {
         Color::Default
     } else {
@@ -1512,7 +1512,7 @@ pub fn entry_label_color(selected: bool) -> Color {
     }
 }
 
-pub fn entry_git_aware_label_color(
+pub fn git_aware_color(
     git_status: Option<GitFileStatus>,
     ignored: bool,
     selected: bool,
@@ -1524,7 +1524,7 @@ pub fn entry_git_aware_label_color(
             Some(GitFileStatus::Added) => Color::Created,
             Some(GitFileStatus::Modified) => Color::Modified,
             Some(GitFileStatus::Conflict) => Color::Conflict,
-            None => entry_label_color(selected),
+            None => regular_color(selected),
         }
     }
 }

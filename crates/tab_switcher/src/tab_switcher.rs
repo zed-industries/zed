@@ -2,7 +2,7 @@
 mod tab_switcher_tests;
 
 use collections::HashMap;
-use editor::items::entry_git_aware_label_color;
+use editor::items::git_aware_color;
 use gpui::{
     actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
     EventEmitter, FocusHandle, FocusableView, Model, Modifiers, ModifiersChangedEvent, MouseButton,
@@ -351,8 +351,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         let label = tab_match.item.tab_content(params, cx);
 
         let icon = tab_match.item.tab_icon(cx).map(|icon| {
-            let git_status_color = ItemSettings::get_global(cx)
-                .git_status
+            let git_status_color = ItemSettings::get_global(cx).git_colors
                 .then(|| {
                     tab_match
                         .item
@@ -360,7 +359,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                         .as_ref()
                         .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
                         .map(|entry| {
-                            entry_git_aware_label_color(
+                            git_aware_color(
                                 entry.git_status,
                                 entry.is_ignored,
                                 selected,

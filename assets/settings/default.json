@@ -342,15 +342,10 @@
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the project panel.
     "folder_icons": true,
-    // Whether to show the git status in the project panel.
-    "git_status": false,
-    // Whether to show git symbols in the project panel.
-    "git_symbols": {
-      // Enable git symbols in the project panel.
-      "enabled": true,
-      // Whether the symbols should be colored.
-      "colored": true
-    },
+    // Whether to show the git status for items in the project panel.
+    "git_status": true,
+    // Whether to apply git coloring to items in the project panel.
+    "git_colors": true,
     // Amount of indentation for nested items.
     "indent_size": 20,
     // Whether to reveal it in the project panel automatically,
@@ -535,15 +530,10 @@
   },
   // Settings related to the editor's tabs
   "tabs": {
-    // Whether to show git symbols in a tab.
-    "git_symbols": {
-      // Enable git symbols in the editor tabs.
-      "enabled": true,
-      // Whether the symbols should be colored.
-      "colored": true
-    },
-    // Show git status colors in the editor tabs.
-    "git_status": false,
+    // Whether to show the git status for items in the tabs.
+    "git_status": true,
+    // Whether to apply git coloring to items in the tabs.
+    "git_colors": true,
     // Position of the close button on the editor tabs.
     "close_position": "right",
     // Whether to show the file icon for a tab.

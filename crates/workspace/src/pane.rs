@@ -1747,7 +1747,7 @@ impl Pane {
         }
     }
 
-    pub fn icon_color(selected: bool) -> Color {
+    pub fn regular_color(selected: bool) -> Color {
         if selected {
             Color::Default
         } else {
@@ -1755,7 +1755,7 @@ impl Pane {
         }
     }
 
-    pub fn git_aware_icon_color(
+    pub fn git_aware_color(
         git_status: Option<GitFileStatus>,
         ignored: bool,
         selected: bool,
@@ -1767,7 +1767,7 @@ impl Pane {
                 Some(GitFileStatus::Added) => Color::Created,
                 Some(GitFileStatus::Modified) => Color::Modified,
                 Some(GitFileStatus::Conflict) => Color::Conflict,
-                None => Self::icon_color(selected),
+                None => Self::regular_color(selected),
             }
         }
     }
@@ -1878,13 +1878,14 @@ impl Pane {
             None
         };
 
-        let icon_color = if ItemSettings::get_global(cx).git_status {
-            Self::git_aware_icon_color(git_status, is_ignored, is_active)
+        let settings = ItemSettings::get_global(cx);
+
+        let color = if settings.git_colors {
+            Self::git_aware_color(git_status, is_ignored, is_active)
         } else {
-            Self::icon_color(is_active)
+            Self::git_aware_color(None, is_ignored, is_active)
         };
 
-        let git_symbols_settings = ItemSettings::get_global(cx).git_symbols;
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
         let indicator = render_item_indicator(item.boxed_clone(), cx);
@@ -1992,44 +1993,32 @@ impl Pane {
                             )
                         })
                     })
-                    .when(git_symbols_settings.enabled, |this| {
-                        this.child(div().id("git_symbol").when_some(
-                            git_status,
-                            |this, git_status| {
-                                this.tooltip(move |cx| {
-                                    Tooltip::text(
-                                        match git_status {
-                                            GitFileStatus::Added => "Untracked".to_string(),
-                                            GitFileStatus::Modified => "Modified".to_string(),
-                                            GitFileStatus::Conflict => "Conflict".to_string(),
-                                        },
-                                        cx,
-                                    )
-                                })
-                                .child(
-                                    Label::new(match git_status {
-                                        GitFileStatus::Added => "U",
-                                        GitFileStatus::Modified => "M",
-                                        GitFileStatus::Conflict => "C",
-                                    })
-                                    .weight(FontWeight::BOLD)
-                                    .size(LabelSize::XSmall)
-                                    .color(
-                                        if git_symbols_settings.colored {
+                    .when(settings.git_status, |this| {
+                            this.child(div().id("git_symbol").when_some(
+                                git_status,
+                                |this, git_status| {
+                                    this.tooltip(move |cx| {
+                                        Tooltip::text(
                                             match git_status {
-                                                GitFileStatus::Added => Color::Created,
-                                                GitFileStatus::Modified => Color::Modified,
-                                                GitFileStatus::Conflict => Color::Conflict,
-                                            }
-                                        } else if is_active {
-                                            Color::Default
-                                        } else {
-                                            Color::Muted
-                                        },
-                                    ),
-                                )
-                            },
-                        ))
+                                                GitFileStatus::Added => "Untracked".to_string(),
+                                                GitFileStatus::Modified => "Modified".to_string(),
+                                                GitFileStatus::Conflict => "Conflict".to_string(),
+                                            },
+                                            cx,
+                                        )
+                                    })
+                                    .child(
+                                        Label::new(match git_status {
+                                            GitFileStatus::Added => "U",
+                                            GitFileStatus::Modified => "M",
+                                            GitFileStatus::Conflict => "C",
+                                        })
+                                        .weight(FontWeight::BOLD)
+                                        .size(LabelSize::XSmall)
+                                        .color(color),
+                                    )
+                                },
+                            ))
                     }),
             )
             .map(|this| {
@@ -2104,7 +2093,7 @@ impl Pane {
             .child(
                 h_flex()
                     .gap_1()
-                    .children(icon.map(|icon| icon.size(IconSize::Small).color(icon_color)))
+                    .children(icon.map(|icon| icon.size(IconSize::Small).color(color)))
                     .child(label),
             );
 

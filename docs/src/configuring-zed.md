@@ -573,11 +573,8 @@ List of `string` values
 "tabs": {
   "close_position": "right",
   "file_icons": false,
-  "git_status": false,
-  "git_symbols": {
-    "enabled": true,
-    "colored": true
-  },
+  "git_status": true,
+  "git_colors": true,
   "activate_on_close": "history"
 },
 ```
@@ -612,24 +609,29 @@ List of `string` values
 - Setting: `file_icons`
 - Default: `true`
 
+**Options**
+
+`boolean` values
+
 ### Git Status
 
-- Description: Whether or not to show Git file status in tab.
+- Description: Whether to show the git status for items in the tabs.
 - Setting: `git_status`
-- Default: `false`
+- Default: `true`
 
-### Git Symbols
+**Options**
 
-- Description: Whether to show git symbols in a tab.
+`boolean` values
+
+### Git Colors
+
+- Description: Whether to apply git coloring to items in the tabs.
 - Setting: `git_symbols`
-- Default:
+- Default: `true`
 
-```json
-"git_symbols": {
-  "enabled": true,
-  "colored": true,
-}
-```
+**Options**
+
+`boolean` values
 
 ### Activate on close
 
@@ -2083,7 +2085,8 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "dock": "left",
     "file_icons": true,
     "folder_icons": true,
-    "git_status": false,
+    "git_status": true,
+    "git_colors": true,
     "indent_size": 20,
     "indent_guides": true,
     "auto_reveal_entries": true,
@@ -2122,42 +2125,25 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-### Git Symbols
-
-- Description: Whether to show git symbols in the project panel.
-- Setting: `git_symbols`
-- Default:
-
-```json
-"git_symbols": {
-  "enabled": true,
-  "colored": true
-}
-```
-
 ### Git Status
 
-- Description: Indicates newly created and updated files
+- Description: Whether to show the git status for items in the project panel.
 - Setting: `git_status`
-- Default: `false`
+- Default: `true`
 
 **Options**
 
-1. Default enable git status
+`boolean` values
 
-```json
-{
-  "git_status": true
-}
-```
+### Git Colors
 
-2. Default disable git status
+- Description: Whether to apply git coloring to items in the project panel.
+- Setting: `git_colors`
+- Default: `true`
 
-```json
-{
-  "git_status": false
-}
-```
+**Options**
+
+`boolean` values
 
 ### Default Width
 

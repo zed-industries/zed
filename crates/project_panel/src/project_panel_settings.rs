@@ -18,18 +18,6 @@ pub enum ShowIndentGuides {
     Never,
 }
 
-#[derive(Copy, Clone, Default, Serialize, Deserialize, JsonSchema, PartialEq, Debug)]
-pub struct GitSymbolSettings {
-    /// Enable git symbols in the project panel.
-    ///
-    /// Default: true
-    pub enabled: bool,
-    /// Whether the symbols should be colored.
-    ///
-    /// Default: true
-    pub colored: bool,
-}
-
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]
 pub struct ProjectPanelSettings {
     pub button: bool,
@@ -38,7 +26,7 @@ pub struct ProjectPanelSettings {
     pub file_icons: bool,
     pub folder_icons: bool,
     pub git_status: bool,
-    pub git_symbols: GitSymbolSettings,
+    pub git_colors: bool,
     pub indent_size: f32,
     pub indent_guides: IndentGuidesSettings,
     pub auto_reveal_entries: bool,
@@ -95,14 +83,14 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: true
     pub folder_icons: Option<bool>,
-    /// Whether to show the git status in the project panel.
+    /// Whether to show the git status for items in the project panel.
     ///
-    /// Default: false
+    /// Default: true
     pub git_status: Option<bool>,
-    /// Whether to show git symbols in the project panel.
+    /// Whether to apply git coloring to items in the project panel.
     ///
-    /// Default on
-    pub git_symbols: Option<GitSymbolSettings>,
+    /// Default: true
+    pub git_colors: Option<bool>,
     /// Amount of indentation (in pixels) for nested items.
     ///
     /// Default: 20

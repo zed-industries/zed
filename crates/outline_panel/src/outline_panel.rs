@@ -16,7 +16,7 @@ use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     display_map::ToDisplayPoint,
-    items::{entry_git_aware_label_color, entry_label_color},
+    items::{git_aware_color, regular_color},
     scroll::{Autoscroll, AutoscrollStrategy, ScrollAnchor, ScrollbarAutoHide},
     AnchorRangeExt, Bias, DisplayPoint, Editor, EditorEvent, EditorMode, EditorSettings, ExcerptId,
     ExcerptRange, MultiBufferSnapshot, RangeToAnchorExt, ShowScrollbar,
@@ -1617,7 +1617,7 @@ impl OutlinePanel {
         let is_expanded = !self
             .collapsed_entries
             .contains(&CollapsedEntry::Excerpt(buffer_id, excerpt_id));
-        let color = entry_git_aware_label_color(None, false, is_active);
+        let color = git_aware_color(None, false, is_active);
         let icon = if has_outlines {
             FileIcons::get_chevron_icon(is_expanded, cx)
                 .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
@@ -1729,7 +1729,7 @@ impl OutlinePanel {
             FsEntry::File(worktree_id, entry, ..) => {
                 let name = self.entry_name(worktree_id, entry, cx);
                 let color =
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active);
+                    git_aware_color(entry.git_status, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
                     FileIcons::get_icon(&entry.path, cx)
                         .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
@@ -1756,7 +1756,7 @@ impl OutlinePanel {
                     .collapsed_entries
                     .contains(&CollapsedEntry::Dir(*worktree_id, entry.id));
                 let color =
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active);
+                    git_aware_color(entry.git_status, entry.is_ignored, is_active);
                 let icon = if settings.folder_icons {
                     FileIcons::get_folder_icon(is_expanded, cx)
                 } else {
@@ -1778,7 +1778,7 @@ impl OutlinePanel {
                 )
             }
             FsEntry::ExternalFile(buffer_id, ..) => {
-                let color = entry_label_color(is_active);
+                let color = regular_color(is_active);
                 let (icon, name) = match self.buffer_snapshot_for_id(*buffer_id, cx) {
                     Some(buffer_snapshot) => match buffer_snapshot.file() {
                         Some(file) => {
@@ -1847,7 +1847,7 @@ impl OutlinePanel {
             });
             let is_ignored = dir_entries.iter().any(|entry| entry.is_ignored);
             let git_status = dir_entries.first().and_then(|entry| entry.git_status);
-            let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
+            let color = git_aware_color(git_status, is_ignored, is_active);
             let icon = if settings.folder_icons {
                 FileIcons::get_folder_icon(is_expanded, cx)
             } else {
