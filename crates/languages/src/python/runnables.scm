@@ -61,7 +61,7 @@
             body: (block
                     (function_definition
                         name: (identifier) @run @_pytest_method_name
-                        (#match? @_pytest_method_name "^test.*")
+                        (#match? @_pytest_method_name "^test")
                     ) @python-pytest-method
                     (#set! tag python-pytest-method)
             )
