@@ -614,9 +614,7 @@ impl Item for Editor {
                 .as_singleton()
                 .and_then(|buffer| buffer.read(cx).project_path(cx))
                 .and_then(|path| self.project.as_ref()?.read(cx).entry_for_path(&path, cx))
-                .map(|entry| {
-                    git_aware_color(entry.git_status, entry.is_ignored, params.selected)
-                })
+                .map(|entry| git_aware_color(entry.git_status, entry.is_ignored, params.selected))
                 .unwrap_or_else(|| regular_color(params.selected))
         } else {
             regular_color(params.selected)
@@ -1512,11 +1510,7 @@ pub fn regular_color(selected: bool) -> Color {
     }
 }
 
-pub fn git_aware_color(
-    git_status: Option<GitFileStatus>,
-    ignored: bool,
-    selected: bool,
-) -> Color {
+pub fn git_aware_color(git_status: Option<GitFileStatus>, ignored: bool, selected: bool) -> Color {
     if ignored {
         Color::Ignored
     } else {

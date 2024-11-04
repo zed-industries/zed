@@ -2586,37 +2586,55 @@ impl ProjectPanel {
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
                     .selected(is_marked || is_active)
-                    .when(
-                        canonical_path.is_some() || settings.git_status,
-                        |this| {
-                            this.end_slot(
-                                h_flex()
-                                    .id("git_symbol")
-                                    .size_3()
-                                    .justify_center()
-                                    .mr_3()
-                                    .when_some(canonical_path, |this, path| {
-                                        this.child(
-                                            div()
-                                                .id("symlink_icon")
-                                                .tooltip(move |cx| {
-                                                    Tooltip::with_meta(
-                                                        path.to_string(),
-                                                        None,
-                                                        "Symbolic Link",
-                                                        cx,
-                                                    )
-                                                })
-                                                .child(
-                                                    Icon::new(IconName::ArrowUpRight)
-                                                        .size(IconSize::Indicator)
-                                                        .color(color),
+                    .when(canonical_path.is_some() || settings.git_status, |this| {
+                        this.end_slot(
+                            h_flex()
+                                .id("git_symbol")
+                                .size_3()
+                                .justify_center()
+                                .mr_3()
+                                .when_some(canonical_path, |this, path| {
+                                    this.child(
+                                        div()
+                                            .id("symlink_icon")
+                                            .tooltip(move |cx| {
+                                                Tooltip::with_meta(
+                                                    path.to_string(),
+                                                    None,
+                                                    "Symbolic Link",
+                                                    cx,
                                                 )
-                                                .into_any_element(),
-                                        )
+                                            })
+                                            .child(
+                                                Icon::new(IconName::ArrowUpRight)
+                                                    .size(IconSize::Indicator)
+                                                    .color(color),
+                                            )
+                                            .into_any_element(),
+                                    )
+                                })
+                                .when_some(git_status, |this, git_status| {
+                                    this.when(entry_details.is_folder, |this| {
+                                        this.tooltip(move |cx| {
+                                            Tooltip::text(
+                                                match git_status {
+                                                    GitFileStatus::Added => "Untracked".to_string(),
+                                                    GitFileStatus::Modified => {
+                                                        "Modified".to_string()
+                                                    }
+                                                    GitFileStatus::Conflict => {
+                                                        "Conflict".to_string()
+                                                    }
+                                                },
+                                                cx,
+                                            )
+                                        })
+                                        .child(Indicator::dot().color(color))
+                                        .opacity(0.5)
                                     })
-                                    .when_some(git_status, |this, git_status| {
-                                        this.when(entry_details.is_folder, |this| {
+                                    .when(
+                                        entry_details.is_file,
+                                        |this| {
                                             this.tooltip(move |cx| {
                                                 Tooltip::text(
                                                     match git_status {
@@ -2633,44 +2651,21 @@ impl ProjectPanel {
                                                     cx,
                                                 )
                                             })
-                                            .child(Indicator::dot().color(color))
-                                            .opacity(0.5)
-                                        })
-                                        .when(
-                                            entry_details.is_file,
-                                            |this| {
-                                                this.tooltip(move |cx| {
-                                                    Tooltip::text(
-                                                        match git_status {
-                                                            GitFileStatus::Added => {
-                                                                "Untracked".to_string()
-                                                            }
-                                                            GitFileStatus::Modified => {
-                                                                "Modified".to_string()
-                                                            }
-                                                            GitFileStatus::Conflict => {
-                                                                "Conflict".to_string()
-                                                            }
-                                                        },
-                                                        cx,
-                                                    )
+                                            .child(
+                                                Label::new(match git_status {
+                                                    GitFileStatus::Added => "U",
+                                                    GitFileStatus::Modified => "M",
+                                                    GitFileStatus::Conflict => "C",
                                                 })
-                                                .child(
-                                                    Label::new(match git_status {
-                                                        GitFileStatus::Added => "U",
-                                                        GitFileStatus::Modified => "M",
-                                                        GitFileStatus::Conflict => "C",
-                                                    })
-                                                    .weight(FontWeight::BOLD)
-                                                    .size(LabelSize::XSmall)
-                                                    .color(color),
-                                                )
-                                            },
-                                        )
-                                    }),
-                            )
-                        },
-                    )
+                                                .weight(FontWeight::BOLD)
+                                                .size(LabelSize::XSmall)
+                                                .color(color),
+                                            )
+                                        },
+                                    )
+                                }),
+                        )
+                    })
                     .child(if let Some(icon) = &icon {
                         h_flex().child(Icon::from_path(icon.to_string()).color(color))
                     } else {
@@ -2740,11 +2735,7 @@ impl ProjectPanel {
 
                                     this
                                 } else {
-                                    this.child(
-                                        Label::new(file_name)
-                                            .single_line()
-                                            .color(color),
-                                    )
+                                    this.child(Label::new(file_name).single_line().color(color))
                                 }
                             })
                         }

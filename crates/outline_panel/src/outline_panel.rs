@@ -1728,8 +1728,7 @@ impl OutlinePanel {
         let (item_id, label_element, icon) = match rendered_entry {
             FsEntry::File(worktree_id, entry, ..) => {
                 let name = self.entry_name(worktree_id, entry, cx);
-                let color =
-                    git_aware_color(entry.git_status, entry.is_ignored, is_active);
+                let color = git_aware_color(entry.git_status, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
                     FileIcons::get_icon(&entry.path, cx)
                         .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
@@ -1755,8 +1754,7 @@ impl OutlinePanel {
                 let is_expanded = !self
                     .collapsed_entries
                     .contains(&CollapsedEntry::Dir(*worktree_id, entry.id));
-                let color =
-                    git_aware_color(entry.git_status, entry.is_ignored, is_active);
+                let color = git_aware_color(entry.git_status, entry.is_ignored, is_active);
                 let icon = if settings.folder_icons {
                     FileIcons::get_folder_icon(is_expanded, cx)
                 } else {

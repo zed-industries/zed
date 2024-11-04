@@ -351,20 +351,15 @@ impl PickerDelegate for TabSwitcherDelegate {
         let label = tab_match.item.tab_content(params, cx);
 
         let icon = tab_match.item.tab_icon(cx).map(|icon| {
-            let git_status_color = ItemSettings::get_global(cx).git_colors
+            let git_status_color = ItemSettings::get_global(cx)
+                .git_colors
                 .then(|| {
                     tab_match
                         .item
                         .project_path(cx)
                         .as_ref()
                         .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
-                        .map(|entry| {
-                            git_aware_color(
-                                entry.git_status,
-                                entry.is_ignored,
-                                selected,
-                            )
-                        })
+                        .map(|entry| git_aware_color(entry.git_status, entry.is_ignored, selected))
                 })
                 .flatten();
 

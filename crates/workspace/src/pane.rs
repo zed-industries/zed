@@ -1994,31 +1994,31 @@ impl Pane {
                         })
                     })
                     .when(settings.git_status, |this| {
-                            this.child(div().id("git_symbol").when_some(
-                                git_status,
-                                |this, git_status| {
-                                    this.tooltip(move |cx| {
-                                        Tooltip::text(
-                                            match git_status {
-                                                GitFileStatus::Added => "Untracked".to_string(),
-                                                GitFileStatus::Modified => "Modified".to_string(),
-                                                GitFileStatus::Conflict => "Conflict".to_string(),
-                                            },
-                                            cx,
-                                        )
-                                    })
-                                    .child(
-                                        Label::new(match git_status {
-                                            GitFileStatus::Added => "U",
-                                            GitFileStatus::Modified => "M",
-                                            GitFileStatus::Conflict => "C",
-                                        })
-                                        .weight(FontWeight::BOLD)
-                                        .size(LabelSize::XSmall)
-                                        .color(color),
+                        this.child(div().id("git_symbol").when_some(
+                            git_status,
+                            |this, git_status| {
+                                this.tooltip(move |cx| {
+                                    Tooltip::text(
+                                        match git_status {
+                                            GitFileStatus::Added => "Untracked".to_string(),
+                                            GitFileStatus::Modified => "Modified".to_string(),
+                                            GitFileStatus::Conflict => "Conflict".to_string(),
+                                        },
+                                        cx,
                                     )
-                                },
-                            ))
+                                })
+                                .child(
+                                    Label::new(match git_status {
+                                        GitFileStatus::Added => "U",
+                                        GitFileStatus::Modified => "M",
+                                        GitFileStatus::Conflict => "C",
+                                    })
+                                    .weight(FontWeight::BOLD)
+                                    .size(LabelSize::XSmall)
+                                    .color(color),
+                                )
+                            },
+                        ))
                     }),
             )
             .map(|this| {
