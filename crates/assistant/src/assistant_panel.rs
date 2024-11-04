@@ -4454,6 +4454,7 @@ impl Render for ContextEditorToolbarItem {
             .group("chat-title-group")
             .pl_0p5()
             .gap_1()
+            .items_center()
             .flex_grow()
             .child(
                 div()
