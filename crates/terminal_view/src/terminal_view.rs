@@ -1131,6 +1131,10 @@ impl Item for TerminalView {
         false
     }
 
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        true
+    }
+
     fn as_searchable(&self, handle: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
         Some(Box::new(handle.clone()))
     }
