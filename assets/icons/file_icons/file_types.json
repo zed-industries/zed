@@ -8,7 +8,6 @@
     "Emakefile": "erlang",
     "aac": "audio",
     "accdb": "storage",
-    "ansible": "ansible",
     "app.src": "erlang",
     "astro": "astro",
     "avi": "video",
