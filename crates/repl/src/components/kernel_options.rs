@@ -47,8 +47,8 @@ pub struct KernelSelector<T: PopoverTrigger> {
 }
 
 pub struct KernelPickerDelegate {
-    all_kernels: Vec<&KernelOption>,
-    filtered_kernels: Vec<&KernelOption>,
+    all_kernels: Vec<KernelOption>,
+    filtered_kernels: Vec<KernelOption>,
     selected_index: usize,
 }
 
@@ -202,7 +202,7 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         // TODO: Implement kernel selection logic
         let store = ReplStore::global(cx).read(cx);
-        let all_kernels: Vec<&KernelOption> = store.kernel_specifications().collect();
+        let all_kernels: Vec<KernelOption> = store.kernel_specifications().cloned().collect();
 
         let delegate = KernelPickerDelegate {
             all_kernels: all_kernels.clone(),

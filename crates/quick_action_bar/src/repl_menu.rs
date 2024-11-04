@@ -4,8 +4,8 @@ use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
-    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
-    SessionSupport,
+    ExecutionState, JupyterSettings, Kernel, KernelOption, KernelSpecification, KernelStatus,
+    Session, SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -256,11 +256,11 @@ impl QuickActionBar {
     }
     pub fn render_repl_launch_menu(
         &self,
-        kernel_specification: KernelSpecification,
+        kernel_specification: KernelOption,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString =
-            SharedString::from(format!("Start REPL for {}", kernel_specification.name));
+            SharedString::from(format!("Start REPL for {}", kernel_specification.name()));
 
         Some(
             h_flex()
@@ -349,13 +349,8 @@ impl QuickActionBar {
 fn session_state(session: View<Session>, cx: &WindowContext) -> ReplMenuState {
     let session = session.read(cx);
 
-    let kernel_name: SharedString = session.kernel_specification.name.clone().into();
-    let kernel_language: SharedString = session
-        .kernel_specification
-        .kernelspec
-        .language
-        .clone()
-        .into();
+    let kernel_name = session.kernel_specification.name();
+    let kernel_language: SharedString = session.kernel_specification.language();
 
     let fill_fields = || {
         ReplMenuState {
