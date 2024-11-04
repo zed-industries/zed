@@ -36,6 +36,13 @@ impl KernelOption {
             Self::PythonEnv(spec) => spec.name.clone().into(),
         }
     }
+
+    pub fn type_name(&self) -> SharedString {
+        match self {
+            Self::Jupyter(_) => "Jupyter".into(),
+            Self::PythonEnv(_) => "Python Environment".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

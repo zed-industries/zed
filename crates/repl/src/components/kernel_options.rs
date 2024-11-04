@@ -161,7 +161,7 @@ impl PickerDelegate for KernelPickerDelegate {
                             .gap_1p5()
                             .child(Label::new(kernel_name)) // TODO: Replace with actual kernel name
                             .child(
-                                Label::new("Kernel Type") // TODO: Replace with actual kernel type
+                                Label::new(kernel.type_name()) // TODO: Replace with actual kernel type
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted),
                             ),
