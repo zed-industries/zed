@@ -7280,9 +7280,14 @@ impl Editor {
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
+                let cursor_offset = this.selections.last::<usize>(cx).head();
+                let mut auto_indent_on_paste = true;
 
                 this.buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.read(cx);
+                    auto_indent_on_paste =
+                        snapshot.settings_at(cursor_offset, cx).auto_indent_on_paste;
+
                     let mut start_offset = 0;
                     let mut edits = Vec::new();
                     let mut original_indent_columns = Vec::new();
@@ -7321,9 +7326,13 @@ impl Editor {
 
                     buffer.edit(
                         edits,
-                        Some(AutoindentMode::Block {
-                            original_indent_columns,
-                        }),
+                        if auto_indent_on_paste {
+                            Some(AutoindentMode::Block {
+                                original_indent_columns,
+                            })
+                        } else {
+                            None
+                        },
                         cx,
                     );
                 });
