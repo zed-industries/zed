@@ -22,7 +22,7 @@ use std::{
 use ui::SharedString;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelOption {
     // TODO: Remote(RemoteKernelSpecification)
     Jupyter(KernelSpecification),
@@ -52,6 +52,14 @@ pub struct KernelSpecification {
     pub kernelspec: JupyterKernelspec,
 }
 
+impl PartialEq for KernelSpecification {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.path == other.path
+    }
+}
+
+impl Eq for KernelSpecification {}
+
 #[derive(Debug, Clone)]
 pub struct RemoteKernelSpecification {
     pub name: String,
@@ -59,6 +67,14 @@ pub struct RemoteKernelSpecification {
     pub token: String,
     pub kernelspec: JupyterKernelspec,
 }
+
+impl PartialEq for RemoteKernelSpecification {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.url == other.url
+    }
+}
+
+impl Eq for RemoteKernelSpecification {}
 
 impl KernelSpecification {
     #[must_use]
@@ -445,7 +461,7 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<KernelSpecif
     Ok(valid_kernelspecs)
 }
 
-pub async fn kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<KernelSpecification>> {
+pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<KernelSpecification>> {
     let mut data_dirs = dirs::data_dirs();
 
     // Pick up any kernels from conda or conda environment

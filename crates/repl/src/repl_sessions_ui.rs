@@ -12,7 +12,7 @@ use workspace::{item::Item, Workspace};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
-use crate::{KernelSpecification, KERNEL_DOCS_URL};
+use crate::{KernelOption, KernelSpecification, KERNEL_DOCS_URL};
 
 actions!(
     repl,
@@ -238,12 +238,15 @@ impl Render for ReplSessionsPage {
                 );
         }
 
-        let mut kernels_by_language: HashMap<String, Vec<KernelSpecification>> = HashMap::default();
+        let mut kernels_by_language: HashMap<String, Vec<KernelOption>> = HashMap::default();
         for spec in kernel_specifications {
-            kernels_by_language
-                .entry(spec.kernelspec.language.clone())
-                .or_default()
-                .push(spec);
+            let language = match spec {
+                KernelOption::Jupyter(spec) => spec.kernelspec.language.clone(),
+                // todo!(): handle other kernel types
+                _ => continue,
+            };
+
+            kernels_by_language.entry(language).or_default().push(spec);
         }
 
         let kernels_available = v_flex()
@@ -274,8 +277,7 @@ impl Render for ReplSessionsPage {
                     .child(Label::new(language.clone()).weight(FontWeight::BOLD))
                     .children(specs.into_iter().map(|spec| {
                         let is_choice = if let Some(chosen_kernel) = &chosen_kernel {
-                            chosen_kernel.name.to_lowercase() == spec.name.to_lowercase()
-                                && chosen_kernel.path == spec.path
+                            chosen_kernel == spec
                         } else {
                             false
                         };

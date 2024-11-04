@@ -10,8 +10,8 @@ use gpui::{
 use project::Fs;
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::kernel_specifications;
-use crate::{JupyterSettings, KernelSpecification, Session};
+use crate::kernels::local_kernel_specifications;
+use crate::{JupyterSettings, KernelOption, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
 
@@ -21,7 +21,7 @@ pub struct ReplStore {
     fs: Arc<dyn Fs>,
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
-    kernel_specifications: Vec<KernelSpecification>,
+    kernel_specifications: Vec<KernelOption>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
 }
@@ -72,7 +72,7 @@ impl ReplStore {
         self.enabled
     }
 
-    pub fn kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
+    pub fn kernel_specifications(&self) -> impl Iterator<Item = &KernelOption> {
         self.kernel_specifications.iter()
     }
 
@@ -106,18 +106,23 @@ impl ReplStore {
     }
 
     pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let kernel_specifications = kernel_specifications(self.fs.clone());
+        let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
         cx.spawn(|this, mut cx| async move {
-            let kernel_specifications = kernel_specifications.await?;
+            let local_kernel_specifications = local_kernel_specifications.await?;
+
+            let mut kernel_options = Vec::new();
+            for kernel_specification in local_kernel_specifications {
+                kernel_options.push(KernelOption::Jupyter(kernel_specification));
+            }
 
             this.update(&mut cx, |this, cx| {
-                this.kernel_specifications = kernel_specifications;
+                this.kernel_specifications = kernel_options;
                 cx.notify();
             })
         })
     }
 
-    pub fn kernelspec(&self, language_name: &str, cx: &AppContext) -> Option<KernelSpecification> {
+    pub fn kernelspec(&self, language_name: &str, cx: &AppContext) -> Option<KernelOption> {
         let settings = JupyterSettings::get_global(cx);
         let selected_kernel = settings.kernel_selections.get(language_name);
 
@@ -125,7 +130,9 @@ impl ReplStore {
             .kernel_specifications
             .iter()
             .find(|runtime_specification| {
-                if let Some(selected) = selected_kernel {
+                if let (Some(selected), KernelOption::Jupyter(runtime_specification)) =
+                    (selected_kernel, runtime_specification)
+                {
                     // Top priority is the selected kernel
                     return runtime_specification.name.to_lowercase() == selected.to_lowercase();
                 }
@@ -139,9 +146,13 @@ impl ReplStore {
 
         self.kernel_specifications
             .iter()
-            .find(|runtime_specification| {
-                runtime_specification.kernelspec.language.to_lowercase()
-                    == language_name.to_lowercase()
+            .find(|kernel_option| match kernel_option {
+                KernelOption::Jupyter(runtime_specification) => {
+                    runtime_specification.kernelspec.language.to_lowercase()
+                        == language_name.to_lowercase()
+                }
+                // todo!()
+                _ => false,
             })
             .cloned()
     }
