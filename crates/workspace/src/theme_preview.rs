@@ -503,8 +503,6 @@ impl ThemePreview {
 
 impl Render for ThemePreview {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
-        let page = self.current_page.clone();
-
         h_flex()
             .id("theme-preview")
             .key_context("ThemePreview")
@@ -534,6 +532,6 @@ impl Render for ThemePreview {
                             })),
                     ),
             )
-            .child(self.view(self.current_page.clone(), cx))
+            .child(self.view(self.current_page, cx))
     }
 }
