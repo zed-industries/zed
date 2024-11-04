@@ -245,7 +245,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 - Description: The default font size for text in the editor.
 - Setting: `buffer_font_size`
-- Default: `15`
+- Default: `12`
 
 **Options**
 
@@ -2402,7 +2402,7 @@ For example, to use `Nerd Font` as a fallback, add the following to your setting
 
 - Description: The default font size for text in the UI.
 - Setting: `ui_font_size`
-- Default: `16`
+- Default: `15`
 
 **Options**
 
