@@ -218,15 +218,44 @@ Note that we couldn't use JSON as an example here because it doesn't support lan
 
 ### Syntax overrides
 
-The `overrides.scm` file defines syntax overrides.
+The `overrides.scm` file defines syntactic _scopes_ that can be used to override certain editor settings within specific language constructs.
 
-Here's an example from an `overrides.scm` file for JSON:
+For example, there is a language-specific setting called `word_characters` that controls which non-alphabetic characters are considered part of a word, for filtering autocomplete suggestions. In JavaScript, "$" and "#" are considered word characters. But when your cursor is within a _string_ in JavaScript, "-" is _also_ considered a word character. To achieve this, the JavaScript `overrides.scm` file contains the following pattern:
 
 ```scheme
-(string) @string
+[
+  (string)
+  (template_string)
+] @string
 ```
 
-This query explicitly marks strings for highlighting, potentially overriding default behavior. For a complete list of supported captures, refer to the [Syntax highlighting](#syntax-highlighting) section above.
+And the JavaScript `config.toml` contains this setting:
+
+```toml
+word_characters = ["#", "$"]
+
+[overrides.string]
+word_characters = ["-"]
+```
+
+You can also disable certain auto-closing brackets in a specific scope. For example, to prevent auto-closing `'` within strings, you could put the following in the JavaScript `config.toml`:
+
+```toml
+brackets = [
+  { start = "'", end = "'", close = true, newline = false, not_in = ["string"] },
+  # other pairs...
+]
+```
+
+#### Range inclusivity
+
+By default, the ranges defined in `overrides.scm` are _exclusive_. So in the case above, if you cursor was _outside_ the quotation marks delimiting the string, the `string` scope would not take effect. Sometimes, you may want to make the range _inclusive_. You can do this by adding the `.inclusive` suffix to the capture name in the query.
+
+For example, in JavaScript, we also disable auto-closing of single quotes within comments. And the comment scope must extend all the way to the newline after a line comment. To achieve this, the JavaScript `overrides.scm` contains the following pattern:
+
+```scheme
+(comment) @comment.inclusive
+```
 
 ### Text redactions
 
