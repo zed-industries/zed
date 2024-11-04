@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
@@ -236,26 +236,24 @@ impl PickerDelegate for BranchListDelegate {
             let branch = branch.clone();
             |picker, mut cx| async move {
                 let branch_change_task = picker.update(&mut cx, |this, cx| {
-                    if let Some(workspace) = this.delegate.workspace.upgrade() {
-                        let project = workspace.read(cx).project().read(cx);
-                        let branch_to_checkout = match branch {
-                            BranchEntry::Branch(branch) => branch.string,
-                            BranchEntry::NewBranch { name: branch_name } => branch_name,
-                        };
-                        let worktree = project
-                            .visible_worktrees(cx)
-                            .next()
-                            .context("worktree disappeared")?;
-                        let repository = ProjectPath::root_path(worktree.read(cx).id());
+                    let workspace = this
+                        .delegate
+                        .workspace
+                        .upgrade()
+                        .ok_or_else(|| anyhow!("workspace was dropped"))?;
 
-                        anyhow::Ok(project.update_or_create_branch(
-                            repository,
-                            branch_to_checkout,
-                            cx,
-                        ))
-                    } else {
-                        anyhow::bail!("workspace was dropped")
-                    }
+                    let project = workspace.read(cx).project().read(cx);
+                    let branch_to_checkout = match branch {
+                        BranchEntry::Branch(branch) => branch.string,
+                        BranchEntry::NewBranch { name: branch_name } => branch_name,
+                    };
+                    let worktree = project
+                        .visible_worktrees(cx)
+                        .next()
+                        .context("worktree disappeared")?;
+                    let repository = ProjectPath::root_path(worktree.read(cx).id());
+
+                    anyhow::Ok(project.update_or_create_branch(repository, branch_to_checkout, cx))
                 })??;
 
                 branch_change_task.await?;
