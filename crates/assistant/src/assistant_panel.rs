@@ -443,7 +443,7 @@ impl AssistantPanel {
                 let _pane = cx.view().clone();
                 let right_children =
                     h_flex()
-                        .gap(Spacing::Small.rems(cx))
+                        .gap(Spacing::XSmall.rems(cx))
                         .child(
                             IconButton::new("new-context", IconName::Plus)
                                 .on_click(cx.listener(|_, _, cx| {
@@ -461,7 +461,7 @@ impl AssistantPanel {
                         .child(
                             PopoverMenu::new("assistant-panel-popover-menu")
                                 .trigger(
-                                    IconButton::new("menu", IconName::Menu)
+                                    IconButton::new("menu", IconName::EllipsisVertical)
                                         .icon_size(IconSize::Small)
                                         .tooltip(|cx| Tooltip::text("Toggle Assistant Menu", cx)),
                                 )
