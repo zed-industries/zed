@@ -1187,6 +1187,9 @@ pub async fn init_test(
     cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
     });
+    server_cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
     init_logger();
 
     let (opts, ssh_server_client) = SshRemoteClient::fake_server(cx, server_cx);
