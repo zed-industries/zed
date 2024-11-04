@@ -294,7 +294,10 @@ impl LanguageModelRequest {
                 top_p: None,
                 top_k: None,
             }),
-            safety_settings: None,
+            safety_settings: Some(vec![google_ai::SafetySetting {
+                category: google_ai::HarmCategory::DangerousContent,
+                threshold: google_ai::HarmBlockThreshold::BlockNone,
+            }]),
         }
     }
 
