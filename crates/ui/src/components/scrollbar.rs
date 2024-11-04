@@ -16,7 +16,7 @@ pub struct Scrollbar {
 }
 
 /// Wrapper around scroll handles.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ScrollableHandle {
     Uniform(UniformListScrollHandle),
     NonUniform(ScrollHandle),
@@ -91,7 +91,7 @@ impl From<ScrollHandle> for ScrollableHandle {
 }
 
 /// A scrollbar state that should be persisted across frames.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct ScrollbarState {
     // If Some(), there's an active drag, offset by percentage from the origin of a thumb.
     drag: Rc<Cell<Option<f32>>>,
@@ -142,7 +142,6 @@ impl ScrollbarState {
         }
         let mut percentage = current_offset / main_dimension_size;
         let viewport_size = self.scroll_handle.viewport().size;
-
         let end_offset = (current_offset + viewport_size.along(axis).0) / main_dimension_size;
         // Scroll handle might briefly report an offset greater than the length of a list;
         // in such case we'll adjust the starting offset as well to keep the scrollbar thumb length stable.
