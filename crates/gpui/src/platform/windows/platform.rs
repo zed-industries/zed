@@ -11,7 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use async_task::Runnable;
 use futures::channel::oneshot::{self, Receiver};
 use itertools::Itertools;
-use one_command::Command;
+use one_command::blocking::Command;
 use parking_lot::RwLock;
 use smallvec::SmallVec;
 use windows::{

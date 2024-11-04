@@ -270,7 +270,7 @@ impl SupermavenAgent {
         client: Arc<Client>,
         cx: &mut ModelContext<Supermaven>,
     ) -> Result<Self> {
-        let mut process = Command::new_async(&binary_path);
+        let mut process = Command::new(&binary_path);
         process
             .arg("stdio")
             .stdin(Stdio::piped())

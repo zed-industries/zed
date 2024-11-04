@@ -86,7 +86,7 @@ impl super::LspAdapter for CLspAdapter {
             }
             futures::io::copy(response.body_mut(), &mut file).await?;
 
-            let unzip_status = Command::new_async("unzip")
+            let unzip_status = Command::new("unzip")
                 .current_dir(&container_dir)
                 .arg(&zip_path)
                 .output()

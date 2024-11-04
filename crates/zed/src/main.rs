@@ -1051,7 +1051,7 @@ async fn load_login_shell_environment() -> Result<()> {
         shell_cmd_prefix.as_deref().unwrap_or("")
     );
 
-    let output = Command::new_async(&shell)
+    let output = Command::new(&shell)
         .args(["-l", "-i", "-c", &shell_cmd])
         .output()
         .await

@@ -7,7 +7,7 @@ use async_tar::Archive;
 use futures::io::BufReader;
 use futures::AsyncReadExt;
 use http_client::{self, AsyncBody, HttpClient};
-use one_command::Command;
+use one_command::blocking::Command;
 use serde::Deserialize;
 use std::{
     env, fs, mem,

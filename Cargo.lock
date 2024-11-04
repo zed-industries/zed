@@ -4105,6 +4105,7 @@ dependencies = [
  "language",
  "log",
  "lsp",
+ "one-command",
  "semantic_version",
  "serde",
  "serde_json",
@@ -4159,7 +4160,6 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "one-command",
  "parking_lot",
  "paths",
  "project",
@@ -7602,7 +7602,7 @@ checksum = "3fdb12b2476b595f9358c5161aa467c2438859caa136dec86c26fdd2efe17b92"
 
 [[package]]
 name = "one-command"
-version = "0.1.1"
+version = "0.2.1"
 dependencies = [
  "async-process 1.8.1",
 ]

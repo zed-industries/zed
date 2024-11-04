@@ -288,7 +288,7 @@ impl SshSocket {
     // and passes -l as an argument to sh, not to ls.
     // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
-        let mut command = Command::new_async("ssh");
+        let mut command = Command::new("ssh");
         let to_run = iter::once(&program)
             .chain(args.iter())
             .map(|token| shlex::try_quote(token).unwrap())
@@ -1438,7 +1438,7 @@ impl SshRemoteConnection {
         // via a control socket.
         let socket_path = temp_dir.path().join("ssh.sock");
 
-        let mut master_process = Command::new_async("ssh")
+        let mut master_process = Command::new("ssh")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -2060,7 +2060,7 @@ impl SshRemoteConnection {
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
-        let mut command = Command::new_async("scp");
+        let mut command = Command::new("scp");
         let output = self
             .socket
             .ssh_options(&mut command)
@@ -2116,7 +2116,7 @@ impl SshRemoteConnection {
         if platform.arch == std::env::consts::ARCH && platform.os == std::env::consts::OS {
             delegate.set_status(Some("Building remote server binary from source"), cx);
             log::info!("building remote server binary from source");
-            run_cmd(Command::new_async("cargo").args([
+            run_cmd(Command::new("cargo").args([
                 "build",
                 "--package",
                 "remote_server",
@@ -2129,7 +2129,7 @@ impl SshRemoteConnection {
 
             delegate.set_status(Some("Compressing binary"), cx);
 
-            run_cmd(Command::new_async("gzip").args([
+            run_cmd(Command::new("gzip").args([
                 "-9",
                 "-f",
                 "target/remote_server/debug/remote_server",
@@ -2146,7 +2146,7 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Installing cross.rs for cross-compilation"), cx);
         log::info!("installing cross");
-        run_cmd(Command::new_async("cargo").args([
+        run_cmd(Command::new("cargo").args([
             "install",
             "cross",
             "--git",
@@ -2163,7 +2163,7 @@ impl SshRemoteConnection {
         );
         log::info!("building remote server binary from source for {}", &triple);
         run_cmd(
-            Command::new_async("cross")
+            Command::new("cross")
                 .args([
                     "build",
                     "--package",
@@ -2184,7 +2184,7 @@ impl SshRemoteConnection {
 
         delegate.set_status(Some("Compressing binary"), cx);
 
-        run_cmd(Command::new_async("gzip").args([
+        run_cmd(Command::new("gzip").args([
             "-9",
             "-f",
             &format!("target/remote_server/{}/debug/remote_server", triple),

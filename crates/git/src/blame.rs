@@ -2,7 +2,7 @@ use crate::commit::get_messages;
 use crate::{parse_git_remote_url, BuildCommitPermalinkParams, GitHostingProviderRegistry, Oid};
 use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
-use one_command::Command;
+use one_command::blocking::Command;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::process::Stdio;

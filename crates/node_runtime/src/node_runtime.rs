@@ -309,7 +309,7 @@ impl ManagedNodeRuntime {
         let node_binary = node_dir.join(Self::NODE_PATH);
         let npm_file = node_dir.join(Self::NPM_PATH);
 
-        let mut command = Command::new_async(&node_binary);
+        let mut command = Command::new(&node_binary);
         command
             .env_clear()
             .arg(npm_file)
@@ -402,7 +402,7 @@ impl NodeRuntimeTrait for ManagedNodeRuntime {
                 return Err(anyhow!("missing npm file"));
             }
 
-            let mut command = Command::new_async(node_binary);
+            let mut command = Command::new(node_binary);
             command.env_clear();
             command.env("PATH", env_path);
             command.arg(npm_file).arg(subcommand);
@@ -463,7 +463,7 @@ pub struct SystemNodeRuntime {
 impl SystemNodeRuntime {
     const MIN_VERSION: semver::Version = Version::new(18, 0, 0);
     async fn new(node: PathBuf, npm: PathBuf) -> Result<Box<dyn NodeRuntimeTrait>> {
-        let output = Command::new_async(&node)
+        let output = Command::new(&node)
             .arg("--version")
             .output()
             .await
@@ -533,7 +533,7 @@ impl NodeRuntimeTrait for SystemNodeRuntime {
         subcommand: &str,
         args: &[&str],
     ) -> anyhow::Result<Output> {
-        let mut command = Command::new_async(self.npm.clone());
+        let mut command = Command::new(self.npm.clone());
         command
             .env_clear()
             .env("PATH", std::env::var_os("PATH").unwrap_or_default())

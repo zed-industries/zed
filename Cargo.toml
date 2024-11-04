@@ -377,7 +377,7 @@ nanoid = "0.4"
 nbformat = "0.3.2"
 nix = "0.29"
 num-format = "0.4.4"
-one-command = "0.1"
+one-command = { version = "0.2", path = "E:\\project\\rust\\one-command" }
 once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }

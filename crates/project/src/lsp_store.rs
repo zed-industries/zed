@@ -611,7 +611,7 @@ impl LocalLspStore {
             Some(worktree_path)
         })?;
 
-        let mut child = Command::new_async(command);
+        let mut child = Command::new(command);
         if let Some(buffer_env) = buffer.env.as_ref() {
             child.envs(buffer_env);
         }
@@ -7920,7 +7920,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
         };
 
         let env = self.shell_env().await;
-        let output = Command::new_async(&npm)
+        let output = Command::new(&npm)
             .args(["root", "-g"])
             .envs(env)
             .current_dir(local_package_directory)
@@ -7954,7 +7954,7 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 
     async fn try_exec(&self, command: LanguageServerBinary) -> Result<()> {
         let working_dir = self.worktree_root_path();
-        let output = Command::new_async(&command.path)
+        let output = Command::new(&command.path)
             .args(command.arguments)
             .envs(command.env.clone().unwrap_or_default())
             .current_dir(working_dir)

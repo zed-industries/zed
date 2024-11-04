@@ -1,7 +1,7 @@
 use crate::Oid;
 use anyhow::{anyhow, Result};
 use collections::HashMap;
-use one_command::Command;
+use one_command::blocking::Command;
 use std::path::Path;
 
 #[cfg(windows)]

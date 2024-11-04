@@ -10,7 +10,7 @@ use gpui::{AsyncAppContext, BackgroundExecutor, Context, Model};
 use http_client::{HttpClient, Method};
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
-use one_command::Command;
+use one_command::blocking::Command;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
 use reqwest_client::ReqwestClient;
