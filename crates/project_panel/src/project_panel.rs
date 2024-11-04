@@ -51,7 +51,7 @@ use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     notifications::{DetachAndPromptErr, NotifyTaskExt},
-    DraggedSelection, OpenInTerminal, SelectedEntry, Workspace,
+    DraggedSelection, OpenInTerminal, PreviewTabsSettings, SelectedEntry, Workspace,
 };
 use worktree::CreatedEntry;
 
@@ -796,7 +796,8 @@ impl ProjectPanel {
     }
 
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
-        self.open_internal(false, true, false, cx);
+        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+        self.open_internal(false, true, !preview_tabs_enabled, cx);
     }
 
     fn open_permanent(&mut self, _: &OpenPermanent, cx: &mut ViewContext<Self>) {
@@ -2721,12 +2722,14 @@ impl ProjectPanel {
                             } else if kind.is_dir() {
                                 this.toggle_expanded(entry_id, cx);
                             } else {
+                                let preview_tabs_enabled =
+                                    PreviewTabsSettings::get_global(cx).enabled;
                                 let click_count = event.up.click_count;
                                 this.open_entry(
                                     entry_id,
                                     cx.modifiers().secondary(),
-                                    click_count > 1,
-                                    click_count == 1,
+                                    !preview_tabs_enabled || click_count > 1,
+                                    !preview_tabs_enabled && click_count == 1,
                                     cx,
                                 );
                             }
