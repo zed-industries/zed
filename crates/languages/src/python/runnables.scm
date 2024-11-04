@@ -35,7 +35,7 @@
     (module
         (function_definition
             name: (identifier) @run @_pytest_method_name
-            (#match? @_pytest_method_name "^test_.*")
+            (#match? @_pytest_method_name "^test_")
         ) @python-pytest-method
     )
     (#set! tag python-pytest-method)
