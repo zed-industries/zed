@@ -3499,35 +3499,27 @@ impl OutlinePanel {
                 || related_excerpts.contains(&match_range.end.excerpt_id)
         });
 
-        let previous_search_matches = state
-            .entries
+        let previous_search_matches = self
+            .cached_entries
             .iter()
-            .skip_while(|entry| {
-                if let PanelEntry::Fs(entry) = &entry.entry {
-                    entry == &parent_entry
+            .filter_map(|entry| {
+                if let PanelEntry::Search(search_entry) = &entry.entry {
+                    Some(search_entry)
                 } else {
-                    true
+                    None
                 }
             })
-            .take_while(|entry| matches!(entry.entry, PanelEntry::Search(_)))
-            .fold(
-                HashMap::default(),
-                |mut previous_matches, previous_entry| match &previous_entry.entry {
-                    PanelEntry::Search(search_entry) => {
-                        previous_matches.insert(
-                            (search_entry.kind, &search_entry.match_range),
-                            &search_entry.render_data,
-                        );
-                        previous_matches
-                    }
-                    _ => previous_matches,
-                },
-            );
+            .filter(|search_entry| search_entry.kind == kind)
+            .filter(|search_entry| {
+                related_excerpts.contains(&search_entry.match_range.start.excerpt_id)
+                    || related_excerpts.contains(&search_entry.match_range.end.excerpt_id)
+            })
+            .map(|search_entry| (&search_entry.match_range, &search_entry.render_data))
+            .collect::<HashMap<_, _>>();
 
         let new_search_entries = new_search_matches
             .map(|(match_range, search_data)| {
-                let previous_search_data =
-                    previous_search_matches.get(&(kind, match_range)).copied();
+                let previous_search_data = previous_search_matches.get(&match_range).copied();
                 let render_data = search_data
                     .get()
                     .or(previous_search_data)
