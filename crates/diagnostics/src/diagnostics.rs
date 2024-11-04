@@ -187,7 +187,7 @@ impl ProjectDiagnosticsEditor {
             update_excerpts_task: None,
             _subscription: project_event_subscription,
         };
-        this.update_stale_excerpts(cx);
+        this.update_all_excerpts(cx);
         this
     }
 
