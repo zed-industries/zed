@@ -13060,7 +13060,7 @@ mod tests {
         assert_eq!(len_with_expanded_tabs(0, "", nz(4)), 0);
         assert_eq!(len_with_expanded_tabs(0, "hello", nz(4)), 5);
         assert_eq!(len_with_expanded_tabs(0, "\thello", nz(4)), 9);
-        assert_eq!(len_with_expanded_tabs(0, "hel\tlo", nz(4)), 6);
+        assert_eq!(len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
         assert_eq!(len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
         assert_eq!(len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
         assert_eq!(len_with_expanded_tabs(0, "x\t", nz(8)), 8);
