@@ -452,7 +452,7 @@ impl ContextProvider for GoContextProvider {
         let go_module_root_variable = local_abs_path
             .as_deref()
             .and_then(|local_abs_path| local_abs_path.parent())
-            .and_then(|buffer_dir| {
+            .map(|buffer_dir| {
                 // Walk dirtree up until getting the first go.mod file
                 let module_dir = buffer_dir
                     .ancestors()
@@ -460,7 +460,7 @@ impl ContextProvider for GoContextProvider {
                     .map(|dir| dir.to_string_lossy().to_string())
                     .unwrap_or_else(|| ".".to_string());
 
-                Some((GO_MODULE_ROOT_TASK_VARIABLE.clone(), module_dir))
+                (GO_MODULE_ROOT_TASK_VARIABLE.clone(), module_dir)
             });
 
         let _subtest_name = variables.get(&VariableName::Custom(Cow::Borrowed("_subtest_name")));
