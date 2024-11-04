@@ -2598,57 +2598,108 @@ impl ContextEditor {
                     let context = self.context.clone();
                     move |cx| {
                         let message_id = MessageId(message.timestamp);
-                        let show_spinner = message.role == Role::Assistant
+                        let llm_loading = message.role == Role::Assistant
                             && message.status == MessageStatus::Pending;
 
-                        let label = match message.role {
-                            Role::User => {
-                                Label::new("You").color(Color::Default).into_any_element()
-                            }
+                        let (label, spinner, note) = match message.role {
+                            Role::User => (
+                                Label::new("You").color(Color::Default).into_any_element(),
+                                None,
+                                None,
+                            ),
                             Role::Assistant => {
-                                let label = Label::new("Assistant").color(Color::Info);
-                                if show_spinner {
-                                    label
+                                let base_label = Label::new("Assistant").color(Color::Info);
+                                let mut spinner = None;
+                                let mut note = None;
+                                let animated_label = if llm_loading {
+                                    base_label
                                         .with_animation(
                                             "pulsating-label",
                                             Animation::new(Duration::from_secs(2))
                                                 .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                                .with_easing(pulsating_between(0.3, 0.9)),
                                             |label, delta| label.alpha(delta),
                                         )
                                         .into_any_element()
                                 } else {
-                                    label.into_any_element()
+                                    base_label.into_any_element()
+                                };
+                                if llm_loading {
+                                    spinner = Some(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted)
+                                            .with_animation(
+                                                "arrow-circle",
+                                                Animation::new(Duration::from_secs(2)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            )
+                                            .into_any_element(),
+                                    );
+                                    note = Some(
+                                        div()
+                                            .font(
+                                                theme::ThemeSettings::get_global(cx)
+                                                    .buffer_font
+                                                    .clone(),
+                                            )
+                                            .child(
+                                                Label::new("Press 'esc' to cancel")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall),
+                                            )
+                                            .into_any_element(),
+                                    );
                                 }
+                                (animated_label, spinner, note)
                             }
-
-                            Role::System => Label::new("System")
-                                .color(Color::Warning)
-                                .into_any_element(),
+                            Role::System => (
+                                Label::new("System")
+                                    .color(Color::Warning)
+                                    .into_any_element(),
+                                None,
+                                None,
+                            ),
                         };
 
-                        let sender = ButtonLike::new("role")
-                            .style(ButtonStyle::Filled)
-                            .child(label)
-                            .tooltip(|cx| {
-                                Tooltip::with_meta(
-                                    "Toggle message role",
-                                    None,
-                                    "Available roles: You (User), Assistant, System",
-                                    cx,
-                                )
-                            })
-                            .on_click({
-                                let context = context.clone();
-                                move |_, cx| {
-                                    context.update(cx, |context, cx| {
-                                        context.cycle_message_roles(
-                                            HashSet::from_iter(Some(message_id)),
+                        let sender = h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                ButtonLike::new("role")
+                                    .style(ButtonStyle::Filled)
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(label)
+                                            .children(spinner),
+                                    )
+                                    .tooltip(|cx| {
+                                        Tooltip::with_meta(
+                                            "Toggle message role",
+                                            None,
+                                            "Available roles: You (User), Assistant, System",
                                             cx,
                                         )
                                     })
-                                }
-                            });
+                                    .on_click({
+                                        let context = context.clone();
+                                        move |_, cx| {
+                                            context.update(cx, |context, cx| {
+                                                context.cycle_message_roles(
+                                                    HashSet::from_iter(Some(message_id)),
+                                                    cx,
+                                                )
+                                            })
+                                        }
+                                    }),
+                            )
+                            .children(note);
 
                         h_flex()
                             .id(("message_header", message_id.as_u64()))
