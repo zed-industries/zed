@@ -6,8 +6,11 @@ Support for Ansible in Zed is provided via a community-maintained [Ansible exten
 - Language Server: [ansible/vscode-ansible](https://github.com/ansible/vscode-ansible/tree/main/packages/ansible-language-server)
 
 ## Setup
+
 ### File detection
-By default, the language server attaches to all files of the `.ansible` extension type. To attach it automatically to all Ansible files that *aren't* of the `.ansible` extension type, you can add something like the following under the `"file_types"` section in your `~/.zed/settings.json`:
+
+By default, the language server attaches to all files of the `.ansible` extension type. To attach it automatically to all Ansible files that _aren't_ of the `.ansible` extension type, you can add something like the following under the `"file_types"` section in your `~/.zed/settings.json`:
+
 ```json
 "file_types": {
     "Ansible": [
@@ -34,6 +37,7 @@ By default, the language server attaches to all files of the `.ansible` extensio
 Feel free to modify this list as per your needs.
 
 ### LSP Configuration
+
 LSP options for this extension can be configured under Zed's settings file. To get the best experience, add the following configuration under the `"lsp"` section in your `~/.zed/settings.json`:
 
 ```json
@@ -61,6 +65,7 @@ LSP options for this extension can be configured under Zed's settings file. To g
   }
 }
 ```
+
 This config was conveniently adopted from [nvim-lspconfig](https://github.com/neovim/nvim-lspconfig/blob/ad32182cc4a03c8826a64e9ced68046c575fdb7d/lua/lspconfig/server_configurations/ansiblels.lua#L6-L23).
 
 A full list of options/settings, that can be passed to the server, can be found at the project's page [here](https://github.com/ansible/vscode-ansible/blob/5a89836d66d470fb9d20e7ea8aa2af96f12f61fb/docs/als/settings.md).
