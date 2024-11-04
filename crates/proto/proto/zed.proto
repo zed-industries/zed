@@ -789,10 +789,10 @@ message GitInit {
 message GetDocumentDiagnostics {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
-    uint64 language_server_id = 3;
+    Anchor position = 3;
+    repeated VectorClockEntry version = 4;
 }
 
 message GetDocumentDiagnosticsResponse {
-    string result_id = 1;
-    repeated Diagnostic diagnostics = 2;
+    repeated Diagnostic diagnostics = 1;
 }

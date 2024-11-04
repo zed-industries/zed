@@ -3639,6 +3639,17 @@ impl Project {
         })
     }
 
+    pub fn document_diagnostics(
+        &mut self,
+        buffer_handle: &Model<Buffer>,
+        position: Anchor,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<anyhow::Result<Vec<lsp::Diagnostic>>> {
+        self.lsp_store.update(cx, |lsp_store, cx| {
+            lsp_store.document_diagnostic(buffer_handle, position, cx)
+        })
+    }
+    
     pub fn search(&mut self, query: SearchQuery, cx: &mut Context<Self>) -> Receiver<SearchResult> {
         let (result_tx, result_rx) = smol::channel::unbounded();
 

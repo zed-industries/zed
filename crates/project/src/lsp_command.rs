@@ -256,10 +256,9 @@ pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct GetDocumentDiagnostics {
-    pub language_server_id: LanguageServerId,
-    pub previous_result_id: Option<String>,
+    pub position: Anchor,
 }
 
 #[async_trait(?Send)]
@@ -3652,26 +3651,9 @@ impl LspCommand for LinkedEditingRange {
     }
 }
 
-fn lsp_diagnostic_to_diagnostic(diagnostic: lsp::Diagnostic) -> Diagnostic {
-    Diagnostic {
-        source: diagnostic.source.clone(),
-        code: diagnostic.code.as_ref().map(|code| match code {
-            lsp::NumberOrString::Number(code) => code.to_string(),
-            lsp::NumberOrString::String(code) => code.clone(),
-        }),
-        severity: diagnostic.severity.unwrap_or(DiagnosticSeverity::ERROR),
-        message: diagnostic.message,
-        group_id: 0,
-        is_primary: true,
-        is_disk_based: false,
-        is_unnecessary: true,
-        data: diagnostic.data.clone(),
-    }
-}
-
 #[async_trait(?Send)]
 impl LspCommand for GetDocumentDiagnostics {
-    type Response = Vec<DiagnosticEntry<Anchor>>;
+    type Response = Vec<Diagnostic>;
     type LspRequest = lsp::request::DocumentDiagnosticRequest;
     type ProtoRequest = proto::GetDocumentDiagnostics;
 
@@ -3702,7 +3684,7 @@ impl LspCommand for GetDocumentDiagnostics {
                 uri: lsp::Url::from_file_path(path).unwrap(),
             },
             identifier,
-            previous_result_id: self.previous_result_id.clone(),
+            previous_result_id: None,
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
         }
@@ -3711,50 +3693,15 @@ impl LspCommand for GetDocumentDiagnostics {
     async fn response_from_lsp(
         self,
         message: lsp::DocumentDiagnosticReportResult,
-        lsp_store: Model<LspStore>,
-        buffer: Model<Buffer>,
-        language_server_id: LanguageServerId,
-        mut cx: AsyncAppContext,
-    ) -> Result<Vec<DiagnosticEntry<Anchor>>> {
+        _: Model<LspStore>,
+        _: Model<Buffer>,
+        _: LanguageServerId,
+        _: AsyncAppContext,
+    ) -> Result<Vec<Diagnostic>> {
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
                 lsp::DocumentDiagnosticReport::Full(report) => {
-                    // TODO: Handle related_documents in the report
-                    let previous_result_id =
-                        report.full_document_diagnostic_report.result_id.clone();
-                    lsp_store.update(&mut cx, |store, _| {
-                        if let Some(LanguageServerState::Running {
-                            previous_document_diagnostic_result_id,
-                            ..
-                        }) = store.as_local_mut().and_then(|local_store| {
-                            local_store.language_servers.get_mut(&language_server_id)
-                        }) {
-                            *previous_document_diagnostic_result_id = previous_result_id;
-                        }
-                    })?;
-
-                    buffer.update(&mut cx, |buffer, _| {
-                        report
-                            .full_document_diagnostic_report
-                            .items
-                            .into_iter()
-                            .map(|diagnostic| {
-                                let start = buffer.clip_point_utf16(
-                                    point_from_lsp(diagnostic.range.start),
-                                    Bias::Left,
-                                );
-                                let end = buffer.clip_point_utf16(
-                                    point_from_lsp(diagnostic.range.end),
-                                    Bias::Left,
-                                );
-
-                                DiagnosticEntry {
-                                    range: buffer.anchor_after(start)..buffer.anchor_before(end),
-                                    diagnostic: lsp_diagnostic_to_diagnostic(diagnostic),
-                                }
-                            })
-                            .collect()
-                    })
+                    Ok(report.full_document_diagnostic_report.items.clone())
                 }
                 lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(vec![]),
             },
@@ -3766,61 +3713,70 @@ impl LspCommand for GetDocumentDiagnostics {
         proto::GetDocumentDiagnostics {
             project_id,
             buffer_id: buffer.remote_id().into(),
-            language_server_id: self.language_server_id.to_proto(),
+            position: Some(language::proto::serialize_anchor(
+                &buffer.anchor_before(self.position),
+            )),
+            version: serialize_version(&buffer.version()),
         }
     }
 
     async fn from_proto(
         message: proto::GetDocumentDiagnostics,
-        lsp_store: Model<LspStore>,
-        _: Model<Buffer>,
+        _: Model<LspStore>,
+        buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
-        let language_server_id = LanguageServerId::from_proto(message.language_server_id);
-        let previous_result_id = lsp_store
-            .update(&mut cx, |lsp_store, _| {
-                match lsp_store
-                    .as_local()
-                    .and_then(|local_store| local_store.language_servers.get(&language_server_id))
-                {
-                    Some(LanguageServerState::Running {
-                        previous_document_diagnostic_result_id,
-                        ..
-                    }) => previous_document_diagnostic_result_id.clone(),
-                    _ => None,
-                }
-            })
-            .expect("Failed to retrieve previous_result_id");
-
-        Ok(Self {
-            language_server_id,
-            previous_result_id,
-        })
+        let position = message
+            .position
+            .and_then(deserialize_anchor)
+            .ok_or_else(|| anyhow!("invalid position"))?;
+        buffer
+            .update(&mut cx, |buffer, _| {
+                buffer.wait_for_version(deserialize_version(&message.version))
+            })?
+            .await?;
+        Ok(Self { position })
     }
 
     fn response_to_proto(
-        diagnostics: Vec<DiagnosticEntry<Anchor>>,
+        response: Self::Response,
         _: &mut LspStore,
         _: PeerId,
         _: &clock::Global,
         _: &mut AppContext,
     ) -> proto::GetDocumentDiagnosticsResponse {
+        let diagnostics = if let Some(diagnostics) = response.diagnostics {
+            diagnostics
+                .into_iter()
+                .map(GetDocumentDiagnostics::serialize_lsp_diagnostic)
+                .collect()
+        } else {
+            Vec::new()
+        };
+
         proto::GetDocumentDiagnosticsResponse {
-            diagnostics: language::proto::serialize_diagnostics(&diagnostics),
-            result_id: Default::default(),
+            server_id: LanguageServerId::to_proto(response.server_id),
+            diagnostics,
         }
     }
 
     async fn response_from_proto(
         self,
-        message: proto::GetDocumentDiagnosticsResponse,
+        response: proto::GetDocumentDiagnosticsResponse,
         _: Model<LspStore>,
         _: Model<Buffer>,
         _: AsyncAppContext,
-    ) -> Result<Vec<DiagnosticEntry<Anchor>>> {
-        Ok(language::proto::deserialize_diagnostics(
-            message.diagnostics,
-        ))
+    ) -> Result<Self::Response> {
+        let diagnostics = response
+            .diagnostics
+            .into_iter()
+            .map(GetDocumentDiagnostics::deserialize_lsp_diagnostic)
+            .collect();
+
+        Ok(LspDiagnostics {
+            server_id: LanguageServerId::from_proto(response.server_id),
+            diagnostics: Some(diagnostics),
+        })
     }
 
     fn buffer_id_from_proto(message: &proto::GetDocumentDiagnostics) -> Result<BufferId> {
