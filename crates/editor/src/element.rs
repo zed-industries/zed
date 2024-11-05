@@ -1,5 +1,6 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
+    context_menu::CodeActionsMenu,
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -16,11 +17,11 @@ use crate::{
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::scroll_amount::ScrollAmount,
-    BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
-    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    BlockId, CursorShape, CustomBlockId, DisplayPoint, DisplayRow, DocumentHighlightRead,
+    DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
+    ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
+    HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
+    RenderedContextMenu, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
     CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
@@ -2655,31 +2656,36 @@ impl EditorElement {
         gutter_overshoot: Pixels,
         cx: &mut WindowContext,
     ) -> bool {
-        let max_height = cmp::min(
-            12. * line_height,
-            cmp::max(3. * line_height, (hitbox.size.height - line_height) / 2.),
-        );
-        let Some((position, mut context_menu)) = self.editor.update(cx, |editor, cx| {
+        let Some(RenderedContextMenu {
+            origin,
+            mut element,
+            is_inverted,
+        }) = self.editor.update(cx, |editor, cx| {
             if editor.context_menu_visible() {
+                let max_height = cmp::min(
+                    12. * line_height,
+                    cmp::max(3. * line_height, (hitbox.size.height - line_height) / 2.),
+                );
                 editor.render_context_menu(newest_selection_head, &self.style, max_height, cx)
             } else {
                 None
             }
-        }) else {
+        })
+        else {
             return false;
         };
 
-        let context_menu_size = context_menu.layout_as_root(AvailableSpace::min_size(), cx);
+        let context_menu_size = element.layout_as_root(AvailableSpace::min_size(), cx);
 
-        let (x, y) = match position {
-            crate::ContextMenuOrigin::EditorPoint(point) => {
+        let (x, y) = match origin {
+            crate::context_menu::ContextMenuOrigin::EditorPoint(point) => {
                 let cursor_row_layout = &line_layouts[point.row().minus(start_row) as usize];
                 let x = cursor_row_layout.x_for_index(point.column() as usize)
                     - scroll_pixel_position.x;
                 let y = point.row().next_row().as_f32() * line_height - scroll_pixel_position.y;
                 (x, y)
             }
-            crate::ContextMenuOrigin::GutterIndicator(row) => {
+            crate::context_menu::ContextMenuOrigin::GutterIndicator(row) => {
                 // Context menu was spawned via a click on a gutter. Ensure it's a bit closer to the indicator than just a plain first column of the
                 // text field.
                 let x = -gutter_overshoot;
@@ -2697,12 +2703,11 @@ impl EditorElement {
         if list_origin.x + list_width > cx.viewport_size().width {
             list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
         }
-
         if list_origin.y + list_height > text_hitbox.lower_right().y {
             list_origin.y -= line_height + list_height;
         }
 
-        cx.defer_draw(context_menu, list_origin, 1);
+        cx.defer_draw(element, list_origin, 1);
         true
     }
 
