@@ -124,11 +124,13 @@ pub struct OutlinePanel {
     max_width_item_index: Option<usize>,
 }
 
+#[derive(Debug)]
 enum ItemsDisplayMode {
     Search(SearchState),
     Outline,
 }
 
+#[derive(Debug)]
 struct SearchState {
     kind: SearchKind,
     query: String,
@@ -2486,6 +2488,10 @@ impl OutlinePanel {
                 .matches
                 .iter()
                 .rev()
+                .filter(|(match_range, _)| {
+                    match_range.start.excerpt_id == excerpt_id
+                        || match_range.end.excerpt_id == excerpt_id
+                })
                 .min_by_key(|&(match_range, _)| {
                     let match_display_range =
                         match_range.clone().to_display_points(&editor_snapshot);
@@ -2855,7 +2861,9 @@ impl OutlinePanel {
                 .update(&mut cx, |outline_panel, cx| {
                     outline_panel.cached_entries = new_cached_entries;
                     outline_panel.max_width_item_index = max_width_item_index;
-                    if outline_panel.selected_entry.is_invalidated() {
+                    if outline_panel.selected_entry.is_invalidated()
+                        || matches!(outline_panel.selected_entry, SelectedEntry::None)
+                    {
                         if let Some(new_selected_entry) =
                             outline_panel.active_editor().and_then(|active_editor| {
                                 outline_panel.location_for_editor_selection(&active_editor, cx)
@@ -4394,7 +4402,7 @@ mod tests {
 
     const SELECTED_MARKER: &str = "  <==== selected";
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_project_search_results_toggling(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4471,12 +4479,6 @@ mod tests {
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
         outline_panel.update(cx, |outline_panel, cx| {
-            // Project search re-adds items to the buffer, removing the caret from it.
-            // Select the first entry and move 4 elements down.
-            for _ in 0..6 {
-                outline_panel.select_next(&SelectNext, cx);
-            }
-
             assert_eq!(
                 display_entries(
                     &snapshot(&outline_panel, cx),
@@ -4600,7 +4602,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_item_filtering(cx: &mut TestAppContext) {
         init_test(cx);
 
@@ -4723,7 +4725,7 @@ mod tests {
         });
     }
 
-    #[gpui::test]
+    #[gpui::test(iterations = 10)]
     async fn test_frontend_repo_structure(cx: &mut TestAppContext) {
         init_test(cx);
 
