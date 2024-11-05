@@ -74,6 +74,15 @@ impl FeatureFlag for AutoCommand {
     }
 }
 
+pub struct SearchCommand {}
+impl FeatureFlag for SearchCommand {
+    const NAME: &'static str = "search-command";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
 pub trait FeatureFlagViewExt<V: 'static> {
     fn observe_flag<T: FeatureFlag, F>(&mut self, callback: F) -> Subscription
     where

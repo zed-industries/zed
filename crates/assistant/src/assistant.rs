@@ -212,21 +212,23 @@ pub fn init(
         });
     }
 
-    cx.spawn(|mut cx| {
-        let client = client.clone();
-        async move {
-            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticDb::new(
-                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
-                Arc::new(embedding_provider),
-                &mut cx,
-            )
-            .await?;
+    if cx.has_flag::<feature_flags::SearchCommand>() {
+        cx.spawn(|mut cx| {
+            let client = client.clone();
+            async move {
+                let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+                let semantic_index = SemanticDb::new(
+                    paths::embeddings_dir().join("semantic-index-db.0.mdb"),
+                    Arc::new(embedding_provider),
+                    &mut cx,
+                )
+                .await?;
 
-            cx.update(|cx| cx.set_global(semantic_index))
-        }
-    })
-    .detach();
+                cx.update(|cx| cx.set_global(semantic_index))
+            }
+        })
+        .detach();
+    }
 
     context_store::init(&client.clone().into());
     prompt_library::init(cx);
