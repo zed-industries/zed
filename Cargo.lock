@@ -6403,6 +6403,7 @@ dependencies = [
  "pet",
  "pet-conda",
  "pet-core",
+ "pet-fs",
  "pet-poetry",
  "pet-reporter",
  "project",

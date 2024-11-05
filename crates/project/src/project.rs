@@ -639,7 +639,12 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
             let toolchain_store = cx.new_model(|cx| {
-                ToolchainStore::local(languages.clone(), worktree_store.clone(), cx)
+                ToolchainStore::local(
+                    languages.clone(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
             });
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
@@ -2369,10 +2374,16 @@ impl Project {
         language_name: LanguageName,
         cx: &AppContext,
     ) -> Task<Option<ToolchainList>> {
-        if let Some(toolchain_store) = self.toolchain_store.as_ref() {
-            toolchain_store
-                .read(cx)
-                .list_toolchains(worktree_id, language_name, cx)
+        if let Some(toolchain_store) = self.toolchain_store.clone() {
+            cx.spawn(|cx| async move {
+                cx.update(|cx| {
+                    toolchain_store
+                        .read(cx)
+                        .list_toolchains(worktree_id, language_name, cx)
+                })
+                .unwrap_or(Task::Ready(None))
+                .await
+            })
         } else {
             Task::ready(None)
         }
