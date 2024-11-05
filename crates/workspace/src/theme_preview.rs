@@ -98,7 +98,6 @@ impl Item for ThemePreview {
 }
 
 const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1714999?v=4";
-
 const PLAYER_HANDLES: [&str; 4] = ["iamnbutler", "Danilo Leal", "zed-fan-89", ""];
 
 impl ThemePreview {
@@ -107,6 +106,8 @@ impl ThemePreview {
     }
 
     fn render_avatars(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let avatar_url = SharedString::from(AVATAR_URL);
+
         v_flex()
             .gap_1()
             .child(
@@ -118,13 +119,22 @@ impl ThemePreview {
                 h_flex()
                     .items_start()
                     .gap_4()
-                    .child(Avatar2::new())
-                    .child(Avatar2::from_image(AVATAR_URL))
-                    .children((0..=5).map(|ix| Avatar2::new_anonymous(ix)))
+                    .child(Avatar2::new(avatar_url.clone()).loading(true))
+                    .child(Avatar2::new(avatar_url.clone()))
+                    .children((0..=5).map(|ix| Avatar2::new_fallback().fallback_anonymous(ix)))
                     .children(PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
-                        let ix_u32 = ix as u32;
-                        Avatar2::new_fallback(ix_u32, handle.to_string())
-                    })),
+                        Avatar2::new_fallback()
+                            .fallback_initials(handle.to_string())
+                            .fallback_anonymous(ix as u32)
+                    }))
+                    .child(
+                        Avatar2::new(avatar_url.clone())
+                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
+                    )
+                    .child(
+                        Avatar2::new(avatar_url.clone())
+                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
+                    ),
             )
             .child(
                 Headline::new("Avatars")

@@ -589,7 +589,7 @@ impl TitleBar {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(Avatar2::from_image(user.avatar_uri.clone()))
+                                .child(Avatar2::new(user.avatar_uri.clone()))
                                 .child(
                                     Icon::new(IconName::ChevronDown)
                                         .size(IconSize::Small)

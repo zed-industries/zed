@@ -76,79 +76,58 @@ impl AnonymousAvatarIcon {
 
 #[derive(IntoElement)]
 pub struct Avatar2 {
-    source: AvatarSource,
+    image: Option<ImageSource>,
+    fallback_initials: Option<SharedString>,
+    fallback_anonymous_index: u32,
     size: Option<AbsoluteLength>,
     border_color: Option<Hsla>,
     indicator: Option<AnyElement>,
     grayscale: bool,
-    index: Option<u32>,
+    loading: bool,
 }
 
 impl Avatar2 {
-    /// Creates a new avatar element with the specified image source.
-    pub fn new() -> Self {
-        let source = AvatarSource::LoadingAvatar;
-
+    // Creates a new avatar with image set to option for allowing forcing initials or anonymous icon rendering
+    pub fn new(image: impl Into<ImageSource>) -> Self {
         Avatar2 {
-            source,
+            image: Some(image.into()),
+            fallback_initials: None,
+            fallback_anonymous_index: 0,
             size: None,
             border_color: None,
             indicator: None,
             grayscale: false,
-            index: None,
+            loading: false,
         }
     }
 
-    /// Creates a new avatar element with an anonymous avatar icon based on the provided index.
-    pub fn new_anonymous(index: u32) -> Self {
-        let source = AvatarSource::AnonymousAvatar(AnonymousAvatarIcon::from_index(index as usize));
-
+    // Creates an avatar that can have image empty but filled by a fallback option
+    pub fn new_fallback() -> Self {
         Avatar2 {
-            source,
+            image: None,
+            fallback_initials: None,
+            fallback_anonymous_index: 0,
             size: None,
             border_color: None,
             indicator: None,
             grayscale: false,
-            index: Some(index),
+            loading: false,
         }
     }
 
-    pub fn new_fallback(index: u32, label: impl Into<SharedString>) -> Self {
-        let initials: String = label
-            .into()
-            .to_uppercase()
-            .split_whitespace()
-            .filter_map(|s| s.chars().next())
-            .take(2)
-            .collect();
-
-        let source = match initials.len() {
-            0 => AvatarSource::AnonymousAvatar(AnonymousAvatarIcon::default()),
-            _ => AvatarSource::FallbackAvatar(initials.into()),
-        };
-
-        Avatar2 {
-            source,
-            size: None,
-            border_color: None,
-            indicator: None,
-            grayscale: false,
-            index: Some(index),
-        }
+    pub fn fallback_initials(mut self, initials: impl Into<SharedString>) -> Self {
+        self.fallback_initials = Some(initials.into());
+        self
     }
 
-    /// Creates a new avatar element with an image source.
-    pub fn from_image(src: impl Into<ImageSource>) -> Self {
-        let source: AvatarSource = AvatarSource::Avatar(src.into());
+    pub fn fallback_anonymous(mut self, index: u32) -> Self {
+        self.fallback_anonymous_index = index;
+        self
+    }
 
-        Avatar2 {
-            source,
-            size: None,
-            border_color: None,
-            indicator: None,
-            grayscale: false,
-            index: None,
-        }
+    pub fn loading(mut self, is_loading: bool) -> Self {
+        self.loading = is_loading;
+        self
     }
 
     /// Applies a grayscale filter to the avatar image.
@@ -175,12 +154,87 @@ impl Avatar2 {
         self
     }
 
-    fn color(&self, index: Option<u32>, cx: &WindowContext) -> Hsla {
-        if let Some(index) = index {
-            return cx.theme().players().color_for_participant(index).cursor;
+    fn base_avatar_style(&self, size: Pixels) -> Div {
+        div()
+            .size(size)
+            .rounded_full()
+            .overflow_hidden()
+            .flex()
+            .items_center()
+            .justify_center()
+    }
+
+    fn render_fallback(&self, content_size: Pixels, cx: &WindowContext) -> AnyElement {
+        let color = self.color(cx);
+        let bg_color = color.opacity(0.12);
+
+        self.base_avatar_style(content_size)
+            .bg(bg_color)
+            .child(if let Some(initials) = &self.fallback_initials {
+                let first_letter = initials.chars().next().unwrap_or('?').to_string();
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .text_color(color)
+                    .text_size(px(10.))
+                    .font_weight(FontWeight::BOLD)
+                    .child(first_letter)
+                    .into_any_element()
+            } else {
+                let icon = AnonymousAvatarIcon::from_index(self.fallback_anonymous_index as usize);
+                Icon::new(icon.into())
+                    .size(IconSize::XSmall)
+                    .color(Color::Custom(color))
+                    .into_any_element()
+            })
+            .into_any_element()
+    }
+
+    fn render_image_or_fallback(&self, content_size: Pixels, cx: &WindowContext) -> AnyElement {
+        self.base_avatar_style(content_size)
+            .child(if let Some(image) = &self.image {
+                img(image.clone())
+                    .size(content_size)
+                    .rounded_full()
+                    .when(self.grayscale, |img| img.grayscale(true))
+                    .into_any_element()
+            } else {
+                self.render_fallback(content_size, cx)
+            })
+            .into_any_element()
+    }
+
+    fn render_loading_avatar(&self, content_size: Pixels, cx: &WindowContext) -> AnyElement {
+        let color = self.color(cx);
+
+        self.base_avatar_style(content_size)
+            .bg(cx.theme().colors().element_background)
+            .with_animation(
+                "pulsating-bg",
+                Animation::new(Duration::from_secs(2))
+                    .repeat()
+                    .with_easing(pulsating_between(0.4, 0.8)),
+                move |this, delta| this.bg(color.opacity(1.0 - delta)),
+            )
+            .into_any_element()
+    }
+
+    fn render_content(&self, content_size: Pixels, cx: &WindowContext) -> AnyElement {
+        if self.loading {
+            self.render_loading_avatar(content_size, cx)
+                .into_any_element()
         } else {
-            return cx.theme().colors().element_background;
+            self.render_image_or_fallback(content_size, cx)
+                .into_any_element()
         }
+    }
+
+    fn color(&self, cx: &WindowContext) -> Hsla {
+        cx.theme()
+            .players()
+            .color_for_participant(self.fallback_anonymous_index)
+            .cursor
     }
 }
 
@@ -196,51 +250,6 @@ impl RenderOnce for Avatar2 {
         };
         let container_size = content_size + (border_width * 2.0);
 
-        let neutral_color = cx.theme().colors().element_background;
-        let color = self.color(self.index, cx);
-        let bg_color = color.opacity(0.12);
-
-        let base = div()
-            .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .overflow_hidden()
-            .size(container_size);
-
-        let content = match self.source {
-            AvatarSource::Avatar(img_source) => img(img_source)
-                .size(content_size)
-                .rounded_full()
-                .when(self.grayscale, |img| img.grayscale(true))
-                .into_any_element(),
-            AvatarSource::AnonymousAvatar(icon) => base
-                .bg(bg_color)
-                .child(
-                    Icon::new(icon.into())
-                        .size(IconSize::XSmall)
-                        .color(Color::Custom(color)),
-                )
-                .into_any_element(),
-            AvatarSource::FallbackAvatar(initials) => base
-                .bg(bg_color)
-                .text_size(px(10.))
-                .text_color(color)
-                .font_weight(FontWeight::BOLD)
-                .child(initials)
-                .into_any_element(),
-            AvatarSource::LoadingAvatar => base
-                .bg(cx.theme().colors().element_background)
-                .with_animation(
-                    "pulsaring-bg",
-                    Animation::new(Duration::from_secs(2))
-                        .repeat()
-                        .with_easing(pulsating_between(0.4, 0.8)),
-                    move |this, delta| this.bg(neutral_color.opacity(1.0 - delta)),
-                )
-                .into_any_element(),
-        };
-
         div()
             .id("avatar")
             .size(container_size)
@@ -248,7 +257,7 @@ impl RenderOnce for Avatar2 {
             .when_some(self.border_color, |this, color| {
                 this.border(border_width).border_color(color)
             })
-            .child(content)
+            .child(self.render_content(content_size, cx))
             .when_some(self.indicator, |this, indicator| {
                 this.child(div().absolute().bottom_0().right_0().child(indicator))
             })

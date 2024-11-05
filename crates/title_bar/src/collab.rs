@@ -221,7 +221,8 @@ impl TitleBar {
                 .child(
                     Facepile::empty()
                         .child(
-                            Avatar2::from_image(user.avatar_uri.clone())
+                            Avatar2::new(user.avatar_uri.clone())
+                                .fallback_initials(user.github_login.clone().to_string())
                                 .grayscale(!is_present)
                                 .border_color(if is_speaking {
                                     cx.theme().status().info
@@ -259,12 +260,9 @@ impl TitleBar {
                                     })?
                                     .clone();
 
-                                Some(
-                                    div().mt(-px(4.)).child(
-                                        Avatar2::from_image(follower.avatar_uri.clone())
-                                            .size(rems(0.75)),
-                                    ),
-                                )
+                                Some(div().mt(-px(4.)).child(
+                                    Avatar2::new(follower.avatar_uri.clone()).size(rems(0.75)),
+                                ))
                             },
                         ))
                         .children(if extra_count > 0 {
