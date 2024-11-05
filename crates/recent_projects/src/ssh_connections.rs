@@ -13,7 +13,7 @@ use gpui::{AppContext, Model};
 
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
-use release_channel::ReleaseChannel;
+use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use remote::ssh_session::ConnectionIdentifier;
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
@@ -501,20 +501,6 @@ impl remote::SshClientDelegate for SshClientDelegate {
                 Ok((release.url, request_body))
             }
         )
-    }
-
-    fn remote_server_binary_path(
-        &self,
-        platform: SshPlatform,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
-        Ok(paths::remote_server_dir_relative().join(format!(
-            "zed-remote-server-{}-{}-{}",
-            release_channel.dev_name(),
-            platform.os,
-            platform.arch
-        )))
     }
 }
 

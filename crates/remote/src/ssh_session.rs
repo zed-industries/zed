@@ -22,6 +22,7 @@ use gpui::{
 };
 use itertools::Itertools;
 use parking_lot::Mutex;
+use paths;
 use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
 use rpc::{
     proto::{self, build_typed_envelope, Envelope, EnvelopedMessage, PeerId, RequestMessage},
@@ -42,7 +43,7 @@ use std::{
         atomic::{AtomicU32, Ordering::SeqCst},
         Arc, Weak,
     },
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 use tempfile::TempDir;
 use util::ResultExt;
@@ -258,11 +259,6 @@ pub trait SshClientDelegate: Send + Sync {
         prompt: String,
         cx: &mut AsyncAppContext,
     ) -> oneshot::Receiver<Result<String>>;
-    fn remote_server_binary_path(
-        &self,
-        platform: SshPlatform,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf>;
     fn get_download_params(
         &self,
         platform: SshPlatform,
@@ -290,16 +286,32 @@ impl SshSocket {
         let mut command = process::Command::new("ssh");
         let to_run = iter::once(&program)
             .chain(args.iter())
-            .map(|token| shlex::try_quote(token).unwrap())
+            .map(|token| {
+                // We're trying to work with: sh, bash, zsh, fish, tcsh, ...?
+                debug_assert!(
+                    !token.contains('\n'),
+                    "multiline arguments do not work in all shells"
+                );
+                shlex::try_quote(token).unwrap()
+            })
             .join(" ");
+        log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
             .arg(to_run);
         command
     }
 
-    fn shell_script(&self, script: impl AsRef<str>) -> process::Command {
-        return self.ssh_command("sh", &["-c", script.as_ref()]);
+    async fn run_command(&self, program: &str, args: &[&str]) -> Result<String> {
+        let output = self.ssh_command(program, args).output().await?;
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow!(
+                "failed to run command: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
@@ -319,18 +331,6 @@ impl SshSocket {
             format!("ControlPath={}", self.socket_path.display()),
             self.connection_options.ssh_url(),
         ]
-    }
-}
-
-async fn run_cmd(mut command: process::Command) -> Result<String> {
-    let output = command.output().await?;
-    if output.status.success() {
-        Ok(String::from_utf8_lossy(&output.stdout).to_string())
-    } else {
-        Err(anyhow!(
-            "failed to run command: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ))
     }
 }
 
@@ -570,7 +570,7 @@ impl SshRemoteClient {
                     .await
                     .map_err(|e| e.cloned())?;
                 let remote_binary_path = ssh_connection
-                    .get_remote_binary_path(&delegate, false, &mut cx)
+                    .get_remote_binary_path(&delegate, &mut cx)
                     .await?;
 
                 let io_task = ssh_connection.start_proxy(
@@ -754,7 +754,7 @@ impl SshRemoteClient {
                     .map_err(|error| error.cloned())?;
 
                 let remote_binary_path = ssh_connection
-                    .get_remote_binary_path(&delegate, true, &mut cx)
+                    .get_remote_binary_path(&delegate, &mut cx)
                     .await?;
 
                 let io_task = ssh_connection.start_proxy(
@@ -1230,7 +1230,6 @@ trait RemoteConnection: Send + Sync {
     async fn get_remote_binary_path(
         &self,
         delegate: &Arc<dyn SshClientDelegate>,
-        reconnect: bool,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf>;
     async fn kill(&self) -> Result<()>;
@@ -1245,7 +1244,6 @@ trait RemoteConnection: Send + Sync {
 struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<process::Child>>,
-    platform: SshPlatform,
     _temp_dir: TempDir,
 }
 
@@ -1275,19 +1273,9 @@ impl RemoteConnection for SshRemoteConnection {
     async fn get_remote_binary_path(
         &self,
         delegate: &Arc<dyn SshClientDelegate>,
-        reconnect: bool,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
-        let platform = self.platform;
-        let remote_binary_path = delegate.remote_server_binary_path(platform, cx)?;
-        if !reconnect {
-            self.ensure_server_binary(&delegate, &remote_binary_path, platform, cx)
-                .await?;
-        }
-
-        let socket = self.socket.clone();
-        run_cmd(socket.ssh_command(&remote_binary_path.to_string_lossy(), &["version"])).await?;
-        Ok(remote_binary_path)
+        self.ensure_server_binary(&delegate, cx).await
     }
 
     fn start_proxy(
@@ -1329,7 +1317,7 @@ impl RemoteConnection for SshRemoteConnection {
 
         let ssh_proxy_process = match self
             .socket
-            .shell_script(start_proxy_command)
+            .ssh_command("sh", &["-c", &start_proxy_command])
             // IMPORTANT: we kill this process when we drop the task that uses it.
             .kill_on_drop(true)
             .spawn()
@@ -1511,8 +1499,18 @@ impl SshRemoteConnection {
             socket_path,
         };
 
-        let os = run_cmd(socket.ssh_command("uname", &["-s"])).await?;
-        let arch = run_cmd(socket.ssh_command("uname", &["-m"])).await?;
+        Ok(Self {
+            socket,
+            master_process: Mutex::new(Some(master_process)),
+            _temp_dir: temp_dir,
+        })
+    }
+
+    async fn platform(&self) -> Result<SshPlatform> {
+        let uname = self.socket.run_command("uname", &["-sm"]).await?;
+        let Some((os, arch)) = uname.split_once(" ") else {
+            Err(anyhow!("unknown uname: {uname:?}"))?
+        };
 
         let os = match os.trim() {
             "Darwin" => "macos",
@@ -1527,14 +1525,7 @@ impl SshRemoteConnection {
             Err(anyhow!("unknown uname architecture {arch:?}"))?
         };
 
-        let platform = SshPlatform { os, arch };
-
-        Ok(Self {
-            socket,
-            master_process: Mutex::new(Some(master_process)),
-            platform,
-            _temp_dir: temp_dir,
-        })
+        Ok(SshPlatform { os, arch })
     }
 
     fn multiplex(
@@ -1642,267 +1633,87 @@ impl SshRemoteConnection {
     async fn ensure_server_binary(
         &self,
         delegate: &Arc<dyn SshClientDelegate>,
-        dst_path: &Path,
-        platform: SshPlatform,
         cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        let lock_file = dst_path.with_extension("lock");
-        let lock_content = {
-            let timestamp = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .context("failed to get timestamp")?
-                .as_secs();
-            let source_port = self.get_ssh_source_port().await?;
-            format!("{} {}", source_port, timestamp)
-        };
+    ) -> Result<PathBuf> {
+        let (release_channel, app_commit, app_version) = cx.update(|cx| {
+            (
+                ReleaseChannel::global(cx),
+                AppCommitSha::try_global(cx),
+                AppVersion::global(cx),
+            )
+        })?;
+        let version = match release_channel {
+            ReleaseChannel::Nightly => {
+                let commit = app_commit.map(|s| s.0.to_string()).unwrap_or_default();
 
-        let lock_stale_age = Duration::from_secs(10 * 60);
-        let max_wait_time = Duration::from_secs(10 * 60);
-        let check_interval = Duration::from_secs(5);
-        let start_time = Instant::now();
-
-        loop {
-            let lock_acquired = self.create_lock_file(&lock_file, &lock_content).await?;
-            if lock_acquired {
-                delegate.set_status(Some("Acquired lock file on host"), cx);
-                let result = self
-                    .update_server_binary_if_needed(delegate, dst_path, platform, cx)
-                    .await;
-
-                self.remove_lock_file(&lock_file).await.ok();
-
-                return result;
-            } else {
-                if let Ok(is_stale) = self.is_lock_stale(&lock_file, &lock_stale_age).await {
-                    if is_stale {
-                        delegate.set_status(
-                            Some("Detected lock file on host being stale. Removing"),
-                            cx,
-                        );
-                        self.remove_lock_file(&lock_file).await?;
-                        continue;
-                    } else {
-                        if start_time.elapsed() > max_wait_time {
-                            return Err(anyhow!("Timeout waiting for lock to be released"));
-                        }
-                        log::info!(
-                            "Found lockfile: {:?}. Will check again in {:?}",
-                            lock_file,
-                            check_interval
-                        );
-                        delegate.set_status(
-                            Some("Waiting for another Zed instance to finish uploading binary"),
-                            cx,
-                        );
-                        smol::Timer::after(check_interval).await;
-                        continue;
-                    }
-                } else {
-                    // Unable to check lock, assume it's valid and wait
-                    if start_time.elapsed() > max_wait_time {
-                        return Err(anyhow!("Timeout waiting for lock to be released"));
-                    }
-                    smol::Timer::after(check_interval).await;
-                    continue;
-                }
+                format!("{}-{}", app_version, commit)
             }
-        }
-    }
-
-    async fn get_ssh_source_port(&self) -> Result<String> {
-        let output = run_cmd(self.socket.shell_script("echo $SSH_CLIENT | cut -d' ' -f2"))
-            .await
-            .context("failed to get source port from SSH_CLIENT on host")?;
-
-        Ok(output.trim().to_string())
-    }
-
-    async fn create_lock_file(&self, lock_file: &Path, content: &str) -> Result<bool> {
-        let parent_dir = lock_file
-            .parent()
-            .ok_or_else(|| anyhow!("Lock file path has no parent directory"))?;
-
-        let script = format!(
-            r#"mkdir -p "{parent_dir}" && [ ! -f "{lock_file}" ] && echo "{content}" > "{lock_file}" && echo "created" || echo "exists""#,
-            parent_dir = parent_dir.display(),
-            lock_file = lock_file.display(),
-            content = content,
+            ReleaseChannel::Dev => "build".to_string(),
+            _ => app_version.to_string(),
+        };
+        let binary_name = format!(
+            "zed-remote-server-{}-{}",
+            release_channel.dev_name(),
+            version
         );
 
-        let output = run_cmd(self.socket.shell_script(&script))
+        let dst_path = paths::remote_server_dir_relative().join(binary_name);
+        let tmp_path_gz = PathBuf::from(format!(
+            "{}-download-{}.gz",
+            dst_path.to_string_lossy(),
+            std::process::id()
+        ));
+
+        #[cfg(debug_assertions)]
+        if std::env::var("ZED_BUILD_REMOTE_SERVER").is_ok() {
+            // only do this once per re-run of zed
+            std::env::remove_var("ZED_BUILD_REMOTE_SERVER");
+            let src_path = self
+                .build_local(self.platform().await?, delegate, cx)
+                .await?;
+            self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+                .await?;
+            self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                .await?;
+            return Ok(dst_path);
+        }
+
+        if self
+            .socket
+            .run_command(&dst_path.to_string_lossy(), &["version"])
             .await
-            .with_context(|| format!("failed to create a lock file at {:?}", lock_file))?;
-
-        Ok(output.trim() == "created")
-    }
-
-    fn generate_stale_check_script(lock_file: &Path, max_age: u64) -> String {
-        shell_script!(
-            r#"
-            if [ ! -f "{lock_file}" ]; then
-                echo "lock file does not exist"
-                exit 0
-            fi
-
-            read -r port timestamp < "{lock_file}"
-
-            # Check if port is still active
-            if command -v ss >/dev/null 2>&1; then
-                if ! ss -n | grep -q ":$port[[:space:]]"; then
-                    echo "ss reports port $port is not open"
-                    exit 0
-                fi
-            elif command -v netstat >/dev/null 2>&1; then
-                if ! netstat -n | grep -q ":$port[[:space:]]"; then
-                    echo "netstat reports port $port is not open"
-                    exit 0
-                fi
-            fi
-
-            # Check timestamp
-            if [ $(( $(date +%s) - timestamp )) -gt {max_age} ]; then
-                echo "timestamp in lockfile is too old"
-            else
-                echo "recent"
-            fi"#,
-            lock_file = &lock_file.to_string_lossy(),
-            max_age = &max_age.to_string()
-        )
-    }
-
-    async fn is_lock_stale(&self, lock_file: &Path, max_age: &Duration) -> Result<bool> {
-        let script = Self::generate_stale_check_script(lock_file, max_age.as_secs());
-
-        let output = run_cmd(self.socket.shell_script(script))
-            .await
-            .with_context(|| {
-                format!("failed to check whether lock file {:?} is stale", lock_file)
-            })?;
-
-        let trimmed = output.trim();
-        let is_stale = trimmed != "recent";
-        log::info!("checked lockfile for staleness. stale: {is_stale}, output: {trimmed:?}");
-        Ok(is_stale)
-    }
-
-    async fn remove_lock_file(&self, lock_file: &Path) -> Result<()> {
-        run_cmd(
-            self.socket
-                .ssh_command("rm", &["-f", &lock_file.to_string_lossy()]),
-        )
-        .await
-        .context("failed to remove lock file")?;
-        Ok(())
-    }
-
-    async fn update_server_binary_if_needed(
-        &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        dst_path: &Path,
-        platform: SshPlatform,
-        cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        let current_version = match run_cmd(
-            self.socket
-                .ssh_command(&dst_path.to_string_lossy(), &["version"]),
-        )
-        .await
+            .is_ok()
         {
-            Ok(version_output) => {
-                if let Ok(version) = version_output.trim().parse::<SemanticVersion>() {
-                    Some(ServerVersion::Semantic(version))
-                } else {
-                    Some(ServerVersion::Commit(version_output.trim().to_string()))
-                }
-            }
-            Err(_) => None,
-        };
-        let (release_channel, wanted_version) = cx.update(|cx| {
-            let release_channel = ReleaseChannel::global(cx);
-            let wanted_version = match release_channel {
-                ReleaseChannel::Nightly => {
-                    AppCommitSha::try_global(cx).map(|sha| ServerVersion::Commit(sha.0))
-                }
-                ReleaseChannel::Dev => None,
-                _ => Some(ServerVersion::Semantic(AppVersion::global(cx))),
-            };
-            (release_channel, wanted_version)
-        })?;
-
-        match (&current_version, &wanted_version) {
-            (Some(current), Some(wanted)) if current == wanted => {
-                log::info!("remote development server present and matching client version");
-                return Ok(());
-            }
-            (Some(ServerVersion::Semantic(current)), Some(ServerVersion::Semantic(wanted)))
-                if current > wanted =>
-            {
-                anyhow::bail!("The version of the remote server ({}) is newer than the Zed version ({}). Please update Zed.", current, wanted);
-            }
-            _ => {
-                log::info!("Installing remote development server");
-            }
+            return Ok(dst_path);
         }
 
-        if self.is_binary_in_use(dst_path).await? {
-            // When we're not in dev mode, we don't want to switch out the binary if it's
-            // still open.
-            // In dev mode, that's fine, since we often kill Zed processes with Ctrl-C and want
-            // to still replace the binary.
-            if cfg!(not(debug_assertions)) {
-                anyhow::bail!("The remote server version ({:?}) does not match the wanted version ({:?}), but is in use by another Zed client so cannot be upgraded.", &current_version, &wanted_version)
-            } else {
-                log::info!("Binary is currently in use, ignoring because this is a dev build")
-            }
-        }
-
-        if wanted_version.is_none() {
-            if std::env::var("ZED_BUILD_REMOTE_SERVER").is_err() {
-                if let Some(current_version) = current_version {
-                    log::warn!(
-                        "In development, using cached remote server binary version ({})",
-                        current_version
-                    );
-
-                    return Ok(());
-                } else {
-                    anyhow::bail!(
-                        "ZED_BUILD_REMOTE_SERVER is not set, but no remote server exists at ({:?})",
-                        dst_path
-                    )
-                }
-            }
-
-            #[cfg(debug_assertions)]
-            {
-                let src_path = self.build_local(platform, delegate, cx).await?;
-
-                return self
-                    .upload_local_server_binary(&src_path, dst_path, delegate, cx)
-                    .await;
-            }
-
-            #[cfg(not(debug_assertions))]
-            anyhow::bail!("Running development build in release mode, cannot cross compile (unset ZED_BUILD_REMOTE_SERVER)")
-        }
-
-        let upload_binary_over_ssh = self.socket.connection_options.upload_binary_over_ssh;
-
-        if !upload_binary_over_ssh {
-            let (url, body) = delegate
-                .get_download_params(
-                    platform,
-                    release_channel,
-                    wanted_version.clone().and_then(|v| v.semantic_version()),
-                    cx,
+        let wanted_version = cx.update(|cx| match release_channel {
+            ReleaseChannel::Nightly => Ok(None),
+            ReleaseChannel::Dev => {
+                anyhow::bail!(
+                    "ZED_BUILD_REMOTE_SERVER is not set, but no remote server exists at ({:?})",
+                    dst_path
                 )
+            }
+            _ => Ok(Some(AppVersion::global(cx))),
+        })??;
+
+        let platform = self.platform().await?;
+
+        if !self.socket.connection_options.upload_binary_over_ssh {
+            let (url, body) = delegate
+                .get_download_params(platform, release_channel, wanted_version, cx)
                 .await?;
 
             match self
-                .download_binary_on_server(&url, &body, dst_path, delegate, cx)
+                .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
                 .await
             {
-                Ok(_) => return Ok(()),
+                Ok(_) => {
+                    self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                        .await?;
+                    return Ok(dst_path);
+                }
                 Err(e) => {
                     log::error!(
                         "Failed to download binary on server, attempting to upload server: {}",
@@ -1913,109 +1724,100 @@ impl SshRemoteConnection {
         }
 
         let src_path = delegate
-            .download_server_binary_locally(
-                platform,
-                release_channel,
-                wanted_version.and_then(|v| v.semantic_version()),
-                cx,
-            )
+            .download_server_binary_locally(platform, release_channel, wanted_version, cx)
             .await?;
-
-        self.upload_local_server_binary(&src_path, dst_path, delegate, cx)
-            .await
-    }
-
-    async fn is_binary_in_use(&self, binary_path: &Path) -> Result<bool> {
-        let script = shell_script!(
-            r#"
-            if command -v lsof >/dev/null 2>&1; then
-                if lsof "{binary_path}" >/dev/null 2>&1; then
-                    echo "in_use"
-                    exit 0
-                fi
-            elif command -v fuser >/dev/null 2>&1; then
-                if fuser "{binary_path}" >/dev/null 2>&1; then
-                    echo "in_use"
-                    exit 0
-                fi
-            fi
-            echo "not_in_use"
-            "#,
-            binary_path = &binary_path.to_string_lossy(),
-        );
-
-        let output = run_cmd(self.socket.shell_script(script))
-            .await
-            .context("failed to check if binary is in use")?;
-
-        Ok(output.trim() == "in_use")
+        self.upload_local_server_binary(&src_path, &tmp_path_gz, delegate, cx)
+            .await?;
+        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+            .await?;
+        return Ok(dst_path);
     }
 
     async fn download_binary_on_server(
         &self,
         url: &str,
         body: &str,
-        dst_path: &Path,
+        tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let mut dst_path_gz = dst_path.to_path_buf();
-        dst_path_gz.set_extension("gz");
-
-        if let Some(parent) = dst_path.parent() {
-            run_cmd(
-                self.socket
-                    .ssh_command("mkdir", &["-p", &parent.to_string_lossy()]),
-            )
-            .await?;
+        if let Some(parent) = tmp_path_gz.parent() {
+            self.socket
+                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
+                .await?;
         }
 
         delegate.set_status(Some("Downloading remote development server on host"), cx);
 
-        let script = shell_script!(
-            r#"
-            if command -v curl >/dev/null 2>&1; then
-                curl -f -L -X GET -H "Content-Type: application/json" -d {body} {url} -o {dst_path} && echo "curl"
-            elif command -v wget >/dev/null 2>&1; then
-                wget --max-redirect=5 --method=GET --header="Content-Type: application/json" --body-data={body} {url} -O {dst_path} && echo "wget"
-            else
-                echo "Neither curl nor wget is available" >&2
-                exit 1
-            fi
-            "#,
-            body = body,
-            url = url,
-            dst_path = &dst_path_gz.to_string_lossy(),
-        );
-
-        let output = run_cmd(self.socket.shell_script(script))
+        match self
+            .socket
+            .run_command(
+                "curl",
+                &[
+                    "-f",
+                    "-L",
+                    "-X",
+                    "GET",
+                    "-H",
+                    "Content-Type: application/json",
+                    "-d",
+                    &body,
+                    &url,
+                    "-o",
+                    &tmp_path_gz.to_string_lossy(),
+                ],
+            )
             .await
-            .context("Failed to download server binary")?;
+        {
+            Ok(_) => {}
+            Err(e) => {
+                if self.socket.run_command("which", &["curl"]).await.is_ok() {
+                    return Err(e);
+                }
 
-        if !output.contains("curl") && !output.contains("wget") {
-            return Err(anyhow!("Failed to download server binary: {}", output));
+                match self
+                    .socket
+                    .run_command(
+                        "wget",
+                        &[
+                            "--max-redirect=5",
+                            "--method=GET",
+                            "--header=Content-Type: application/json",
+                            "--body-data",
+                            &body,
+                            &url,
+                            "-O",
+                            &tmp_path_gz.to_string_lossy(),
+                        ],
+                    )
+                    .await
+                {
+                    Ok(_) => {}
+                    Err(e) => {
+                        if self.socket.run_command("which", &["wget"]).await.is_ok() {
+                            return Err(e);
+                        } else {
+                            anyhow::bail!("Neither curl nor wget is available");
+                        }
+                    }
+                }
+            }
         }
 
-        self.extract_server_binary(dst_path, &dst_path_gz, delegate, cx)
-            .await
+        Ok(())
     }
 
     async fn upload_local_server_binary(
         &self,
         src_path: &Path,
-        dst_path: &Path,
+        tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
-        let mut dst_path_gz = dst_path.to_path_buf();
-        dst_path_gz.set_extension("gz");
-
-        if let Some(parent) = dst_path.parent() {
-            run_cmd(
-                self.socket
-                    .ssh_command("mkdir", &["-p", &parent.to_string_lossy()]),
-            )
-            .await?;
+        if let Some(parent) = tmp_path_gz.parent() {
+            self.socket
+                .run_command("mkdir", &["-p", &parent.to_string_lossy()])
+                .await?;
         }
 
         let src_stat = fs::metadata(&src_path).await?;
@@ -2023,42 +1825,41 @@ impl SshRemoteConnection {
 
         let t0 = Instant::now();
         delegate.set_status(Some("Uploading remote development server"), cx);
-        log::info!("uploading remote development server ({}kb)", size / 1024);
-        self.upload_file(&src_path, &dst_path_gz)
+        log::info!(
+            "uploading remote development server to {:?} ({}kb)",
+            tmp_path_gz,
+            size / 1024
+        );
+        self.upload_file(&src_path, &tmp_path_gz)
             .await
             .context("failed to upload server binary")?;
         log::info!("uploaded remote development server in {:?}", t0.elapsed());
-
-        self.extract_server_binary(dst_path, &dst_path_gz, delegate, cx)
-            .await
+        Ok(())
     }
 
     async fn extract_server_binary(
         &self,
         dst_path: &Path,
-        dst_path_gz: &Path,
+        tmp_path_gz: &Path,
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<()> {
         delegate.set_status(Some("Extracting remote development server"), cx);
-        run_cmd(
-            self.socket
-                .ssh_command("gunzip", &["-f", &dst_path_gz.to_string_lossy()]),
-        )
-        .await?;
-
         let server_mode = 0o755;
-        delegate.set_status(Some("Marking remote development server executable"), cx);
-        run_cmd(self.socket.ssh_command(
-            "chmod",
-            &[&format!("{:o}", server_mode), &dst_path.to_string_lossy()],
-        ))
-        .await?;
 
+        let script = shell_script!(
+            "gunzip -f {tmp_path_gz} && chmod {server_mode} {tmp_path} && mv {tmp_path} {dst_path}",
+            tmp_path_gz = &tmp_path_gz.to_string_lossy(),
+            tmp_path = &tmp_path_gz.to_string_lossy().strip_suffix(".gz").unwrap(),
+            server_mode = &format!("{:o}", server_mode),
+            dst_path = &dst_path.to_string_lossy()
+        );
+        self.socket.run_command("sh", &["-c", &script]).await?;
         Ok(())
     }
 
     async fn upload_file(&self, src_path: &Path, dest_path: &Path) -> Result<()> {
+        log::debug!("uploading file {:?} to {:?}", src_path, dest_path);
         let mut command = process::Command::new("scp");
         let output = self
             .socket
@@ -2577,7 +2378,6 @@ mod fake {
         async fn get_remote_binary_path(
             &self,
             _delegate: &Arc<dyn SshClientDelegate>,
-            _reconnect: bool,
             _cx: &mut AsyncAppContext,
         ) -> Result<PathBuf> {
             Ok(PathBuf::new())
@@ -2665,81 +2465,5 @@ mod fake {
         ) -> Result<PathBuf> {
             unreachable!()
         }
-    }
-}
-
-#[cfg(all(test, unix))]
-mod tests {
-    use super::*;
-    use std::fs;
-    use tempfile::TempDir;
-
-    fn run_stale_check_script(
-        lock_file: &Path,
-        max_age: Duration,
-        simulate_port_open: Option<&str>,
-    ) -> Result<String> {
-        let wrapper = format!(
-            r#"
-            # Mock ss/netstat commands
-            ss() {{
-                # Only handle the -n argument
-                if [ "$1" = "-n" ]; then
-                    # If we're simulating an open port, output a line containing that port
-                    if [ "{simulated_port}" != "" ]; then
-                        echo "ESTAB 0 0 1.2.3.4:{simulated_port} 5.6.7.8:12345"
-                    fi
-                fi
-            }}
-            netstat() {{
-                ss "$@"
-            }}
-            export -f ss netstat
-
-            # Real script starts here
-            {script}"#,
-            simulated_port = simulate_port_open.unwrap_or(""),
-            script = SshRemoteConnection::generate_stale_check_script(lock_file, max_age.as_secs())
-        );
-
-        let output = std::process::Command::new("bash")
-            .arg("-c")
-            .arg(&wrapper)
-            .output()?;
-
-        if !output.stderr.is_empty() {
-            eprintln!("Script stderr: {}", String::from_utf8_lossy(&output.stderr));
-        }
-
-        Ok(String::from_utf8(output.stdout)?.trim().to_string())
-    }
-
-    #[test]
-    fn test_lock_staleness() -> Result<()> {
-        let temp_dir = TempDir::new()?;
-        let lock_file = temp_dir.path().join("test.lock");
-
-        // Test 1: No lock file
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), None)?;
-        assert_eq!(output, "lock file does not exist");
-
-        // Test 2: Lock file with port that's not open
-        fs::write(&lock_file, "54321 1234567890")?;
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("98765"))?;
-        assert_eq!(output, "ss reports port 54321 is not open");
-
-        // Test 3: Lock file with port that is open but old timestamp
-        let old_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - 700; // 700 seconds ago
-        fs::write(&lock_file, format!("54321 {}", old_timestamp))?;
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("54321"))?;
-        assert_eq!(output, "timestamp in lockfile is too old");
-
-        // Test 4: Lock file with port that is open and recent timestamp
-        let recent_timestamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() - 60; // 1 minute ago
-        fs::write(&lock_file, format!("54321 {}", recent_timestamp))?;
-        let output = run_stale_check_script(&lock_file, Duration::from_secs(600), Some("54321"))?;
-        assert_eq!(output, "recent");
-
-        Ok(())
     }
 }
