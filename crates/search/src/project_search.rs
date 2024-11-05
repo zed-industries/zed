@@ -2024,6 +2024,7 @@ pub fn perform_project_search(
     text: impl Into<std::sync::Arc<str>>,
     cx: &mut gpui::VisualTestContext,
 ) {
+    cx.run_until_parked();
     search_view.update(cx, |search_view, cx| {
         search_view
             .query_editor
