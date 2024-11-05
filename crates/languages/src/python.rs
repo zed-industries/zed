@@ -11,6 +11,7 @@ use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
@@ -436,30 +437,29 @@ impl ToolchainLister for PythonToolchainProvider {
 pub struct EnvironmentApi<'a> {
     global_search_locations: Arc<Mutex<Vec<PathBuf>>>,
     project_env: &'a HashMap<String, String>,
+    pet_env: pet_core::os_environment::EnvironmentApi,
 }
 
 impl<'a> EnvironmentApi<'a> {
     pub fn from_env(project_env: &'a HashMap<String, String>) -> Self {
         let paths = project_env
             .get("PATH")
-            .cloned()
-            .or_else(|| std::env::var("PATH").ok())
-            .map(|p| std::env::split_paths(&p).collect())
+            .map(|p| std::env::split_paths(p).collect())
             .unwrap_or_default();
+
         EnvironmentApi {
             global_search_locations: Arc::new(Mutex::new(paths)),
             project_env,
+            pet_env: pet_core::os_environment::EnvironmentApi::new(),
         }
     }
 
     fn user_home(&self) -> Option<PathBuf> {
         self.project_env
             .get("HOME")
-            .cloned()
-            .or_else(|| self.project_env.get("USERPROFILE").cloned())
-            .or_else(|| std::env::var("HOME").ok())
-            .or_else(|| std::env::var("USERPROFILE").ok())
+            .or_else(|| self.project_env.get("USERPROFILE"))
             .map(|home| pet_fs::path::norm_case(PathBuf::from(home)))
+            .or_else(|| self.pet_env.get_user_home())
     }
 }
 
@@ -474,7 +474,10 @@ impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
     }
 
     fn get_env_var(&self, key: String) -> Option<String> {
-        self.project_env.get(&key).cloned()
+        self.project_env
+            .get(&key)
+            .cloned()
+            .or_else(|| self.pet_env.get_env_var(key))
     }
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
@@ -493,7 +496,10 @@ impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
     }
 
     fn get_env_var(&self, key: String) -> Option<String> {
-        self.project_env.get(&key).cloned()
+        self.project_env
+            .get(&key)
+            .cloned()
+            .or_else(|| self.pet_env.get_env_var(key))
     }
 
     fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
@@ -501,15 +507,12 @@ impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
             let mut paths =
                 std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
                     .collect::<Vec<PathBuf>>();
-            log::trace!("Env PATH: {:?}", paths);
-            for p in LINUX_SYSTEM_SEARCH_PATHS.iter() {
-                if !paths.contains(p) {
-                    paths.push(p.clone());
-                }
-            }
 
-            if let Some(home) = self.get_user_home() {
-                paths.push(home.join(".local").join("bin"));
+            log::trace!("Env PATH: {:?}", paths);
+            for p in self.pet_env.get_know_global_search_locations() {
+                if !paths.contains(&p) {
+                    paths.push(p);
+                }
             }
 
             let mut paths = paths
@@ -525,40 +528,6 @@ impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
         self.global_search_locations.lock().unwrap().clone()
     }
 }
-
-#[cfg(unix)]
-static LINUX_SYSTEM_SEARCH_PATHS: std::sync::LazyLock<[PathBuf; 27]> =
-    std::sync::LazyLock::new(|| {
-        [
-            PathBuf::from("/bin"),
-            PathBuf::from("/etc"),
-            PathBuf::from("/lib"),
-            PathBuf::from("/lib/x86_64-linux-gnu"),
-            PathBuf::from("/lib64"),
-            PathBuf::from("/sbin"),
-            PathBuf::from("/snap/bin"),
-            PathBuf::from("/usr/bin"),
-            PathBuf::from("/usr/games"),
-            PathBuf::from("/usr/include"),
-            PathBuf::from("/usr/lib"),
-            PathBuf::from("/usr/lib/x86_64-linux-gnu"),
-            PathBuf::from("/usr/lib64"),
-            PathBuf::from("/usr/libexec"),
-            PathBuf::from("/usr/local"),
-            PathBuf::from("/usr/local/bin"),
-            PathBuf::from("/usr/local/etc"),
-            PathBuf::from("/usr/local/games"),
-            PathBuf::from("/usr/local/lib"),
-            PathBuf::from("/usr/local/sbin"),
-            PathBuf::from("/usr/sbin"),
-            PathBuf::from("/usr/share"),
-            PathBuf::from("/home/bin"),
-            PathBuf::from("/home/sbin"),
-            PathBuf::from("/opt"),
-            PathBuf::from("/opt/bin"),
-            PathBuf::from("/opt/sbin"),
-        ]
-    });
 
 #[cfg(test)]
 mod tests {
