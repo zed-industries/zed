@@ -123,10 +123,6 @@ pub enum SlashCommandEvent {
         label: SharedString,
         metadata: Option<serde_json::Value>,
     },
-    Progress {
-        message: SharedString,
-        complete: f32,
-    },
     Content(SlashCommandContent),
     EndSection {
         metadata: Option<serde_json::Value>,
@@ -241,7 +237,7 @@ impl SlashCommandOutput {
                         output.sections.push(section);
                     }
                 }
-                SlashCommandEvent::StartMessage { .. } | SlashCommandEvent::Progress { .. } => {}
+                SlashCommandEvent::StartMessage { .. } => {}
             }
         }
 

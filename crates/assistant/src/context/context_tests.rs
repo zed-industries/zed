@@ -1077,7 +1077,10 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     let num_sections = rng.gen_range(0..=3);
                     let mut section_start = 0;
                     for _ in 0..num_sections {
-                        let section_end = rng.gen_range(section_start..=output_text.len());
+                        let mut section_end = rng.gen_range(section_start..=output_text.len());
+                        while !output_text.is_char_boundary(section_end) {
+                            section_end += 1;
+                        }
                         events.push(Ok(SlashCommandEvent::StartSection {
                             icon: IconName::Ai,
                             label: "section".into(),

@@ -2005,31 +2005,6 @@ impl ContextEditor {
                         cx,
                     );
 
-                    // todo!(): Added on `main`, do we still need?
-                    // let block_ids = editor.insert_blocks(
-                    //     updated
-                    //         .iter()
-                    //         .filter_map(|command| match &command.status {
-                    //             PendingSlashCommandStatus::Error(error) => {
-                    //                 Some((command, error.clone()))
-                    //             }
-                    //             _ => None,
-                    //         })
-                    //         .map(|(command, error_message)| BlockProperties {
-                    //             style: BlockStyle::Fixed,
-                    //             height: 1,
-                    //             placement: BlockPlacement::Below(Anchor {
-                    //                 buffer_id: Some(buffer_id),
-                    //                 excerpt_id,
-                    //                 text_anchor: command.source_range.start,
-                    //             }),
-                    //             render: slash_command_error_block_renderer(error_message),
-                    //             priority: 0,
-                    //         }),
-                    //     None,
-                    //     cx,
-                    // );
-
                     self.pending_slash_command_creases.extend(
                         updated
                             .iter()
@@ -2046,16 +2021,9 @@ impl ContextEditor {
             }
             ContextEvent::SlashCommandFinished {
                 output_range: _output_range,
-                sections,
                 run_commands_in_ranges,
                 expand_result,
             } => {
-                self.insert_slash_command_output_sections(
-                    sections.iter().cloned(),
-                    *expand_result,
-                    cx,
-                );
-
                 for range in run_commands_in_ranges {
                     let commands = self.context.update(cx, |context, cx| {
                         context.reparse(cx);
