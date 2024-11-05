@@ -154,7 +154,7 @@ pub fn initialize_workspace(
         .detach();
 
         #[cfg(target_os = "linux")]
-        if let Err(e) = fs::watcher::global(|_| {}) {
+        if let Err(e) = fs::linux_watcher::watcher::global(|_| {}) {
             let message = format!(db::indoc!{r#"
                 inotify_init returned {}
 

@@ -1,6 +1,9 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
+#[cfg(target_os = "linux")]
+pub mod linux_watcher;
+
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
 
@@ -585,74 +588,20 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use notify::EventKind;
         use parking_lot::Mutex;
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let root_path = path.to_path_buf();
+        let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
 
-        // Check if root path is a symlink
-        let target_path = self.read_link(&path).await.ok();
-
-        watcher::global({
-            let target_path = target_path.clone();
-            |g| {
-                let tx = tx.clone();
-                let pending_paths = pending_paths.clone();
-                g.add(move |event: &notify::Event| {
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-                    let mut paths = event
-                        .paths
-                        .iter()
-                        .filter_map(|path| {
-                            if let Some(target) = target_path.clone() {
-                                if path.starts_with(target) {
-                                    return Some(PathEvent {
-                                        path: path.clone(),
-                                        kind,
-                                    });
-                                }
-                            } else if path.starts_with(&root_path) {
-                                return Some(PathEvent {
-                                    path: path.clone(),
-                                    kind,
-                                });
-                            }
-                            None
-                        })
-                        .collect::<Vec<_>>();
-
-                    if !paths.is_empty() {
-                        paths.sort();
-                        let mut pending_paths = pending_paths.lock();
-                        if pending_paths.is_empty() {
-                            tx.try_send(()).ok();
-                        }
-                        util::extend_sorted(&mut *pending_paths, paths, usize::MAX, |a, b| {
-                            a.path.cmp(&b.path)
-                        });
-                    }
-                })
-            }
-        })
-        .log_err();
-
-        let watcher = Arc::new(RealWatcher {});
-
-        watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
-        // watch the parent dir so we can tell when settings.json is created
+        watcher.add(&path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
         if let Some(parent) = path.parent() {
+            // watch the parent dir so we can tell when settings.json is created
             watcher.add(parent).log_err();
         }
 
         // Check if path is a symlink and follow the target parent
-        if let Some(target) = target_path {
+        if let Some(target) = self.read_link(&path).await.ok() {
             watcher.add(&target).ok();
             if let Some(parent) = target.parent() {
                 watcher.add(parent).log_err();
@@ -785,24 +734,6 @@ impl Watcher for RealWatcher {
 
     fn remove(&self, _: &Path) -> Result<()> {
         Ok(())
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Watcher for RealWatcher {
-    fn add(&self, path: &Path) -> Result<()> {
-        use notify::Watcher;
-        Ok(watcher::global(|w| {
-            dbg!("adding watcher", path);
-            w.inotify
-                .lock()
-                .watch(path, notify::RecursiveMode::NonRecursive)
-        })??)
-    }
-
-    fn remove(&self, path: &Path) -> Result<()> {
-        use notify::Watcher;
-        Ok(watcher::global(|w| w.inotify.lock().unwatch(path))??)
     }
 }
 
@@ -2087,51 +2018,5 @@ mod tests {
             fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
             "D",
         );
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub mod watcher {
-    use std::sync::OnceLock;
-
-    use parking_lot::Mutex;
-    use util::ResultExt;
-
-    pub struct GlobalWatcher {
-        // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
-        pub(super) inotify: Mutex<notify::INotifyWatcher>,
-        pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
-    }
-
-    impl GlobalWatcher {
-        pub(super) fn add(&self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
-            self.watchers.lock().push(Box::new(cb))
-        }
-    }
-
-    static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
-        OnceLock::new();
-
-    fn handle_event(event: Result<notify::Event, notify::Error>) {
-        let Some(event) = event.log_err() else { return };
-        global::<()>(move |watcher| {
-            for f in watcher.watchers.lock().iter() {
-                f(&event)
-            }
-        })
-        .log_err();
-    }
-
-    pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
-        let result = INOTIFY_INSTANCE.get_or_init(|| {
-            notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
-                inotify: Mutex::new(file_watcher),
-                watchers: Default::default(),
-            })
-        });
-        match result {
-            Ok(g) => Ok(f(g)),
-            Err(e) => Err(anyhow::anyhow!("{}", e)),
-        }
     }
 }
