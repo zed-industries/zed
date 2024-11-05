@@ -6,7 +6,7 @@ use gpui::{actions, AppContext, Task, WindowContext};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
 use rpc::proto::{self};
 use theme::ActiveTheme;
-use ui::{prelude::*, Avatar2, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
+use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
 use workspace::notifications::DetachAndPromptErr;
 
 use crate::TitleBar;
@@ -221,7 +221,7 @@ impl TitleBar {
                 .child(
                     Facepile::empty()
                         .child(
-                            Avatar2::new(user.avatar_uri.clone())
+                            Avatar::new(user.avatar_uri.clone())
                                 .fallback_initials(user.github_login.clone().to_string())
                                 .grayscale(!is_present)
                                 .border_color(if is_speaking {
@@ -261,7 +261,7 @@ impl TitleBar {
                                     .clone();
 
                                 Some(div().mt(-px(4.)).child(
-                                    Avatar2::new(follower.avatar_uri.clone()).size(rems(0.75)),
+                                    Avatar::new(follower.avatar_uri.clone()).size(rems(0.75)),
                                 ))
                             },
                         ))

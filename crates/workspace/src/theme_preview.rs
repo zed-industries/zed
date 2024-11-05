@@ -3,9 +3,9 @@ use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar, Avatar2,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, ElevationIndex, Facepile,
-    TintColor, Tooltip,
+    prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
+    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, AvatarOld, ButtonLike, ElevationIndex,
+    Facepile, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -111,7 +111,7 @@ impl ThemePreview {
         v_flex()
             .gap_1()
             .child(
-                Headline::new("Avatar2")
+                Headline::new("Avatar")
                     .size(HeadlineSize::Small)
                     .color(Color::Muted),
             )
@@ -124,24 +124,20 @@ impl ThemePreview {
                             v_flex()
                                 .gap_1()
                                 .child(Label::new("Default").color(Color::Muted))
-                                .child(Avatar2::new(avatar_url.clone()))
+                                .child(Avatar::new(avatar_url.clone()))
                                 .child(Label::new("Default, Grayscale").color(Color::Muted))
-                                .child(Avatar2::new(avatar_url.clone()).grayscale(true)),
+                                .child(Avatar::new(avatar_url.clone()).grayscale(true)),
                         )
                         .child(
                             v_flex()
                                 .gap_1()
                                 .child(Label::new("Anonymous").color(Color::Muted))
-                                .child(
-                                    h_flex().gap_1().children(
-                                        (0..=5).map(|ix| {
-                                            Avatar2::new_fallback().fallback_anonymous(ix)
-                                        }),
-                                    ),
-                                )
+                                .child(h_flex().gap_1().children(
+                                    (0..=5).map(|ix| Avatar::new_fallback().fallback_anonymous(ix)),
+                                ))
                                 .child(Label::new("Anonymous, Grayscale").color(Color::Muted))
                                 .child(h_flex().gap_1().children((0..=5).map(|ix| {
-                                    Avatar2::new_fallback()
+                                    Avatar::new_fallback()
                                         .fallback_anonymous(ix)
                                         .grayscale(true)
                                 }))),
@@ -152,7 +148,7 @@ impl ThemePreview {
                                 .child(Label::new("Initials").color(Color::Muted))
                                 .child(h_flex().gap_1().children(
                                     PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
-                                        Avatar2::new_fallback()
+                                        Avatar::new_fallback()
                                             .fallback_initials(handle.to_string())
                                             .fallback_anonymous(ix as u32)
                                     }),
@@ -160,7 +156,7 @@ impl ThemePreview {
                                 .child(Label::new("Initials, Grayscale").color(Color::Muted))
                                 .child(h_flex().gap_1().children(
                                     PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
-                                        Avatar2::new_fallback()
+                                        Avatar::new_fallback()
                                             .fallback_initials(handle.to_string())
                                             .fallback_anonymous(ix as u32)
                                             .grayscale(true)
@@ -174,20 +170,20 @@ impl ThemePreview {
                                 .child(
                                     h_flex()
                                         .gap_2()
-                                        .child(Avatar2::new(avatar_url.clone()).indicator(
+                                        .child(Avatar::new(avatar_url.clone()).indicator(
                                             AvatarAudioStatusIndicator::new(AudioStatus::Deafened),
                                         ))
-                                        .child(Avatar2::new(avatar_url.clone()).indicator(
+                                        .child(Avatar::new(avatar_url.clone()).indicator(
                                             AvatarAvailabilityIndicator::new(Availability::Free),
                                         )),
                                 )
                                 .child(Label::new("Loading").color(Color::Muted))
-                                .child(Avatar2::new(avatar_url.clone()).loading(true)),
+                                .child(Avatar::new(avatar_url.clone()).loading(true)),
                         ),
                 ),
             )
             .child(
-                Headline::new("Avatars")
+                Headline::new("Old Avatars")
                     .size(HeadlineSize::Small)
                     .color(Color::Muted),
             )
@@ -195,50 +191,50 @@ impl ThemePreview {
                 h_flex()
                     .items_start()
                     .gap_4()
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)))
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)).grayscale(true))
+                    .child(AvatarOld::new(AVATAR_URL).size(px(24.)))
+                    .child(AvatarOld::new(AVATAR_URL).size(px(24.)).grayscale(true))
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Muted)),
                     )
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
                     )
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
                     )
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
                     )
                     .child(
                         Facepile::empty()
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),
                             )
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),
                             )
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),
                             )
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),

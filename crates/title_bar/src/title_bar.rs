@@ -24,7 +24,7 @@ use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
-    h_flex, prelude::*, Avatar2, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
+    h_flex, prelude::*, Avatar, Button, ButtonLike, ButtonStyle, ContextMenu, Icon, IconName,
     IconSize, IconWithIndicator, Indicator, PopoverMenu, Tooltip,
 };
 use util::ResultExt;
@@ -589,7 +589,7 @@ impl TitleBar {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(Avatar2::new(user.avatar_uri.clone()))
+                                .child(Avatar::new(user.avatar_uri.clone()))
                                 .child(
                                     Icon::new(IconName::ChevronDown)
                                         .size(IconSize::Small)
