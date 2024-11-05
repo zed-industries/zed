@@ -127,8 +127,27 @@ impl PickerDelegate for KernelPickerDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(kernelspec) = self.filtered_kernels.get(self.selected_index) {
-            let store = ReplStore::global(cx).read(cx);
-            store.set_kernelspec(self.entity_id, kernelspec);
+            let store = ReplStore::global(cx);
+
+            let mut session = store.read(cx).get_session(self.entity_id);
+
+            // if the session is already started, we're swapping kernelspec out and starting a new kernel
+            // if the session is None, we're making a new one
+            //
+            if let Some(session) = session {
+                //
+            } else {
+                // todo!(): ... we would need the weak_editor, the fs, the telemetry as well as the kernel_specification
+                // let session = cx.new_view(|cx| {
+                //     Session::new(weak_editor, fs, telemetry, kernel_specification, cx)
+                // });
+            }
+
+            store.update(cx, |store, cx| {
+                //
+                store.set_kernelspec(self.entity_id, kernelspec, cx);
+            });
+
             cx.emit(DismissEvent);
         }
     }
