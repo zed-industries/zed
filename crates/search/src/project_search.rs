@@ -1164,7 +1164,11 @@ impl ProjectSearchView {
         let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
-            .child(Label::new("Hit enter to search. For more options:"))
+            .child(
+                Label::new("Hit enter to search. For more options:")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
             .child(
                 Button::new("filter-paths", "Include/exclude specific paths")
                     .icon(IconName::Filter)
