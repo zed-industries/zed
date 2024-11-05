@@ -646,6 +646,10 @@ impl Fs for RealFs {
         let watcher = Arc::new(RealWatcher {});
 
         watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
+        // watch the parent dir so we can tell when settings.json is created
+        if let Some(parent) = path.parent() {
+            watcher.add(parent).log_err();
+        }
 
         // Check if path is a symlink and follow the target parent
         if let Some(target) = target_path {
@@ -653,11 +657,6 @@ impl Fs for RealFs {
             if let Some(parent) = target.parent() {
                 watcher.add(parent).log_err();
             }
-        }
-
-        // watch the parent dir so we can tell when settings.json is created
-        if let Some(parent) = path.parent() {
-            watcher.add(parent).log_err();
         }
 
         (
@@ -794,6 +793,7 @@ impl Watcher for RealWatcher {
     fn add(&self, path: &Path) -> Result<()> {
         use notify::Watcher;
         Ok(watcher::global(|w| {
+            dbg!("adding watcher", path);
             w.inotify
                 .lock()
                 .watch(path, notify::RecursiveMode::NonRecursive)

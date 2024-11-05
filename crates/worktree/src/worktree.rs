@@ -2953,14 +2953,15 @@ impl BackgroundScannerState {
 
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
-        let actual_dot_git_dir_abs_path = Arc::from(
-            repository
-                .path()
+
+        let actual_repo_path = repository.path();
+        let actual_dot_git_dir_abs_path: Arc<Path> = Arc::from(
+            actual_repo_path
                 .ancestors()
                 .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))?,
         );
 
-        watcher.add(&actual_dot_git_dir_abs_path).log_err()?;
+        watcher.add(&actual_repo_path).log_err()?;
 
         let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path.as_ref() == dot_git_abs_path
         {
