@@ -169,9 +169,9 @@
       "ctrl-6": "pane::AlternateFile",
 
       // easy motion
-      "g w": ["easy_motion::Word", "both"],
-      "g shift-w": ["easy_motion::FullWord", "both"],
-      "g r": ["easy_motion::Row", "both"]
+      "ctrl-;": ["easy_motion::Word", "both"],
+      "ctrl-:": ["easy_motion::FullWord", "both"],
+      "ctrl-'": ["easy_motion::Row", "both"]
     }
   },
 
