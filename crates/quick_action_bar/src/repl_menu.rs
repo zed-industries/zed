@@ -4,8 +4,7 @@ use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
-    ExecutionState, JupyterSettings, Kernel, KernelOption, KernelSpecification, KernelStatus,
-    Session, SessionSupport,
+    ExecutionState, JupyterSettings, Kernel, KernelOption, KernelStatus, Session, SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
