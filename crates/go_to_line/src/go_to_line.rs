@@ -229,7 +229,7 @@ mod tests {
     use indoc::indoc;
     use project::{FakeFs, Project};
     use serde_json::json;
-    use std::sync::Arc;
+    use std::{sync::Arc, time::Duration};
     use workspace::{AppState, Workspace};
 
     #[gpui::test]
@@ -379,6 +379,7 @@ mod tests {
             .downcast::<Editor>()
             .unwrap();
 
+        cx.executor().advance_clock(Duration::from_millis(200));
         workspace.update(cx, |workspace, cx| {
             assert_eq!(
                 &SelectionStats {
@@ -397,6 +398,7 @@ mod tests {
             );
         });
         editor.update(cx, |editor, cx| editor.select_all(&SelectAll, cx));
+        cx.executor().advance_clock(Duration::from_millis(200));
         workspace.update(cx, |workspace, cx| {
             assert_eq!(
                 &SelectionStats {
