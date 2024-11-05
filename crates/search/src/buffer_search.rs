@@ -133,6 +133,10 @@ impl BufferSearchBar {
             },
         )
     }
+
+    pub fn query_editor_focused(&self) -> bool {
+        self.query_editor_focused
+    }
 }
 
 impl EventEmitter<Event> for BufferSearchBar {}

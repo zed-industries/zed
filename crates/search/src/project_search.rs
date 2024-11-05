@@ -1,7 +1,7 @@
 use crate::{
-    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
-    ToggleReplace, ToggleWholeWord,
+    BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
+    ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use collections::{HashMap, HashSet};
 use editor::{
@@ -863,6 +863,10 @@ impl ProjectSearchView {
         cx: &mut ViewContext<Workspace>,
     ) {
         let query = workspace.active_item(cx).and_then(|item| {
+            if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
+                return Some(buffer_search_query);
+            }
+
             let editor = item.act_as::<Editor>(cx)?;
             let query = editor.query_suggestion(cx);
             if query.is_empty() {
@@ -1240,6 +1244,29 @@ impl ProjectSearchView {
     pub fn results_editor(&self) -> &View<Editor> {
         &self.results_editor
     }
+}
+
+fn buffer_search_query(
+    workspace: &mut Workspace,
+    item: &dyn ItemHandle,
+    cx: &mut ViewContext<'_, Workspace>,
+) -> Option<String> {
+    let buffer_search_bar = workspace
+        .pane_for(item)
+        .and_then(|pane| {
+            pane.read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+        })?
+        .read(cx);
+    if buffer_search_bar.query_editor_focused() {
+        let buffer_search_query = buffer_search_bar.query(cx);
+        if !buffer_search_query.is_empty() {
+            return Some(buffer_search_query);
+        }
+    }
+    None
 }
 
 impl Default for ProjectSearchBar {
@@ -2008,11 +2035,11 @@ pub fn perform_project_search(
 
 #[cfg(test)]
 pub mod tests {
-    use std::sync::Arc;
+    use std::{ops::Deref as _, sync::Arc};
 
     use super::*;
     use editor::{display_map::DisplayRow, DisplayPoint};
-    use gpui::{Action, TestAppContext, WindowHandle};
+    use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -3566,6 +3593,81 @@ pub mod tests {
                 });
             })
             .expect("unable to update search view");
+    }
+
+    #[gpui::test]
+    async fn test_buffer_search_query_reused(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.update(cx, |this, cx| {
+            this.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let editor = workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "one.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let buffer_search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        let panes: Vec<_> = window
+            .update(&mut cx, |this, _| this.panes().to_owned())
+            .unwrap();
+        assert_eq!(panes.len(), 1);
+        let pane = panes.first().cloned().unwrap();
+        pane.update(&mut cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                toolbar.add_item(buffer_search_bar.clone(), cx);
+            })
+        });
+
+        let buffer_search_query = "search bar query";
+        buffer_search_bar
+            .update(&mut cx, |buffer_search_bar, cx| {
+                buffer_search_bar.focus_handle(cx).focus(cx);
+                buffer_search_bar.search(buffer_search_query, None, cx)
+            })
+            .await
+            .unwrap();
+
+        workspace.update(&mut cx, |workspace, cx| {
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
+        });
+        cx.run_until_parked();
+        let project_search_view = pane
+            .update(&mut cx, |pane, _| {
+                pane.active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("should open a project search view after spawning a new search");
+        project_search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(
+                search_view.search_query_text(cx),
+                buffer_search_query,
+                "Project search should take the query from the buffer search bar since it got focused and had a query inside"
+            );
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {
