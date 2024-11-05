@@ -9,7 +9,7 @@ use gpui::{
 };
 use strum::IntoEnumIterator;
 
-const DEFAULT_AVATAR_SIZE: f32 = 16.0;
+const DEFAULT_AVATAR_SIZE: f32 = 20.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AvatarSource {
@@ -197,13 +197,13 @@ impl Avatar2 {
         cx: &WindowContext,
     ) -> AnyElement {
         let color = self.color(cx);
-        let bg_color = color.opacity(0.12);
+        let bg_color = color.opacity(0.2);
 
         self.base_avatar_style(content_size)
             .bg(bg_color)
             .child(
                 Icon::new(icon.into())
-                    .size(IconSize::XSmall)
+                    .size(IconSize::Indicator)
                     .color(Color::Custom(color)),
             )
             .into_any_element()
@@ -216,8 +216,13 @@ impl Avatar2 {
         cx: &WindowContext,
     ) -> AnyElement {
         let color = self.color(cx);
-        let bg_color = color.opacity(0.12);
-        let first_letter = initials.chars().next().unwrap_or('?').to_string();
+        let bg_color = color.opacity(0.2);
+        let first_letter = initials
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_string()
+            .to_uppercase();
 
         self.base_avatar_style(content_size)
             .bg(bg_color)
@@ -229,6 +234,7 @@ impl Avatar2 {
                     .justify_center()
                     .text_color(color)
                     .text_size(px(10.))
+                    .line_height(relative(1.))
                     .font_weight(FontWeight::BOLD)
                     .child(first_letter),
             )
@@ -244,8 +250,8 @@ impl Avatar2 {
                 "pulsating-bg",
                 Animation::new(Duration::from_secs(2))
                     .repeat()
-                    .with_easing(pulsating_between(0.4, 0.8)),
-                move |this, delta| this.bg(color.opacity(1.0 - delta)),
+                    .with_easing(pulsating_between(0.3, 0.7)),
+                move |this, delta| this.bg(color.opacity(0.8 - delta)),
             )
             .into_any_element()
     }
