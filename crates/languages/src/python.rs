@@ -16,7 +16,6 @@ use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
 
-use std::sync::LazyLock;
 use std::sync::Mutex;
 use std::{
     any::Any,
@@ -528,7 +527,7 @@ impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
 }
 
 #[cfg(unix)]
-static LINUX_SYSTEM_SEARCH_PATHS: LazyLock<[PathBuf; 27]> = LazyLock::new(|| {
+static LINUX_SYSTEM_SEARCH_PATHS: std::sync::LazyLock<[PathBuf; 27]> = std::sync::LazyLock::new(|| {
     [
         PathBuf::from("/bin"),
         PathBuf::from("/etc"),
