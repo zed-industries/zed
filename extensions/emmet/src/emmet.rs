@@ -67,14 +67,23 @@ impl zed::Extension for EmmetExtension {
         _worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = self.server_script_path(language_server_id)?;
-        Ok(zed::Command {
-            command: zed::node_binary_path()?,
-            args: vec![
-                env::current_dir()
+
+        let full_path = env::current_dir()
                     .unwrap()
                     .join(&server_path)
                     .to_string_lossy()
-                    .to_string(),
+                    .to_string();
+
+        #[cfg(target_os = "windows")]
+		let path: String = full_path.split_off(3);
+
+		#[cfg(not(target_os = "windows"))]
+		let path: String = full_path;
+
+        Ok(zed::Command {
+            command: zed::node_binary_path()?,
+            args: vec![
+                path,
                 "--stdio".to_string(),
             ],
             env: Default::default(),
