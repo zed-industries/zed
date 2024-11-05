@@ -108,11 +108,11 @@ impl Avatar2 {
 
     pub fn fallback_initials(mut self, initials: impl Into<SharedString>) -> Self {
         let initials = initials.into();
-        if initials.is_empty() {
-            self.source = AvatarSource::AnonymousAvatar(AnonymousAvatarIcon::default());
+        self.source = AvatarSource::FallbackAvatar(if initials.is_empty() {
+            "?".into()
         } else {
-            self.source = AvatarSource::FallbackAvatar(initials);
-        }
+            initials
+        });
         self
     }
 
