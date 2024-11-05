@@ -530,9 +530,7 @@ impl Vim {
                     }
                 }
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
                 editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
             });
         });
