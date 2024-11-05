@@ -375,6 +375,25 @@ impl Extension {
         }
     }
 
+    pub async fn call_context_server_command(
+        &self,
+        store: &mut Store<WasmState>,
+        context_server_id: Arc<str>,
+        resource: Resource<Arc<dyn LspAdapterDelegate>>,
+    ) -> Result<Result<Command, String>> {
+        match self {
+            Extension::V020(ext) => {
+                ext.call_context_server_command(store, &context_server_id, resource)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) | Extension::V010(_) => {
+                Err(anyhow!(
+                    "`context_server_command` not available prior to v0.2.0"
+                ))
+            }
+        }
+    }
+
     pub async fn call_suggest_docs_packages(
         &self,
         store: &mut Store<WasmState>,
