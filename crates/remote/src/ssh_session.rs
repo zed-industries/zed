@@ -541,12 +541,8 @@ impl SshRemoteClient {
                     })?
                     .await
                     .map_err(|e| e.cloned())?;
-                let remote_binary_path = ssh_connection
-                    .get_remote_binary_path(&delegate, &mut cx)
-                    .await?;
 
                 let io_task = ssh_connection.start_proxy(
-                    remote_binary_path,
                     unique_identifier,
                     false,
                     incoming_tx,
@@ -725,12 +721,7 @@ impl SshRemoteClient {
                     .await
                     .map_err(|error| error.cloned())?;
 
-                let remote_binary_path = ssh_connection
-                    .get_remote_binary_path(&delegate, &mut cx)
-                    .await?;
-
                 let io_task = ssh_connection.start_proxy(
-                    remote_binary_path,
                     unique_identifier,
                     true,
                     incoming_tx,
@@ -1190,7 +1181,6 @@ trait RemoteConnection: Send + Sync {
     #[allow(clippy::too_many_arguments)]
     fn start_proxy(
         &self,
-        remote_binary_path: PathBuf,
         unique_identifier: String,
         reconnect: bool,
         incoming_tx: UnboundedSender<Envelope>,
@@ -1199,11 +1189,6 @@ trait RemoteConnection: Send + Sync {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Task<Result<i32>>;
-    async fn get_remote_binary_path(
-        &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf>;
     async fn kill(&self) -> Result<()>;
     fn has_been_killed(&self) -> bool;
     fn ssh_args(&self) -> Vec<String>;
@@ -1216,6 +1201,7 @@ trait RemoteConnection: Send + Sync {
 struct SshRemoteConnection {
     socket: SshSocket,
     master_process: Mutex<Option<process::Child>>,
+    remote_binary_path: Option<PathBuf>,
     _temp_dir: TempDir,
 }
 
@@ -1241,26 +1227,8 @@ impl RemoteConnection for SshRemoteConnection {
     fn connection_options(&self) -> SshConnectionOptions {
         self.socket.connection_options.clone()
     }
-
-    async fn get_remote_binary_path(
-        &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        let (release_channel, version, commit) = cx.update(|cx| {
-            (
-                ReleaseChannel::global(cx),
-                AppVersion::global(cx),
-                AppCommitSha::try_global(cx),
-            )
-        })?;
-        self.ensure_server_binary(&delegate, release_channel, version, commit, cx)
-            .await
-    }
-
     fn start_proxy(
         &self,
-        remote_binary_path: PathBuf,
         unique_identifier: String,
         reconnect: bool,
         incoming_tx: UnboundedSender<Envelope>,
@@ -1270,6 +1238,10 @@ impl RemoteConnection for SshRemoteConnection {
         cx: &mut AsyncAppContext,
     ) -> Task<Result<i32>> {
         delegate.set_status(Some("Starting proxy"), cx);
+
+        let Some(remote_binary_path) = self.remote_binary_path.clone() else {
+            return Task::ready(Err(anyhow!("Remote binary path not set")));
+        };
 
         let mut start_proxy_command = shell_script!(
             "exec {binary_path} proxy --identifier {identifier}",
@@ -1479,11 +1451,32 @@ impl SshRemoteConnection {
             socket_path,
         };
 
-        Ok(Self {
+        let this = Self {
             socket,
             master_process: Mutex::new(Some(master_process)),
             _temp_dir: temp_dir,
-        })
+        };
+
+        let (release_channel, version, commit) = cx.update(|cx| {
+            (
+                ReleaseChannel::global(cx),
+                AppVersion::global(cx),
+                AppCommitSha::try_global(cx),
+            )
+        })?;
+        this.remote_binary_path = Some(
+            this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+                .await?,
+        );
+
+        Ok(this)
+    }
+
+    async fn get_remote_binary_path(
+        &self,
+        delegate: &Arc<dyn SshClientDelegate>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<PathBuf> {
     }
 
     async fn platform(&self) -> Result<SshPlatform> {
@@ -2350,17 +2343,9 @@ mod fake {
                 .reconnect(incoming_rx, outgoing_tx, &self.server_cx.get(&cx));
         }
 
-        async fn get_remote_binary_path(
-            &self,
-            _delegate: &Arc<dyn SshClientDelegate>,
-            _cx: &mut AsyncAppContext,
-        ) -> Result<PathBuf> {
-            Ok(PathBuf::new())
-        }
-
         fn start_proxy(
             &self,
-            _remote_binary_path: PathBuf,
+
             _unique_identifier: String,
             _reconnect: bool,
             mut client_incoming_tx: mpsc::UnboundedSender<Envelope>,
