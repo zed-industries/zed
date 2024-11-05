@@ -12,6 +12,54 @@ use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
 use crate::{KernelSpecification, Session};
 
+pub fn assign_kernelspec(
+    kernel_specification: KernelSpecification,
+    weak_editor: WeakView<Editor>,
+    cx: &mut WindowContext,
+) -> Result<()> {
+    let store = ReplStore::global(cx);
+    if !store.read(cx).is_enabled() {
+        return Ok(());
+    }
+
+    let fs = store.read(cx).fs().clone();
+    let telemetry = store.read(cx).telemetry().clone();
+
+    if let Some(session) = store.read(cx).get_session(weak_editor.entity_id()).cloned() {
+        // Drop previous session, start new one
+        session.update(cx, |session, cx| {
+            session.shutdown(cx);
+        });
+    }
+
+    let session = cx
+        .new_view(|cx| Session::new(weak_editor.clone(), fs, telemetry, kernel_specification, cx));
+
+    weak_editor
+        .update(cx, |_editor, cx| {
+            cx.notify();
+
+            cx.subscribe(&session, {
+                let store = store.clone();
+                move |_this, _session, event, cx| match event {
+                    SessionEvent::Shutdown(shutdown_event) => {
+                        store.update(cx, |store, _cx| {
+                            store.remove_session(shutdown_event.entity_id());
+                        });
+                    }
+                }
+            })
+            .detach();
+        })
+        .ok();
+
+    store.update(cx, |store, _cx| {
+        store.insert_session(weak_editor.entity_id(), session.clone());
+    });
+
+    Ok(())
+}
+
 pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) -> Result<()> {
     let store = ReplStore::global(cx);
     if !store.read(cx).is_enabled() {

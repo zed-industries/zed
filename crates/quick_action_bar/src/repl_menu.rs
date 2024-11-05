@@ -291,10 +291,11 @@ impl QuickActionBar {
         let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
             PopoverMenuHandle::default();
         KernelSelector::new(
-            Box::new(|kernelspec, cx| {
-                // cx.new_view(|cx| Session::new(editor.downgrade(), fs, telemetry, kernelspec, cx));
-                dbg!(kernelspec);
-            }),
+            {
+                Box::new(move |kernelspec, cx| {
+                    repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
+                })
+            },
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
                 .child(
