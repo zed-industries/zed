@@ -38,7 +38,7 @@ impl Vim {
     }
 
     fn temporary_normal(&mut self, _: &TemporaryNormal, cx: &mut ViewContext<Self>) {
-        self.switch_mode(Mode::Normal, false, cx);
+        self.switch_mode(Mode::Normal, true, cx);
         self.temp_mode = true;
     }
 }

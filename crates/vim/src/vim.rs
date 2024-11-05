@@ -38,7 +38,7 @@ use serde::Deserialize;
 use serde_derive::Serialize;
 use settings::{update_settings_file, Settings, SettingsSources, SettingsStore};
 use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
-use std::{ops::Range, sync::Arc};
+use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use ui::{IntoElement, VisualContext};
 use workspace::{self, Pane, Workspace};
@@ -147,6 +147,7 @@ pub(crate) struct Vim {
     pub(crate) mode: Mode,
     pub last_mode: Mode,
     pub temp_mode: bool,
+    pub exit_temporary_mode: bool,
 
     /// pre_count is the number before an operator is specified (3 in 3d2d)
     pre_count: Option<usize>,
@@ -198,6 +199,7 @@ impl Vim {
             mode: Mode::Normal,
             last_mode: Mode::Normal,
             temp_mode: false,
+            exit_temporary_mode: false,
             pre_count: None,
             post_count: None,
             operator_stack: Vec::new(),
@@ -352,6 +354,10 @@ impl Vim {
     /// Called whenever an keystroke is typed so vim can observe all actions
     /// and keystrokes accordingly.
     fn observe_keystrokes(&mut self, keystroke_event: &KeystrokeEvent, cx: &mut ViewContext<Self>) {
+        if self.exit_temporary_mode {
+            self.exit_temporary_mode = false;
+            self.switch_mode(Mode::Insert, false, cx);
+        }
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
             if action.name().starts_with("vim::") {
@@ -439,7 +445,8 @@ impl Vim {
     pub fn switch_mode(&mut self, mode: Mode, leave_selections: bool, cx: &mut ViewContext<Self>) {
         if self.temp_mode && mode == Mode::Normal {
             self.temp_mode = false;
-            self.insert_after(&normal::InsertAfter, cx);
+            self.switch_mode(Mode::Normal, leave_selections, cx);
+            self.switch_mode(Mode::Insert, false, cx);
             return;
         } else if self.temp_mode
             && !matches!(mode, Mode::Visual | Mode::VisualLine | Mode::VisualBlock)
@@ -738,7 +745,7 @@ impl Vim {
         Vim::update_globals(cx, |globals, cx| {
             if !globals.dot_replaying {
                 globals.dot_recording = true;
-                globals.recorded_actions = Default::default();
+                globals.recording_actions = Default::default();
                 globals.recorded_count = None;
 
                 let selections = self.editor().map(|editor| {
@@ -793,6 +800,7 @@ impl Vim {
         if globals.dot_recording {
             globals.stop_recording_after_next_action = true;
         }
+        self.exit_temporary_mode = self.temp_mode;
     }
 
     /// Stops recording actions immediately rather than waiting until after the
@@ -807,11 +815,14 @@ impl Vim {
         let globals = Vim::globals(cx);
         if globals.dot_recording {
             globals
-                .recorded_actions
+                .recording_actions
                 .push(ReplayableAction::Action(action.boxed_clone()));
+            globals.recorded_actions = mem::take(&mut globals.recording_actions);
             globals.dot_recording = false;
             globals.stop_recording_after_next_action = false;
         }
+        // ???
+        self.exit_temporary_mode = self.temp_mode;
     }
 
     /// Explicitly record one action (equivalents to start_recording and stop_recording)

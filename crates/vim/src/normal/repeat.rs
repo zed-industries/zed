@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc};
 use crate::{
     insert::NormalBefore,
     motion::Motion,
+    normal::InsertBefore,
     state::{Mode, Operator, RecordedSelection, ReplayableAction, VimGlobals},
     Vim,
 };
@@ -16,6 +17,9 @@ actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
 fn should_replay(action: &dyn Action) -> bool {
     // skip so that we don't leave the character palette open
     if editor::actions::ShowCharacterPalette.partial_eq(action) {
+        return false;
+    }
+    if Repeat.partial_eq(action) {
         return false;
     }
     true
@@ -307,6 +311,11 @@ impl Vim {
         }
 
         actions.push(ReplayableAction::Action(EndRepeat.boxed_clone()));
+
+        if self.temp_mode {
+            self.temp_mode = false;
+            actions.push(ReplayableAction::Action(InsertBefore.boxed_clone()));
+        }
 
         let globals = Vim::globals(cx);
         globals.dot_replaying = true;
