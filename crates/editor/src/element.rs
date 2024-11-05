@@ -20,9 +20,9 @@ use crate::{
     BlockId, CursorShape, CustomBlockId, DisplayPoint, DisplayRow, DocumentHighlightRead,
     DocumentHighlightWrite, Editor, EditorMode, EditorSettings, EditorSnapshot, EditorStyle,
     ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown, HalfPageUp, HandleInput,
-    HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point,
-    RenderedContextMenu, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
-    CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt,
+    RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint, CURSORS_VISIBLE_FOR,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -2656,11 +2656,7 @@ impl EditorElement {
         gutter_overshoot: Pixels,
         cx: &mut WindowContext,
     ) -> bool {
-        let Some(RenderedContextMenu {
-            origin,
-            mut element,
-            is_inverted,
-        }) = self.editor.update(cx, |editor, cx| {
+        let Some(mut context_menu) = self.editor.update(cx, |editor, cx| {
             if editor.context_menu_visible() {
                 let max_height = cmp::min(
                     12. * line_height,
@@ -2670,14 +2666,14 @@ impl EditorElement {
             } else {
                 None
             }
-        })
-        else {
+        }) else {
             return false;
         };
+        let context_menu_size = context_menu
+            .element
+            .layout_as_root(AvailableSpace::min_size(), cx);
 
-        let context_menu_size = element.layout_as_root(AvailableSpace::min_size(), cx);
-
-        let (x, y) = match origin {
+        let (x, y) = match context_menu.origin {
             crate::context_menu::ContextMenuOrigin::EditorPoint(point) => {
                 let cursor_row_layout = &line_layouts[point.row().minus(start_row) as usize];
                 let x = cursor_row_layout.x_for_index(point.column() as usize)
@@ -2704,10 +2700,11 @@ impl EditorElement {
             list_origin.x = (cx.viewport_size().width - list_width).max(Pixels::ZERO);
         }
         if list_origin.y + list_height > text_hitbox.lower_right().y {
+            context_menu.invert();
             list_origin.y -= line_height + list_height;
         }
 
-        cx.defer_draw(element, list_origin, 1);
+        cx.defer_draw(context_menu.element, list_origin, 1);
         true
     }
 

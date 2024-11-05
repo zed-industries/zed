@@ -3620,6 +3620,7 @@ impl Editor {
                         selected_completion_documentation_resolve_debounce: Arc::new(Mutex::new(
                             DebouncedDelay::new(),
                         )),
+                        is_inverted: Default::default(),
                     };
                     menu.filter(query.as_deref(), cx.background_executor().clone())
                         .await;

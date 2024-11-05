@@ -39,13 +39,21 @@ pub(super) enum ContextMenu {
 pub(super) struct RenderedContextMenu {
     pub(super) origin: ContextMenuOrigin,
     pub(super) element: AnyElement,
-    pub(super) is_inverted: Arc<AtomicBool>,
+    count: usize,
+    is_inverted: Arc<AtomicBool>,
+    scroll_handle: UniformListScrollHandle,
 }
 
 impl RenderedContextMenu {
-    fn invert(&self) {
-        self.is_inverted
+    pub(crate) fn invert(&self) {
+        let was_inverted = self
+            .is_inverted
             .fetch_or(true, std::sync::atomic::Ordering::Release);
+        if !was_inverted {
+            self.scroll_handle.scroll_to_item(dbg!(
+                self.count - self.scroll_handle.logical_scroll_top_index() - 1
+            ));
+        }
     }
 }
 
@@ -131,12 +139,7 @@ impl ContextMenu {
     ) -> RenderedContextMenu {
         match self {
             ContextMenu::Completions(menu) => {
-                let (element, is_inverted) = menu.render(style, max_height, workspace, cx);
-                RenderedContextMenu {
-                    origin: ContextMenuOrigin::EditorPoint(cursor_position),
-                    element,
-                    is_inverted,
-                }
+                menu.render(cursor_position, style, max_height, workspace, cx)
             }
             ContextMenu::CodeActions(menu) => menu.render(cursor_position, style, max_height, cx),
         }
@@ -160,6 +163,7 @@ pub(super) struct CompletionsMenu {
     pub(super) selected_item: usize,
     pub(super) scroll_handle: UniformListScrollHandle,
     pub(super) selected_completion_documentation_resolve_debounce: Arc<Mutex<DebouncedDelay>>,
+    pub(super) is_inverted: Arc<AtomicBool>,
 }
 
 impl CompletionsMenu {
@@ -288,14 +292,14 @@ impl CompletionsMenu {
 
     fn render(
         &self,
+        cursor_position: DisplayPoint,
         style: &EditorStyle,
         max_height: Pixels,
         workspace: Option<WeakView<Workspace>>,
         cx: &mut ViewContext<Editor>,
-    ) -> (AnyElement, Arc<AtomicBool>) {
+    ) -> RenderedContextMenu {
         let settings = EditorSettings::get_global(cx);
         let show_completion_documentation = settings.show_completion_documentation;
-        let is_inverted = Arc::new(Default::default());
         let widest_completion_ix = self
             .matches
             .iter()
@@ -446,16 +450,18 @@ impl CompletionsMenu {
         .track_scroll(self.scroll_handle.clone())
         .with_width_from_item(widest_completion_ix)
         .with_sizing_behavior(ListSizingBehavior::Infer);
-
-        (
-            Popover::new()
+        RenderedContextMenu {
+            origin: ContextMenuOrigin::EditorPoint(cursor_position),
+            count: self.matches.len(),
+            scroll_handle: self.scroll_handle.clone(),
+            element: Popover::new()
                 .child(list)
                 .when_some(multiline_docs, |popover, multiline_docs| {
                     popover.aside(multiline_docs)
                 })
                 .into_any_element(),
-            is_inverted,
-        )
+            is_inverted: self.is_inverted.clone(),
+        }
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
@@ -836,6 +842,8 @@ impl CodeActionsMenu {
             origin,
             element,
             is_inverted,
+            count: self.actions.len(),
+            scroll_handle: self.scroll_handle.clone(),
         }
     }
 }
