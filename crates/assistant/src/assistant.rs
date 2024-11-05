@@ -44,7 +44,8 @@ use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::{
     auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
     diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
-    prompt_command, search_command, symbols_command, tab_command, terminal_command,
+    prompt_command, search_command, selection_command, symbols_command, tab_command,
+    terminal_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -436,6 +437,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry
         .register_command(cargo_workspace_command::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
+    slash_command_registry.register_command(selection_command::SelectionCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
     slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
