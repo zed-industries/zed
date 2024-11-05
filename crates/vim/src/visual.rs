@@ -757,7 +757,7 @@ mod test {
             },
             Mode::Visual,
         );
-        cx.simulate_keystrokes("g I");
+        cx.simulate_keystrokes("g shift-i");
         cx.assert_state(
             indoc! {
                 "ˇThe quick brown
@@ -780,7 +780,7 @@ mod test {
             },
             Mode::Visual,
         );
-        cx.simulate_keystrokes("g A");
+        cx.simulate_keystrokes("g shift-a");
         cx.assert_state(
             indoc! {
                 "The quick brownˇ
