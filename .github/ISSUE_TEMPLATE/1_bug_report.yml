@@ -2,7 +2,7 @@ name: Bug Report
 description: |
   Use this template for **non-crash-related** bug reports.
   Tip: open this issue template from within Zed with the `file bug report` command palette action.
-labels: ["admin read", "triage", "defect"]
+labels: ["admin read", "triage", "bug"]
 body:
   - type: checkboxes
     attributes:
@@ -38,9 +38,12 @@ body:
         Linux: `~/.local/share/zed/logs/Zed.log` or $XDG_DATA_HOME
         If you only need the most recent lines, you can run the `zed: open log` command palette action to see the last 1000.
       value: |
-        <details><summary>Zed.log</summary><pre>
-        <!-- Click below this line and paste or drag-and-drop your log-->
+        <details><summary>Zed.log</summary>
 
-        <!-- Click above this line and paste or drag-and-drop your log--></pre></details>
+        <!-- Click below this line and paste or drag-and-drop your log-->
+        ```
+
+        ```
+        <!-- Click above this line and paste or drag-and-drop your log--></details>
     validations:
       required: false
