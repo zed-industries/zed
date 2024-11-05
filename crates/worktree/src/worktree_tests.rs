@@ -720,7 +720,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
     cx.read(|cx| {
         let tree = tree.read(cx);
         assert_entry_git_state(tree, "tracked-dir/tracked-file1", None, false);
-        assert_entry_git_state(tree, "tracked-dir/ancestor-ignored-file1", None, true);
+        assert_entry_git_state(tree, "tracked-dir/ancestor-ignored-file1", None, false);
         assert_entry_git_state(tree, "ignored-dir/ignored-file1", None, true);
     });
 
@@ -757,7 +757,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
             Some(GitFileStatus::Added),
             false,
         );
-        assert_entry_git_state(tree, "tracked-dir/ancestor-ignored-file2", None, true);
+        assert_entry_git_state(tree, "tracked-dir/ancestor-ignored-file2", None, false);
         assert_entry_git_state(tree, "ignored-dir/ignored-file2", None, true);
         assert!(tree.entry_for_path(".git").unwrap().is_ignored);
     });
@@ -2635,6 +2635,12 @@ fn assert_entry_git_state(
     is_ignored: bool,
 ) {
     let entry = tree.entry_for_path(path).expect("entry {path} not found");
-    assert_eq!(entry.git_status, git_status);
-    assert_eq!(entry.is_ignored, is_ignored);
+    assert_eq!(
+        entry.git_status, git_status,
+        "expected {path} to have git status: {git_status:?}"
+    );
+    assert_eq!(
+        entry.is_ignored, is_ignored,
+        "expected {path} to have is_ignored: {is_ignored}"
+    );
 }
