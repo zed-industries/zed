@@ -1555,17 +1555,17 @@ impl Render for ProjectSearchBar {
         let search = search.read(cx);
         let focus_handle = search.focus_handle(cx);
 
-        let query_column = h_flex()
-            .flex_1()
-            .h_8()
-            .mr_2()
-            .px_2()
-            .py_1()
-            .border_1()
-            .border_color(search.border_color_for(InputPanel::Query, cx))
-            .rounded_lg()
-            .min_w(rems(MIN_INPUT_WIDTH_REMS))
-            .max_w(rems(MAX_INPUT_WIDTH_REMS))
+        let input_base_styles = || {
+            h_flex()
+                .w_full()
+                .h_8()
+                .px_2()
+                .py_1()
+                .border_1()
+                .border_color(search.border_color_for(InputPanel::Query, cx))
+                .rounded_lg()
+        };
+
             .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
             .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
             .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
