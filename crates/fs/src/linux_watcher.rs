@@ -1,7 +1,7 @@
-use std::sync::Arc;
-
 use notify::EventKind;
 use parking_lot::Mutex;
+use std::sync::{Arc, OnceLock};
+use util::ResultExt;
 
 use crate::{PathEvent, PathEventKind, Watcher};
 
@@ -31,7 +31,7 @@ impl Watcher for LinuxWatcher {
 
         use notify::Watcher;
 
-        watcher::global({
+        global({
             |g| {
                 g.add(move |event: &notify::Event| {
                     let kind = match event.kind {
@@ -68,7 +68,7 @@ impl Watcher for LinuxWatcher {
             }
         })?;
 
-        watcher::global(|g| {
+        global(|g| {
             g.inotify
                 .lock()
                 .watch(path, notify::RecursiveMode::NonRecursive)
@@ -79,52 +79,43 @@ impl Watcher for LinuxWatcher {
 
     fn remove(&self, path: &std::path::Path) -> gpui::Result<()> {
         use notify::Watcher;
-        Ok(watcher::global(|w| w.inotify.lock().unwatch(path))??)
+        Ok(global(|w| w.inotify.lock().unwatch(path))??)
     }
 }
 
-#[cfg(target_os = "linux")]
-pub mod watcher {
-    use std::sync::OnceLock;
+pub struct GlobalWatcher {
+    // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
+    pub(super) inotify: Mutex<notify::INotifyWatcher>,
+    pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
+}
 
-    use parking_lot::Mutex;
-    use util::ResultExt;
-
-    pub struct GlobalWatcher {
-        // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
-        pub(super) inotify: Mutex<notify::INotifyWatcher>,
-        pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
+impl GlobalWatcher {
+    pub(super) fn add(&self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
+        self.watchers.lock().push(Box::new(cb))
     }
+}
 
-    impl GlobalWatcher {
-        pub(super) fn add(&self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
-            self.watchers.lock().push(Box::new(cb))
+static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> = OnceLock::new();
+
+fn handle_event(event: Result<notify::Event, notify::Error>) {
+    let Some(event) = event.log_err() else { return };
+    global::<()>(move |watcher| {
+        for f in watcher.watchers.lock().iter() {
+            f(&event)
         }
-    }
+    })
+    .log_err();
+}
 
-    static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
-        OnceLock::new();
-
-    fn handle_event(event: Result<notify::Event, notify::Error>) {
-        let Some(event) = event.log_err() else { return };
-        global::<()>(move |watcher| {
-            for f in watcher.watchers.lock().iter() {
-                f(&event)
-            }
+pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
+    let result = INOTIFY_INSTANCE.get_or_init(|| {
+        notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
+            inotify: Mutex::new(file_watcher),
+            watchers: Default::default(),
         })
-        .log_err();
-    }
-
-    pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
-        let result = INOTIFY_INSTANCE.get_or_init(|| {
-            notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
-                inotify: Mutex::new(file_watcher),
-                watchers: Default::default(),
-            })
-        });
-        match result {
-            Ok(g) => Ok(f(g)),
-            Err(e) => Err(anyhow::anyhow!("{}", e)),
-        }
+    });
+    match result {
+        Ok(g) => Ok(f(g)),
+        Err(e) => Err(anyhow::anyhow!("{}", e)),
     }
 }
