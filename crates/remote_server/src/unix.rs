@@ -14,7 +14,6 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
-use release_channel::AppVersion;
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{

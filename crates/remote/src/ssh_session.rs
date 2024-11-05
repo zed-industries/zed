@@ -2457,13 +2457,5 @@ mod fake {
         }
 
         fn set_status(&self, _: Option<&str>, _: &mut AsyncAppContext) {}
-
-        fn remote_server_binary_path(
-            &self,
-            _platform: SshPlatform,
-            _cx: &mut AsyncAppContext,
-        ) -> Result<PathBuf> {
-            unreachable!()
-        }
     }
 }
