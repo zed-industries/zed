@@ -13,7 +13,7 @@ use gpui::{AppContext, Model};
 
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
-use release_channel::{AppCommitSha, AppVersion, ReleaseChannel};
+use release_channel::ReleaseChannel;
 use remote::ssh_session::ConnectionIdentifier;
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;

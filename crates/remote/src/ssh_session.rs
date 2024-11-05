@@ -225,34 +225,6 @@ impl SshPlatform {
     }
 }
 
-pub enum ServerBinary {
-    LocalBinary(PathBuf),
-    ReleaseUrl { url: String, body: String },
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ServerVersion {
-    Semantic(SemanticVersion),
-    Commit(String),
-}
-impl ServerVersion {
-    pub fn semantic_version(&self) -> Option<SemanticVersion> {
-        match self {
-            Self::Semantic(version) => Some(*version),
-            _ => None,
-        }
-    }
-}
-
-impl std::fmt::Display for ServerVersion {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Semantic(version) => write!(f, "{}", version),
-            Self::Commit(commit) => write!(f, "{}", commit),
-        }
-    }
-}
-
 pub trait SshClientDelegate: Send + Sync {
     fn ask_password(
         &self,
@@ -1275,7 +1247,15 @@ impl RemoteConnection for SshRemoteConnection {
         delegate: &Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
-        self.ensure_server_binary(&delegate, cx).await
+        let (release_channel, version, commit) = cx.update(|cx| {
+            (
+                ReleaseChannel::global(cx),
+                AppVersion::global(cx),
+                AppCommitSha::try_global(cx),
+            )
+        })?;
+        self.ensure_server_binary(&delegate, release_channel, version, commit, cx)
+            .await
     }
 
     fn start_proxy(
@@ -1633,30 +1613,25 @@ impl SshRemoteConnection {
     async fn ensure_server_binary(
         &self,
         delegate: &Arc<dyn SshClientDelegate>,
+        release_channel: ReleaseChannel,
+        version: SemanticVersion,
+        commit: Option<AppCommitSha>,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
-        let (release_channel, app_commit, app_version) = cx.update(|cx| {
-            (
-                ReleaseChannel::global(cx),
-                AppCommitSha::try_global(cx),
-                AppVersion::global(cx),
-            )
-        })?;
         let version = match release_channel {
             ReleaseChannel::Nightly => {
-                let commit = app_commit.map(|s| s.0.to_string()).unwrap_or_default();
+                let commit = commit.map(|s| s.0.to_string()).unwrap_or_default();
 
-                format!("{}-{}", app_version, commit)
+                format!("{}-{}", version, commit)
             }
             ReleaseChannel::Dev => "build".to_string(),
-            _ => app_version.to_string(),
+            _ => version.to_string(),
         };
         let binary_name = format!(
             "zed-remote-server-{}-{}",
             release_channel.dev_name(),
             version
         );
-
         let dst_path = paths::remote_server_dir_relative().join(binary_name);
         let tmp_path_gz = PathBuf::from(format!(
             "{}-download-{}.gz",
