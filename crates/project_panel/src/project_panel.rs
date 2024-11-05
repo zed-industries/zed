@@ -2571,6 +2571,74 @@ impl ProjectPanel {
                 this.hover_scroll_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
+                if event.down.button == MouseButton::Right || event.down.first_mouse {
+                    return;
+                }
+                if !show_editor {
+                    cx.stop_propagation();
+
+                    if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
+                        let current_selection = this.index_for_selection(selection);
+                        let target_selection = this.index_for_selection(SelectedEntry {
+                            entry_id,
+                            worktree_id,
+                        });
+                        if let Some(((_, _, source_index), (_, _, target_index))) =
+                            current_selection.zip(target_selection)
+                        {
+                            let range_start = source_index.min(target_index);
+                            let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
+                            let mut new_selections = BTreeSet::new();
+                            this.for_each_visible_entry(
+                                range_start..range_end,
+                                cx,
+                                |entry_id, details, _| {
+                                    new_selections.insert(SelectedEntry {
+                                        entry_id,
+                                        worktree_id: details.worktree_id,
+                                    });
+                                },
+                            );
+
+                            this.marked_entries = this
+                                .marked_entries
+                                .union(&new_selections)
+                                .cloned()
+                                .collect();
+
+                            this.selection = Some(SelectedEntry {
+                                entry_id,
+                                worktree_id,
+                            });
+                            // Ensure that the current entry is selected.
+                            this.marked_entries.insert(SelectedEntry {
+                                entry_id,
+                                worktree_id,
+                            });
+                        }
+                    } else if event.down.modifiers.secondary() {
+                        if event.down.click_count > 1 {
+                            this.split_entry(entry_id, cx);
+                        } else if !this.marked_entries.insert(selection) {
+                            this.marked_entries.remove(&selection);
+                        }
+                    } else if kind.is_dir() {
+                        this.toggle_expanded(entry_id, cx);
+                    } else {
+                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                        let click_count = event.up.click_count;
+                        this.open_entry(
+                            entry_id,
+                            cx.modifiers().secondary(),
+                            !preview_tabs_enabled || click_count > 1,
+                            !preview_tabs_enabled && click_count == 1,
+                            cx,
+                        );
+                    }
+                }
+            }))
+            .cursor_pointer()
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -2671,76 +2739,6 @@ impl ProjectPanel {
                         }
                         .ml_1(),
                     )
-                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                        if event.down.button == MouseButton::Right || event.down.first_mouse {
-                            return;
-                        }
-                        if !show_editor {
-                            cx.stop_propagation();
-
-                            if let Some(selection) =
-                                this.selection.filter(|_| event.down.modifiers.shift)
-                            {
-                                let current_selection = this.index_for_selection(selection);
-                                let target_selection = this.index_for_selection(SelectedEntry {
-                                    entry_id,
-                                    worktree_id,
-                                });
-                                if let Some(((_, _, source_index), (_, _, target_index))) =
-                                    current_selection.zip(target_selection)
-                                {
-                                    let range_start = source_index.min(target_index);
-                                    let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
-                                    let mut new_selections = BTreeSet::new();
-                                    this.for_each_visible_entry(
-                                        range_start..range_end,
-                                        cx,
-                                        |entry_id, details, _| {
-                                            new_selections.insert(SelectedEntry {
-                                                entry_id,
-                                                worktree_id: details.worktree_id,
-                                            });
-                                        },
-                                    );
-
-                                    this.marked_entries = this
-                                        .marked_entries
-                                        .union(&new_selections)
-                                        .cloned()
-                                        .collect();
-
-                                    this.selection = Some(SelectedEntry {
-                                        entry_id,
-                                        worktree_id,
-                                    });
-                                    // Ensure that the current entry is selected.
-                                    this.marked_entries.insert(SelectedEntry {
-                                        entry_id,
-                                        worktree_id,
-                                    });
-                                }
-                            } else if event.down.modifiers.secondary() {
-                                if event.down.click_count > 1 {
-                                    this.split_entry(entry_id, cx);
-                                } else if !this.marked_entries.insert(selection) {
-                                    this.marked_entries.remove(&selection);
-                                }
-                            } else if kind.is_dir() {
-                                this.toggle_expanded(entry_id, cx);
-                            } else {
-                                let preview_tabs_enabled =
-                                    PreviewTabsSettings::get_global(cx).enabled;
-                                let click_count = event.up.click_count;
-                                this.open_entry(
-                                    entry_id,
-                                    cx.modifiers().secondary(),
-                                    !preview_tabs_enabled || click_count > 1,
-                                    !preview_tabs_enabled && click_count == 1,
-                                    cx,
-                                );
-                            }
-                        }
-                    }))
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, cx| {
                             // Stop propagation to prevent the catch-all context menu for the project

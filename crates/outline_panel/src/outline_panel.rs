@@ -1996,6 +1996,17 @@ impl OutlinePanel {
         div()
             .text_ui(cx)
             .id(item_id.clone())
+            .on_click({
+                let clicked_entry = rendered_entry.clone();
+                cx.listener(move |outline_panel, event: &gpui::ClickEvent, cx| {
+                    if event.down.button == MouseButton::Right || event.down.first_mouse {
+                        return;
+                    }
+                    let change_selection = event.down.click_count > 1;
+                    outline_panel.open_entry(&clicked_entry, change_selection, cx);
+                })
+            })
+            .cursor_pointer()
             .child(
                 ListItem::new(item_id)
                     .indent_level(depth)
@@ -2005,16 +2016,6 @@ impl OutlinePanel {
                         list_item.child(h_flex().child(icon_element))
                     })
                     .child(h_flex().h_6().child(label_element).ml_1())
-                    .on_click({
-                        let clicked_entry = rendered_entry.clone();
-                        cx.listener(move |outline_panel, event: &gpui::ClickEvent, cx| {
-                            if event.down.button == MouseButton::Right || event.down.first_mouse {
-                                return;
-                            }
-                            let change_selection = event.down.click_count > 1;
-                            outline_panel.open_entry(&clicked_entry, change_selection, cx);
-                        })
-                    })
                     .on_secondary_mouse_down(cx.listener(
                         move |outline_panel, event: &MouseDownEvent, cx| {
                             // Stop propagation to prevent the catch-all context menu for the project
