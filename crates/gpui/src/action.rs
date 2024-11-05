@@ -326,7 +326,7 @@ mod no_action {
     actions!(zed, [NoAction]);
 
     /// Returns whether or not this action represents a removed key binding.
-    pub fn is_no_action(action: &Box<dyn gpui::Action>) -> bool {
+    pub fn is_no_action(action: &dyn gpui::Action) -> bool {
         action.as_any().type_id() == (NoAction {}).type_id()
     }
 }

@@ -40,7 +40,7 @@ impl Keymap {
     pub fn add_bindings<T: IntoIterator<Item = KeyBinding>>(&mut self, bindings: T) {
         for binding in bindings {
             let action_id = binding.action().as_any().type_id();
-            if is_no_action(&binding.action) {
+            if is_no_action(&*binding.action) {
                 self.no_action_binding_indices.push(self.bindings.len());
             } else {
                 self.binding_indices_by_action_id
@@ -167,7 +167,7 @@ impl Keymap {
         let bindings = bindings
             .into_iter()
             .map_while(|(binding, _)| {
-                if is_no_action(&binding.action) {
+                if is_no_action(&*binding.action) {
                     None
                 } else {
                     Some(binding)
