@@ -1172,7 +1172,7 @@ impl Sub for DisplayPoint {
 #[serde(transparent)]
 pub struct DisplayRow(pub u32);
 
-impl Add for DisplayRow {
+impl Add<DisplayRow> for DisplayRow {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
@@ -1180,11 +1180,27 @@ impl Add for DisplayRow {
     }
 }
 
-impl Sub for DisplayRow {
+impl Add<u32> for DisplayRow {
+    type Output = Self;
+
+    fn add(self, other: u32) -> Self::Output {
+        DisplayRow(self.0 + other)
+    }
+}
+
+impl Sub<DisplayRow> for DisplayRow {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
         DisplayRow(self.0 - other.0)
+    }
+}
+
+impl Sub<u32> for DisplayRow {
+    type Output = Self;
+
+    fn sub(self, other: u32) -> Self::Output {
+        DisplayRow(self.0 - other)
     }
 }
 
