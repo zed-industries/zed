@@ -738,11 +738,11 @@ fn paragraph(
             let paragraph_start_row = paragraph_start.row();
             if paragraph_start_row.0 != 0 {
                 let previous_paragraph_last_line_start =
-                    Point::new(paragraph_start_row.0 - 1, 0).to_display_point(map);
+                    DisplayPoint::new(paragraph_start_row - 1, 0);
                 paragraph_start = start_of_paragraph(map, previous_paragraph_last_line_start);
             }
         } else {
-            let next_paragraph_start = Point::new(paragraph_end_row.0 + 1, 0).to_display_point(map);
+            let next_paragraph_start = DisplayPoint::new(paragraph_end_row + 1, 0);
             paragraph_end = end_of_paragraph(map, next_paragraph_start);
         }
     }
