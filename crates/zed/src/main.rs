@@ -620,23 +620,6 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
         cx.spawn(|mut cx| async move {
             let paths_with_position =
                 derive_paths_with_position(app_state.fs.as_ref(), request.open_paths).await;
-            cx.spawn(|mut cx| {
-                let connection_options = connection_options.clone();
-                let paths_with_position = paths_with_position.clone();
-                let app_state = app_state.clone();
-                async move {
-                    open_ssh_project(
-                        connection_options,
-                        vec![PathBuf::from("~/0/zed/zed")],
-                        app_state,
-                        workspace::OpenOptions::default(),
-                        &mut cx,
-                    )
-                    .await
-                }
-            })
-            .detach();
-
             open_ssh_project(
                 connection_options,
                 paths_with_position.into_iter().map(|p| p.path).collect(),

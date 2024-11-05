@@ -1306,7 +1306,6 @@ impl SshRemoteConnection {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        dbg!("CONNECTING");
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
         use smol::net::unix::UnixStream;
