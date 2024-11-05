@@ -116,30 +116,75 @@ impl ThemePreview {
                     .color(Color::Muted),
             )
             .child(
-                h_flex()
-                    .items_start()
-                    .gap_4()
-                    .child(Avatar2::new(avatar_url.clone()).loading(true))
-                    .child(Avatar2::new(avatar_url.clone()))
-                    .children((0..=5).map(|ix| Avatar2::new_fallback().fallback_anonymous(ix)))
-                    .child(
-                        Avatar2::new_fallback()
-                            .fallback_anonymous(0)
-                            .grayscale(true),
-                    )
-                    .children(PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
-                        Avatar2::new_fallback()
-                            .fallback_initials(handle.to_string())
-                            .fallback_anonymous(ix as u32)
-                    }))
-                    .child(
-                        Avatar2::new(avatar_url.clone())
-                            .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
-                    )
-                    .child(
-                        Avatar2::new(avatar_url.clone())
-                            .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
-                    ),
+                v_flex().items_start().gap_4().child(
+                    h_flex()
+                        .items_start()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Default").color(Color::Muted))
+                                .child(Avatar2::new(avatar_url.clone()))
+                                .child(Label::new("Default, Grayscale").color(Color::Muted))
+                                .child(Avatar2::new(avatar_url.clone()).grayscale(true)),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Anonymous").color(Color::Muted))
+                                .child(
+                                    h_flex().gap_1().children(
+                                        (0..=5).map(|ix| {
+                                            Avatar2::new_fallback().fallback_anonymous(ix)
+                                        }),
+                                    ),
+                                )
+                                .child(Label::new("Anonymous, Grayscale").color(Color::Muted))
+                                .child(h_flex().gap_1().children((0..=5).map(|ix| {
+                                    Avatar2::new_fallback()
+                                        .fallback_anonymous(ix)
+                                        .grayscale(true)
+                                }))),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Initials").color(Color::Muted))
+                                .child(h_flex().gap_1().children(
+                                    PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
+                                        Avatar2::new_fallback()
+                                            .fallback_initials(handle.to_string())
+                                            .fallback_anonymous(ix as u32)
+                                    }),
+                                ))
+                                .child(Label::new("Initials, Grayscale").color(Color::Muted))
+                                .child(h_flex().gap_1().children(
+                                    PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
+                                        Avatar2::new_fallback()
+                                            .fallback_initials(handle.to_string())
+                                            .fallback_anonymous(ix as u32)
+                                            .grayscale(true)
+                                    }),
+                                )),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Indicators").color(Color::Muted))
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Avatar2::new(avatar_url.clone()).indicator(
+                                            AvatarAudioStatusIndicator::new(AudioStatus::Deafened),
+                                        ))
+                                        .child(Avatar2::new(avatar_url.clone()).indicator(
+                                            AvatarAvailabilityIndicator::new(Availability::Free),
+                                        )),
+                                )
+                                .child(Label::new("Loading").color(Color::Muted))
+                                .child(Avatar2::new(avatar_url.clone()).loading(true)),
+                        ),
+                ),
             )
             .child(
                 Headline::new("Avatars")
