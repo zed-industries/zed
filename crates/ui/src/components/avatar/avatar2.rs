@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use crate::prelude::*;
 use gpui::{
-    img, pulsating_between, AbsoluteLength, Animation, AnimationExt, AnyElement, FontWeight, Hsla,
-    ImageSource, IntoElement, SharedString,
+    hsla, img, pulsating_between, AbsoluteLength, Animation, AnimationExt, AnyElement, FontWeight,
+    Hsla, ImageSource, IntoElement, SharedString,
 };
 use strum::IntoEnumIterator;
 
@@ -197,6 +197,7 @@ impl Avatar2 {
         cx: &WindowContext,
     ) -> AnyElement {
         let color = self.color(cx);
+
         let bg_color = color.opacity(0.2);
 
         self.base_avatar_style(content_size)
@@ -259,17 +260,29 @@ impl Avatar2 {
     fn color(&self, cx: &WindowContext) -> Hsla {
         match &self.source {
             AvatarSource::AnonymousAvatar(icon) => {
-                cx.theme()
+                let base_color = cx
+                    .theme()
                     .players()
                     .color_for_participant((*icon as u8).into())
-                    .cursor
+                    .cursor;
+                if !self.grayscale {
+                    base_color
+                } else {
+                    hsla(0.0, 0.0, 0.5, 1.0)
+                }
             }
             AvatarSource::FallbackAvatar(initials) => {
                 let index = initials.chars().next().map(|c| c as u8).unwrap_or(0);
-                cx.theme()
+                let base_color = cx
+                    .theme()
                     .players()
                     .color_for_participant(index.into())
-                    .cursor
+                    .cursor;
+                if !self.grayscale {
+                    base_color
+                } else {
+                    hsla(0.0, 0.0, 0.5, 1.0)
+                }
             }
             _ => cx.theme().colors().text,
         }

@@ -122,6 +122,11 @@ impl ThemePreview {
                     .child(Avatar2::new(avatar_url.clone()).loading(true))
                     .child(Avatar2::new(avatar_url.clone()))
                     .children((0..=5).map(|ix| Avatar2::new_fallback().fallback_anonymous(ix)))
+                    .child(
+                        Avatar2::new_fallback()
+                            .fallback_anonymous(0)
+                            .grayscale(true),
+                    )
                     .children(PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
                         Avatar2::new_fallback()
                             .fallback_initials(handle.to_string())
