@@ -4506,7 +4506,6 @@ impl BackgroundScanner {
         let mut repo_updates = Vec::new();
         {
             let mut state = self.state.lock();
-
             let scan_id = state.snapshot.scan_id;
             for dot_git_dir in dot_git_paths {
                 let existing_repository_entry =
@@ -4640,7 +4639,6 @@ impl BackgroundScanner {
         let Some(statuses) = job.repository.status(&[PathBuf::from("")]).log_err() else {
             return;
         };
-
         log::trace!(
             "computed git statuses for repo {:?} in {:?}",
             job.work_directory.0,
