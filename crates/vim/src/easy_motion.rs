@@ -17,15 +17,12 @@ use text::{Bias, SelectionGoal};
 use theme::ThemeSettings;
 use ui::{IntoElement, Render, VisualContext};
 
-use crate::{
-    easy_motion::{
-        editor_state::{EasyMotionState, OverlayState},
-        search::{row_starts, sort_matches_display},
-        trie::{Trie, TrimResult},
-    },
-    state::Mode,
-    Vim,
+use crate::easy_motion::{
+    editor_state::{EasyMotionState, OverlayState},
+    search::{row_starts, sort_matches_display},
+    trie::{Trie, TrimResult},
 };
+use crate::{state::Mode, Vim};
 
 pub mod editor_state;
 mod search;
