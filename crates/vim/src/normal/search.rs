@@ -112,7 +112,9 @@ impl Vim {
     }
 
     fn search(&mut self, action: &Search, cx: &mut ViewContext<Self>) {
-        let Some(pane) = self.pane(cx) else { return };
+        let Some(pane) = self.pane(cx) else {
+            return;
+        };
         let direction = if action.backwards {
             Direction::Prev
         } else {

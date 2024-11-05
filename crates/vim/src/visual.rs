@@ -576,14 +576,9 @@ impl Vim {
 
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let count = self.take_count(cx).unwrap_or(1);
-        let Some(workspace) = self
-            .editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).workspace())
-        else {
+        let Some(pane) = self.pane(cx) else {
             return;
         };
-        let pane = workspace.read(cx).active_pane().clone();
         let vim_is_normal = self.mode == Mode::Normal;
         let mut start_selection = 0usize;
         let mut end_selection = 0usize;
