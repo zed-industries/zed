@@ -731,6 +731,24 @@ async fn test_wrapped_motions(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_wrapped_delete_end_document(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_wrap(12).await;
+
+    cx.set_shared_state(indoc! {"
+                aaˇaaaaaaaaaaaaaaaaaa
+                bbbbbbbbbbbbbbbbbbbb
+                cccccccccccccccccccc"
+    })
+    .await;
+    cx.simulate_shared_keystrokes("d shift-g i z z z").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+                zzzˇ"
+    });
+}
+
+#[gpui::test]
 async fn test_paragraphs_dont_wrap(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 

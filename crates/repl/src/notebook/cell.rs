@@ -553,9 +553,6 @@ impl RunnableCell for CodeCell {
 
 impl Render for CodeCell {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let lines = self.source.lines().count();
-        let height = lines as f32 * cx.line_height();
-
         v_flex()
             .size_full()
             // TODO: Move base cell render into trait impl so we don't have to repeat this
@@ -582,7 +579,7 @@ impl Render for CodeCell {
                                 .border_1()
                                 .border_color(cx.theme().colors().border)
                                 .bg(cx.theme().colors().editor_background)
-                                .child(div().h(height).w_full().child(self.editor.clone())),
+                                .child(div().w_full().child(self.editor.clone())),
                         ),
                     ),
             )

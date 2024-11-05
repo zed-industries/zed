@@ -62,6 +62,9 @@ pub type SlashCommandResult = Result<BoxStream<'static, Result<SlashCommandEvent
 
 pub trait SlashCommand: 'static + Send + Sync {
     fn name(&self) -> String;
+    fn icon(&self) -> IconName {
+        IconName::Slash
+    }
     fn label(&self, _cx: &AppContext) -> CodeLabel {
         CodeLabel::plain(self.name(), None)
     }

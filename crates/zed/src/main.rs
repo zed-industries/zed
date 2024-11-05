@@ -329,7 +329,7 @@ fn main() {
         telemetry.start(
             system_id.as_ref().map(|id| id.to_string()),
             installation_id.as_ref().map(|id| id.to_string()),
-            session_id,
+            session_id.clone(),
             cx,
         );
 
@@ -365,7 +365,9 @@ fn main() {
         auto_update::init(client.http_client(), cx);
         reliability::init(
             client.http_client(),
+            system_id.as_ref().map(|id| id.to_string()),
             installation_id.clone().map(|id| id.to_string()),
+            session_id.clone(),
             cx,
         );
 
@@ -400,7 +402,7 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
-        extension::init(
+        extension_host::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),

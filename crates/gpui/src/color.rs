@@ -1,7 +1,7 @@
 use anyhow::{bail, Context};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
 use std::{
-    fmt,
+    fmt::{self, Display, Formatter},
     hash::{Hash, Hasher},
 };
 
@@ -276,6 +276,19 @@ impl Hash for Hsla {
         state.write_u32(u32::from_be_bytes(self.s.to_be_bytes()));
         state.write_u32(u32::from_be_bytes(self.l.to_be_bytes()));
         state.write_u32(u32::from_be_bytes(self.a.to_be_bytes()));
+    }
+}
+
+impl Display for Hsla {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "hsla({:.2}, {:.2}%, {:.2}%, {:.2})",
+            self.h * 360.,
+            self.s * 100.,
+            self.l * 100.,
+            self.a
+        )
     }
 }
 

@@ -1,17 +1,10 @@
 use std::sync::Arc;
 
 use assistant_slash_command::SlashCommandRegistry;
-use gpui::AnyElement;
-use gpui::DismissEvent;
-use gpui::WeakView;
-use picker::PickerEditorPosition;
 
-use ui::ListItemSpacing;
-
-use gpui::SharedString;
-use gpui::Task;
-use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverTrigger};
+use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
+use picker::{Picker, PickerDelegate, PickerEditorPosition};
+use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
 
 use crate::assistant_panel::ContextEditor;
 
@@ -27,6 +20,7 @@ struct SlashCommandInfo {
     name: SharedString,
     description: SharedString,
     args: Option<SharedString>,
+    icon: IconName,
 }
 
 #[derive(Clone)]
@@ -145,16 +139,20 @@ impl PickerDelegate for SlashCommandDelegate {
         }
         ret
     }
+
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if let Some(command) = self.filtered_commands.get(self.selected_index) {
-            if let SlashCommandEntry::Info(info) = command {
-                self.active_context_editor
-                    .update(cx, |context_editor, cx| {
-                        context_editor.insert_command(&info.name, cx)
-                    })
-                    .ok();
-            } else if let SlashCommandEntry::Advert { on_confirm, .. } = command {
-                on_confirm(cx);
+            match command {
+                SlashCommandEntry::Info(info) => {
+                    self.active_context_editor
+                        .update(cx, |context_editor, cx| {
+                            context_editor.insert_command(&info.name, cx)
+                        })
+                        .ok();
+                }
+                SlashCommandEntry::Advert { on_confirm, .. } => {
+                    on_confirm(cx);
+                }
             }
             cx.emit(DismissEvent);
         }
@@ -181,43 +179,41 @@ impl PickerDelegate for SlashCommandDelegate {
                     .spacing(ListItemSpacing::Dense)
                     .selected(selected)
                     .child(
-                        h_flex()
+                        v_flex()
                             .group(format!("command-entry-label-{ix}"))
                             .w_full()
                             .min_w(px(250.))
                             .child(
-                                v_flex()
-                                    .child(
-                                        h_flex()
-                                            .child(div().font_buffer(cx).child({
-                                                let mut label = format!("/{}", info.name);
-                                                if let Some(args) =
-                                                    info.args.as_ref().filter(|_| selected)
-                                                {
-                                                    label.push_str(&args);
-                                                }
-                                                Label::new(label).size(LabelSize::Small)
-                                            }))
-                                            .children(info.args.clone().filter(|_| !selected).map(
-                                                |args| {
-                                                    div()
-                                                        .font_buffer(cx)
-                                                        .child(
-                                                            Label::new(args)
-                                                                .size(LabelSize::Small)
-                                                                .color(Color::Muted),
-                                                        )
-                                                        .visible_on_hover(format!(
-                                                            "command-entry-label-{ix}"
-                                                        ))
-                                                },
-                                            )),
-                                    )
-                                    .child(
-                                        Label::new(info.description.clone())
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
+                                h_flex()
+                                    .gap_1p5()
+                                    .child(Icon::new(info.icon).size(IconSize::XSmall))
+                                    .child(div().font_buffer(cx).child({
+                                        let mut label = format!("{}", info.name);
+                                        if let Some(args) = info.args.as_ref().filter(|_| selected)
+                                        {
+                                            label.push_str(&args);
+                                        }
+                                        Label::new(label).size(LabelSize::Small)
+                                    }))
+                                    .children(info.args.clone().filter(|_| !selected).map(
+                                        |args| {
+                                            div()
+                                                .font_buffer(cx)
+                                                .child(
+                                                    Label::new(args)
+                                                        .size(LabelSize::Small)
+                                                        .color(Color::Muted),
+                                                )
+                                                .visible_on_hover(format!(
+                                                    "command-entry-label-{ix}"
+                                                ))
+                                        },
+                                    )),
+                            )
+                            .child(
+                                Label::new(info.description.clone())
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             ),
                     ),
             ),
@@ -251,24 +247,40 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                     name: command_name.into(),
                     description: menu_text,
                     args,
+                    icon: command.icon(),
                 }))
             })
             .chain([SlashCommandEntry::Advert {
                 name: "create-your-command".into(),
                 renderer: |cx| {
                     v_flex()
+                        .w_full()
                         .child(
                             h_flex()
+                                .w_full()
                                 .font_buffer(cx)
                                 .items_center()
-                                .gap_1()
-                                .child(div().font_buffer(cx).child(
-                                    Label::new("create-your-command").size(LabelSize::Small),
-                                ))
-                                .child(Icon::new(IconName::ArrowUpRight).size(IconSize::XSmall)),
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
+                                        .child(
+                                            div().font_buffer(cx).child(
+                                                Label::new("create-your-command")
+                                                    .size(LabelSize::Small),
+                                            ),
+                                        ),
+                                )
+                                .child(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
                         )
                         .child(
-                            Label::new("Learn how to create a custom command")
+                            Label::new("Create your custom command")
                                 .size(LabelSize::Small)
                                 .color(Color::Muted),
                         )

@@ -119,12 +119,13 @@ pub fn init(cx: &mut AppContext) {
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, cx| {
-            let Some(vim) = workspace
-                .active_item_as::<Editor>(cx)
-                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned())
-            else {
-                return;
-            };
+            let vim = workspace
+                .focused_pane(cx)
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
+            let Some(vim) = vim else { return };
             vim.view
                 .update(cx, |_, cx| cx.defer(|vim, cx| vim.search_submit(cx)))
         });
@@ -301,6 +302,7 @@ impl Vim {
             object::register(editor, cx);
             visual::register(editor, cx);
             change_list::register(editor, cx);
+            digraph::register(editor, cx);
 
             cx.defer(|vim, cx| {
                 vim.focused(false, cx);
@@ -347,13 +349,15 @@ impl Vim {
         self.editor.upgrade()
     }
 
-    pub fn workspace(&self, cx: &ViewContext<Self>) -> Option<View<Workspace>> {
-        self.editor().and_then(|editor| editor.read(cx).workspace())
+    pub fn workspace(&self, cx: &mut ViewContext<Self>) -> Option<View<Workspace>> {
+        cx.window_handle()
+            .downcast::<Workspace>()
+            .and_then(|handle| handle.root(cx).ok())
     }
 
-    pub fn pane(&self, cx: &ViewContext<Self>) -> Option<View<Pane>> {
+    pub fn pane(&self, cx: &mut ViewContext<Self>) -> Option<View<Pane>> {
         self.workspace(cx)
-            .and_then(|workspace| workspace.read(cx).pane_for(&self.editor()?))
+            .map(|workspace| workspace.read(cx).focused_pane(cx))
     }
 
     pub fn enabled(cx: &mut AppContext) -> bool {
@@ -373,9 +377,15 @@ impl Vim {
         }
 
         if let Some(operator) = self.active_operator() {
-            if !operator.is_waiting(self.mode) {
-                self.clear_operator(cx);
-                self.stop_recording_immediately(Box::new(ClearOperators), cx)
+            match operator {
+                Operator::Literal { prefix } => {
+                    self.handle_literal_keystroke(keystroke_event, prefix.unwrap_or_default(), cx);
+                }
+                _ if !operator.is_waiting(self.mode) => {
+                    self.clear_operator(cx);
+                    self.stop_recording_immediately(Box::new(ClearOperators), cx)
+                }
+                _ => {}
             }
         }
     }
@@ -631,14 +641,18 @@ impl Vim {
 
         if let Some(active_operator) = active_operator {
             if active_operator.is_waiting(self.mode) {
-                mode = "waiting".to_string();
+                if matches!(active_operator, Operator::Literal { .. }) {
+                    mode = "literal".to_string();
+                } else {
+                    mode = "waiting".to_string();
+                }
             } else {
-                mode = "operator".to_string();
                 operator_id = active_operator.id();
+                mode = "operator".to_string();
             }
         }
 
-        if mode != "waiting" && mode != "insert" && mode != "replace" {
+        if mode == "normal" || mode == "visual" || mode == "operator" {
             context.add("VimControl");
         }
         context.set("vim_mode", mode);
@@ -649,9 +663,11 @@ impl Vim {
         let Some(editor) = self.editor() else {
             return;
         };
+        let newest_selection_empty = editor.update(cx, |editor, cx| {
+            editor.selections.newest::<usize>(cx).is_empty()
+        });
         let editor = editor.read(cx);
         let editor_mode = editor.mode();
-        let newest_selection_empty = editor.selections.newest::<usize>(cx).is_empty();
 
         if editor_mode == EditorMode::Full
                 && !newest_selection_empty
@@ -746,11 +762,12 @@ impl Vim {
                 globals.recorded_count = None;
 
                 let selections = self.editor().map(|editor| {
-                    let editor = editor.read(cx);
-                    (
-                        editor.selections.oldest::<Point>(cx),
-                        editor.selections.newest::<Point>(cx),
-                    )
+                    editor.update(cx, |editor, cx| {
+                        (
+                            editor.selections.oldest::<Point>(cx),
+                            editor.selections.newest::<Point>(cx),
+                        )
+                    })
                 });
 
                 if let Some((oldest, newest)) = selections {
@@ -1023,6 +1040,9 @@ impl Vim {
                     self.pop_operator(cx);
                     self.push_operator(Operator::Digraph { first_char }, cx);
                 }
+            }
+            Some(Operator::Literal { prefix }) => {
+                self.handle_literal_input(prefix.unwrap_or_default(), &text, cx)
             }
             Some(Operator::AddSurrounds { target }) => match self.mode {
                 Mode::Normal => {

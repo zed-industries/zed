@@ -26,7 +26,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
 
-const PROVIDER_ID: &str = "anthropic";
+pub const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -356,6 +356,10 @@ impl LanguageModel for AnthropicModel {
         format!("anthropic/{}", self.model.id())
     }
 
+    fn api_key(&self, cx: &AppContext) -> Option<String> {
+        self.state.read(cx).api_key.clone()
+    }
+
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
     }
@@ -519,6 +523,14 @@ pub fn map_to_language_model_completion_events(
                                     state,
                                 ));
                             }
+                        }
+                        Event::MessageStart { message } => {
+                            return Some((
+                                Some(Ok(LanguageModelCompletionEvent::StartMessage {
+                                    message_id: message.id,
+                                })),
+                                state,
+                            ))
                         }
                         Event::MessageDelta { delta, .. } => {
                             if let Some(stop_reason) = delta.stop_reason.as_deref() {

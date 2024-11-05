@@ -105,6 +105,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use similar::{ChangeTag, TextDiff};
+use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -133,7 +134,9 @@ use project::{
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
 use scroll::{Autoscroll, OngoingScroll, ScrollAnchor, ScrollManager, ScrollbarAutoHide};
-use selections_collection::{resolve_multiple, MutableSelectionsCollection, SelectionsCollection};
+use selections_collection::{
+    resolve_selections, MutableSelectionsCollection, SelectionsCollection,
+};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
@@ -502,6 +505,19 @@ struct RunnableTasks {
     extra_variables: HashMap<String, String>,
     // Full range of the tagged region. We use it to determine which `extra_variables` to grab for context resolution in e.g. a modal.
     context_range: Range<BufferOffset>,
+}
+
+impl RunnableTasks {
+    fn resolve<'a>(
+        &'a self,
+        cx: &'a task::TaskContext,
+    ) -> impl Iterator<Item = (TaskSourceKind, ResolvedTask)> + 'a {
+        self.templates.iter().filter_map(|(kind, template)| {
+            template
+                .resolve_task(&kind.to_id_base(), cx)
+                .map(|task| (kind.clone(), task))
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -1341,22 +1357,22 @@ impl CompletionsMenu {
                 // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
                 // and the Weak matches are the rest.
                 //
-                // For the strong matches, we sort by the language-servers score first and for the weak
-                // matches, we prefer our fuzzy finder first.
+                // For the strong matches, we sort by our fuzzy-finder score first and for the weak
+                // matches, we prefer language-server sort_text first.
                 //
-                // The thinking behind that: it's useless to take the sort_text the language-server gives
-                // us into account when it's obviously a bad match.
+                // The thinking behind that: we want to show strong matches first in order of relevance(fuzzy score).
+                // Rest of the matches(weak) can be sorted as language-server expects.
 
                 #[derive(PartialEq, Eq, PartialOrd, Ord)]
                 enum MatchScore<'a> {
                     Strong {
-                        sort_text: Option<&'a str>,
                         score: Reverse<OrderedFloat<f64>>,
+                        sort_text: Option<&'a str>,
                         sort_key: (usize, &'a str),
                     },
                     Weak {
-                        score: Reverse<OrderedFloat<f64>>,
                         sort_text: Option<&'a str>,
+                        score: Reverse<OrderedFloat<f64>>,
                         sort_key: (usize, &'a str),
                     },
                 }
@@ -1368,14 +1384,14 @@ impl CompletionsMenu {
 
                 if mat.score >= 0.2 {
                     MatchScore::Strong {
-                        sort_text,
                         score,
+                        sort_text,
                         sort_key,
                     }
                 } else {
                     MatchScore::Weak {
-                        score,
                         sort_text,
+                        score,
                         sort_key,
                     }
                 }
@@ -3483,8 +3499,8 @@ impl Editor {
             }
             let new_anchor_selections = new_selections.iter().map(|e| &e.0);
             let new_selection_deltas = new_selections.iter().map(|e| e.1);
-            let snapshot = this.buffer.read(cx).read(cx);
-            let new_selections = resolve_multiple::<usize, _>(new_anchor_selections, &snapshot)
+            let map = this.display_map.update(cx, |map, cx| map.snapshot(cx));
+            let new_selections = resolve_selections::<usize, _>(new_anchor_selections, &map)
                 .zip(new_selection_deltas)
                 .map(|(selection, delta)| Selection {
                     id: selection.id,
@@ -3497,18 +3513,20 @@ impl Editor {
 
             let mut i = 0;
             for (position, delta, selection_id, pair) in new_autoclose_regions {
-                let position = position.to_offset(&snapshot) + delta;
-                let start = snapshot.anchor_before(position);
-                let end = snapshot.anchor_after(position);
+                let position = position.to_offset(&map.buffer_snapshot) + delta;
+                let start = map.buffer_snapshot.anchor_before(position);
+                let end = map.buffer_snapshot.anchor_after(position);
                 while let Some(existing_state) = this.autoclose_regions.get(i) {
-                    match existing_state.range.start.cmp(&start, &snapshot) {
+                    match existing_state.range.start.cmp(&start, &map.buffer_snapshot) {
                         Ordering::Less => i += 1,
                         Ordering::Greater => break,
-                        Ordering::Equal => match end.cmp(&existing_state.range.end, &snapshot) {
-                            Ordering::Less => i += 1,
-                            Ordering::Equal => break,
-                            Ordering::Greater => break,
-                        },
+                        Ordering::Equal => {
+                            match end.cmp(&existing_state.range.end, &map.buffer_snapshot) {
+                                Ordering::Less => i += 1,
+                                Ordering::Equal => break,
+                                Ordering::Greater => break,
+                            }
+                        }
                     }
                 }
                 this.autoclose_regions.insert(
@@ -3521,7 +3539,6 @@ impl Editor {
                 );
             }
 
-            drop(snapshot);
             let had_active_inline_completion = this.has_active_inline_completion(cx);
             this.change_selections_inner(Some(Autoscroll::fit()), false, cx, |s| {
                 s.select(new_selections)
@@ -4037,7 +4054,7 @@ impl Editor {
                 }
             }
 
-            (selection.clone(), enclosing)
+            (selection, enclosing)
         })
     }
 
@@ -4735,29 +4752,7 @@ impl Editor {
                             .as_ref()
                             .zip(editor.project.clone())
                             .map(|(tasks, project)| {
-                                let position = Point::new(buffer_row, tasks.column);
-                                let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
-                                let location = Location {
-                                    buffer: buffer.clone(),
-                                    range: range_start..range_start,
-                                };
-                                // Fill in the environmental variables from the tree-sitter captures
-                                let mut captured_task_variables = TaskVariables::default();
-                                for (capture_name, value) in tasks.extra_variables.clone() {
-                                    captured_task_variables.insert(
-                                        task::VariableName::Custom(capture_name.into()),
-                                        value.clone(),
-                                    );
-                                }
-                                project.update(cx, |project, cx| {
-                                    project.task_store().update(cx, |task_store, cx| {
-                                        task_store.task_context_for_location(
-                                            captured_task_variables,
-                                            location,
-                                            cx,
-                                        )
-                                    })
-                                })
+                                Self::build_tasks_context(&project, &buffer, buffer_row, tasks, cx)
                             });
 
                     Some(cx.spawn(|editor, mut cx| async move {
@@ -4768,15 +4763,7 @@ impl Editor {
                         let resolved_tasks =
                             tasks.zip(task_context).map(|(tasks, task_context)| {
                                 Arc::new(ResolvedTasks {
-                                    templates: tasks
-                                        .templates
-                                        .iter()
-                                        .filter_map(|(kind, template)| {
-                                            template
-                                                .resolve_task(&kind.to_id_base(), &task_context)
-                                                .map(|task| (kind.clone(), task))
-                                        })
-                                        .collect(),
+                                    templates: tasks.resolve(&task_context).collect(),
                                     position: snapshot.buffer_snapshot.anchor_before(Point::new(
                                         multibuffer_point.row,
                                         tasks.column,
@@ -5480,6 +5467,132 @@ impl Editor {
             // This case should hopefully be rare, but just in case...
             log::error!("multiple different run targets found on a single line, only the last target will be rendered")
         }
+    }
+
+    fn build_tasks_context(
+        project: &Model<Project>,
+        buffer: &Model<Buffer>,
+        buffer_row: u32,
+        tasks: &Arc<RunnableTasks>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Option<task::TaskContext>> {
+        let position = Point::new(buffer_row, tasks.column);
+        let range_start = buffer.read(cx).anchor_at(position, Bias::Right);
+        let location = Location {
+            buffer: buffer.clone(),
+            range: range_start..range_start,
+        };
+        // Fill in the environmental variables from the tree-sitter captures
+        let mut captured_task_variables = TaskVariables::default();
+        for (capture_name, value) in tasks.extra_variables.clone() {
+            captured_task_variables.insert(
+                task::VariableName::Custom(capture_name.into()),
+                value.clone(),
+            );
+        }
+        project.update(cx, |project, cx| {
+            project.task_store().update(cx, |task_store, cx| {
+                task_store.task_context_for_location(captured_task_variables, location, cx)
+            })
+        })
+    }
+
+    pub fn spawn_nearest_task(&mut self, action: &SpawnNearestTask, cx: &mut ViewContext<Self>) {
+        let Some((workspace, _)) = self.workspace.clone() else {
+            return;
+        };
+        let Some(project) = self.project.clone() else {
+            return;
+        };
+
+        // Try to find a closest, enclosing node using tree-sitter that has a
+        // task
+        let Some((buffer, buffer_row, tasks)) = self
+            .find_enclosing_node_task(cx)
+            // Or find the task that's closest in row-distance.
+            .or_else(|| self.find_closest_task(cx))
+        else {
+            return;
+        };
+
+        let reveal_strategy = action.reveal;
+        let task_context = Self::build_tasks_context(&project, &buffer, buffer_row, &tasks, cx);
+        cx.spawn(|_, mut cx| async move {
+            let context = task_context.await?;
+            let (task_source_kind, mut resolved_task) = tasks.resolve(&context).next()?;
+
+            let resolved = resolved_task.resolved.as_mut()?;
+            resolved.reveal = reveal_strategy;
+
+            workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace::tasks::schedule_resolved_task(
+                        workspace,
+                        task_source_kind,
+                        resolved_task,
+                        false,
+                        cx,
+                    );
+                })
+                .ok()
+        })
+        .detach();
+    }
+
+    fn find_closest_task(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Model<Buffer>, u32, Arc<RunnableTasks>)> {
+        let cursor_row = self.selections.newest_adjusted(cx).head().row;
+
+        let ((buffer_id, row), tasks) = self
+            .tasks
+            .iter()
+            .min_by_key(|((_, row), _)| cursor_row.abs_diff(*row))?;
+
+        let buffer = self.buffer.read(cx).buffer(*buffer_id)?;
+        let tasks = Arc::new(tasks.to_owned());
+        Some((buffer, *row, tasks))
+    }
+
+    fn find_enclosing_node_task(
+        &mut self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<(Model<Buffer>, u32, Arc<RunnableTasks>)> {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let offset = self.selections.newest::<usize>(cx).head();
+        let excerpt = snapshot.excerpt_containing(offset..offset)?;
+        let buffer_id = excerpt.buffer().remote_id();
+
+        let layer = excerpt.buffer().syntax_layer_at(offset)?;
+        let mut cursor = layer.node().walk();
+
+        while cursor.goto_first_child_for_byte(offset).is_some() {
+            if cursor.node().end_byte() == offset {
+                cursor.goto_next_sibling();
+            }
+        }
+
+        // Ascend to the smallest ancestor that contains the range and has a task.
+        loop {
+            let node = cursor.node();
+            let node_range = node.byte_range();
+            let symbol_start_row = excerpt.buffer().offset_to_point(node.start_byte()).row;
+
+            // Check if this node contains our offset
+            if node_range.start <= offset && node_range.end >= offset {
+                // If it contains offset, check for task
+                if let Some(tasks) = self.tasks.get(&(buffer_id, symbol_start_row)) {
+                    let buffer = self.buffer.read(cx).buffer(buffer_id)?;
+                    return Some((buffer, symbol_start_row, Arc::new(tasks.to_owned())));
+                }
+            }
+
+            if !cursor.goto_parent() {
+                break;
+            }
+        }
+        None
     }
 
     fn render_run_indicator(
@@ -6908,6 +7021,8 @@ impl Editor {
                 }
             }
 
+            let tab_size = buffer.settings_at(selection.head(), cx).tab_size;
+
             // Since not all lines in the selection may be at the same indent
             // level, choose the indent size that is the most common between all
             // of the lines.
@@ -6925,7 +7040,7 @@ impl Editor {
 
                 let indent_size = indent_size_occurrences
                     .into_iter()
-                    .max_by_key(|(indent, count)| (*count, indent.len))
+                    .max_by_key(|(indent, count)| (*count, indent.len_with_expanded_tabs(tab_size)))
                     .map(|(indent, _)| indent)
                     .unwrap_or_default();
                 let row = rows_by_indent_size[&indent_size][0];
@@ -6949,6 +7064,10 @@ impl Editor {
             {
                 line_prefix.push_str(&comment_prefix);
                 should_rewrap = true;
+            }
+
+            if !should_rewrap {
+                continue;
             }
 
             if selection.is_empty() {
@@ -6975,10 +7094,6 @@ impl Editor {
                 }
             }
 
-            if !should_rewrap {
-                continue;
-            }
-
             let start = Point::new(start_row, 0);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
@@ -6997,29 +7112,15 @@ impl Editor {
                 continue;
             };
 
-            let unwrapped_text = lines_without_prefixes.join(" ");
             let wrap_column = buffer
                 .settings_at(Point::new(start_row, 0), cx)
                 .preferred_line_length as usize;
-            let mut wrapped_text = String::new();
-            let mut current_line = line_prefix.clone();
-            for word in unwrapped_text.split_whitespace() {
-                if current_line.len() + word.len() >= wrap_column {
-                    wrapped_text.push_str(&current_line);
-                    wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                }
-
-                if current_line.len() > line_prefix.len() {
-                    current_line.push(' ');
-                }
-
-                current_line.push_str(word);
-            }
-
-            if !current_line.is_empty() {
-                wrapped_text.push_str(&current_line);
-            }
+            let wrapped_text = wrap_with_prefix(
+                line_prefix,
+                lines_without_prefixes.join(" "),
+                wrap_column,
+                tab_size,
+            );
 
             let diff = TextDiff::from_lines(&selection_text, &wrapped_text);
             let mut offset = start.to_offset(&buffer);
@@ -7180,9 +7281,14 @@ impl Editor {
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
+                let cursor_offset = this.selections.last::<usize>(cx).head();
+                let mut auto_indent_on_paste = true;
 
                 this.buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.read(cx);
+                    auto_indent_on_paste =
+                        snapshot.settings_at(cursor_offset, cx).auto_indent_on_paste;
+
                     let mut start_offset = 0;
                     let mut edits = Vec::new();
                     let mut original_indent_columns = Vec::new();
@@ -7221,9 +7327,13 @@ impl Editor {
 
                     buffer.edit(
                         edits,
-                        Some(AutoindentMode::Block {
-                            original_indent_columns,
-                        }),
+                        if auto_indent_on_paste {
+                            Some(AutoindentMode::Block {
+                                original_indent_columns,
+                            })
+                        } else {
+                            None
+                        },
                         cx,
                     );
                 });
@@ -8676,14 +8786,22 @@ impl Editor {
             let snapshot = this.buffer.read(cx).read(cx);
             let empty_str: Arc<str> = Arc::default();
             let mut suffixes_inserted = Vec::new();
+            let ignore_indent = action.ignore_indent;
 
             fn comment_prefix_range(
                 snapshot: &MultiBufferSnapshot,
                 row: MultiBufferRow,
                 comment_prefix: &str,
                 comment_prefix_whitespace: &str,
+                ignore_indent: bool,
             ) -> Range<Point> {
-                let start = Point::new(row.0, snapshot.indent_size_for_line(row).len);
+                let indent_size = if ignore_indent {
+                    0
+                } else {
+                    snapshot.indent_size_for_line(row).len
+                };
+
+                let start = Point::new(row.0, indent_size);
 
                 let mut line_bytes = snapshot
                     .bytes_in_range(start..snapshot.max_point())
@@ -8779,7 +8897,16 @@ impl Editor {
                 }
 
                 // If the language has line comments, toggle those.
-                let full_comment_prefixes = language.line_comment_prefixes();
+                let mut full_comment_prefixes = language.line_comment_prefixes().to_vec();
+
+                // If ignore_indent is set, trim spaces from the right side of all full_comment_prefixes
+                if ignore_indent {
+                    full_comment_prefixes = full_comment_prefixes
+                        .into_iter()
+                        .map(|s| Arc::from(s.trim_end()))
+                        .collect();
+                }
+
                 if !full_comment_prefixes.is_empty() {
                     let first_prefix = full_comment_prefixes
                         .first()
@@ -8806,6 +8933,7 @@ impl Editor {
                                     row,
                                     &prefix[..trimmed_prefix_len],
                                     &prefix[trimmed_prefix_len..],
+                                    ignore_indent,
                                 )
                             })
                             .max_by_key(|range| range.end.column - range.start.column)
@@ -8846,6 +8974,7 @@ impl Editor {
                         start_row,
                         comment_prefix,
                         comment_prefix_whitespace,
+                        ignore_indent,
                     );
                     let suffix_range = comment_suffix_range(
                         snapshot.deref(),
@@ -9641,8 +9770,8 @@ impl Editor {
         let Some(provider) = self.semantics_provider.clone() else {
             return Task::ready(Ok(Navigated::No));
         };
-        let buffer = self.buffer.read(cx);
         let head = self.selections.newest::<usize>(cx).head();
+        let buffer = self.buffer.read(cx);
         let (buffer, head) = if let Some(text_anchor) = buffer.text_anchor_for_position(head, cx) {
             text_anchor
         } else {
@@ -9949,8 +10078,8 @@ impl Editor {
         _: &FindAllReferences,
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<Result<Navigated>>> {
-        let multi_buffer = self.buffer.read(cx);
         let selection = self.selections.newest::<usize>(cx);
+        let multi_buffer = self.buffer.read(cx);
         let head = selection.head();
 
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
@@ -10357,8 +10486,9 @@ impl Editor {
         self.show_local_selections = true;
 
         if moving_cursor {
-            let rename_editor = rename.editor.read(cx);
-            let cursor_in_rename_editor = rename_editor.selections.newest::<usize>(cx).head();
+            let cursor_in_rename_editor = rename.editor.update(cx, |editor, cx| {
+                editor.selections.newest::<usize>(cx).head()
+            });
 
             // Update the selection to match the position of the selection inside
             // the rename editor.
@@ -10472,7 +10602,7 @@ impl Editor {
 
     fn cancel_language_server_work(
         &mut self,
-        _: &CancelLanguageServerWork,
+        _: &actions::CancelLanguageServerWork,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some(project) = self.project.clone() {
@@ -11607,9 +11737,9 @@ impl Editor {
     }
 
     pub fn copy_file_location(&mut self, _: &CopyFileLocation, cx: &mut ViewContext<Self>) {
+        let selection = self.selections.newest::<Point>(cx).start.row + 1;
         if let Some(file) = self.target_file(cx) {
             if let Some(path) = file.path().to_str() {
-                let selection = self.selections.newest::<Point>(cx).start.row + 1;
                 cx.write_to_clipboard(ClipboardItem::new_string(format!("{path}:{selection}")));
             }
         }
@@ -12408,9 +12538,10 @@ impl Editor {
             return;
         };
 
+        let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx);
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in selections {
             for (buffer, range, _) in
                 buffer.range_to_buffer_ranges(selection.start..selection.end, cx)
             {
@@ -12455,6 +12586,7 @@ impl Editor {
     }
 
     fn open_excerpts_common(&mut self, split: bool, cx: &mut ViewContext<Self>) {
+        let selections = self.selections.all::<usize>(cx);
         let buffer = self.buffer.read(cx);
         if buffer.is_singleton() {
             cx.propagate();
@@ -12467,7 +12599,7 @@ impl Editor {
         };
 
         let mut new_selections_by_buffer = HashMap::default();
-        for selection in self.selections.all::<usize>(cx) {
+        for selection in selections {
             for (mut buffer_handle, mut range, _) in
                 buffer.range_to_buffer_ranges(selection.range(), cx)
             {
@@ -12583,7 +12715,7 @@ impl Editor {
     fn selection_replacement_ranges(
         &self,
         range: Range<OffsetUtf16>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> Vec<Range<OffsetUtf16>> {
         let selections = self.selections.all::<OffsetUtf16>(cx);
         let newest_selection = selections
@@ -12949,6 +13081,289 @@ impl Editor {
             .get(&type_id)
             .and_then(|item| item.to_any().downcast_ref::<T>())
     }
+}
+
+fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
+    let tab_size = tab_size.get() as usize;
+    let mut width = offset;
+
+    for ch in text.chars() {
+        width += if ch == '\t' {
+            tab_size - (width % tab_size)
+        } else {
+            1
+        };
+    }
+
+    width - offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_size_with_expanded_tabs() {
+        let nz = |val| NonZeroU32::new(val).unwrap();
+        assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
+        assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
+        assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
+        assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
+        assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
+        assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+}
+
+/// Tokenizes a string into runs of text that should stick together, or that is whitespace.
+struct WordBreakingTokenizer<'a> {
+    input: &'a str,
+}
+
+impl<'a> WordBreakingTokenizer<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input }
+    }
+}
+
+fn is_char_ideographic(ch: char) -> bool {
+    use unicode_script::Script::*;
+    use unicode_script::UnicodeScript;
+    matches!(ch.script(), Han | Tangut | Yi)
+}
+
+fn is_grapheme_ideographic(text: &str) -> bool {
+    text.chars().any(is_char_ideographic)
+}
+
+fn is_grapheme_whitespace(text: &str) -> bool {
+    text.chars().any(|x| x.is_whitespace())
+}
+
+fn should_stay_with_preceding_ideograph(text: &str) -> bool {
+    text.chars().next().map_or(false, |ch| {
+        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
+    })
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+struct WordBreakToken<'a> {
+    token: &'a str,
+    grapheme_len: usize,
+    is_whitespace: bool,
+}
+
+impl<'a> Iterator for WordBreakingTokenizer<'a> {
+    /// Yields a span, the count of graphemes in the token, and whether it was
+    /// whitespace. Note that it also breaks at word boundaries.
+    type Item = WordBreakToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use unicode_segmentation::UnicodeSegmentation;
+        if self.input.is_empty() {
+            return None;
+        }
+
+        let mut iter = self.input.graphemes(true).peekable();
+        let mut offset = 0;
+        let mut graphemes = 0;
+        if let Some(first_grapheme) = iter.next() {
+            let is_whitespace = is_grapheme_whitespace(first_grapheme);
+            offset += first_grapheme.len();
+            graphemes += 1;
+            if is_grapheme_ideographic(first_grapheme) && !is_whitespace {
+                if let Some(grapheme) = iter.peek().copied() {
+                    if should_stay_with_preceding_ideograph(grapheme) {
+                        offset += grapheme.len();
+                        graphemes += 1;
+                    }
+                }
+            } else {
+                let mut words = self.input[offset..].split_word_bound_indices().peekable();
+                let mut next_word_bound = words.peek().copied();
+                if next_word_bound.map_or(false, |(i, _)| i == 0) {
+                    next_word_bound = words.next();
+                }
+                while let Some(grapheme) = iter.peek().copied() {
+                    if next_word_bound.map_or(false, |(i, _)| i == offset) {
+                        break;
+                    };
+                    if is_grapheme_whitespace(grapheme) != is_whitespace {
+                        break;
+                    };
+                    offset += grapheme.len();
+                    graphemes += 1;
+                    iter.next();
+                }
+            }
+            let token = &self.input[..offset];
+            self.input = &self.input[offset..];
+            if is_whitespace {
+                Some(WordBreakToken {
+                    token: " ",
+                    grapheme_len: 1,
+                    is_whitespace: true,
+                })
+            } else {
+                Some(WordBreakToken {
+                    token,
+                    grapheme_len: graphemes,
+                    is_whitespace: false,
+                })
+            }
+        } else {
+            None
+        }
+    }
+}
+
+#[test]
+fn test_word_breaking_tokenizer() {
+    let tests: &[(&str, &[(&str, usize, bool)])] = &[
+        ("", &[]),
+        ("  ", &[(" ", 1, true)]),
+        ("Ʒ", &[("Ʒ", 1, false)]),
+        ("Ǽ", &[("Ǽ", 1, false)]),
+        ("⋑", &[("⋑", 1, false)]),
+        ("⋑⋑", &[("⋑⋑", 2, false)]),
+        (
+            "原理，进而",
+            &[
+                ("原", 1, false),
+                ("理，", 2, false),
+                ("进", 1, false),
+                ("而", 1, false),
+            ],
+        ),
+        (
+            "hello world",
+            &[("hello", 5, false), (" ", 1, true), ("world", 5, false)],
+        ),
+        (
+            "hello, world",
+            &[("hello,", 6, false), (" ", 1, true), ("world", 5, false)],
+        ),
+        (
+            "  hello world",
+            &[
+                (" ", 1, true),
+                ("hello", 5, false),
+                (" ", 1, true),
+                ("world", 5, false),
+            ],
+        ),
+        (
+            "这是什么 \n 钢笔",
+            &[
+                ("这", 1, false),
+                ("是", 1, false),
+                ("什", 1, false),
+                ("么", 1, false),
+                (" ", 1, true),
+                ("钢", 1, false),
+                ("笔", 1, false),
+            ],
+        ),
+        (" mutton", &[(" ", 1, true), ("mutton", 6, false)]),
+    ];
+
+    for (input, result) in tests {
+        assert_eq!(
+            WordBreakingTokenizer::new(input).collect::<Vec<_>>(),
+            result
+                .iter()
+                .copied()
+                .map(|(token, grapheme_len, is_whitespace)| WordBreakToken {
+                    token,
+                    grapheme_len,
+                    is_whitespace,
+                })
+                .collect::<Vec<_>>()
+        );
+    }
+}
+
+fn wrap_with_prefix(
+    line_prefix: String,
+    unwrapped_text: String,
+    wrap_column: usize,
+    tab_size: NonZeroU32,
+) -> String {
+    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let mut wrapped_text = String::new();
+    let mut current_line = line_prefix.clone();
+
+    let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
+    let mut current_line_len = line_prefix_len;
+    for WordBreakToken {
+        token,
+        grapheme_len,
+        is_whitespace,
+    } in tokenizer
+    {
+        if current_line_len + grapheme_len > wrap_column && current_line_len != line_prefix_len {
+            wrapped_text.push_str(current_line.trim_end());
+            wrapped_text.push('\n');
+            current_line.truncate(line_prefix.len());
+            current_line_len = line_prefix_len;
+            if !is_whitespace {
+                current_line.push_str(token);
+                current_line_len += grapheme_len;
+            }
+        } else if !is_whitespace {
+            current_line.push_str(token);
+            current_line_len += grapheme_len;
+        } else if current_line_len != line_prefix_len {
+            current_line.push(' ');
+            current_line_len += 1;
+        }
+    }
+
+    if !current_line.is_empty() {
+        wrapped_text.push_str(&current_line);
+    }
+    wrapped_text
+}
+
+#[test]
+fn test_wrap_with_prefix() {
+    assert_eq!(
+        wrap_with_prefix(
+            "# ".to_string(),
+            "abcdefg".to_string(),
+            4,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "# abcdefg"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            "".to_string(),
+            "\thello world".to_string(),
+            8,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "hello\nworld"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            "// ".to_string(),
+            "xx \nyy zz aa bb cc".to_string(),
+            12,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "// xx yy zz\n// aa bb cc"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            String::new(),
+            "这是什么 \n 钢笔".to_string(),
+            3,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "这是什\n么 钢\n笔"
+    );
 }
 
 fn hunks_for_selections(
@@ -13450,7 +13865,7 @@ fn consume_contiguous_rows(
     contiguous_row_selections: &mut Vec<Selection<Point>>,
     selection: &Selection<Point>,
     display_map: &DisplaySnapshot,
-    selections: &mut std::iter::Peekable<std::slice::Iter<Selection<Point>>>,
+    selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
 ) -> (MultiBufferRow, MultiBufferRow) {
     contiguous_row_selections.push(selection.clone());
     let start_row = MultiBufferRow(selection.start.row);

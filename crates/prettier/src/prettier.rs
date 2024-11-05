@@ -329,11 +329,7 @@ impl Prettier {
                     })?
                     .context("prettier params calculation")?;
 
-                let response = local
-                    .server
-                    .request::<Format>(params)
-                    .await
-                    .context("prettier format request")?;
+                let response = local.server.request::<Format>(params).await?;
                 let diff_task = buffer.update(cx, |buffer, cx| buffer.diff(response.text, cx))?;
                 Ok(diff_task.await)
             }

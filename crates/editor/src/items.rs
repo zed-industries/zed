@@ -992,12 +992,15 @@ impl SerializableItem for Editor {
                     };
 
                     // First create the empty buffer
-                    let buffer = project.update(&mut cx, |project, cx| {
-                        project.create_local_buffer("", language, cx)
-                    })?;
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.create_buffer(cx))?
+                        .await?;
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(&mut cx, |buffer, cx| {
+                        if let Some(language) = language {
+                            buffer.set_language(Some(language), cx);
+                        }
                         buffer.set_text(contents, cx);
                     })?;
 
