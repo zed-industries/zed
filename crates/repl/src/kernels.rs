@@ -24,7 +24,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KernelSpecification {
-    // TODO: Remote(RemoteKernelSpecification)
+    Remote(RemoteKernelSpecification),
     Jupyter(LocalKernelSpecification),
     PythonEnv(LocalKernelSpecification),
 }
@@ -34,6 +34,7 @@ impl KernelSpecification {
         match self {
             Self::Jupyter(spec) => spec.name.clone().into(),
             Self::PythonEnv(spec) => spec.name.clone().into(),
+            Self::Remote(spec) => spec.name.clone().into(),
         }
     }
 
@@ -41,6 +42,7 @@ impl KernelSpecification {
         match self {
             Self::Jupyter(_) => "Jupyter".into(),
             Self::PythonEnv(_) => "Python Environment".into(),
+            Self::Remote(_) => "Remote".into(),
         }
     }
 
@@ -48,6 +50,7 @@ impl KernelSpecification {
         SharedString::from(match self {
             Self::Jupyter(spec) => spec.path.to_string_lossy().to_string(),
             Self::PythonEnv(spec) => spec.path.to_string_lossy().to_string(),
+            Self::Remote(spec) => spec.url.to_string(),
         })
     }
 
@@ -55,6 +58,7 @@ impl KernelSpecification {
         SharedString::from(match self {
             Self::Jupyter(spec) => spec.kernelspec.language.clone(),
             Self::PythonEnv(spec) => spec.kernelspec.language.clone(),
+            Self::Remote(spec) => spec.kernelspec.language.clone(),
         })
     }
 }
@@ -124,31 +128,6 @@ impl LocalKernelSpecification {
         }
 
         Ok(cmd)
-    }
-
-    pub(crate) fn deno_kernel() -> Self {
-        let kernelspec = JupyterKernelspec {
-            display_name: "Deno".to_string(),
-            language: "typescript".to_string(),
-            argv: vec![
-                "deno".to_string(),
-                "--unstable-ffi".to_string(),
-                "--unstable".to_string(),
-                "jupyter".to_string(),
-                "--kernel".to_string(),
-                "--conn".to_string(),
-                "{connection_file}".to_string(),
-            ],
-            env: None,
-            metadata: None,
-            interrupt_mode: None,
-        };
-
-        Self {
-            name: "deno".to_string(),
-            path: PathBuf::from("deno"),
-            kernelspec,
-        }
     }
 }
 
@@ -288,6 +267,12 @@ impl RunningKernel {
         let kernel_specification = match kernel_specification {
             KernelSpecification::Jupyter(spec) => spec,
             KernelSpecification::PythonEnv(spec) => spec,
+            KernelSpecification::Remote(_spec) => {
+                // todo!(): Implement remote kernel specification
+                return Task::ready(Err(anyhow::anyhow!(
+                    "Running remote kernels is not supported"
+                )));
+            }
         };
 
         cx.spawn(|cx| async move {
