@@ -277,12 +277,21 @@ impl QuickActionBar {
         )
     }
 
-    pub fn render_kernel_selector(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    pub fn render_kernel_selector(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let editor = if let Some(editor) = self.active_editor() {
             editor
         } else {
             // todo!()
             return div().into_any_element();
+        };
+
+        let session = repl::session(editor.downgrade(), cx);
+
+        let current_kernel_name = match session {
+            SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.name()),
+            SessionSupport::Inactive(kernel_specification) => Some(kernel_specification.name()),
+            SessionSupport::RequiresSetup(_language_name) => None,
+            SessionSupport::Unsupported => None,
         };
 
         // let current_kernel_name = self.current_kernelspec.as_ref().map(|spec| spec.name());
@@ -308,15 +317,11 @@ impl QuickActionBar {
                                 .flex_grow()
                                 .whitespace_nowrap()
                                 .child(
-                                    Label::new(
-                                        if let Some(name) =
-                                            current_kernelspec.as_ref().map(|spec| spec.name())
-                                        {
-                                            name
-                                        } else {
-                                            SharedString::from("Select Kernel")
-                                        },
-                                    )
+                                    Label::new(if let Some(name) = current_kernel_name {
+                                        name
+                                    } else {
+                                        SharedString::from("Select Kernel")
+                                    })
                                     .size(LabelSize::Small)
                                     .color(if current_kernelspec.is_some() {
                                         Color::Default

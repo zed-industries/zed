@@ -28,7 +28,9 @@ pub fn assign_kernelspec(
     if let Some(session) = store.read(cx).get_session(weak_editor.entity_id()).cloned() {
         // Drop previous session, start new one
         session.update(cx, |session, cx| {
+            session.clear_outputs(cx);
             session.shutdown(cx);
+            cx.notify();
         });
     }
 
