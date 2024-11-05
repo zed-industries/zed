@@ -19,6 +19,10 @@ impl SlashCommand for SelectionCommand {
         "selection".into()
     }
 
+    fn label(&self, _cx: &AppContext) -> CodeLabel {
+        CodeLabel::plain(self.name(), None)
+    }
+
     fn description(&self) -> String {
         "Insert editor selection".into()
     }
@@ -31,6 +35,14 @@ impl SlashCommand for SelectionCommand {
         self.description()
     }
 
+    fn requires_argument(&self) -> bool {
+        false
+    }
+
+    fn accepts_arguments(&self) -> bool {
+        true
+    }
+
     fn complete_argument(
         self: Arc<Self>,
         _arguments: &[String],
@@ -39,10 +51,6 @@ impl SlashCommand for SelectionCommand {
         _cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Err(anyhow!("this command does not require argument")))
-    }
-
-    fn requires_argument(&self) -> bool {
-        false
     }
 
     fn run(
@@ -86,13 +94,5 @@ impl SlashCommand for SelectionCommand {
         let result = futures::stream::iter(events).boxed();
 
         Task::ready(Ok(result))
-    }
-
-    fn label(&self, _cx: &AppContext) -> CodeLabel {
-        CodeLabel::plain(self.name(), None)
-    }
-
-    fn accepts_arguments(&self) -> bool {
-        self.requires_argument()
     }
 }
