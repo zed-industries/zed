@@ -306,9 +306,9 @@ struct BackgroundScannerState {
 pub struct LocalRepositoryEntry {
     pub(crate) git_dir_scan_id: usize,
     pub(crate) repo_ptr: Arc<dyn GitRepository>,
-    /// Path to the actual .git folder.
+    /// Absolute path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
-    pub(crate) git_dir_path: Arc<Path>,
+    pub(crate) git_dir_abs_path: Arc<Path>,
 }
 
 impl LocalRepositoryEntry {
@@ -2663,7 +2663,7 @@ impl LocalSnapshot {
         let dotgit_paths = self
             .git_repositories
             .iter()
-            .map(|repo| repo.1.git_dir_path.clone())
+            .map(|repo| repo.1.git_dir_abs_path.clone())
             .collect::<HashSet<_>>();
         let work_dir_paths = self
             .repository_entries
@@ -2957,7 +2957,6 @@ impl BackgroundScannerState {
                 .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))?,
         );
 
-        dbg!(&git_dir_path, &dot_git_abs_path);
         watcher.add(&git_dir_path).log_err()?;
         if git_dir_path.as_ref() != dot_git_abs_path {
             // The two paths could be different because we opened a git worktree.
@@ -2989,7 +2988,7 @@ impl BackgroundScannerState {
             LocalRepositoryEntry {
                 git_dir_scan_id: 0,
                 repo_ptr: repository.clone(),
-                git_dir_path,
+                git_dir_abs_path: git_dir_path,
             },
         );
 
@@ -4240,7 +4239,7 @@ impl BackgroundScanner {
             if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
                 if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
                     paths_by_git_repo
-                        .entry(repo.git_dir_path.clone())
+                        .entry(repo.git_dir_abs_path.clone())
                         .or_insert_with(|| RepoPaths {
                             repo: repo.repo_ptr.clone(),
                             repo_paths: Vec::new(),
@@ -4506,7 +4505,6 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock();
             let scan_id = state.snapshot.scan_id;
-                dbg!(&state.snapshot.git_repositories);
             for dot_git_dir in dot_git_paths {
                 let existing_repository_entry =
                     state
@@ -4514,7 +4512,7 @@ impl BackgroundScanner {
                         .git_repositories
                         .iter()
                         .find_map(|(entry_id, repo)| {
-                            (dbg!(repo.git_dir_path.as_ref()) == dbg!(&dot_git_dir))
+                            (repo.git_dir_abs_path.as_ref() == &dot_git_dir)
                                 .then(|| (*entry_id, repo.clone()))
                         });
 
@@ -4579,19 +4577,14 @@ impl BackgroundScanner {
                     .map_or(false, |entry| {
                         snapshot.entry_for_path(entry.path.join(*DOT_GIT)).is_some()
                     });
-                if exists_in_snapshot {
+
+                if exists_in_snapshot
+                    || matches!(
+                        smol::block_on(self.fs.metadata(&entry.git_dir_abs_path)),
+                        Ok(Some(_))
+                    )
+                {
                     ids_to_preserve.insert(work_directory_id);
-                } else {
-                    let git_dir_abs_path = snapshot.abs_path().join(&entry.git_dir_path);
-                    let git_dir_excluded = self.settings.is_path_excluded(&entry.git_dir_path);
-                    if git_dir_excluded
-                        && !matches!(
-                            smol::block_on(self.fs.metadata(&git_dir_abs_path)),
-                            Ok(None)
-                        )
-                    {
-                        ids_to_preserve.insert(work_directory_id);
-                    }
                 }
             }
 
@@ -4984,7 +4977,7 @@ impl WorktreeModelHandle for Model<Worktree> {
             let local_repo_entry = tree.get_local_repo(&root_entry).unwrap();
             (
                 tree.fs.clone(),
-                local_repo_entry.git_dir_path.clone(),
+                local_repo_entry.git_dir_abs_path.clone(),
                 local_repo_entry.git_dir_scan_id,
             )
         });
