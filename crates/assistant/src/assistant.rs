@@ -41,6 +41,7 @@ use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
+use slash_command::search_command::SearchSlashCommandFeatureFlag;
 use slash_command::{
     auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
     diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
@@ -212,7 +213,7 @@ pub fn init(
         });
     }
 
-    if cx.has_flag::<feature_flags::SearchCommand>() {
+    if cx.has_flag::<SearchSlashCommandFeatureFlag>() {
         cx.spawn(|mut cx| {
             let client = client.clone();
             async move {
