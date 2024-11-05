@@ -1353,22 +1353,22 @@ impl CompletionsMenu {
                 // Strong matches are the ones with a high fuzzy-matcher score (the "obvious" matches)
                 // and the Weak matches are the rest.
                 //
-                // For the strong matches, we sort by the language-servers score first and for the weak
-                // matches, we prefer our fuzzy finder first.
+                // For the strong matches, we sort by our fuzzy-finder score first and for the weak
+                // matches, we prefer language-server sort_text first.
                 //
-                // The thinking behind that: it's useless to take the sort_text the language-server gives
-                // us into account when it's obviously a bad match.
+                // The thinking behind that: we want to show strong matches first in order of relevance(fuzzy score).
+                // Rest of the matches(weak) can be sorted as language-server expects.
 
                 #[derive(PartialEq, Eq, PartialOrd, Ord)]
                 enum MatchScore<'a> {
                     Strong {
-                        sort_text: Option<&'a str>,
                         score: Reverse<OrderedFloat<f64>>,
+                        sort_text: Option<&'a str>,
                         sort_key: (usize, &'a str),
                     },
                     Weak {
-                        score: Reverse<OrderedFloat<f64>>,
                         sort_text: Option<&'a str>,
+                        score: Reverse<OrderedFloat<f64>>,
                         sort_key: (usize, &'a str),
                     },
                 }
@@ -1380,14 +1380,14 @@ impl CompletionsMenu {
 
                 if mat.score >= 0.2 {
                     MatchScore::Strong {
-                        sort_text,
                         score,
+                        sort_text,
                         sort_key,
                     }
                 } else {
                     MatchScore::Weak {
-                        score,
                         sort_text,
+                        score,
                         sort_key,
                     }
                 }
@@ -7008,6 +7008,8 @@ impl Editor {
                 }
             }
 
+            let tab_size = buffer.settings_at(selection.head(), cx).tab_size;
+
             // Since not all lines in the selection may be at the same indent
             // level, choose the indent size that is the most common between all
             // of the lines.
@@ -7025,7 +7027,7 @@ impl Editor {
 
                 let indent_size = indent_size_occurrences
                     .into_iter()
-                    .max_by_key(|(indent, count)| (*count, indent.len))
+                    .max_by_key(|(indent, count)| (*count, indent.len_with_expanded_tabs(tab_size)))
                     .map(|(indent, _)| indent)
                     .unwrap_or_default();
                 let row = rows_by_indent_size[&indent_size][0];
@@ -7049,6 +7051,10 @@ impl Editor {
             {
                 line_prefix.push_str(&comment_prefix);
                 should_rewrap = true;
+            }
+
+            if !should_rewrap {
+                continue;
             }
 
             if selection.is_empty() {
@@ -7075,10 +7081,6 @@ impl Editor {
                 }
             }
 
-            if !should_rewrap {
-                continue;
-            }
-
             let start = Point::new(start_row, 0);
             let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
@@ -7097,29 +7099,15 @@ impl Editor {
                 continue;
             };
 
-            let unwrapped_text = lines_without_prefixes.join(" ");
             let wrap_column = buffer
                 .settings_at(Point::new(start_row, 0), cx)
                 .preferred_line_length as usize;
-            let mut wrapped_text = String::new();
-            let mut current_line = line_prefix.clone();
-            for word in unwrapped_text.split_whitespace() {
-                if current_line.len() + word.len() >= wrap_column {
-                    wrapped_text.push_str(&current_line);
-                    wrapped_text.push('\n');
-                    current_line.truncate(line_prefix.len());
-                }
-
-                if current_line.len() > line_prefix.len() {
-                    current_line.push(' ');
-                }
-
-                current_line.push_str(word);
-            }
-
-            if !current_line.is_empty() {
-                wrapped_text.push_str(&current_line);
-            }
+            let wrapped_text = wrap_with_prefix(
+                line_prefix,
+                lines_without_prefixes.join(" "),
+                wrap_column,
+                tab_size,
+            );
 
             let diff = TextDiff::from_lines(&selection_text, &wrapped_text);
             let mut offset = start.to_offset(&buffer);
@@ -7280,9 +7268,14 @@ impl Editor {
                 if clipboard_selections.len() != old_selections.len() {
                     clipboard_selections.drain(..);
                 }
+                let cursor_offset = this.selections.last::<usize>(cx).head();
+                let mut auto_indent_on_paste = true;
 
                 this.buffer.update(cx, |buffer, cx| {
                     let snapshot = buffer.read(cx);
+                    auto_indent_on_paste =
+                        snapshot.settings_at(cursor_offset, cx).auto_indent_on_paste;
+
                     let mut start_offset = 0;
                     let mut edits = Vec::new();
                     let mut original_indent_columns = Vec::new();
@@ -7321,9 +7314,13 @@ impl Editor {
 
                     buffer.edit(
                         edits,
-                        Some(AutoindentMode::Block {
-                            original_indent_columns,
-                        }),
+                        if auto_indent_on_paste {
+                            Some(AutoindentMode::Block {
+                                original_indent_columns,
+                            })
+                        } else {
+                            None
+                        },
                         cx,
                     );
                 });
@@ -13045,6 +13042,70 @@ impl Editor {
             .get(&type_id)
             .and_then(|item| item.to_any().downcast_ref::<T>())
     }
+}
+
+fn len_with_expanded_tabs(offset: usize, comment_prefix: &str, tab_size: NonZeroU32) -> usize {
+    let tab_size = tab_size.get() as usize;
+    let mut width = offset;
+
+    for c in comment_prefix.chars() {
+        width += if c == '\t' {
+            tab_size - (width % tab_size)
+        } else {
+            1
+        };
+    }
+
+    width - offset
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_string_size_with_expanded_tabs() {
+        let nz = |val| NonZeroU32::new(val).unwrap();
+        assert_eq!(len_with_expanded_tabs(0, "", nz(4)), 0);
+        assert_eq!(len_with_expanded_tabs(0, "hello", nz(4)), 5);
+        assert_eq!(len_with_expanded_tabs(0, "\thello", nz(4)), 9);
+        assert_eq!(len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
+        assert_eq!(len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
+        assert_eq!(len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
+        assert_eq!(len_with_expanded_tabs(0, "x\t", nz(8)), 8);
+        assert_eq!(len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+}
+
+fn wrap_with_prefix(
+    line_prefix: String,
+    unwrapped_text: String,
+    wrap_column: usize,
+    tab_size: NonZeroU32,
+) -> String {
+    let line_prefix_display_len = len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let mut wrapped_text = String::new();
+    let mut current_line = line_prefix.to_string();
+    let prefix_extra_chars = line_prefix_display_len - line_prefix.len();
+
+    for word in unwrapped_text.split_whitespace() {
+        if current_line.len() + prefix_extra_chars + word.len() >= wrap_column {
+            wrapped_text.push_str(&current_line);
+            wrapped_text.push('\n');
+            current_line.truncate(line_prefix.len());
+        }
+
+        if current_line.len() > line_prefix.len() {
+            current_line.push(' ');
+        }
+
+        current_line.push_str(word);
+    }
+
+    if !current_line.is_empty() {
+        wrapped_text.push_str(&current_line);
+    }
+    wrapped_text
 }
 
 fn hunks_for_selections(

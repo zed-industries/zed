@@ -24,7 +24,7 @@ jobs:
           # issues, preventing 365 days from working until then.
           days-before-stale: 180
           days-before-close: 7
-          any-of-issue-labels: "defect,panic / crash"
+          any-of-issue-labels: "bug,panic / crash"
           operations-per-run: 1000
           ascending: true
           enable-statistics: true

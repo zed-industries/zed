@@ -1052,7 +1052,9 @@ impl Context {
     }
 
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
-        let request = self.to_completion_request(RequestType::SuggestEdits, cx); // Conservatively assume SuggestEdits, since it takes more tokens.
+        // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
+        // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
+        let request = self.to_completion_request(RequestType::Chat, cx);
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -2202,7 +2204,7 @@ impl Context {
         }
 
         if let RequestType::SuggestEdits = request_type {
-            if let Ok(preamble) = self.prompt_builder.generate_workflow_prompt() {
+            if let Ok(preamble) = self.prompt_builder.generate_suggest_edits_prompt() {
                 let last_elem_index = completion_request.messages.len();
 
                 completion_request

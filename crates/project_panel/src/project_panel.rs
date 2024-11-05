@@ -63,6 +63,9 @@ pub struct ProjectPanel {
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
     scroll_handle: UniformListScrollHandle,
+    // An update loop that keeps incrementing/decrementing scroll offset while there is a dragged entry that's
+    // hovered over the start/end of a list.
+    hover_scroll_task: Option<Task<()>>,
     visible_entries: Vec<(WorktreeId, Vec<Entry>, OnceCell<HashSet<Arc<Path>>>)>,
     /// Maps from leaf project entry ID to the currently selected ancestor.
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
@@ -307,6 +310,7 @@ impl ProjectPanel {
             let scroll_handle = UniformListScrollHandle::new();
             let mut this = Self {
                 project: project.clone(),
+                hover_scroll_task: None,
                 fs: workspace.app_state().fs.clone(),
                 focus_handle,
                 visible_entries: Default::default(),
@@ -2544,6 +2548,7 @@ impl ProjectPanel {
                 ))
                 .on_drop(cx.listener(
                     move |this, external_paths: &ExternalPaths, cx| {
+                        this.hover_scroll_task.take();
                         this.last_external_paths_drag_over_entry = None;
                         this.marked_entries.clear();
                         this.drop_external_files(external_paths.paths(), entry_id, cx);
@@ -2563,8 +2568,77 @@ impl ProjectPanel {
                 style.bg(cx.theme().colors().drop_target_background)
             })
             .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
+                this.hover_scroll_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
+                if event.down.button == MouseButton::Right || event.down.first_mouse {
+                    return;
+                }
+                if !show_editor {
+                    cx.stop_propagation();
+
+                    if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
+                        let current_selection = this.index_for_selection(selection);
+                        let target_selection = this.index_for_selection(SelectedEntry {
+                            entry_id,
+                            worktree_id,
+                        });
+                        if let Some(((_, _, source_index), (_, _, target_index))) =
+                            current_selection.zip(target_selection)
+                        {
+                            let range_start = source_index.min(target_index);
+                            let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
+                            let mut new_selections = BTreeSet::new();
+                            this.for_each_visible_entry(
+                                range_start..range_end,
+                                cx,
+                                |entry_id, details, _| {
+                                    new_selections.insert(SelectedEntry {
+                                        entry_id,
+                                        worktree_id: details.worktree_id,
+                                    });
+                                },
+                            );
+
+                            this.marked_entries = this
+                                .marked_entries
+                                .union(&new_selections)
+                                .cloned()
+                                .collect();
+
+                            this.selection = Some(SelectedEntry {
+                                entry_id,
+                                worktree_id,
+                            });
+                            // Ensure that the current entry is selected.
+                            this.marked_entries.insert(SelectedEntry {
+                                entry_id,
+                                worktree_id,
+                            });
+                        }
+                    } else if event.down.modifiers.secondary() {
+                        if event.down.click_count > 1 {
+                            this.split_entry(entry_id, cx);
+                        } else if !this.marked_entries.insert(selection) {
+                            this.marked_entries.remove(&selection);
+                        }
+                    } else if kind.is_dir() {
+                        this.toggle_expanded(entry_id, cx);
+                    } else {
+                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                        let click_count = event.up.click_count;
+                        this.open_entry(
+                            entry_id,
+                            cx.modifiers().secondary(),
+                            !preview_tabs_enabled || click_count > 1,
+                            !preview_tabs_enabled && click_count == 1,
+                            cx,
+                        );
+                    }
+                }
+            }))
+            .cursor_pointer()
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -2665,76 +2739,6 @@ impl ProjectPanel {
                         }
                         .ml_1(),
                     )
-                    .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                        if event.down.button == MouseButton::Right || event.down.first_mouse {
-                            return;
-                        }
-                        if !show_editor {
-                            cx.stop_propagation();
-
-                            if let Some(selection) =
-                                this.selection.filter(|_| event.down.modifiers.shift)
-                            {
-                                let current_selection = this.index_for_selection(selection);
-                                let target_selection = this.index_for_selection(SelectedEntry {
-                                    entry_id,
-                                    worktree_id,
-                                });
-                                if let Some(((_, _, source_index), (_, _, target_index))) =
-                                    current_selection.zip(target_selection)
-                                {
-                                    let range_start = source_index.min(target_index);
-                                    let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
-                                    let mut new_selections = BTreeSet::new();
-                                    this.for_each_visible_entry(
-                                        range_start..range_end,
-                                        cx,
-                                        |entry_id, details, _| {
-                                            new_selections.insert(SelectedEntry {
-                                                entry_id,
-                                                worktree_id: details.worktree_id,
-                                            });
-                                        },
-                                    );
-
-                                    this.marked_entries = this
-                                        .marked_entries
-                                        .union(&new_selections)
-                                        .cloned()
-                                        .collect();
-
-                                    this.selection = Some(SelectedEntry {
-                                        entry_id,
-                                        worktree_id,
-                                    });
-                                    // Ensure that the current entry is selected.
-                                    this.marked_entries.insert(SelectedEntry {
-                                        entry_id,
-                                        worktree_id,
-                                    });
-                                }
-                            } else if event.down.modifiers.secondary() {
-                                if event.down.click_count > 1 {
-                                    this.split_entry(entry_id, cx);
-                                } else if !this.marked_entries.insert(selection) {
-                                    this.marked_entries.remove(&selection);
-                                }
-                            } else if kind.is_dir() {
-                                this.toggle_expanded(entry_id, cx);
-                            } else {
-                                let preview_tabs_enabled =
-                                    PreviewTabsSettings::get_global(cx).enabled;
-                                let click_count = event.up.click_count;
-                                this.open_entry(
-                                    entry_id,
-                                    cx.modifiers().secondary(),
-                                    !preview_tabs_enabled || click_count > 1,
-                                    !preview_tabs_enabled && click_count == 1,
-                                    cx,
-                                );
-                            }
-                        }
-                    }))
                     .on_secondary_mouse_down(cx.listener(
                         move |this, event: &MouseDownEvent, cx| {
                             // Stop propagation to prevent the catch-all context menu for the project
@@ -3057,9 +3061,67 @@ impl Render for ProjectPanel {
                 .map(|(_, worktree_entries, _)| worktree_entries.len())
                 .sum();
 
+            fn handle_drag_move_scroll<T: 'static>(
+                this: &mut ProjectPanel,
+                e: &DragMoveEvent<T>,
+                cx: &mut ViewContext<ProjectPanel>,
+            ) {
+                if !e.bounds.contains(&e.event.position) {
+                    return;
+                }
+                this.hover_scroll_task.take();
+                let panel_height = e.bounds.size.height;
+                if panel_height <= px(0.) {
+                    return;
+                }
+
+                let event_offset = e.event.position.y - e.bounds.origin.y;
+                // How far along in the project panel is our cursor? (0. is the top of a list, 1. is the bottom)
+                let hovered_region_offset = event_offset / panel_height;
+
+                // We want the scrolling to be a bit faster when the cursor is closer to the edge of a list.
+                // These pixels offsets were picked arbitrarily.
+                let vertical_scroll_offset = if hovered_region_offset <= 0.05 {
+                    8.
+                } else if hovered_region_offset <= 0.15 {
+                    5.
+                } else if hovered_region_offset >= 0.95 {
+                    -8.
+                } else if hovered_region_offset >= 0.85 {
+                    -5.
+                } else {
+                    return;
+                };
+                let adjustment = point(px(0.), px(vertical_scroll_offset));
+                this.hover_scroll_task = Some(cx.spawn(move |this, mut cx| async move {
+                    loop {
+                        let should_stop_scrolling = this
+                            .update(&mut cx, |this, cx| {
+                                this.hover_scroll_task.as_ref()?;
+                                let handle = this.scroll_handle.0.borrow_mut();
+                                let offset = handle.base_handle.offset();
+
+                                handle.base_handle.set_offset(offset + adjustment);
+                                cx.notify();
+                                Some(())
+                            })
+                            .ok()
+                            .flatten()
+                            .is_some();
+                        if should_stop_scrolling {
+                            return;
+                        }
+                        cx.background_executor()
+                            .timer(Duration::from_millis(16))
+                            .await;
+                    }
+                }));
+            }
             h_flex()
                 .id("project-panel")
                 .group("project-panel")
+                .on_drag_move(cx.listener(handle_drag_move_scroll::<ExternalPaths>))
+                .on_drag_move(cx.listener(handle_drag_move_scroll::<DraggedSelection>))
                 .size_full()
                 .relative()
                 .on_hover(cx.listener(|this, hovered, cx| {
@@ -3291,6 +3353,7 @@ impl Render for ProjectPanel {
                         move |this, external_paths: &ExternalPaths, cx| {
                             this.last_external_paths_drag_over_entry = None;
                             this.marked_entries.clear();
+                            this.hover_scroll_task.take();
                             if let Some(task) = this
                                 .workspace
                                 .update(cx, |workspace, cx| {

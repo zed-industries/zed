@@ -241,6 +241,7 @@ pub enum IconName {
     Public,
     PullRequest,
     Quote,
+    RefreshTitle,
     Regex,
     ReplNeutral,
     Replace,
