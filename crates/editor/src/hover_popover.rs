@@ -615,7 +615,7 @@ impl HoverState {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
     }
 
-    pub fn render(
+    pub(crate) fn render(
         &mut self,
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
@@ -694,7 +694,11 @@ pub(crate) struct InfoPopover {
 }
 
 impl InfoPopover {
-    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+    pub(crate) fn render(
+        &mut self,
+        max_size: Size<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
             .id("info_popover")

@@ -37,13 +37,14 @@ impl ScrollableHandle {
             }),
             ScrollableHandle::NonUniform(handle) => {
                 let last_children_index = handle.children_count().checked_sub(1)?;
-                // todo: PO: this is slightly wrong for horizontal scrollbar, as the last item is not necessarily the longest one.
+
                 let mut last_item = handle.bounds_for_item(last_children_index)?;
-                last_item.size.height += last_item.origin.y;
-                last_item.size.width += last_item.origin.x;
                 let mut scroll_adjustment = None;
                 if last_children_index != 0 {
+                    // todo: PO: this is slightly wrong for horizontal scrollbar, as the last item is not necessarily the longest one.
                     let first_item = handle.bounds_for_item(0)?;
+                    last_item.size.height += last_item.origin.y;
+                    last_item.size.width += last_item.origin.x;
 
                     scroll_adjustment = Some(first_item.origin);
                     last_item.size.height -= first_item.origin.y;
@@ -140,6 +141,7 @@ impl ScrollbarState {
         }) {
             current_offset -= adjustment;
         }
+
         let mut percentage = current_offset / main_dimension_size;
         let viewport_size = self.scroll_handle.viewport().size;
         let end_offset = (current_offset + viewport_size.along(axis).0) / main_dimension_size;
