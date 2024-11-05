@@ -29,6 +29,7 @@ use crate::KERNEL_DOCS_URL;
 // ---
 use gpui::DismissEvent;
 
+use gpui::EntityId;
 use picker::Picker;
 use picker::PickerDelegate;
 
@@ -42,6 +43,7 @@ use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 #[derive(IntoElement)]
 pub struct KernelSelector<T: PopoverTrigger> {
     handle: Option<PopoverMenuHandle<Picker<KernelPickerDelegate>>>,
+    entity_id: EntityId,
     trigger: T,
     info_text: Option<SharedString>,
 }
@@ -50,11 +52,13 @@ pub struct KernelPickerDelegate {
     all_kernels: Vec<KernelSpecification>,
     filtered_kernels: Vec<KernelSpecification>,
     selected_index: usize,
+    entity_id: EntityId,
 }
 
 impl<T: PopoverTrigger> KernelSelector<T> {
-    pub fn new(trigger: T) -> Self {
+    pub fn new(entity_id: EntityId, trigger: T) -> Self {
         KernelSelector {
+            entity_id,
             handle: None,
             trigger,
             info_text: None,
@@ -122,12 +126,10 @@ impl PickerDelegate for KernelPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(kernel) = self.filtered_kernels.get(self.selected_index) {
-            let kernel = kernel.clone();
-            println!("Selected kernel: {:?}", kernel);
-
+        if let Some(kernelspec) = self.filtered_kernels.get(self.selected_index) {
+            let store = ReplStore::global(cx).read(cx);
+            store.set_kernelspec(self.entity_id, kernelspec);
             cx.emit(DismissEvent);
-            todo!();
         }
     }
 
@@ -206,6 +208,7 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
             store.kernel_specifications().cloned().collect();
 
         let delegate = KernelPickerDelegate {
+            entity_id: self.entity_id,
             all_kernels: all_kernels.clone(),
             filtered_kernels: all_kernels,
             selected_index: 0,

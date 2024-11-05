@@ -157,6 +157,12 @@ impl ReplStore {
             .cloned()
     }
 
+    pub fn set_kernelspec(&self, entity_id: EntityId, kernelspec: &KernelSpecification) {
+        dbg!("set_kernelspec");
+        dbg!(entity_id);
+        dbg!(kernelspec);
+    }
+
     pub fn get_session(&self, entity_id: EntityId) -> Option<&View<Session>> {
         self.sessions.get(&entity_id)
     }

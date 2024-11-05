@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Entity, Transformation, View};
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
@@ -282,9 +282,17 @@ impl QuickActionBar {
         current_kernel_name: Option<SharedString>,
         _cx: &mut ViewContext<Self>,
     ) -> impl IntoElement {
+        let entity_id = if let Some(editor) = self.active_editor() {
+            editor.entity_id()
+        } else {
+            // todo!()
+            return div().into_any_element();
+        };
+
         let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
             PopoverMenuHandle::default();
         KernelSelector::new(
+            entity_id,
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
                 .child(
@@ -320,6 +328,7 @@ impl QuickActionBar {
                 .tooltip(move |cx| Tooltip::text("Select Kernel", cx)),
         )
         .with_handle(menu_handle.clone())
+        .into_any_element()
     }
 
     pub fn render_repl_setup(
