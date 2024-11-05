@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use std::time::Duration;
 
 use crate::prelude::*;
@@ -11,27 +9,42 @@ use strum::IntoEnumIterator;
 
 const DEFAULT_AVATAR_SIZE: f32 = 20.0;
 
+/// A collection of types of content that can be used for the avatar
 #[derive(Debug, Clone, PartialEq)]
 pub enum AvatarSource {
+    /// The avatar's content is an image
     Avatar(ImageSource),
+    /// The avatar's content is a random icon
     AnonymousAvatar(AnonymousAvatarIcon),
+    /// The avatar's content is a string (user's initials)
     FallbackAvatar(SharedString),
+    /// The avatar's content is loading
     LoadingAvatar,
 }
 
+/// A collection of effects that can be applied to the avatar's content
 pub enum AvatarEffect {
+    /// The avatar's content is rendered in grayscale
     Grayscale,
 }
 
+/// A collection of random icons to be used as the anonymous avatars content
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum AnonymousAvatarIcon {
+    /// A crown icon
     Crown,
+    /// A cat icon
     Cat,
+    /// A dragon icon
     Dragon,
+    /// An alian icon
     Alien,
+    /// A ghost icon
     Ghost,
+    /// A crab icon
     #[default]
     Crab,
+    /// An alternative alien icon
     Invader,
 }
 
@@ -74,6 +87,17 @@ impl AnonymousAvatarIcon {
     }
 }
 
+/// An element that renders a user avatar with customizable appearance options.
+///
+/// # Examples
+///
+/// ```
+/// use ui::Avatar;
+///
+/// Avatar::new("path/to/image.png")
+///     .grayscale(true)
+///     .border_color(gpui::red());
+/// ```
 #[derive(IntoElement)]
 pub struct Avatar2 {
     source: AvatarSource,
@@ -84,7 +108,7 @@ pub struct Avatar2 {
 }
 
 impl Avatar2 {
-    // Creates a new avatar with image set to option for allowing forcing initials or anonymous icon rendering
+    /// Creates a new avatar with image set to option for allowing forcing initials or anonymous icon rendering
     pub fn new(image: impl Into<ImageSource>) -> Self {
         Avatar2 {
             source: AvatarSource::Avatar(image.into()),
@@ -95,7 +119,7 @@ impl Avatar2 {
         }
     }
 
-    // Creates an avatar that can have image empty but filled by a fallback option
+    /// Creates an avatar that can have image empty but filled by a fallback option
     pub fn new_fallback() -> Self {
         Avatar2 {
             source: AvatarSource::LoadingAvatar,
@@ -106,6 +130,21 @@ impl Avatar2 {
         }
     }
 
+    /// Uses the user name's first letter as the fallback avatar
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::Avatar;
+    ///
+    /// div().children(
+    ///    PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
+    ///        Avatar::new_fallback()
+    ///            .fallback_initials(handle.to_string())
+    ///            .fallback_anonymous(ix as u32)
+    ///    }),
+    ///
+    /// ```
     pub fn fallback_initials(mut self, initials: impl Into<SharedString>) -> Self {
         let initials = initials.into();
         self.source = AvatarSource::FallbackAvatar(if initials.is_empty() {
@@ -116,6 +155,19 @@ impl Avatar2 {
         self
     }
 
+    /// Iterates over a set of random icons as a fallback
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::Avatar;
+    ///
+    /// div().children((0..=5).map(|ix| {
+    ///    Avatar::new_fallback()
+    ///        .fallback_anonymous(ix)
+    /// })))
+    ///
+    /// ```
     pub fn fallback_anonymous(mut self, index: u32) -> Self {
         // Only set anonymous avatar if there's no initials
         if !matches!(self.source, AvatarSource::FallbackAvatar(_)) {
@@ -125,6 +177,15 @@ impl Avatar2 {
         self
     }
 
+    /// Uses a pulsating background animation to indicate the loading state
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::Avatar;
+    ///
+    /// let avatar = Avatar::new("path/to/image.png").loading(true);
+    /// ```
     pub fn loading(mut self, is_loading: bool) -> Self {
         if is_loading {
             self.source = AvatarSource::LoadingAvatar;
@@ -133,12 +194,24 @@ impl Avatar2 {
     }
 
     /// Applies a grayscale filter to the avatar image.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use ui::Avatar;
+    ///
+    /// let avatar = Avatar::new("path/to/image.png").grayscale(true);
+    /// ```
     pub fn grayscale(mut self, grayscale: bool) -> Self {
         self.grayscale = grayscale;
         self
     }
 
     /// Sets the border color of the avatar.
+    ///
+    /// This might be used to match the border to the background color of
+    /// the parent element to create the illusion of cropping another
+    /// shape underneath (for example in face piles.)
     pub fn border_color(mut self, color: impl Into<Hsla>) -> Self {
         self.border_color = Some(color.into());
         self
