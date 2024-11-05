@@ -227,17 +227,17 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         // works in visual mode
         cx.set_shared_state("a😀C«dÉ1*fˇ»\n").await;
-        cx.simulate_shared_keystrokes("U").await;
+        cx.simulate_shared_keystrokes("shift-u").await;
         cx.shared_state().await.assert_eq("a😀CˇDÉ1*F\n");
 
         // works with line selections
         cx.set_shared_state("abˇC\n").await;
-        cx.simulate_shared_keystrokes("shift-v U").await;
+        cx.simulate_shared_keystrokes("shift-v shift-u").await;
         cx.shared_state().await.assert_eq("ˇABC\n");
 
         // works in visual block mode
         cx.set_shared_state("ˇaa\nbb\ncc").await;
-        cx.simulate_shared_keystrokes("ctrl-v j U").await;
+        cx.simulate_shared_keystrokes("ctrl-v j shift-u").await;
         cx.shared_state().await.assert_eq("ˇAa\nBb\ncc");
     }
 
