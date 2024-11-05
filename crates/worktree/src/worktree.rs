@@ -2952,7 +2952,7 @@ impl BackgroundScannerState {
         let repository = fs.open_repo(&dot_git_abs_path)?;
         let git_dir_path = Arc::from(
             repository
-                .path()?
+                .path()
                 .ancestors()
                 .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))?,
         );
@@ -2975,7 +2975,7 @@ impl BackgroundScannerState {
         }
 
         self.snapshot.repository_entries.insert(
-            work_directory.clone(), // ""
+            work_directory.clone(),
             RepositoryEntry {
                 work_directory: work_dir_id.into(),
                 branch: repository.branch_name().map(Into::into),
