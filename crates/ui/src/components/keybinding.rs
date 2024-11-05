@@ -135,7 +135,7 @@ impl RenderOnce for KeyBinding {
                     })
                     .map(|el| match key_icon {
                         Some(icon) => el.child(KeyIcon::new(icon)),
-                        None => el.child(Key::new(keystroke.key.clone())),
+                        None => el.child(Key::new(&keystroke.key)),
                     })
             }))
     }
