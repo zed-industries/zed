@@ -64,6 +64,7 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings};
 use smol::stream::StreamExt;
 use std::{
+    any::TypeId,
     borrow::Cow,
     cmp,
     ops::{ControlFlow, Range},
@@ -4185,6 +4186,21 @@ impl Item for ContextEditor {
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, Item::deactivated)
+    }
+
+    fn act_as_type<'a>(
+        &'a self,
+        type_id: TypeId,
+        self_handle: &'a View<Self>,
+        _: &'a AppContext,
+    ) -> Option<AnyView> {
+        if type_id == TypeId::of::<Self>() {
+            Some(self_handle.to_any())
+        } else if type_id == TypeId::of::<Editor>() {
+            Some(self.editor.to_any())
+        } else {
+            None
+        }
     }
 }
 
