@@ -1,7 +1,5 @@
-pub mod extension_builder;
 mod extension_indexed_docs_provider;
 mod extension_lsp_adapter;
-mod extension_manifest;
 mod extension_settings;
 mod extension_slash_command;
 mod wasm_host;
@@ -10,7 +8,6 @@ mod wasm_host;
 mod extension_store_test;
 
 use crate::extension_indexed_docs_provider::ExtensionIndexedDocsProvider;
-use crate::extension_manifest::SchemaVersion;
 use crate::extension_slash_command::ExtensionSlashCommand;
 use crate::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host::wit};
 use anyhow::{anyhow, bail, Context as _, Result};
@@ -19,7 +16,8 @@ use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
 use collections::{btree_map, BTreeMap, HashSet};
-use extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
+use extension::SchemaVersion;
 use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
@@ -62,7 +60,7 @@ use wasm_host::{
     WasmExtension, WasmHost,
 };
 
-pub use extension_manifest::{
+pub use extension::{
     ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry, OldExtensionManifest,
 };
 pub use extension_settings::ExtensionSettings;
@@ -1358,7 +1356,7 @@ impl ExtensionStore {
                     continue;
                 };
 
-                let Some(theme_family) = ThemeRegistry::read_user_theme(&theme_path, fs.clone())
+                let Some(theme_family) = theme::read_user_theme(&theme_path, fs.clone())
                     .await
                     .log_err()
                 else {

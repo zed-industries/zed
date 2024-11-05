@@ -1,4 +1,3 @@
-use crate::extension_manifest::SchemaVersion;
 use crate::extension_settings::ExtensionSettings;
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
@@ -8,6 +7,7 @@ use crate::{
 use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
+use extension::SchemaVersion;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
@@ -296,7 +296,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["ERB", "Plain Text", "Ruby"]
         );
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Monokai Dark",
                 "Monokai Light",
@@ -377,7 +377,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         assert_eq!(index.themes, expected_index.themes);
 
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Gruvbox",
                 "Monokai Dark",
@@ -424,7 +424,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             ["embedded_template".into(), "ruby".into()]
         );
         assert_eq!(
-            theme_registry.list_names(false),
+            theme_registry.list_names(),
             [
                 "Gruvbox",
                 "Monokai Dark",

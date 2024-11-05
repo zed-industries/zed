@@ -11,7 +11,7 @@ use client::telemetry::Telemetry;
 use client::ExtensionMetadata;
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, uniform_list, AppContext, EventEmitter, Flatten, FocusableView, InteractiveElement,
@@ -203,8 +203,8 @@ impl ExtensionsPage {
             let subscriptions = [
                 cx.observe(&store, |_, _, cx| cx.notify()),
                 cx.subscribe(&store, move |this, _, event, cx| match event {
-                    extension::Event::ExtensionsUpdated => this.fetch_extensions_debounced(cx),
-                    extension::Event::ExtensionInstalled(extension_id) => {
+                    extension_host::Event::ExtensionsUpdated => this.fetch_extensions_debounced(cx),
+                    extension_host::Event::ExtensionInstalled(extension_id) => {
                         this.on_extension_installed(workspace_handle.clone(), extension_id, cx)
                     }
                     _ => {}
@@ -691,7 +691,8 @@ impl ExtensionsPage {
         has_dev_extension: bool,
         cx: &mut ViewContext<Self>,
     ) -> (Button, Option<Button>) {
-        let is_compatible = extension::is_version_compatible(ReleaseChannel::global(cx), extension);
+        let is_compatible =
+            extension_host::is_version_compatible(ReleaseChannel::global(cx), extension);
 
         if has_dev_extension {
             // If we have a dev extension for the given extension, just treat it as uninstalled.
