@@ -527,6 +527,7 @@ impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
     }
 }
 
+#[cfg(unix)]
 static LINUX_SYSTEM_SEARCH_PATHS: LazyLock<[PathBuf; 27]> = LazyLock::new(|| {
     [
         PathBuf::from("/bin"),
