@@ -11,7 +11,7 @@ pub struct LinuxWatcher {
 }
 
 impl LinuxWatcher {
-    pub(crate) fn new(
+    pub fn new(
         tx: smol::channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
     ) -> Self {
@@ -44,14 +44,10 @@ impl Watcher for LinuxWatcher {
                         .paths
                         .iter()
                         .filter_map(|event_path| {
-                            if event_path.starts_with(&root_path) {
-                                Some(PathEvent {
-                                    path: event_path.clone(),
-                                    kind,
-                                })
-                            } else {
-                                None
-                            }
+                            event_path.starts_with(&root_path).then(|| PathEvent {
+                                path: event_path.clone(),
+                                kind,
+                            })
                         })
                         .collect::<Vec<_>>();
 
