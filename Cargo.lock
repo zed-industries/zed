@@ -2432,7 +2432,6 @@ dependencies = [
  "smol",
  "sysinfo",
  "telemetry_events",
- "tempfile",
  "text",
  "thiserror",
  "time",
