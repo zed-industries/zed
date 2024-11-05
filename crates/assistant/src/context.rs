@@ -24,6 +24,7 @@ use gpui::{
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
+    logging::report_assistant_event,
     provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
     LanguageModelImage, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage,
@@ -1051,7 +1052,9 @@ impl Context {
     }
 
     pub(crate) fn count_remaining_tokens(&mut self, cx: &mut ModelContext<Self>) {
-        let request = self.to_completion_request(RequestType::SuggestEdits, cx); // Conservatively assume SuggestEdits, since it takes more tokens.
+        // Assume it will be a Chat request, even though that takes fewer tokens (and risks going over the limit),
+        // because otherwise you see in the UI that your empty message has a bunch of tokens already used.
+        let request = self.to_completion_request(RequestType::Chat, cx);
         let Some(model) = LanguageModelRegistry::read_global(cx).active_model() else {
             return;
         };
@@ -1955,6 +1958,7 @@ impl Context {
                                     });
 
                                 match event {
+                                    LanguageModelCompletionEvent::StartMessage { .. } => {}
                                     LanguageModelCompletionEvent::Stop(reason) => {
                                         stop_reason = reason;
                                     }
@@ -2060,23 +2064,28 @@ impl Context {
                         None
                     };
 
-                    if let Some(telemetry) = this.telemetry.as_ref() {
-                        let language_name = this
-                            .buffer
-                            .read(cx)
-                            .language()
-                            .map(|language| language.name());
-                        telemetry.report_assistant_event(AssistantEvent {
+                    let language_name = this
+                        .buffer
+                        .read(cx)
+                        .language()
+                        .map(|language| language.name());
+                    report_assistant_event(
+                        AssistantEvent {
                             conversation_id: Some(this.id.0.clone()),
                             kind: AssistantKind::Panel,
                             phase: AssistantPhase::Response,
+                            message_id: None,
                             model: model.telemetry_id(),
                             model_provider: model.provider_id().to_string(),
                             response_latency,
                             error_message,
                             language_name: language_name.map(|name| name.to_proto()),
-                        });
-                    }
+                        },
+                        this.telemetry.clone(),
+                        cx.http_client(),
+                        model.api_key(cx),
+                        cx.background_executor(),
+                    );
 
                     if let Ok(stop_reason) = result {
                         match stop_reason {
@@ -2195,7 +2204,7 @@ impl Context {
         }
 
         if let RequestType::SuggestEdits = request_type {
-            if let Ok(preamble) = self.prompt_builder.generate_workflow_prompt() {
+            if let Ok(preamble) = self.prompt_builder.generate_suggest_edits_prompt() {
                 let last_elem_index = completion_request.messages.len();
 
                 completion_request
@@ -2543,7 +2552,7 @@ impl Context {
                     let mut messages = stream.await?;
 
                     let mut replaced = !replace_old;
-                    while let Some(message) = messages.next().await {
+                    while let Some(message) = messages.stream.next().await {
                         let text = message?;
                         let mut lines = text.lines();
                         this.update(&mut cx, |this, cx| {

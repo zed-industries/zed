@@ -14,6 +14,7 @@ use gpui::{AppContext, Model};
 use language::CursorShape;
 use markdown::{Markdown, MarkdownStyle};
 use release_channel::ReleaseChannel;
+use remote::ssh_session::ConnectionIdentifier;
 use remote::{SshConnectionOptions, SshPlatform, SshRemoteClient};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -63,7 +64,7 @@ impl SshSettings {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct SshConnection {
     pub host: SharedString,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -100,7 +101,7 @@ impl From<SshConnection> for SshConnectionOptions {
     }
 }
 
-#[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, PartialEq, Deserialize, JsonSchema)]
 pub struct SshProject {
     pub paths: Vec<String>,
 }
@@ -534,7 +535,7 @@ pub fn is_connecting_over_ssh(workspace: &Workspace, cx: &AppContext) -> bool {
 }
 
 pub fn connect_over_ssh(
-    unique_identifier: String,
+    unique_identifier: ConnectionIdentifier,
     connection_options: SshConnectionOptions,
     ui: View<SshPrompt>,
     cx: &mut WindowContext,

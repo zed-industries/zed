@@ -1,6 +1,6 @@
 use std::{
     cell::Ref,
-    iter, mem,
+    cmp, iter, mem,
     ops::{Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
@@ -98,9 +98,9 @@ impl SelectionsCollection {
         &self,
         cx: &mut AppContext,
     ) -> Option<Selection<D>> {
-        self.pending_anchor()
-            .as_ref()
-            .map(|pending| pending.map(|p| p.summary::<D>(&self.buffer(cx))))
+        let map = self.display_map(cx);
+        let selection = resolve_selections(self.pending_anchor().as_ref(), &map).next();
+        selection
     }
 
     pub(crate) fn pending_mode(&self) -> Option<SelectMode> {
@@ -111,12 +111,10 @@ impl SelectionsCollection {
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D>,
     {
+        let map = self.display_map(cx);
         let disjoint_anchors = &self.disjoint;
-        let mut disjoint =
-            resolve_multiple::<D, _>(disjoint_anchors.iter(), &self.buffer(cx)).peekable();
-
+        let mut disjoint = resolve_selections::<D, _>(disjoint_anchors.iter(), &map).peekable();
         let mut pending_opt = self.pending::<D>(cx);
-
         iter::from_fn(move || {
             if let Some(pending) = pending_opt.as_mut() {
                 while let Some(next_selection) = disjoint.peek() {
@@ -199,34 +197,57 @@ impl SelectionsCollection {
     where
         D: 'a + TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
     {
-        let buffer = self.buffer(cx);
+        let map = self.display_map(cx);
         let start_ix = match self
             .disjoint
-            .binary_search_by(|probe| probe.end.cmp(&range.start, &buffer))
+            .binary_search_by(|probe| probe.end.cmp(&range.start, &map.buffer_snapshot))
         {
             Ok(ix) | Err(ix) => ix,
         };
         let end_ix = match self
             .disjoint
-            .binary_search_by(|probe| probe.start.cmp(&range.end, &buffer))
+            .binary_search_by(|probe| probe.start.cmp(&range.end, &map.buffer_snapshot))
         {
             Ok(ix) => ix + 1,
             Err(ix) => ix,
         };
-        resolve_multiple(&self.disjoint[start_ix..end_ix], &buffer).collect()
+        resolve_selections(&self.disjoint[start_ix..end_ix], &map).collect()
     }
 
     pub fn all_display(
         &self,
         cx: &mut AppContext,
     ) -> (DisplaySnapshot, Vec<Selection<DisplayPoint>>) {
-        let display_map = self.display_map(cx);
-        let selections = self
-            .all::<Point>(cx)
-            .into_iter()
-            .map(|selection| selection.map(|point| point.to_display_point(&display_map)))
-            .collect();
-        (display_map, selections)
+        let map = self.display_map(cx);
+        let disjoint_anchors = &self.disjoint;
+        let mut disjoint = resolve_selections_display(disjoint_anchors.iter(), &map).peekable();
+        let mut pending_opt =
+            resolve_selections_display(self.pending_anchor().as_ref(), &map).next();
+        let selections = iter::from_fn(move || {
+            if let Some(pending) = pending_opt.as_mut() {
+                while let Some(next_selection) = disjoint.peek() {
+                    if pending.start <= next_selection.end && pending.end >= next_selection.start {
+                        let next_selection = disjoint.next().unwrap();
+                        if next_selection.start < pending.start {
+                            pending.start = next_selection.start;
+                        }
+                        if next_selection.end > pending.end {
+                            pending.end = next_selection.end;
+                        }
+                    } else if next_selection.end < pending.start {
+                        return disjoint.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                pending_opt.take()
+            } else {
+                disjoint.next()
+            }
+        })
+        .collect();
+        (map, selections)
     }
 
     pub fn newest_anchor(&self) -> &Selection<Anchor> {
@@ -241,15 +262,18 @@ impl SelectionsCollection {
         &self,
         cx: &mut AppContext,
     ) -> Selection<D> {
-        let buffer = self.buffer(cx);
-        self.newest_anchor().map(|p| p.summary::<D>(&buffer))
+        let map = self.display_map(cx);
+        let selection = resolve_selections([self.newest_anchor()], &map)
+            .next()
+            .unwrap();
+        selection
     }
 
     pub fn newest_display(&self, cx: &mut AppContext) -> Selection<DisplayPoint> {
-        let display_map = self.display_map(cx);
-        let selection = self
-            .newest_anchor()
-            .map(|point| point.to_display_point(&display_map));
+        let map = self.display_map(cx);
+        let selection = resolve_selections_display([self.newest_anchor()], &map)
+            .next()
+            .unwrap();
         selection
     }
 
@@ -265,8 +289,11 @@ impl SelectionsCollection {
         &self,
         cx: &mut AppContext,
     ) -> Selection<D> {
-        let buffer = self.buffer(cx);
-        self.oldest_anchor().map(|p| p.summary::<D>(&buffer))
+        let map = self.display_map(cx);
+        let selection = resolve_selections([self.oldest_anchor()], &map)
+            .next()
+            .unwrap();
+        selection
     }
 
     pub fn first_anchor(&self) -> Selection<Anchor> {
@@ -538,9 +565,9 @@ impl<'a> MutableSelectionsCollection<'a> {
     }
 
     pub fn select_anchors(&mut self, selections: Vec<Selection<Anchor>>) {
-        let buffer = self.buffer.read(self.cx).snapshot(self.cx);
+        let map = self.display_map();
         let resolved_selections =
-            resolve_multiple::<usize, _>(&selections, &buffer).collect::<Vec<_>>();
+            resolve_selections::<usize, _>(&selections, &map).collect::<Vec<_>>();
         self.select(resolved_selections);
     }
 
@@ -650,20 +677,16 @@ impl<'a> MutableSelectionsCollection<'a> {
     ) {
         let mut changed = false;
         let display_map = self.display_map();
-        let selections = self
-            .collection
-            .all::<Point>(self.cx)
+        let (_, selections) = self.collection.all_display(self.cx);
+        let selections = selections
             .into_iter()
             .map(|selection| {
-                let mut moved_selection =
-                    selection.map(|point| point.to_display_point(&display_map));
+                let mut moved_selection = selection.clone();
                 move_selection(&display_map, &mut moved_selection);
-                let moved_selection =
-                    moved_selection.map(|display_point| display_point.to_point(&display_map));
                 if selection != moved_selection {
                     changed = true;
                 }
-                moved_selection
+                moved_selection.map(|display_point| display_point.to_point(&display_map))
             })
             .collect();
 
@@ -804,8 +827,8 @@ impl<'a> MutableSelectionsCollection<'a> {
             .collect();
 
         if !adjusted_disjoint.is_empty() {
-            let resolved_selections =
-                resolve_multiple(adjusted_disjoint.iter(), &self.buffer()).collect();
+            let map = self.display_map();
+            let resolved_selections = resolve_selections(adjusted_disjoint.iter(), &map).collect();
             self.select::<usize>(resolved_selections);
         }
 
@@ -849,27 +872,76 @@ impl<'a> DerefMut for MutableSelectionsCollection<'a> {
 }
 
 // Panics if passed selections are not in order
-pub(crate) fn resolve_multiple<'a, D, I>(
+fn resolve_selections_display<'a>(
+    selections: impl 'a + IntoIterator<Item = &'a Selection<Anchor>>,
+    map: &'a DisplaySnapshot,
+) -> impl 'a + Iterator<Item = Selection<DisplayPoint>> {
+    let (to_summarize, selections) = selections.into_iter().tee();
+    let mut summaries = map
+        .buffer_snapshot
+        .summaries_for_anchors::<Point, _>(to_summarize.flat_map(|s| [&s.start, &s.end]))
+        .into_iter();
+    let mut selections = selections
+        .map(move |s| {
+            let start = summaries.next().unwrap();
+            let end = summaries.next().unwrap();
+
+            let display_start = map.point_to_display_point(start, Bias::Left);
+            let display_end = if start == end {
+                map.point_to_display_point(end, Bias::Right)
+            } else {
+                map.point_to_display_point(end, Bias::Left)
+            };
+
+            Selection {
+                id: s.id,
+                start: display_start,
+                end: display_end,
+                reversed: s.reversed,
+                goal: s.goal,
+            }
+        })
+        .peekable();
+    iter::from_fn(move || {
+        let mut selection = selections.next()?;
+        while let Some(next_selection) = selections.peek() {
+            if selection.end >= next_selection.start {
+                selection.end = cmp::max(selection.end, next_selection.end);
+                selections.next();
+            } else {
+                break;
+            }
+        }
+        Some(selection)
+    })
+}
+
+// Panics if passed selections are not in order
+pub(crate) fn resolve_selections<'a, D, I>(
     selections: I,
-    snapshot: &MultiBufferSnapshot,
+    map: &'a DisplaySnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
 where
-    D: TextDimension + Ord + Sub<D, Output = D>,
+    D: TextDimension + Clone + Ord + Sub<D, Output = D>,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
-    let (to_summarize, selections) = selections.into_iter().tee();
-    let mut summaries = snapshot
-        .summaries_for_anchors::<D, _>(
-            to_summarize
-                .flat_map(|s| [&s.start, &s.end])
-                .collect::<Vec<_>>(),
-        )
-        .into_iter();
-    selections.map(move |s| Selection {
-        id: s.id,
-        start: summaries.next().unwrap(),
-        end: summaries.next().unwrap(),
-        reversed: s.reversed,
-        goal: s.goal,
+    let (to_convert, selections) = resolve_selections_display(selections, map).tee();
+    let mut converted_endpoints =
+        map.buffer_snapshot
+            .dimensions_from_points::<D>(to_convert.flat_map(|s| {
+                let start = map.display_point_to_point(s.start, Bias::Left);
+                let end = map.display_point_to_point(s.end, Bias::Right);
+                [start, end]
+            }));
+    selections.map(move |s| {
+        let start = converted_endpoints.next().unwrap();
+        let end = converted_endpoints.next().unwrap();
+        Selection {
+            id: s.id,
+            start,
+            end,
+            reversed: s.reversed,
+            goal: s.goal,
+        }
     })
 }

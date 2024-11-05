@@ -441,43 +441,49 @@ impl AssistantPanel {
                             .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
                     );
                 let _pane = cx.view().clone();
-                let right_children = h_flex()
-                    .gap(Spacing::Small.rems(cx))
-                    .child(
-                        IconButton::new("new-context", IconName::Plus)
-                            .on_click(
-                                cx.listener(|_, _, cx| {
+                let right_children =
+                    h_flex()
+                        .gap(Spacing::XSmall.rems(cx))
+                        .child(
+                            IconButton::new("new-context", IconName::Plus)
+                                .on_click(cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())
-                                }),
-                            )
-                            .tooltip(move |cx| {
-                                Tooltip::for_action_in("New Chat", &NewContext, &focus_handle, cx)
-                            }),
-                    )
-                    .child(
-                        PopoverMenu::new("assistant-panel-popover-menu")
-                            .trigger(
-                                IconButton::new("menu", IconName::Menu).icon_size(IconSize::Small),
-                            )
-                            .menu(move |cx| {
-                                let zoom_label = if _pane.read(cx).is_zoomed() {
-                                    "Zoom Out"
-                                } else {
-                                    "Zoom In"
-                                };
-                                let focus_handle = _pane.focus_handle(cx);
-                                Some(ContextMenu::build(cx, move |menu, _| {
-                                    menu.context(focus_handle.clone())
-                                        .action("New Chat", Box::new(NewContext))
-                                        .action("History", Box::new(DeployHistory))
-                                        .action("Prompt Library", Box::new(DeployPromptLibrary))
-                                        .action("Configure", Box::new(ShowConfiguration))
-                                        .action(zoom_label, Box::new(ToggleZoom))
                                 }))
-                            }),
-                    )
-                    .into_any_element()
-                    .into();
+                                .tooltip(move |cx| {
+                                    Tooltip::for_action_in(
+                                        "New Context",
+                                        &NewContext,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }),
+                        )
+                        .child(
+                            PopoverMenu::new("assistant-panel-popover-menu")
+                                .trigger(
+                                    IconButton::new("menu", IconName::EllipsisVertical)
+                                        .icon_size(IconSize::Small)
+                                        .tooltip(|cx| Tooltip::text("Toggle Assistant Menu", cx)),
+                                )
+                                .menu(move |cx| {
+                                    let zoom_label = if _pane.read(cx).is_zoomed() {
+                                        "Zoom Out"
+                                    } else {
+                                        "Zoom In"
+                                    };
+                                    let focus_handle = _pane.focus_handle(cx);
+                                    Some(ContextMenu::build(cx, move |menu, _| {
+                                        menu.context(focus_handle.clone())
+                                            .action("New Context", Box::new(NewContext))
+                                            .action("History", Box::new(DeployHistory))
+                                            .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                            .action("Configure", Box::new(ShowConfiguration))
+                                            .action(zoom_label, Box::new(ToggleZoom))
+                                    }))
+                                }),
+                        )
+                        .into_any_element()
+                        .into();
 
                 (Some(left_children.into_any_element()), right_children)
             });
@@ -1492,7 +1498,7 @@ pub struct ContextEditor {
     dragged_file_worktrees: Vec<Model<Worktree>>,
 }
 
-const DEFAULT_TAB_TITLE: &str = "New Chat";
+const DEFAULT_TAB_TITLE: &str = "New Context";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl ContextEditor {
@@ -2593,57 +2599,108 @@ impl ContextEditor {
                     let context = self.context.clone();
                     move |cx| {
                         let message_id = MessageId(message.timestamp);
-                        let show_spinner = message.role == Role::Assistant
+                        let llm_loading = message.role == Role::Assistant
                             && message.status == MessageStatus::Pending;
 
-                        let label = match message.role {
-                            Role::User => {
-                                Label::new("You").color(Color::Default).into_any_element()
-                            }
+                        let (label, spinner, note) = match message.role {
+                            Role::User => (
+                                Label::new("You").color(Color::Default).into_any_element(),
+                                None,
+                                None,
+                            ),
                             Role::Assistant => {
-                                let label = Label::new("Assistant").color(Color::Info);
-                                if show_spinner {
-                                    label
+                                let base_label = Label::new("Assistant").color(Color::Info);
+                                let mut spinner = None;
+                                let mut note = None;
+                                let animated_label = if llm_loading {
+                                    base_label
                                         .with_animation(
                                             "pulsating-label",
                                             Animation::new(Duration::from_secs(2))
                                                 .repeat()
-                                                .with_easing(pulsating_between(0.4, 0.8)),
+                                                .with_easing(pulsating_between(0.3, 0.9)),
                                             |label, delta| label.alpha(delta),
                                         )
                                         .into_any_element()
                                 } else {
-                                    label.into_any_element()
+                                    base_label.into_any_element()
+                                };
+                                if llm_loading {
+                                    spinner = Some(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .size(IconSize::XSmall)
+                                            .color(Color::Muted)
+                                            .with_animation(
+                                                "arrow-circle",
+                                                Animation::new(Duration::from_secs(2)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            )
+                                            .into_any_element(),
+                                    );
+                                    note = Some(
+                                        div()
+                                            .font(
+                                                theme::ThemeSettings::get_global(cx)
+                                                    .buffer_font
+                                                    .clone(),
+                                            )
+                                            .child(
+                                                Label::new("Press 'esc' to cancel")
+                                                    .color(Color::Muted)
+                                                    .size(LabelSize::XSmall),
+                                            )
+                                            .into_any_element(),
+                                    );
                                 }
+                                (animated_label, spinner, note)
                             }
-
-                            Role::System => Label::new("System")
-                                .color(Color::Warning)
-                                .into_any_element(),
+                            Role::System => (
+                                Label::new("System")
+                                    .color(Color::Warning)
+                                    .into_any_element(),
+                                None,
+                                None,
+                            ),
                         };
 
-                        let sender = ButtonLike::new("role")
-                            .style(ButtonStyle::Filled)
-                            .child(label)
-                            .tooltip(|cx| {
-                                Tooltip::with_meta(
-                                    "Toggle message role",
-                                    None,
-                                    "Available roles: You (User), Assistant, System",
-                                    cx,
-                                )
-                            })
-                            .on_click({
-                                let context = context.clone();
-                                move |_, cx| {
-                                    context.update(cx, |context, cx| {
-                                        context.cycle_message_roles(
-                                            HashSet::from_iter(Some(message_id)),
+                        let sender = h_flex()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                ButtonLike::new("role")
+                                    .style(ButtonStyle::Filled)
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .child(label)
+                                            .children(spinner),
+                                    )
+                                    .tooltip(|cx| {
+                                        Tooltip::with_meta(
+                                            "Toggle message role",
+                                            None,
+                                            "Available roles: You (User), Assistant, System",
                                             cx,
                                         )
                                     })
-                                }
-                            });
+                                    .on_click({
+                                        let context = context.clone();
+                                        move |_, cx| {
+                                            context.update(cx, |context, cx| {
+                                                context.cycle_message_roles(
+                                                    HashSet::from_iter(Some(message_id)),
+                                                    cx,
+                                                )
+                                            })
+                                        }
+                                    }),
+                            )
+                            .children(note);
 
                         h_flex()
                             .id(("message_header", message_id.as_u64()))
@@ -3068,7 +3125,7 @@ impl ContextEditor {
         }
 
         panel.update(cx, |_, cx| {
-            // Wait to create a new chat until the workspace is no longer
+            // Wait to create a new context until the workspace is no longer
             // being updated.
             cx.defer(move |panel, cx| {
                 if let Some(context) = panel
@@ -4311,24 +4368,9 @@ impl FollowableItem for ContextEditor {
 
 pub struct ContextEditorToolbarItem {
     fs: Arc<dyn Fs>,
-    workspace: WeakView<Workspace>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
     model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
-}
-
-fn active_editor_focus_handle(
-    workspace: &WeakView<Workspace>,
-    cx: &WindowContext<'_>,
-) -> Option<FocusHandle> {
-    workspace.upgrade().and_then(|workspace| {
-        Some(
-            workspace
-                .read(cx)
-                .active_item_as::<Editor>(cx)?
-                .focus_handle(cx),
-        )
-    })
 }
 
 fn render_inject_context_menu(
@@ -4357,7 +4399,6 @@ impl ContextEditorToolbarItem {
     ) -> Self {
         Self {
             fs: workspace.app_state().fs.clone(),
-            workspace: workspace.weak_handle(),
             active_context_editor: None,
             model_summary_editor,
             model_selector_menu_handle,
@@ -4410,16 +4451,30 @@ impl ContextEditorToolbarItem {
 impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
-            .pl_1()
-            .gap_2()
-            .flex_1()
-            .min_w(rems(DEFAULT_TAB_TITLE.len() as f32))
-            .when(self.active_context_editor.is_some(), |left_side| {
-                left_side.child(self.model_summary_editor.clone())
-            });
+            .group("chat-title-group")
+            .pl_0p5()
+            .gap_1()
+            .items_center()
+            .flex_grow()
+            .child(
+                div()
+                    .w_full()
+                    .when(self.active_context_editor.is_some(), |left_side| {
+                        left_side.child(self.model_summary_editor.clone())
+                    }),
+            )
+            .child(
+                div().visible_on_hover("chat-title-group").child(
+                    IconButton::new("regenerate-context", IconName::RefreshTitle)
+                        .shape(ui::IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Regenerate Title", cx))
+                        .on_click(cx.listener(move |_, _, cx| {
+                            cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
+                        })),
+                ),
+            );
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let weak_self = cx.view().downgrade();
         let right_side = h_flex()
             .gap_2()
             // TODO display this in a nicer way, once we have a design for it.
@@ -4432,7 +4487,6 @@ impl Render for ContextEditorToolbarItem {
             //     let scan_items_remaining = cx.update_global(|db: &mut SemanticDb, cx| {
             //         project.and_then(|project| db.remaining_summaries(&project, cx))
             //     });
-
             //     scan_items_remaining
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
@@ -4454,9 +4508,13 @@ impl Render for ContextEditorToolbarItem {
                                             (Some(provider), Some(model)) => h_flex()
                                                 .gap_1()
                                                 .child(
-                                                    Icon::new(model.icon().unwrap_or_else(|| provider.icon()))
-                                                        .color(Color::Muted)
-                                                        .size(IconSize::XSmall),
+                                                    Icon::new(
+                                                        model
+                                                            .icon()
+                                                            .unwrap_or_else(|| provider.icon()),
+                                                    )
+                                                    .color(Color::Muted)
+                                                    .size(IconSize::XSmall),
                                                 )
                                                 .child(
                                                     Label::new(model.name().0)
@@ -4482,71 +4540,7 @@ impl Render for ContextEditorToolbarItem {
                 )
                 .with_handle(self.model_selector_menu_handle.clone()),
             )
-            .children(self.render_remaining_tokens(cx))
-            .child(
-                PopoverMenu::new("context-editor-popover")
-                    .trigger(
-                        IconButton::new("context-editor-trigger", IconName::EllipsisVertical)
-                            .icon_size(IconSize::Small)
-                            .tooltip(|cx| Tooltip::text("Open Context Options", cx)),
-                    )
-                    .menu({
-                        let weak_self = weak_self.clone();
-                        move |cx| {
-                            let weak_self = weak_self.clone();
-                            Some(ContextMenu::build(cx, move |menu, cx| {
-                                let context = weak_self
-                                    .update(cx, |this, cx| {
-                                        active_editor_focus_handle(&this.workspace, cx)
-                                    })
-                                    .ok()
-                                    .flatten();
-                                menu.when_some(context, |menu, context| menu.context(context))
-                                    .entry("Regenerate Chat Title", None, {
-                                        let weak_self = weak_self.clone();
-                                        move |cx| {
-                                            weak_self
-                                                .update(cx, |_, cx| {
-                                                    cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
-                                                })
-                                                .ok();
-                                        }
-                                    })
-                                    .custom_entry(
-                                        |_| {
-                                            h_flex()
-                                                .w_full()
-                                                .justify_between()
-                                                .gap_2()
-                                                .child(Label::new("Add Context"))
-                                                .child(Label::new("/ command").color(Color::Muted))
-                                                .into_any()
-                                        },
-                                        {
-                                            let weak_self = weak_self.clone();
-                                            move |cx| {
-                                                weak_self
-                                                    .update(cx, |this, cx| {
-                                                        if let Some(editor) =
-                                                        &this.active_context_editor
-                                                        {
-                                                            editor
-                                                                .update(cx, |this, cx| {
-                                                                    this.slash_menu_handle
-                                                                        .toggle(cx);
-                                                                })
-                                                                .ok();
-                                                        }
-                                                    })
-                                                    .ok();
-                                            }
-                                        },
-                                    )
-                                    .action("Add Selection", QuoteSelection.boxed_clone())
-                            }))
-                        }
-                    }),
-            );
+            .children(self.render_remaining_tokens(cx));
 
         h_flex()
             .size_full()
@@ -4761,7 +4755,7 @@ impl ConfigurationView {
                             h_flex().justify_end().child(
                                 Button::new(
                                     SharedString::from(format!("new-context-{provider_id}")),
-                                    "Open New Chat",
+                                    "Open new context",
                                 )
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Plus)

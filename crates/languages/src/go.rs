@@ -549,6 +549,21 @@ impl ContextProvider for GoContextProvider {
                 tags: vec!["go-main".to_owned()],
                 ..TaskTemplate::default()
             },
+            TaskTemplate {
+                label: format!("go generate {}", GO_PACKAGE_TASK_VARIABLE.template_value()),
+                command: "go".into(),
+                args: vec!["generate".into()],
+                cwd: package_cwd.clone(),
+                tags: vec!["go-generate".to_owned()],
+                ..TaskTemplate::default()
+            },
+            TaskTemplate {
+                label: "go generate ./...".into(),
+                command: "go".into(),
+                args: vec!["generate".into(), "./...".into()],
+                cwd: package_cwd.clone(),
+                ..TaskTemplate::default()
+            },
         ]))
     }
 }

@@ -20,7 +20,9 @@ use wasmtime::{
 #[cfg(test)]
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
-    zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
+    zed::extension::lsp::{
+        Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
+    },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
     CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
@@ -262,7 +264,11 @@ impl Extension {
                     .await
             }
             Extension::V010(ext) => Ok(ext
-                .call_labels_for_completions(store, &language_server_id.0, &completions)
+                .call_labels_for_completions(
+                    store,
+                    &language_server_id.0,
+                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -271,7 +277,11 @@ impl Extension {
                         .collect()
                 })),
             Extension::V006(ext) => Ok(ext
-                .call_labels_for_completions(store, &language_server_id.0, &completions)
+                .call_labels_for_completions(
+                    store,
+                    &language_server_id.0,
+                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -295,7 +305,11 @@ impl Extension {
                     .await
             }
             Extension::V010(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -304,7 +318,11 @@ impl Extension {
                         .collect()
                 })),
             Extension::V006(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
