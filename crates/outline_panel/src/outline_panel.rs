@@ -132,7 +132,6 @@ enum ItemsDisplayMode {
 struct SearchState {
     kind: SearchKind,
     query: String,
-    previous_matches: HashMap<Range<editor::Anchor>, Arc<OnceLock<SearchData>>>,
     matches: Vec<(Range<editor::Anchor>, Arc<OnceLock<SearchData>>)>,
     highlight_search_match_tx: channel::Sender<HighlightArguments>,
     _search_match_highlighter: Task<()>,
@@ -159,10 +158,15 @@ impl SearchState {
         Self {
             kind,
             query,
-            previous_matches,
             matches: new_matches
                 .into_iter()
-                .map(|range| (range, Arc::default()))
+                .map(|range| {
+                    let search_data = previous_matches
+                        .get(&range)
+                        .map(Arc::clone)
+                        .unwrap_or_default();
+                    (range, search_data)
+                })
                 .collect(),
             highlight_search_match_tx,
             _search_match_highlighter: cx.background_executor().spawn(async move {
@@ -3529,14 +3533,10 @@ impl OutlinePanel {
         });
 
         let new_search_entries = new_search_matches
-            .map(|(match_range, search_data)| {
-                let previous_search_data = search_state.previous_matches.get(&match_range);
-                let render_data = previous_search_data.unwrap_or(search_data).clone();
-                SearchEntry {
-                    match_range: match_range.clone(),
-                    kind,
-                    render_data,
-                }
+            .map(|(match_range, search_data)| SearchEntry {
+                match_range: match_range.clone(),
+                kind,
+                render_data: Arc::clone(search_data),
             })
             .collect::<Vec<_>>();
         for new_search_entry in new_search_entries {
