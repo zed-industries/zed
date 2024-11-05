@@ -1,30 +1,26 @@
 use std::time::Duration;
 use std::{pin::Pin, str::FromStr};
-
-use anyhow::{anyhow, Context, Result};
-use aws_sdk_bedrockruntime::types::ConverseStreamOutput;
+use std::any::Any;
+use anyhow::{anyhow, Context, Error, Result};
+use aws_sdk_bedrockruntime::types::{ContentBlockDelta, ContentBlockDeltaEvent, ContentBlockStopEvent, ConverseStreamOutput};
 use chrono::{DateTime, Utc};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, FutureExt, Stream, StreamExt};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString};
 use thiserror::Error;
-use util::ResultExt as _;
 
 pub use aws_sdk_bedrockruntime as bedrock;
-
+use aws_sdk_bedrockruntime::config::http::HttpResponse;
+use aws_sdk_bedrockruntime::operation::converse::{ConverseError, ConverseOutput};
 pub use bedrock::operation::converse_stream::ConverseStreamInput as StreamingRequest;
-pub use bedrock::Error as BedrockError;
+pub use bedrock::types::ContentBlock as RequestContent;
+pub use bedrock::types::ConverseOutput as Response;
+pub use bedrock::types::Message;
+pub use bedrock::types::ConversationRole;
+pub use bedrock::types::ResponseStream;
 
 //TODO: Re-export the Bedrock stuff
 // https://doc.rust-lang.org/rustdoc/write-documentation/re-exports.html
-
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-pub struct BedrockModelCacheConfiguration {
-    pub min_total_token: usize,
-    pub should_speculate: bool,
-    pub max_cache_anchors: usize,
-}
 
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
@@ -44,8 +40,6 @@ pub enum Model {
         max_tokens: usize,
         /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
         display_name: Option<String>,
-        /// Indicates whether this custom model supports caching.
-        cache_configuration: Option<BedrockModelCacheConfiguration>,
         max_output_tokens: Option<u32>,
         default_temperature: Option<f32>,
     },
@@ -88,21 +82,6 @@ impl Model {
         }
     }
 
-    pub fn cache_configuration(&self) -> Option<BedrockModelCacheConfiguration> {
-        match self {
-            Self::Claude3_5Sonnet | Self::Claude3Haiku => Some(BedrockModelCacheConfiguration {
-                min_total_token: 2_048,
-                should_speculate: true,
-                max_cache_anchors: 4,
-            }),
-            Self::Custom {
-                cache_configuration,
-                ..
-            } => cache_configuration.clone(),
-            _ => None,
-        }
-    }
-
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Claude3_5Sonnet
@@ -139,18 +118,28 @@ impl Model {
 
 pub async fn complete(
     client: &bedrock::Client,
-    api_url: &str,
-    api_key: &str,
     request: Request,
 ) -> Result<Response, BedrockError> {
-    todo!()
+    let mut response = bedrock::Client::converse(client)
+        .model_id(request.model.clone())
+        .set_messages(request.messages.into())
+        .send().await.context("Failed to send request to Bedrock");
+
+    match response {
+        Ok(output) => {
+            Ok(output.into())
+        }
+        Err(err) => {
+            Err(anyhow!(err))
+        }
+    }
 }
 
 pub async fn stream_completion(
     client: &bedrock::Client,
     request: Request,
     low_speed_timeout: Option<Duration>,
-) -> Result<BoxStream<'static, Result<Event, BedrockError>>, BedrockError> {
+) -> Result<BoxStream<'static, Result<BedrockEvent, BedrockError>>, BedrockError> { // There is no generic Bedrock event Type?
 
     let response = bedrock::Client::converse_stream(client)
         .model_id(request.model)
@@ -160,6 +149,7 @@ pub async fn stream_completion(
         Ok(output) => Ok(output.stream),
         Err(e) => {
             // TODO: Figure this out
+
             unimplemented!();
         }
     };
@@ -198,7 +188,6 @@ fn get_converse_output_text(
     })
 }
 //TODO: A LOT of these types need to re-export the Bedrock types instead of making custom ones
-
 #[derive(Debug, Serialize, Deserialize, Copy, Clone)]
 #[serde(rename_all = "lowercase")]
 pub enum CacheControlType {
@@ -209,27 +198,6 @@ pub enum CacheControlType {
 pub struct CacheControl {
     #[serde(rename = "type")]
     pub cache_type: CacheControlType,
-}
-
-pub use bedrock::types::Message;
-pub use bedrock::types::ConversationRole;
-pub use bedrock::types::ResponseStream;
-
-#[derive(Debug, Serialize, Deserialize)]
-#[serde(tag = "type")]
-pub enum RequestContent {
-    #[serde(rename = "text")]
-    Text {
-        text: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<CacheControl>,
-    },
-    #[serde(rename = "image")]
-    Image {
-        source: ImageSource,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        cache_control: Option<CacheControl>,
-    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -283,20 +251,26 @@ pub struct Usage {
     pub cache_read_input_tokens: Option<u32>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Response {
-    pub id: String,
-    #[serde(rename = "type")]
-    pub response_type: String,
-    pub role: Role,
-    pub content: Vec<ResponseContent>,
-    pub model: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_reason: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stop_sequence: Option<String>,
-    pub usage: Usage,
+#[derive(Error, Debug)]
+pub enum BedrockError {
+    SdkError(bedrock::Error),
+    Other(anyhow::Error)
 }
+
+// #[derive(Debug, Serialize, Deserialize)]
+// pub struct Response {
+//     pub id: String,
+//     #[serde(rename = "type")]
+//     pub response_type: String,
+//     pub role: ConversationRole,
+//     pub content: Vec<ResponseContent>,
+//     pub model: String,
+//     #[serde(default, skip_serializing_if = "Option::is_none")]
+//     pub stop_reason: Option<String>,
+//     #[serde(default, skip_serializing_if = "Option::is_none")]
+//     pub stop_sequence: Option<String>,
+//     pub usage: Usage,
+// }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
