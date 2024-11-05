@@ -17,7 +17,7 @@ pub use runtimelib::ExecutionState;
 use settings::Settings as _;
 
 pub use crate::jupyter_settings::JupyterSettings;
-pub use crate::kernels::{Kernel, KernelOption, KernelStatus};
+pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
 pub use crate::repl_editor::*;
 pub use crate::repl_sessions_ui::{
     ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,

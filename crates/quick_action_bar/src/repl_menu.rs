@@ -4,7 +4,8 @@ use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
-    ExecutionState, JupyterSettings, Kernel, KernelOption, KernelStatus, Session, SessionSupport,
+    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
+    SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -255,7 +256,7 @@ impl QuickActionBar {
     }
     pub fn render_repl_launch_menu(
         &self,
-        kernel_specification: KernelOption,
+        kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
     ) -> Option<AnyElement> {
         let tooltip: SharedString =

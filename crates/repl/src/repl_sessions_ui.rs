@@ -12,7 +12,7 @@ use workspace::{item::Item, Workspace};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
-use crate::{KernelOption, KERNEL_DOCS_URL};
+use crate::{KernelSpecification, KERNEL_DOCS_URL};
 
 actions!(
     repl,
@@ -238,7 +238,7 @@ impl Render for ReplSessionsPage {
                 );
         }
 
-        let mut kernels_by_language: HashMap<SharedString, Vec<&KernelOption>> =
+        let mut kernels_by_language: HashMap<SharedString, Vec<&KernelSpecification>> =
             kernel_specifications
                 .iter()
                 .map(|spec| (spec.language(), spec))
@@ -253,7 +253,7 @@ impl Render for ReplSessionsPage {
         }
 
         // Convert to a sorted Vec of tuples
-        let mut sorted_kernels: Vec<(SharedString, Vec<&KernelOption>)> =
+        let mut sorted_kernels: Vec<(SharedString, Vec<&KernelSpecification>)> =
             kernels_by_language.into_iter().collect();
         sorted_kernels.sort_by(|a, b| a.0.cmp(&b.0));
 

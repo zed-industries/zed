@@ -1,6 +1,6 @@
 use crate::components::KernelListItem;
 use crate::{
-    kernels::{Kernel, KernelOption, RunningKernel},
+    kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
     KernelStatus,
 };
@@ -36,7 +36,7 @@ pub struct Session {
     blocks: HashMap<String, EditorBlock>,
     messaging_task: Option<Task<()>>,
     process_status_task: Option<Task<()>>,
-    pub kernel_specification: KernelOption,
+    pub kernel_specification: KernelSpecification,
     telemetry: Arc<Telemetry>,
     _buffer_subscription: Subscription,
 }
@@ -196,7 +196,7 @@ impl Session {
         editor: WeakView<Editor>,
         fs: Arc<dyn Fs>,
         telemetry: Arc<Telemetry>,
-        kernel_specification: KernelOption,
+        kernel_specification: KernelSpecification,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let subscription = match editor.upgrade() {

@@ -23,13 +23,13 @@ use ui::SharedString;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KernelOption {
+pub enum KernelSpecification {
     // TODO: Remote(RemoteKernelSpecification)
-    Jupyter(KernelSpecification),
-    PythonEnv(KernelSpecification),
+    Jupyter(LocalKernelSpecification),
+    PythonEnv(LocalKernelSpecification),
 }
 
-impl KernelOption {
+impl KernelSpecification {
     pub fn name(&self) -> SharedString {
         match self {
             Self::Jupyter(spec) => spec.name.clone().into(),
@@ -60,19 +60,19 @@ impl KernelOption {
 }
 
 #[derive(Debug, Clone)]
-pub struct KernelSpecification {
+pub struct LocalKernelSpecification {
     pub name: String,
     pub path: PathBuf,
     pub kernelspec: JupyterKernelspec,
 }
 
-impl PartialEq for KernelSpecification {
+impl PartialEq for LocalKernelSpecification {
     fn eq(&self, other: &Self) -> bool {
         self.name == other.name && self.path == other.path
     }
 }
 
-impl Eq for KernelSpecification {}
+impl Eq for LocalKernelSpecification {}
 
 #[derive(Debug, Clone)]
 pub struct RemoteKernelSpecification {
@@ -90,7 +90,7 @@ impl PartialEq for RemoteKernelSpecification {
 
 impl Eq for RemoteKernelSpecification {}
 
-impl KernelSpecification {
+impl LocalKernelSpecification {
     #[must_use]
     fn command(&self, connection_path: &PathBuf) -> Result<Command> {
         let argv = &self.kernelspec.argv;
@@ -279,15 +279,15 @@ impl Debug for RunningKernel {
 
 impl RunningKernel {
     pub fn new(
-        kernel_specification: KernelOption,
+        kernel_specification: KernelSpecification,
         entity_id: EntityId,
         working_directory: PathBuf,
         fs: Arc<dyn Fs>,
         cx: &mut AppContext,
     ) -> Task<Result<(Self, JupyterMessageChannel)>> {
         let kernel_specification = match kernel_specification {
-            KernelOption::Jupyter(spec) => spec,
-            KernelOption::PythonEnv(spec) => spec,
+            KernelSpecification::Jupyter(spec) => spec,
+            KernelSpecification::PythonEnv(spec) => spec,
         };
 
         cx.spawn(|cx| async move {
@@ -436,7 +436,7 @@ async fn read_kernelspec_at(
     // /usr/local/share/jupyter/kernels/python3
     kernel_dir: PathBuf,
     fs: &dyn Fs,
-) -> Result<KernelSpecification> {
+) -> Result<LocalKernelSpecification> {
     let path = kernel_dir;
     let kernel_name = if let Some(kernel_name) = path.file_name() {
         kernel_name.to_string_lossy().to_string()
@@ -452,7 +452,7 @@ async fn read_kernelspec_at(
     let spec = fs.load(expected_kernel_json.as_path()).await?;
     let spec = serde_json::from_str::<JupyterKernelspec>(&spec)?;
 
-    Ok(KernelSpecification {
+    Ok(LocalKernelSpecification {
         name: kernel_name,
         path,
         kernelspec: spec,
@@ -460,7 +460,7 @@ async fn read_kernelspec_at(
 }
 
 /// Read a directory of kernelspec directories
-async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<KernelSpecification>> {
+async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<LocalKernelSpecification>> {
     let mut kernelspec_dirs = fs.read_dir(&path).await?;
 
     let mut valid_kernelspecs = Vec::new();
@@ -480,7 +480,7 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<KernelSpecif
     Ok(valid_kernelspecs)
 }
 
-pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<KernelSpecification>> {
+pub async fn local_kernel_specifications(fs: Arc<dyn Fs>) -> Result<Vec<LocalKernelSpecification>> {
     let mut data_dirs = dirs::data_dirs();
 
     // Pick up any kernels from conda or conda environment
