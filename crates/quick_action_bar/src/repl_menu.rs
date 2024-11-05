@@ -248,7 +248,7 @@ impl QuickActionBar {
 
         Some(
             h_flex()
-                .child(self.render_kernel_selector(Some(menu_state.kernel_name.clone()), cx))
+                .child(self.render_kernel_selector(cx))
                 .child(button)
                 .child(dropdown_menu)
                 .into_any_element(),
@@ -264,7 +264,7 @@ impl QuickActionBar {
 
         Some(
             h_flex()
-                .child(self.render_kernel_selector(None, cx))
+                .child(self.render_kernel_selector(cx))
                 .child(
                     IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
                         .size(ButtonSize::Compact)
@@ -277,22 +277,24 @@ impl QuickActionBar {
         )
     }
 
-    pub fn render_kernel_selector(
-        &self,
-        current_kernel_name: Option<SharedString>,
-        _cx: &mut ViewContext<Self>,
-    ) -> impl IntoElement {
-        let entity_id = if let Some(editor) = self.active_editor() {
-            editor.entity_id()
+    pub fn render_kernel_selector(&self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let editor = if let Some(editor) = self.active_editor() {
+            editor
         } else {
             // todo!()
             return div().into_any_element();
         };
 
+        // let current_kernel_name = self.current_kernelspec.as_ref().map(|spec| spec.name());
+        let current_kernelspec: Option<KernelSpecification> = None;
+
         let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
             PopoverMenuHandle::default();
         KernelSelector::new(
-            entity_id,
+            Box::new(|kernelspec, cx| {
+                // cx.new_view(|cx| Session::new(editor.downgrade(), fs, telemetry, kernelspec, cx));
+                dbg!(kernelspec);
+            }),
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
                 .child(
@@ -305,13 +307,17 @@ impl QuickActionBar {
                                 .flex_grow()
                                 .whitespace_nowrap()
                                 .child(
-                                    Label::new(if let Some(name) = current_kernel_name.clone() {
-                                        name
-                                    } else {
-                                        SharedString::from("Select Kernel")
-                                    })
+                                    Label::new(
+                                        if let Some(name) =
+                                            current_kernelspec.as_ref().map(|spec| spec.name())
+                                        {
+                                            name
+                                        } else {
+                                            SharedString::from("Select Kernel")
+                                        },
+                                    )
                                     .size(LabelSize::Small)
-                                    .color(if current_kernel_name.is_some() {
+                                    .color(if current_kernelspec.is_some() {
                                         Color::Default
                                     } else {
                                         Color::Placeholder
@@ -339,7 +345,7 @@ impl QuickActionBar {
         let tooltip: SharedString = SharedString::from(format!("Setup Zed REPL for {}", language));
         Some(
             h_flex()
-                .child(self.render_kernel_selector(None, cx))
+                .child(self.render_kernel_selector(cx))
                 .child(
                     IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
                         .size(ButtonSize::Compact)
