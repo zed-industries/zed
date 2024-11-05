@@ -43,8 +43,8 @@ LSP options for this extension can be configured under Zed's settings file. To g
 
 ```json
 "lsp": {
-  // Notice how the `ansible` key under `ansible-language-server/settings` is omitted.
-  // This is because it's added from within the extension code, to allow for a cleaner config under Zed's settings file.
+  // Note, the Zed Ansible extension prefixes all settings with `ansible`
+  // so instead of using `ansible.ansible.path` use `ansible.path`.
   "ansible-language-server": {
     "settings": {
       "ansible": {
