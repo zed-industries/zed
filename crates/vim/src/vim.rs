@@ -572,12 +572,10 @@ impl Vim {
                     CursorShape::Underline
                 }
             }
-            Mode::Replace => CursorShape::Underscore,
+            Mode::Replace => CursorShape::Underline,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock | Mode::EasyMotion => {
                 CursorShape::Block
             }
-            Mode::Replace => CursorShape::Underline,
-            Mode::Visual | Mode::VisualLine | Mode::VisualBlock => CursorShape::Block,
             Mode::Insert => CursorShape::Bar,
         }
     }

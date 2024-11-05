@@ -722,7 +722,7 @@ impl FoldSnapshot {
 
     pub fn is_point_folded(&self, point: Point) -> bool {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
-        let mut cursor = self.transforms.cursor::<InlayPoint>();
+        let mut cursor = self.transforms.cursor::<InlayPoint>(&());
         cursor.seek(&inlay_point, Bias::Right, &());
         cursor
             .item()

@@ -1,4 +1,4 @@
-use gpui::{HighlightStyle, KeyContext};
+use gpui::HighlightStyle;
 
 use crate::easy_motion::trie::{Trie, TrimResult};
 
@@ -20,12 +20,6 @@ impl EasyMotionState {
             selection: String::new(),
             trie,
         }
-    }
-
-    pub(crate) fn keymap_context_layer(&self) -> KeyContext {
-        let mut context = KeyContext::new_with_defaults();
-        context.add("VimWaiting");
-        return context;
     }
 
     #[allow(dead_code)]

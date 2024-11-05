@@ -9,8 +9,8 @@ use editor::{
     EditorEvent, MultiBufferSnapshot, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, saturate, Action, AppContext, HighlightStyle, KeyContext,
-    KeystrokeEvent, View, ViewContext, WeakView,
+    actions, impl_actions, saturate, Action, AppContext, HighlightStyle, KeystrokeEvent, View,
+    ViewContext, WeakView,
 };
 use settings::{Settings, SettingsSources};
 use text::{Bias, SelectionGoal};
@@ -295,8 +295,6 @@ impl EasyMotion {
     }
 
     fn observe_keystrokes(&mut self, keystroke_event: &KeystrokeEvent, cx: &mut ViewContext<Self>) {
-        let ctx = self.editor.upgrade().unwrap().read(cx).hi(cx);
-
         if keystroke_event.action.is_some() {
             return;
         } else if cx.has_pending_keystrokes() {
