@@ -15,21 +15,22 @@ By default, the language server attaches to all files of the `.ansible` extensio
 "file_types": {
     "Ansible": [
       "**.ansible.yml",
-      "**/defaults/**.yml",
-      "**/defaults/**.yaml",
-      "**/meta/**.yml",
-      "**/meta/**.yaml",
-      "**/tasks/**.yml",
+      "**.ansible.yaml",
+      "**/defaults/*.yml",
+      "**/defaults/*.yaml",
+      "**/meta/*.yml",
+      "**/meta/*.yaml",
+      "**/tasks/*.yml",
       "**/tasks/*.yml",
       "**/tasks/*.yaml",
       "**/handlers/*.yml",
       "**/handlers/*.yaml",
-      "**/group_vars/**.yml",
-      "**/group_vars/**.yaml",
+      "**/group_vars/*.yml",
+      "**/group_vars/*.yaml",
+      "**/playbooks/*.yaml",
+      "**/playbooks/*.yml",
       "**playbook*.yaml",
-      "**playbook*.yml",
-      "**/playbooks/**.yaml"
-      "**/playbooks/**.yml"
+      "**playbook*.yml"
     ]
   }
 ```
