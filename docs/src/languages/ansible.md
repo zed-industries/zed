@@ -9,7 +9,7 @@ Support for Ansible in Zed is provided via a community-maintained [Ansible exten
 
 ### File detection
 
-By default, the language server attaches to all files of the `.ansible` extension type. To attach it automatically to all Ansible files that _aren't_ of the `.ansible` extension type, you can add something like the following under the `"file_types"` section in your `~/.zed/settings.json`:
+By default, to avoid mishandling non-Ansible YAML files, the Ansible Language is not associated with any file extensions by default.  To change this behavior you can add a `"file_types"` section to the Zed settings inside your project (`.zed/setttings.json`) or your Zed user settings (`~/.config/zed/settings.json`) to match your folder/naming conventions.  For example:
 
 ```json
 "file_types": {
@@ -43,7 +43,8 @@ LSP options for this extension can be configured under Zed's settings file. To g
 
 ```json
 "lsp": {
-  // Notice how the `ansible` key under `ansible-language-server/settings` is omitted. This is because it's added from within the extension code, to allow for a cleaner config under Zed's settings file.
+  // Notice how the `ansible` key under `ansible-language-server/settings` is omitted.
+  // This is because it's added from within the extension code, to allow for a cleaner config under Zed's settings file.
   "ansible-language-server": {
     "settings": {
       "ansible": {
@@ -57,8 +58,9 @@ LSP options for this extension can be configured under Zed's settings file. To g
       },
       "validation": {
         "enabled": true,
+        // To enable linting, manually install ansible-lint and make sure it is your PATH
         "lint": {
-          "enabled": true, //Note: for this to work, ansible-lint should be installed and discoverable on PATH
+          "enabled": true,
           "path": "ansible-lint"
         }
       }
