@@ -463,29 +463,6 @@ impl<'a> EnvironmentApi<'a> {
     }
 }
 
-#[cfg(windows)]
-impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
-    fn get_user_home(&self) -> Option<PathBuf> {
-        self.user_home()
-    }
-
-    fn get_root(&self) -> Option<PathBuf> {
-        None
-    }
-
-    fn get_env_var(&self, key: String) -> Option<String> {
-        self.project_env
-            .get(&key)
-            .cloned()
-            .or_else(|| self.pet_env.get_env_var(key))
-    }
-
-    fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
-        self.global_search_locations.lock().unwrap().clone()
-    }
-}
-
-#[cfg(unix)]
 impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
     fn get_user_home(&self) -> Option<PathBuf> {
         self.user_home()
