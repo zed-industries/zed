@@ -478,29 +478,17 @@ impl remote::SshClientDelegate for SshClientDelegate {
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Task<Result<(String, String)>> {
+    ) -> Task<Result<Option<(String, String)>>> {
         cx.spawn(|mut cx| async move {
-                let (release, request_body) = AutoUpdater::get_remote_server_release_url(
-                            platform.os,
-                            platform.arch,
-                            release_channel,
-                            version,
-                            &mut cx,
-                        )
-                        .await
-                        .map_err(|e| {
-                            anyhow!(
-                                "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
-                                version.map(|v| format!("{}", v)).unwrap_or("unknown".to_string()),
-                                platform.os,
-                                platform.arch,
-                                e
-                            )
-                        })?;
-
-                Ok((release.url, request_body))
-            }
-        )
+            AutoUpdater::get_remote_server_release_url(
+                platform.os,
+                platform.arch,
+                release_channel,
+                version,
+                &mut cx,
+            )
+            .await
+        })
     }
 }
 

@@ -237,7 +237,7 @@ pub trait SshClientDelegate: Send + Sync {
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Task<Result<(String, String)>>;
+    ) -> Task<Result<Option<(String, String)>>>;
 
     fn download_server_binary_locally(
         &self,
@@ -1306,6 +1306,7 @@ impl SshRemoteConnection {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
+        dbg!("CONNECTING");
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
         use smol::net::unix::UnixStream;
@@ -1451,10 +1452,11 @@ impl SshRemoteConnection {
             socket_path,
         };
 
-        let this = Self {
+        let mut this = Self {
             socket,
             master_process: Mutex::new(Some(master_process)),
             _temp_dir: temp_dir,
+            remote_binary_path: None,
         };
 
         let (release_channel, version, commit) = cx.update(|cx| {
@@ -1470,13 +1472,6 @@ impl SshRemoteConnection {
         );
 
         Ok(this)
-    }
-
-    async fn get_remote_binary_path(
-        &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
     }
 
     async fn platform(&self) -> Result<SshPlatform> {
@@ -1611,7 +1606,7 @@ impl SshRemoteConnection {
         commit: Option<AppCommitSha>,
         cx: &mut AsyncAppContext,
     ) -> Result<PathBuf> {
-        let version = match release_channel {
+        let version_str = match release_channel {
             ReleaseChannel::Nightly => {
                 let commit = commit.map(|s| s.0.to_string()).unwrap_or_default();
 
@@ -1623,7 +1618,7 @@ impl SshRemoteConnection {
         let binary_name = format!(
             "zed-remote-server-{}-{}",
             release_channel.dev_name(),
-            version
+            version_str
         );
         let dst_path = paths::remote_server_dir_relative().join(binary_name);
         let tmp_path_gz = PathBuf::from(format!(
@@ -1634,8 +1629,6 @@ impl SshRemoteConnection {
 
         #[cfg(debug_assertions)]
         if std::env::var("ZED_BUILD_REMOTE_SERVER").is_ok() {
-            // only do this once per re-run of zed
-            std::env::remove_var("ZED_BUILD_REMOTE_SERVER");
             let src_path = self
                 .build_local(self.platform().await?, delegate, cx)
                 .await?;
@@ -1659,7 +1652,7 @@ impl SshRemoteConnection {
             ReleaseChannel::Nightly => Ok(None),
             ReleaseChannel::Dev => {
                 anyhow::bail!(
-                    "ZED_BUILD_REMOTE_SERVER is not set, but no remote server exists at ({:?})",
+                    "ZED_BUILD_REMOTE_SERVER is not set and no remote server exists at ({:?})",
                     dst_path
                 )
             }
@@ -1669,24 +1662,25 @@ impl SshRemoteConnection {
         let platform = self.platform().await?;
 
         if !self.socket.connection_options.upload_binary_over_ssh {
-            let (url, body) = delegate
+            if let Some((url, body)) = delegate
                 .get_download_params(platform, release_channel, wanted_version, cx)
-                .await?;
-
-            match self
-                .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
-                .await
+                .await?
             {
-                Ok(_) => {
-                    self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
-                        .await?;
-                    return Ok(dst_path);
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to download binary on server, attempting to upload server: {}",
-                        e
-                    )
+                match self
+                    .download_binary_on_server(&url, &body, &tmp_path_gz, delegate, cx)
+                    .await
+                {
+                    Ok(_) => {
+                        self.extract_server_binary(&dst_path, &tmp_path_gz, delegate, cx)
+                            .await?;
+                        return Ok(dst_path);
+                    }
+                    Err(e) => {
+                        log::error!(
+                            "Failed to download binary on server, attempting to upload server: {}",
+                            e
+                        )
+                    }
                 }
             }
         }
@@ -2412,7 +2406,7 @@ mod fake {
             _release_channel: ReleaseChannel,
             _version: Option<SemanticVersion>,
             _cx: &mut AsyncAppContext,
-        ) -> Task<Result<(String, String)>> {
+        ) -> Task<Result<Option<(String, String)>>> {
             unreachable!()
         }
 
