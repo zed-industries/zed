@@ -2956,6 +2956,8 @@ impl BackgroundScannerState {
                 .ancestors()
                 .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))?,
         );
+
+        dbg!(&git_dir_path, &dot_git_abs_path);
         watcher.add(&git_dir_path).log_err()?;
         if git_dir_path.as_ref() != dot_git_abs_path {
             // The two paths could be different because we opened a git worktree.
@@ -3727,7 +3729,7 @@ impl BackgroundScanner {
         };
 
         let mut relative_paths = Vec::with_capacity(abs_paths.len());
-        let mut dot_git_paths = Vec::new();
+        let mut dot_git_abs_paths = Vec::new();
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         abs_paths.retain(|abs_path| {
@@ -3742,7 +3744,7 @@ impl BackgroundScanner {
                     FsMonitor
                 }
                 let mut fsmonitor_parse_state = None;
-                if let Some(dot_git_dir) = abs_path
+                if let Some(dot_git_abs_path) = abs_path
                     .ancestors()
                     .find(|ancestor| {
                         let file_name = ancestor.file_name();
@@ -3761,12 +3763,9 @@ impl BackgroundScanner {
 
                     })
                 {
-                    let dot_git_path = dot_git_dir
-                        .strip_prefix(&root_canonical_path)
-                        .unwrap_or(dot_git_dir)
-                        .to_path_buf();
-                    if !dot_git_paths.contains(&dot_git_path) {
-                        dot_git_paths.push(dot_git_path);
+                    let dot_git_abs_path = dot_git_abs_path.to_path_buf();
+                    if !dot_git_abs_paths.contains(&dot_git_abs_path) {
+                        dot_git_abs_paths.push(dot_git_abs_path);
                     }
                     is_git_related = true;
                 }
@@ -3809,7 +3808,7 @@ impl BackgroundScanner {
             }
         });
 
-        if relative_paths.is_empty() && dot_git_paths.is_empty() {
+        if relative_paths.is_empty() && dot_git_abs_paths.is_empty() {
             return;
         }
 
@@ -3829,8 +3828,8 @@ impl BackgroundScanner {
         self.update_ignore_statuses(scan_job_tx).await;
         self.scan_dirs(false, scan_job_rx).await;
 
-        if !dot_git_paths.is_empty() {
-            self.update_git_repositories(dot_git_paths).await;
+        if !dot_git_abs_paths.is_empty() {
+            self.update_git_repositories(dot_git_abs_paths).await;
         }
 
         {
@@ -4507,6 +4506,7 @@ impl BackgroundScanner {
         {
             let mut state = self.state.lock();
             let scan_id = state.snapshot.scan_id;
+                dbg!(&state.snapshot.git_repositories);
             for dot_git_dir in dot_git_paths {
                 let existing_repository_entry =
                     state
@@ -4514,7 +4514,7 @@ impl BackgroundScanner {
                         .git_repositories
                         .iter()
                         .find_map(|(entry_id, repo)| {
-                            (repo.git_dir_path.as_ref() == dot_git_dir)
+                            (dbg!(repo.git_dir_path.as_ref()) == dbg!(&dot_git_dir))
                                 .then(|| (*entry_id, repo.clone()))
                         });
 
