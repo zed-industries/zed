@@ -159,7 +159,7 @@ pub(super) fn refresh_linked_ranges(
 
                 cx.notify();
             })
-            .log_err();
+            .ok()?;
 
         Some(())
     }));

@@ -4478,6 +4478,7 @@ mod tests {
 
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4491,6 +4492,7 @@ mod tests {
             outline_panel.select_parent(&SelectParent, cx);
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4501,9 +4503,10 @@ mod tests {
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, cx);
         });
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4536,6 +4539,7 @@ mod tests {
             outline_panel.select_parent(&SelectParent, cx);
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4547,6 +4551,7 @@ mod tests {
             outline_panel.select_parent(&SelectParent, cx);
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4558,9 +4563,10 @@ mod tests {
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, cx);
         });
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4581,9 +4587,10 @@ mod tests {
             outline_panel.expand_selected_entry(&ExpandSelectedEntry, cx);
         });
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4659,9 +4666,13 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
-                display_entries(&outline_panel.cached_entries, None,),
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                ),
                 all_matches,
             );
         });
@@ -4676,9 +4687,13 @@ mod tests {
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
 
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
-                display_entries(&outline_panel.cached_entries, None),
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                ),
                 all_matches
                     .lines()
                     .filter(|item| item.contains(filter_text))
@@ -4695,9 +4710,13 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
-                display_entries(&outline_panel.cached_entries, None,),
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    None,
+                ),
                 all_matches,
             );
         });
@@ -4782,16 +4801,17 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
                 r#"/
   public/lottie/
     syntax-tree.json
-      search: { "something": "static" }
+      search: { "something": "static" }  <==== selected
   src/
     app/(site)/
       (about)/jobs/[slug]/
@@ -4807,17 +4827,17 @@ mod tests {
         });
 
         outline_panel.update(cx, |outline_panel, cx| {
-            // After the search is done, we have updated the outline panel contents and caret is not in any excerot, so there are no selections.
-            // Move to 5th element in the list (0th action will selection the first element)
-            for _ in 0..6 {
+            // Move to 5th element in the list, 3 items down.
+            for _ in 0..2 {
                 outline_panel.select_next(&SelectNext, cx);
             }
             outline_panel.collapse_selected_entry(&CollapseSelectedEntry, cx);
         });
         cx.run_until_parked();
-        outline_panel.update(cx, |outline_panel, _| {
+        outline_panel.update(cx, |outline_panel, cx| {
             assert_eq!(
                 display_entries(
+                    &snapshot(&outline_panel, cx),
                     &outline_panel.cached_entries,
                     outline_panel.selected_entry()
                 ),
@@ -4868,6 +4888,7 @@ mod tests {
     }
 
     fn display_entries(
+        multi_buffer_snapshot: &MultiBufferSnapshot,
         cached_entries: &[CachedEntry],
         selected_entry: Option<&PanelEntry>,
     ) -> String {
@@ -4907,12 +4928,15 @@ mod tests {
                     OutlineEntry::Excerpt(_, _, _) => continue,
                     OutlineEntry::Outline(_, _, outline) => format!("outline: {}", outline.text),
                 },
-                PanelEntry::Search(SearchEntry { render_data, .. }) => {
+                PanelEntry::Search(SearchEntry {
+                    render_data,
+                    match_range,
+                    ..
+                }) => {
                     format!(
                         "search: {}",
                         render_data
-                            .get()
-                            .expect("search entry is not rendered")
+                            .get_or_init(|| SearchData::new(match_range, &multi_buffer_snapshot))
                             .context_text
                     )
                 }
@@ -5156,5 +5180,15 @@ mod tests {
             "#,
         )
         .unwrap()
+    }
+
+    fn snapshot(outline_panel: &OutlinePanel, cx: &AppContext) -> MultiBufferSnapshot {
+        outline_panel
+            .active_editor()
+            .unwrap()
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .snapshot(cx)
     }
 }
