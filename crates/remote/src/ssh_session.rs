@@ -1597,6 +1597,7 @@ impl SshRemoteConnection {
         })
     }
 
+    #[allow(unused)]
     async fn ensure_server_binary(
         &self,
         delegate: &Arc<dyn SshClientDelegate>,
