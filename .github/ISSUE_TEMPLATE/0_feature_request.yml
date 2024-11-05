@@ -16,6 +16,13 @@ body:
     validations:
       required: true
   - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Run the `copy system specs into clipboard` command palette action and paste the output in the field below.
+    validations:
+      required: true
+  - type: textarea
     attributes:
       label: |
         If applicable, add mockups / screenshots to help present your vision of the feature
