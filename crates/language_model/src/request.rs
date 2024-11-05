@@ -1,9 +1,9 @@
 use std::io::{Cursor, Write};
-
+use aws_sdk_bedrockruntime::types::ImageBlock;
 use crate::role::Role;
 use crate::LanguageModelToolUse;
 use base64::write::EncoderWriter;
-use gpui::{point, size, AppContext, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
+use gpui::{point, size, AppContext, DevicePixels, Image, ImageFormat, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};
 use serde::{Deserialize, Serialize};
 use ui::{px, SharedString};
@@ -440,23 +440,17 @@ impl LanguageModelRequest {
                         .filter_map(|content| match content {
                             MessageContent::Text(text) => {
                                 if !text.is_empty() {
-                                    Some(bedrock::RequestContent::Text {
-                                        text,
-                                        cache_control,
-                                    })
+                                    Some(bedrock::RequestContent::Text(text))
                                 } else {
                                     None
                                 }
                             }
                             MessageContent::Image(image) => {
-                                Some(bedrock::RequestContent::Image {
-                                    source: bedrock::ImageSource {
-                                        source_type: "base64".to_string(),
-                                        media_type: "image/png".to_string(),
-                                        data: image.source.to_string(),
-                                    },
-                                    cache_control,
-                                })
+                                todo!()
+                                // Some(bedrock::RequestContent::Image(ImageBlock{
+                                //     format: ImageFormat::,
+                                //     source: None,
+                                // })
                             }
                             _ => {
                                 unimplemented!()
@@ -464,9 +458,9 @@ impl LanguageModelRequest {
                         })
                         .collect();
                     let bedrock_role = match message.role {
-                        Role::User => bedrock::Role::User,
-                        Role::Assistant => bedrock::Role::Assistant,
-                        Role::System => unreachable!("System role should never occur here"),
+                        Role::User => bedrock::ConversationRole::User,
+                        Role::Assistant => bedrock::ConversationRole::Assistant,
+                        Role::System => unreachable!("System role should never occur here")
                     };
                     if let Some(last_message) = new_messages.last_mut() {
                         if last_message.role == bedrock_role {
@@ -476,7 +470,7 @@ impl LanguageModelRequest {
                     }
                     new_messages.push(bedrock::Message {
                         role: bedrock_role,
-                        content: bedrock_message_content,
+                        content: bedrock_message_content
                     });
                 }
                 Role::System => {
