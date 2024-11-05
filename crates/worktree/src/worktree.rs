@@ -308,7 +308,9 @@ pub struct LocalRepositoryEntry {
     pub(crate) repo_ptr: Arc<dyn GitRepository>,
     /// Absolute path to the actual .git folder.
     /// Note: if .git is a file, this points to the folder indicated by the .git file
-    pub(crate) git_dir_abs_path: Arc<Path>,
+    pub(crate) dot_git_dir_abs_path: Arc<Path>,
+    /// Absolute path to the .git file, if we're in a git worktree.
+    pub(crate) dot_git_worktree_abs_path: Option<Arc<Path>>,
 }
 
 impl LocalRepositoryEntry {
@@ -2663,7 +2665,7 @@ impl LocalSnapshot {
         let dotgit_paths = self
             .git_repositories
             .iter()
-            .map(|repo| repo.1.git_dir_abs_path.clone())
+            .map(|repo| repo.1.dot_git_dir_abs_path.clone())
             .collect::<HashSet<_>>();
         let work_dir_paths = self
             .repository_entries
@@ -2948,22 +2950,28 @@ impl BackgroundScannerState {
         }
 
         let dot_git_abs_path = self.snapshot.abs_path.join(&dot_git_path);
+
         let t0 = Instant::now();
         let repository = fs.open_repo(&dot_git_abs_path)?;
-        let git_dir_path = Arc::from(
+        let actual_dot_git_dir_abs_path = Arc::from(
             repository
                 .path()
                 .ancestors()
                 .find(|ancestor| ancestor.file_name() == Some(&*DOT_GIT))?,
         );
 
-        watcher.add(&git_dir_path).log_err()?;
-        if git_dir_path.as_ref() != dot_git_abs_path {
+        watcher.add(&actual_dot_git_dir_abs_path).log_err()?;
+
+        let dot_git_worktree_abs_path = if actual_dot_git_dir_abs_path.as_ref() == dot_git_abs_path
+        {
+            None
+        } else {
             // The two paths could be different because we opened a git worktree.
             // When that happens, the .git path in the worktree (`dot_git_abs_path`) is a file that
             // points to the worktree-subdirectory in the actual .git directory (`git_dir_path`)
             watcher.add(&dot_git_abs_path).log_err()?;
-        }
+            Some(Arc::from(dot_git_abs_path))
+        };
 
         log::trace!("constructed libgit2 repo in {:?}", t0.elapsed());
         let work_directory = RepositoryWorkDirectory(work_dir_path.clone());
@@ -2988,7 +2996,8 @@ impl BackgroundScannerState {
             LocalRepositoryEntry {
                 git_dir_scan_id: 0,
                 repo_ptr: repository.clone(),
-                git_dir_abs_path: git_dir_path,
+                dot_git_dir_abs_path: actual_dot_git_dir_abs_path,
+                dot_git_worktree_abs_path,
             },
         );
 
@@ -4239,7 +4248,7 @@ impl BackgroundScanner {
             if let Some((repo_entry, repo)) = state.snapshot.repo_for_path(relative_path) {
                 if let Ok(repo_path) = repo_entry.relativize(&state.snapshot, relative_path) {
                     paths_by_git_repo
-                        .entry(repo.git_dir_abs_path.clone())
+                        .entry(repo.dot_git_dir_abs_path.clone())
                         .or_insert_with(|| RepoPaths {
                             repo: repo.repo_ptr.clone(),
                             repo_paths: Vec::new(),
@@ -4512,8 +4521,13 @@ impl BackgroundScanner {
                         .git_repositories
                         .iter()
                         .find_map(|(entry_id, repo)| {
-                            (repo.git_dir_abs_path.as_ref() == &dot_git_dir)
-                                .then(|| (*entry_id, repo.clone()))
+                            if repo.dot_git_dir_abs_path.as_ref() == &dot_git_dir
+                                || repo.dot_git_worktree_abs_path.as_deref() == Some(&dot_git_dir)
+                            {
+                                Some((*entry_id, repo.clone()))
+                            } else {
+                                None
+                            }
                         });
 
                 let (work_directory, repository) = match existing_repository_entry {
@@ -4580,7 +4594,7 @@ impl BackgroundScanner {
 
                 if exists_in_snapshot
                     || matches!(
-                        smol::block_on(self.fs.metadata(&entry.git_dir_abs_path)),
+                        smol::block_on(self.fs.metadata(&entry.dot_git_dir_abs_path)),
                         Ok(Some(_))
                     )
                 {
@@ -4977,7 +4991,7 @@ impl WorktreeModelHandle for Model<Worktree> {
             let local_repo_entry = tree.get_local_repo(&root_entry).unwrap();
             (
                 tree.fs.clone(),
-                local_repo_entry.git_dir_abs_path.clone(),
+                local_repo_entry.dot_git_dir_abs_path.clone(),
                 local_repo_entry.git_dir_scan_id,
             )
         });
