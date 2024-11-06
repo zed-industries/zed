@@ -221,7 +221,15 @@ impl FileHandle for std::fs::File {
     fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
         let fd = self.as_fd();
         let fd_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
-        Ok(std::fs::read_link(fd_path)?)
+        let new_path = std::fs::read_link(fd_path)?;
+        if new_path
+            .file_name()
+            .is_some_and(|f| f.to_string_lossy().ends_with(" (deleted)"))
+        {
+            anyhow::bail!("file was deleted")
+        };
+
+        Ok(new_path)
     }
 
     #[cfg(target_os = "windows")]
