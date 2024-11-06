@@ -13,6 +13,7 @@ pub struct Chunk {
     chars: u128,
     chars_utf16: u128,
     newlines: u128,
+    tabs: u128,
     pub text: ArrayString<MAX_BASE>,
 }
 
@@ -32,6 +33,7 @@ impl Chunk {
             self.chars_utf16 |= 1 << ix;
             self.chars_utf16 |= (c.len_utf16() as u128) << ix;
             self.newlines |= ((c == '\n') as u128) << ix;
+            self.tabs |= ((c == '\t') as u128) << ix;
         }
         self.text.push_str(text);
     }
@@ -46,6 +48,7 @@ impl Chunk {
         self.chars |= slice.chars << base_ix;
         self.chars_utf16 |= slice.chars_utf16 << base_ix;
         self.newlines |= slice.newlines << base_ix;
+        self.tabs |= slice.tabs << base_ix;
         self.text.push_str(&slice.text);
     }
 
@@ -55,6 +58,7 @@ impl Chunk {
             chars: self.chars,
             chars_utf16: self.chars_utf16,
             newlines: self.newlines,
+            tabs: self.tabs,
             text: &self.text,
         }
     }
@@ -70,6 +74,7 @@ pub struct ChunkSlice<'a> {
     chars: u128,
     chars_utf16: u128,
     newlines: u128,
+    tabs: u128,
     text: &'a str,
 }
 
@@ -79,6 +84,7 @@ impl<'a> Into<Chunk> for ChunkSlice<'a> {
             chars: self.chars,
             chars_utf16: self.chars_utf16,
             newlines: self.newlines,
+            tabs: self.tabs,
             text: self.text.try_into().unwrap(),
         }
     }
@@ -103,26 +109,25 @@ impl<'a> ChunkSlice<'a> {
                 chars: 0,
                 chars_utf16: 0,
                 newlines: 0,
+                tabs: 0,
                 text: "",
             };
             (left, right)
         } else {
-            let mask = if mid == MAX_BASE {
-                u128::MAX
-            } else {
-                (1u128 << mid) - 1
-            };
+            let mask = (1u128 << mid) - 1;
             let (left_text, right_text) = self.text.split_at(mid);
             let left = ChunkSlice {
                 chars: self.chars & mask,
                 chars_utf16: self.chars_utf16 & mask,
                 newlines: self.newlines & mask,
+                tabs: self.tabs & mask,
                 text: left_text,
             };
             let right = ChunkSlice {
                 chars: self.chars >> mid,
                 chars_utf16: self.chars_utf16 >> mid,
                 newlines: self.newlines >> mid,
+                tabs: self.tabs >> mid,
                 text: right_text,
             };
             (left, right)
@@ -141,6 +146,7 @@ impl<'a> ChunkSlice<'a> {
                 chars: 0,
                 chars_utf16: 0,
                 newlines: 0,
+                tabs: 0,
                 text: "",
             }
         } else {
@@ -148,6 +154,7 @@ impl<'a> ChunkSlice<'a> {
                 chars: (self.chars & mask) >> range.start,
                 chars_utf16: (self.chars_utf16 & mask) >> range.start,
                 newlines: (self.newlines & mask) >> range.start,
+                tabs: (self.tabs & mask) >> range.start,
                 text: &self.text[range],
             }
         }
@@ -493,6 +500,60 @@ impl<'a> ChunkSlice<'a> {
         };
         row_start..row_start + row_len as usize
     }
+
+    #[inline(always)]
+    pub fn tabs(&self) -> Tabs {
+        Tabs {
+            byte_offset: 0,
+            char_offset: 0,
+            tabs: self.tabs,
+            chars: self.chars,
+        }
+    }
+}
+
+pub struct Tabs {
+    byte_offset: usize,
+    char_offset: usize,
+    tabs: u128,
+    chars: u128,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct TabPosition {
+    pub byte_offset: usize,
+    pub char_offset: usize,
+}
+
+impl Iterator for Tabs {
+    type Item = TabPosition;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.tabs == 0 {
+            return None;
+        }
+
+        let tab_offset = self.tabs.trailing_zeros() as usize;
+        let chars_mask = (1 << tab_offset) - 1;
+        let char_offset = (self.chars & chars_mask).count_ones() as usize;
+        self.byte_offset += tab_offset;
+        self.char_offset += char_offset;
+        let position = TabPosition {
+            byte_offset: self.byte_offset,
+            char_offset: self.char_offset,
+        };
+
+        self.byte_offset += 1;
+        self.char_offset += 1;
+        if self.byte_offset == MAX_BASE {
+            self.tabs = 0;
+        } else {
+            self.tabs >>= tab_offset + 1;
+            self.chars >>= tab_offset + 1;
+        }
+
+        Some(position)
+    }
 }
 
 /// Finds the n-th bit that is set to 1.
@@ -613,9 +674,12 @@ mod tests {
         let mut offset_utf16 = OffsetUtf16(0);
         let mut point = Point::zero();
         let mut point_utf16 = PointUtf16::zero();
+        let mut char_offset = 0;
 
         log::info!("Verifying chunk {:?}", text);
         assert_eq!(chunk.offset_to_point(0), Point::zero());
+
+        let mut expected_tab_positions = Vec::new();
 
         for c in text.chars() {
             let expected_point = chunk.offset_to_point(offset);
@@ -735,6 +799,14 @@ mod tests {
                 point_utf16.column += c.len_utf16() as u32;
             }
 
+            if c == '\t' {
+                expected_tab_positions.push(TabPosition {
+                    byte_offset: offset,
+                    char_offset,
+                });
+            }
+
+            char_offset += 1;
             offset += c.len_utf8();
             offset_utf16.0 += c.len_utf16();
         }
@@ -874,5 +946,6 @@ mod tests {
         }
 
         assert_eq!((max_row, max_chars as u32), (longest_row, longest_chars));
+        assert_eq!(chunk.tabs().collect::<Vec<_>>(), expected_tab_positions);
     }
 }
