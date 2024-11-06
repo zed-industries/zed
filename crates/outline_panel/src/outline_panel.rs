@@ -27,7 +27,7 @@ use gpui::{
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
     Div, ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
     IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
-    MouseDownEvent, ParentElement, Pixels, Point, Render, SharedString, Stateful,
+    MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle, View,
     ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -1078,7 +1078,8 @@ impl OutlinePanel {
                 .iter()
                 .position(|cached_entry| &cached_entry.entry == selected_entry);
             if let Some(index) = index {
-                self.scroll_handle.scroll_to_item(index);
+                self.scroll_handle
+                    .scroll_to_item(index, ScrollStrategy::Center);
                 cx.notify();
             }
         }
