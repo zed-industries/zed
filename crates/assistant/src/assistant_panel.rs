@@ -2579,6 +2579,29 @@ impl ContextEditor {
         })
     }
 
+    fn esc_kbd(cx: &WindowContext) -> Div {
+        let colors = cx.theme().colors().clone();
+
+        h_flex()
+            .items_center()
+            .gap_1()
+            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+            .text_size(TextSize::XSmall.rems(cx))
+            .text_color(colors.text_muted)
+            .child("Press")
+            .child(
+                h_flex()
+                    .rounded_md()
+                    .px_1()
+                    .mr_0p5()
+                    .border_1()
+                    .border_color(theme::color_alpha(colors.border_variant, 0.6))
+                    .bg(theme::color_alpha(colors.element_background, 0.6))
+                    .child("esc"),
+            )
+            .child("to cancel")
+    }
+
     fn update_message_headers(&mut self, cx: &mut ViewContext<Self>) {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -2594,6 +2617,7 @@ impl ContextEditor {
             let render_block = |message: MessageMetadata| -> RenderBlock {
                 Box::new({
                     let context = self.context.clone();
+
                     move |cx| {
                         let message_id = MessageId(message.timestamp);
                         let llm_loading = message.role == Role::Assistant
@@ -2615,7 +2639,7 @@ impl ContextEditor {
                                             "pulsating-label",
                                             Animation::new(Duration::from_secs(2))
                                                 .repeat()
-                                                .with_easing(pulsating_between(0.3, 0.9)),
+                                                .with_easing(pulsating_between(0.4, 0.8)),
                                             |label, delta| label.alpha(delta),
                                         )
                                         .into_any_element()
@@ -2626,7 +2650,7 @@ impl ContextEditor {
                                     spinner = Some(
                                         Icon::new(IconName::ArrowCircle)
                                             .size(IconSize::XSmall)
-                                            .color(Color::Muted)
+                                            .color(Color::Info)
                                             .with_animation(
                                                 "arrow-circle",
                                                 Animation::new(Duration::from_secs(2)).repeat(),
@@ -2638,20 +2662,7 @@ impl ContextEditor {
                                             )
                                             .into_any_element(),
                                     );
-                                    note = Some(
-                                        div()
-                                            .font(
-                                                theme::ThemeSettings::get_global(cx)
-                                                    .buffer_font
-                                                    .clone(),
-                                            )
-                                            .child(
-                                                Label::new("Press 'esc' to cancel")
-                                                    .color(Color::Muted)
-                                                    .size(LabelSize::XSmall),
-                                            )
-                                            .into_any_element(),
-                                    );
+                                    note = Some(Self::esc_kbd(cx).into_any_element());
                                 }
                                 (animated_label, spinner, note)
                             }
@@ -2666,7 +2677,7 @@ impl ContextEditor {
 
                         let sender = h_flex()
                             .items_center()
-                            .gap_2()
+                            .gap_2p5()
                             .child(
                                 ButtonLike::new("role")
                                     .style(ButtonStyle::Filled)
