@@ -163,15 +163,12 @@ impl Vim {
             editor.transact(cx, |editor, cx| {
                 for range in ranges.into_iter().rev() {
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
-                    editor.buffer().update(cx, |buffer, cx| {
-                        let text = snapshot
-                            .text_for_range(range.start..range.end)
-                            .flat_map(|s| s.chars())
-                            .flat_map(transform)
-                            .collect::<String>();
-
-                        buffer.edit([(range, text)], None, cx)
-                    })
+                    let text = snapshot
+                        .text_for_range(range.start..range.end)
+                        .flat_map(|s| s.chars())
+                        .flat_map(transform)
+                        .collect::<String>();
+                    editor.edit([(range, text)], cx)
                 }
                 editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                     s.select_ranges(cursor_positions)
