@@ -3436,6 +3436,17 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
+        for (i, name) in project.worktree_root_names(cx).enumerate() {
+            if i > 0 {
+                title.push_str(", ");
+            }
+            title.push_str(name);
+        }
+
+        if title.is_empty() {
+            title = "empty project".to_string();
+        }
+
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
             let filename = path
                 .path
@@ -3451,20 +3462,9 @@ impl Workspace {
                 });
 
             if let Some(filename) = filename {
-                title.push_str(filename.as_ref());
                 title.push_str(" — ");
+                title.push_str(filename.as_ref());
             }
-        }
-
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
-            if i > 0 {
-                title.push_str(", ");
-            }
-            title.push_str(name);
-        }
-
-        if title.is_empty() {
-            title = "empty project".to_string();
         }
 
         if project.is_via_collab() {
@@ -6211,13 +6211,13 @@ mod tests {
                     .map(|e| e.id)
             );
         });
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| {
             workspace.add_item_to_active_pane(Box::new(item2), None, true, cx)
         });
-        assert_eq!(cx.window_title().as_deref(), Some("two.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — two.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -6233,7 +6233,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -6250,11 +6250,11 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1, root2"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1, root2 — one.txt"));
 
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root2"));
+        assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
     }
 
     #[gpui::test]
