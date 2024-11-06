@@ -3447,12 +3447,6 @@ impl Workspace {
             title = "empty project".to_string();
         }
 
-        if project.is_via_collab() {
-            title.push_str(" ↙");
-        } else if project.is_shared() {
-            title.push_str(" ↗");
-        }
-
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
             let filename = path
                 .path
@@ -3471,6 +3465,12 @@ impl Workspace {
                 title.push_str(" — ");
                 title.push_str(filename.as_ref());
             }
+        }
+
+        if project.is_via_collab() {
+            title.push_str(" ↙");
+        } else if project.is_shared() {
+            title.push_str(" ↗");
         }
 
         cx.set_window_title(&title);
