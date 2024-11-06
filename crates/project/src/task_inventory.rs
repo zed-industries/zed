@@ -13,9 +13,10 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{AppContext, Context as _, Model};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, Location};
-use settings::{parse_json_with_comments, SettingsLocation};
+use settings::{parse_json_with_comments, SettingsLocation, TaskKind};
 use task::{
-    ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
+    DebugTaskDefinition, ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates,
+    TaskVariables, VariableName,
 };
 use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
@@ -33,7 +34,7 @@ pub struct Inventory {
 #[derive(Debug, Default)]
 struct ParsedTemplates {
     global: Vec<TaskTemplate>,
-    worktree: HashMap<WorktreeId, HashMap<Arc<Path>, Vec<TaskTemplate>>>,
+    worktree: HashMap<WorktreeId, HashMap<(Arc<Path>, TaskKind), Vec<TaskTemplate>>>,
 }
 
 /// Kind of a source the tasks are fetched from, used to display more source information in the UI.
@@ -261,7 +262,7 @@ impl Inventory {
                     .flat_map(|(directory, templates)| {
                         templates.iter().map(move |template| (directory, template))
                     })
-                    .map(move |(directory, template)| {
+                    .map(move |((directory, _task_kind), template)| {
                         (
                             TaskSourceKind::Worktree {
                                 id: worktree,
@@ -284,13 +285,19 @@ impl Inventory {
         &mut self,
         location: Option<SettingsLocation<'_>>,
         raw_tasks_json: Option<&str>,
+        task_kind: TaskKind,
     ) -> anyhow::Result<()> {
         let raw_tasks =
             parse_json_with_comments::<Vec<serde_json::Value>>(raw_tasks_json.unwrap_or("[]"))
                 .context("parsing tasks file content as a JSON array")?;
-        let new_templates = raw_tasks.into_iter().filter_map(|raw_template| {
-            serde_json::from_value::<TaskTemplate>(raw_template).log_err()
-        });
+        let new_templates = raw_tasks
+            .into_iter()
+            .filter_map(|raw_template| match &task_kind {
+                TaskKind::Script => serde_json::from_value::<TaskTemplate>(raw_template).log_err(),
+                TaskKind::Debug => serde_json::from_value::<DebugTaskDefinition>(raw_template)
+                    .log_err()
+                    .and_then(|content| content.to_zed_format().log_err()),
+            });
 
         let parsed_templates = &mut self.templates_from_settings;
         match location {
@@ -300,14 +307,14 @@ impl Inventory {
                     if let Some(worktree_tasks) =
                         parsed_templates.worktree.get_mut(&location.worktree_id)
                     {
-                        worktree_tasks.remove(location.path);
+                        worktree_tasks.remove(&(Arc::from(location.path), task_kind));
                     }
                 } else {
                     parsed_templates
                         .worktree
                         .entry(location.worktree_id)
                         .or_default()
-                        .insert(Arc::from(location.path), new_templates);
+                        .insert((Arc::from(location.path), task_kind), new_templates);
                 }
             }
             None => parsed_templates.global = new_templates.collect(),
@@ -584,6 +591,7 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         expected_initial_state.iter().map(|name| name.as_str()),
                     )),
+                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -639,6 +647,7 @@ mod tests {
                             .into_iter()
                             .chain(expected_initial_state.iter().map(|name| name.as_str())),
                     )),
+                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });
@@ -763,6 +772,7 @@ mod tests {
                             .iter()
                             .map(|(_, name)| name.as_str()),
                     )),
+                    settings::TaskKind::Script,
                 )
                 .unwrap();
             inventory
@@ -774,6 +784,7 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         worktree_1_tasks.iter().map(|(_, name)| name.as_str()),
                     )),
+                    settings::TaskKind::Script,
                 )
                 .unwrap();
             inventory
@@ -785,6 +796,7 @@ mod tests {
                     Some(&mock_tasks_from_names(
                         worktree_2_tasks.iter().map(|(_, name)| name.as_str()),
                     )),
+                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });

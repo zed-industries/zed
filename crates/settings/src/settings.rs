@@ -15,7 +15,7 @@ pub use keymap_file::KeymapFile;
 pub use settings_file::*;
 pub use settings_store::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
-    SettingsSources, SettingsStore,
+    SettingsSources, SettingsStore, TaskKind,
 };
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash, PartialOrd, Ord)]

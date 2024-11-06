@@ -330,6 +330,7 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                         }])
                         .to_string(),
                     ),
+                    settings::TaskKind::Script,
                 )
                 .unwrap();
         });

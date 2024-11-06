@@ -319,7 +319,6 @@ impl PickerDelegate for TasksModalDelegate {
                         omit_history_entry,
                         cx,
                     ),
-                    // TODO: Should create a schedule_resolved_debug_task function
                     // This would allow users to access to debug history and other issues
                     TaskType::Debug(_) => workspace.project().update(cx, |project, cx| {
                         project.start_debug_adapter_client_from_task(task, cx)

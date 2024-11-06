@@ -10,7 +10,7 @@ use language::{
     ContextProvider as _, Location,
 };
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
-use settings::{watch_config_file, SettingsLocation};
+use settings::{watch_config_file, SettingsLocation, TaskKind};
 use task::{TaskContext, TaskVariables, VariableName};
 use text::BufferId;
 use util::ResultExt;
@@ -261,6 +261,7 @@ impl TaskStore {
         &self,
         location: Option<SettingsLocation<'_>>,
         raw_tasks_json: Option<&str>,
+        task_type: Option<TaskKind>,
         cx: &mut ModelContext<'_, Self>,
     ) -> anyhow::Result<()> {
         let task_inventory = match self {
@@ -272,7 +273,11 @@ impl TaskStore {
             .filter(|json| !json.is_empty());
 
         task_inventory.update(cx, |inventory, _| {
-            inventory.update_file_based_tasks(location, raw_tasks_json)
+            inventory.update_file_based_tasks(
+                location,
+                raw_tasks_json,
+                task_type.unwrap_or(TaskKind::Script),
+            )
         })
     }
 
@@ -287,7 +292,7 @@ impl TaskStore {
             if let Some(user_tasks_content) = user_tasks_content {
                 let Ok(_) = task_store.update(&mut cx, |task_store, cx| {
                     task_store
-                        .update_user_tasks(None, Some(&user_tasks_content), cx)
+                        .update_user_tasks(None, Some(&user_tasks_content), None, cx)
                         .log_err();
                 }) else {
                     return;
@@ -295,7 +300,8 @@ impl TaskStore {
             }
             while let Some(user_tasks_content) = user_tasks_file_rx.next().await {
                 let Ok(()) = task_store.update(&mut cx, |task_store, cx| {
-                    let result = task_store.update_user_tasks(None, Some(&user_tasks_content), cx);
+                    let result =
+                        task_store.update_user_tasks(None, Some(&user_tasks_content), None, cx);
                     if let Err(err) = &result {
                         log::error!("Failed to load user tasks: {err}");
                         cx.emit(crate::Event::Toast {
