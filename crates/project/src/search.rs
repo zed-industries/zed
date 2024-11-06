@@ -55,35 +55,75 @@ impl SearchInputs {
         &self.buffers
     }
 }
-#[derive(Clone, Debug)]
-pub enum SearchQuery {
-    Text {
-        search: Arc<AhoCorasick>,
-        replacement: Option<String>,
-        whole_word: bool,
-        case_sensitive: bool,
-        include_ignored: bool,
-        inner: SearchInputs,
-    },
 
-    Regex {
-        regex: Regex,
-        replacement: Option<String>,
-        multiline: bool,
-        whole_word: bool,
-        case_sensitive: bool,
-        include_ignored: bool,
-        inner: SearchInputs,
-    },
-    FancyRegex {
-        regex: FancyRegex,
-        replacement: Option<String>,
-        multiline: bool,
-        whole_word: bool,
-        case_sensitive: bool,
-        include_ignored: bool,
-        inner: SearchInputs,
-    },
+#[derive(Clone, Debug)]
+enum RegexEngine {
+    Regex(Regex),
+    FancyRegex(FancyRegex),
+}
+
+impl RegexEngine {
+    fn detect(&self, text: &str) -> Result<bool> {
+        match self {
+            Self::Regex(regex) => Ok(regex.find(text).is_some()),
+            Self::FancyRegex(fancy_regex) => Ok(fancy_regex.find(text)?.is_some()),
+        }
+    }
+    fn replace<'a>(&self, text: &'a str, replacement: &str) -> Cow<'a, str> {
+        match self {
+            Self::Regex(regex) => regex.replace(text, replacement),
+            Self::FancyRegex(fancy_regex) => fancy_regex.replace(text, replacement),
+        }
+    }
+    async fn find_and_extend_matches(
+        &self,
+        text: &str,
+        offset: usize,
+        matches: &mut Vec<Range<usize>>,
+        yield_interval: usize,
+    ) {
+        match self {
+            Self::Regex(regex) => {
+                for (i, mat) in regex.find_iter(text).enumerate() {
+                    if (i + 1) % yield_interval == 0 {
+                        yield_now().await;
+                    }
+                    matches.push(mat.start() + offset..mat.end() + offset)
+                }
+            }
+            Self::FancyRegex(fancy_regex) => {
+                for (i, mat) in fancy_regex.find_iter(text).enumerate() {
+                    if (i + 1) % yield_interval == 0 {
+                        // REVIEW: revisit this yield interval and how it interacts with the outer
+                        // line loop, etc...
+                        yield_now().await;
+                    }
+                    if let Ok(mat) = mat {
+                        matches.push(mat.start() + offset..mat.end() + offset)
+                    } else {
+                        // REVIEW: can consider ignoring or percolating up, or logging to see
+                        // if this ever actually happens.
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchQuery {
+    method: SearchQueryMethod,
+    replacement: Option<String>,
+    pub whole_word: bool,
+    pub case_sensitive: bool,
+    inner: SearchInputs,
+    pub include_ignored: bool,
+}
+
+#[derive(Clone, Debug)]
+pub enum SearchQueryMethod {
+    Text { search: Arc<AhoCorasick> },
+    Regex { regex: RegexEngine, multiline: bool },
 }
 
 impl SearchQuery {
@@ -106,8 +146,10 @@ impl SearchQuery {
             files_to_include,
             buffers,
         };
-        Ok(Self::Text {
-            search: Arc::new(search),
+        Ok(Self {
+            method: SearchQueryMethod::Text {
+                search: Arc::new(search),
+            },
             replacement: None,
             whole_word,
             case_sensitive,
@@ -151,10 +193,12 @@ impl SearchQuery {
             files_to_include,
             buffers,
         };
-        Ok(Self::Regex {
-            regex,
+        Ok(Self {
+            method: SearchQueryMethod::Regex {
+                regex: RegexEngine::Regex(regex),
+                multiline,
+            },
             replacement: None,
-            multiline,
             whole_word,
             case_sensitive,
             include_ignored,
@@ -187,28 +231,17 @@ impl SearchQuery {
     }
 
     pub fn with_replacement(mut self, new_replacement: String) -> Self {
-        match self {
-            Self::Text {
-                ref mut replacement,
-                ..
-            }
-            | Self::Regex {
-                ref mut replacement,
-                ..
-            } => {
-                *replacement = Some(new_replacement);
-                self
-            }
-        }
+        self.replacement = Some(new_replacement);
+        self
     }
 
     pub fn to_proto(&self) -> proto::SearchQuery {
         proto::SearchQuery {
             query: self.as_str().to_string(),
             regex: self.is_regex(),
-            whole_word: self.whole_word(),
-            case_sensitive: self.case_sensitive(),
-            include_ignored: self.include_ignored(),
+            whole_word: self.whole_word,
+            case_sensitive: self.case_sensitive,
+            include_ignored: self.include_ignored,
             files_to_include: self.files_to_include().sources().join(","),
             files_to_exclude: self.files_to_exclude().sources().join(","),
         }
@@ -219,8 +252,8 @@ impl SearchQuery {
             return Ok(false);
         }
 
-        match self {
-            Self::Text { search, .. } => {
+        match &self.method {
+            SearchQueryMethod::Text { search, .. } => {
                 let mat = search.stream_find_iter(stream).next();
                 match mat {
                     Some(Ok(_)) => Ok(true),
@@ -228,7 +261,7 @@ impl SearchQuery {
                     None => Ok(false),
                 }
             }
-            Self::Regex {
+            SearchQueryMethod::Regex {
                 regex, multiline, ..
             } => {
                 let mut reader = BufReader::new(stream);
@@ -237,12 +270,12 @@ impl SearchQuery {
                     if let Err(err) = reader.read_to_string(&mut text) {
                         Err(err.into())
                     } else {
-                        Ok(regex.find(&text).is_some())
+                        regex.detect(&text)
                     }
                 } else {
                     for line in reader.lines() {
                         let line = line?;
-                        if regex.find(&line).is_some() {
+                        if regex.detect(&line)? {
                             return Ok(true);
                         }
                     }
@@ -253,20 +286,14 @@ impl SearchQuery {
     }
     /// Returns the replacement text for this `SearchQuery`.
     pub fn replacement(&self) -> Option<&str> {
-        match self {
-            SearchQuery::Text { replacement, .. } | SearchQuery::Regex { replacement, .. } => {
-                replacement.as_deref()
-            }
-        }
+        self.replacement.as_deref()
     }
     /// Replaces search hits if replacement is set. `text` is assumed to be a string that matches this `SearchQuery` exactly, without any leftovers on either side.
     pub fn replacement_for<'a>(&self, text: &'a str) -> Option<Cow<'a, str>> {
-        match self {
-            SearchQuery::Text { replacement, .. } => replacement.clone().map(Cow::from),
-            SearchQuery::Regex {
-                regex, replacement, ..
-            } => {
-                if let Some(replacement) = replacement {
+        match &self.method {
+            SearchQueryMethod::Text { .. } => self.replacement.clone().map(Cow::from),
+            SearchQueryMethod::Regex { regex, .. } => {
+                if let Some(ref replacement) = self.replacement {
                     let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX
                         .get_or_init(|| Regex::new(r"\\\\|\\n|\\t").unwrap())
                         .replace_all(replacement, |c: &Captures| {
@@ -277,7 +304,7 @@ impl SearchQuery {
                                 x => unreachable!("Unexpected escape sequence: {}", x),
                             }
                         });
-                    Some(regex.replace(text, replacement))
+                    Some(regex.replace(text, &replacement))
                 } else {
                     None
                 }
@@ -303,11 +330,9 @@ impl SearchQuery {
             buffer.as_rope().clone()
         };
 
-        let mut matches = Vec::new();
-        match self {
-            Self::Text {
-                search, whole_word, ..
-            } => {
+        let mut matches: Vec<Range<usize>> = Vec::new();
+        match &self.method {
+            SearchQueryMethod::Text { search, .. } => {
                 for (ix, mat) in search
                     .stream_find_iter(rope.bytes_in_range(0..rope.len()))
                     .enumerate()
@@ -317,7 +342,7 @@ impl SearchQuery {
                     }
 
                     let mat = mat.unwrap();
-                    if *whole_word {
+                    if self.whole_word {
                         let classifier = buffer.char_classifier_at(range_offset + mat.start());
 
                         let prev_kind = rope
@@ -337,18 +362,14 @@ impl SearchQuery {
                 }
             }
 
-            Self::Regex {
+            SearchQueryMethod::Regex {
                 regex, multiline, ..
             } => {
                 if *multiline {
                     let text = rope.to_string();
-                    for (ix, mat) in regex.find_iter(&text).enumerate() {
-                        if (ix + 1) % YIELD_INTERVAL == 0 {
-                            yield_now().await;
-                        }
-
-                        matches.push(mat.start()..mat.end());
-                    }
+                    regex
+                        .find_and_extend_matches(&text, 0, &mut matches, YIELD_INTERVAL)
+                        .await;
                 } else {
                     let mut line = String::new();
                     let mut line_offset = 0;
@@ -359,12 +380,14 @@ impl SearchQuery {
 
                         for (newline_ix, text) in chunk.split('\n').enumerate() {
                             if newline_ix > 0 {
-                                for mat in regex.find_iter(&line) {
-                                    let start = line_offset + mat.start();
-                                    let end = line_offset + mat.end();
-                                    matches.push(start..end);
-                                }
-
+                                regex
+                                    .find_and_extend_matches(
+                                        &line,
+                                        line_offset,
+                                        &mut matches,
+                                        YIELD_INTERVAL,
+                                    )
+                                    .await;
                                 line_offset += line.len() + 1;
                                 line.clear();
                             }
@@ -386,33 +409,8 @@ impl SearchQuery {
         self.as_inner().as_str()
     }
 
-    pub fn whole_word(&self) -> bool {
-        match self {
-            Self::Text { whole_word, .. } => *whole_word,
-            Self::Regex { whole_word, .. } => *whole_word,
-        }
-    }
-
-    pub fn case_sensitive(&self) -> bool {
-        match self {
-            Self::Text { case_sensitive, .. } => *case_sensitive,
-            Self::Regex { case_sensitive, .. } => *case_sensitive,
-        }
-    }
-
-    pub fn include_ignored(&self) -> bool {
-        match self {
-            Self::Text {
-                include_ignored, ..
-            } => *include_ignored,
-            Self::Regex {
-                include_ignored, ..
-            } => *include_ignored,
-        }
-    }
-
     pub fn is_regex(&self) -> bool {
-        matches!(self, Self::Regex { .. })
+        matches!(self.method, SearchQueryMethod::Regex { .. })
     }
 
     pub fn files_to_include(&self) -> &PathMatcher {
@@ -451,9 +449,7 @@ impl SearchQuery {
         }
     }
     pub fn as_inner(&self) -> &SearchInputs {
-        match self {
-            Self::Regex { inner, .. } | Self::Text { inner, .. } => inner,
-        }
+        &self.inner
     }
 }
 
