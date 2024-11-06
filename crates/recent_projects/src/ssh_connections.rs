@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
@@ -75,7 +76,7 @@ pub struct SshConnection {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub projects: Vec<SshProject>,
+    pub projects: BTreeSet<SshProject>,
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
@@ -101,7 +102,7 @@ impl From<SshConnection> for SshConnectionOptions {
     }
 }
 
-#[derive(Clone, Default, Serialize, PartialEq, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
 pub struct SshProject {
     pub paths: Vec<String>,
 }
