@@ -85,7 +85,9 @@ impl Extension {
             // We always allow the latest in tests so that the extension tests pass on release branches.
             let allow_latest_version = match dbg!(release_channel) {
                 ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
-                ReleaseChannel::Stable | ReleaseChannel::Preview => cfg!(test),
+                ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                    cfg!(any(test, feature = "test-support"))
+                }
             };
             if !allow_latest_version {
                 Err(anyhow!(
