@@ -951,10 +951,12 @@ impl ProjectPanel {
         self.edit_state = None;
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
+
         if let Some(previous_focus) = self.previous_focus.take() {
             self.selection = Some(previous_focus);
             self.autoscroll(cx);
         }
+
         cx.focus(&self.focus_handle);
         cx.notify();
     }
