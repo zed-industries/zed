@@ -2254,7 +2254,7 @@ message ContextOperation {
         BufferOperation buffer_operation = 5;
         SlashCommandStarted slash_command_started = 6;
         SlashCommandOutputSectionAdded slash_command_output_section_added = 7;
-        SlashCommandFinished slash_command_finished = 8;
+        SlashCommandCompleted slash_command_completed = 8;
     }
 
     reserved 4;
@@ -2292,7 +2292,7 @@ message ContextOperation {
         repeated VectorClockEntry version = 3;
     }
 
-    message SlashCommandFinished {
+    message SlashCommandCompleted {
         LamportTimestamp id = 1;
         LamportTimestamp timestamp = 3;
         optional string error_message = 4;

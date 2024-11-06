@@ -196,7 +196,7 @@ impl ContextOperation {
                     version: language::proto::deserialize_version(&message.version),
                 })
             }
-            proto::context_operation::Variant::SlashCommandFinished(message) => {
+            proto::context_operation::Variant::SlashCommandCompleted(message) => {
                 Ok(Self::SlashCommandFinished {
                     id: SlashCommandId(language::proto::deserialize_timestamp(
                         message.id.context("invalid id")?,
@@ -310,8 +310,8 @@ impl ContextOperation {
                 error_message,
                 version,
             } => proto::ContextOperation {
-                variant: Some(proto::context_operation::Variant::SlashCommandFinished(
-                    proto::context_operation::SlashCommandFinished {
+                variant: Some(proto::context_operation::Variant::SlashCommandCompleted(
+                    proto::context_operation::SlashCommandCompleted {
                         id: Some(language::proto::serialize_timestamp(id.0)),
                         timestamp: Some(language::proto::serialize_timestamp(*timestamp)),
                         error_message: error_message.clone(),
