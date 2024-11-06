@@ -294,8 +294,10 @@ impl MacPlatform {
                     Some(crate::OsAction::Copy) => selector("copy:"),
                     Some(crate::OsAction::Paste) => selector("paste:"),
                     Some(crate::OsAction::SelectAll) => selector("selectAll:"),
-                    Some(crate::OsAction::Undo) => selector("undo:"),
-                    Some(crate::OsAction::Redo) => selector("redo:"),
+                    // "undo:" and "redo:" are always disabled in our case, as
+                    // we don't have a NSTextView/NSTextField to enable them on.
+                    Some(crate::OsAction::Undo) => selector("handleGPUIMenuItem:"),
+                    Some(crate::OsAction::Redo) => selector("handleGPUIMenuItem:"),
                     None => selector("handleGPUIMenuItem:"),
                 };
 
