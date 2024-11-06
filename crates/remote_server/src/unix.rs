@@ -14,6 +14,7 @@ use node_runtime::{NodeBinaryOptions, NodeRuntime};
 use paths::logs_dir;
 use project::project_settings::ProjectSettings;
 
+use release_channel::AppVersion;
 use remote::proxy::ProxyLaunchError;
 use remote::ssh_session::ChannelClient;
 use remote::{
@@ -377,6 +378,8 @@ fn init_paths() -> anyhow::Result<()> {
         paths::languages_dir(),
         paths::logs_dir(),
         paths::temp_dir(),
+        paths::remote_extensions_dir(),
+        paths::remote_extensions_uploads_dir(),
     ]
     .iter()
     {
@@ -418,6 +421,9 @@ pub fn execute_run(
     let git_hosting_provider_registry = Arc::new(GitHostingProviderRegistry::new());
     gpui::App::headless().run(move |cx| {
         settings::init(cx);
+        let app_version = AppVersion::init(env!("ZED_PKG_VERSION"));
+        release_channel::init(app_version, cx);
+
         HeadlessProject::init(cx);
 
         log::info!("gpui app started, initializing server");

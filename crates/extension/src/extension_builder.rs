@@ -365,12 +365,15 @@ impl ExtensionBuilder {
 
         let output = Command::new("rustup")
             .args(["target", "add", RUST_TARGET])
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
             .output()
             .context("failed to run `rustup target add`")?;
         if !output.status.success() {
-            bail!("failed to install the `{RUST_TARGET}` target");
+            bail!(
+                "failed to install the `{RUST_TARGET}` target: {}",
+                String::from_utf8_lossy(&rustc_output.stderr)
+            );
         }
 
         Ok(())
