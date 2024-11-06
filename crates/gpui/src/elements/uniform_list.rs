@@ -292,12 +292,34 @@ impl Element for UniformList {
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
+                        let mut scrolled_to_top = false;
                         if item_top < scroll_top + padding.top {
+                            scrolled_to_top = true;
                             updated_scroll_offset.y = -(item_top) + padding.top;
                         } else if item_bottom > scroll_top + list_height - padding.bottom {
+                            scrolled_to_top = true;
                             updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
                         }
-                        scroll_offset = *updated_scroll_offset;
+
+                        match scroll_strategy {
+                            ScrollStrategy::Top => {}
+                            ScrollStrategy::Center => {
+                                if scrolled_to_top {
+                                    let item_center = item_top + item_height / 2.0;
+                                    let target_scroll_top = item_center - list_height / 2.0;
+
+                                    if item_top < scroll_top
+                                        || item_bottom > scroll_top + list_height
+                                    {
+                                        updated_scroll_offset.y = -target_scroll_top
+                                            .max(Pixels::ZERO)
+                                            .min(content_height - list_height)
+                                            .max(Pixels::ZERO);
+                                    }
+                                }
+                            }
+                        }
+                        scroll_offset = *updated_scroll_offset
                     }
 
                     let first_visible_element_ix =
