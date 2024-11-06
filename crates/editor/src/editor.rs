@@ -1861,6 +1861,7 @@ impl Editor {
                     .into_any()
             }),
             merge_adjacent: true,
+            ..Default::default()
         };
         let display_map = cx.new_model(|cx| {
             DisplayMap::new(
@@ -11121,14 +11122,15 @@ impl Editor {
     }
 
     /// Removes any folds with the given ranges.
-    pub fn remove_folds<T: ToOffset + Clone>(
+    pub fn remove_folds_with_type<T: ToOffset + Clone>(
         &mut self,
         ranges: &[Range<T>],
+        type_id: TypeId,
         auto_scroll: bool,
         cx: &mut ViewContext<Self>,
     ) {
         self.remove_folds_with(ranges, auto_scroll, cx, |map, cx| {
-            map.remove_folds(ranges.iter().cloned(), cx)
+            map.remove_folds_with_type(ranges.iter().cloned(), type_id, cx)
         });
     }
 

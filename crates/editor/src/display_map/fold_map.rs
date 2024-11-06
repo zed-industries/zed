@@ -6,12 +6,14 @@ use gpui::{AnyElement, ElementId, WindowContext};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToOffset};
 use std::{
+    any::TypeId,
     cmp::{self, Ordering},
     fmt, iter,
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary};
+use ui::IntoElement as _;
 use util::post_inc;
 
 #[derive(Clone)]
@@ -22,17 +24,29 @@ pub struct FoldPlaceholder {
     pub constrain_width: bool,
     /// If true, merges the fold with an adjacent one.
     pub merge_adjacent: bool,
+    /// Category of the fold. Useful for carefully removing from overlapping folds.
+    pub type_tag: Option<TypeId>,
+}
+
+impl Default for FoldPlaceholder {
+    fn default() -> Self {
+        Self {
+            render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
+            constrain_width: true,
+            merge_adjacent: true,
+            type_tag: None,
+        }
+    }
 }
 
 impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
-        use gpui::IntoElement;
-
         Self {
             render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
+            type_tag: None,
         }
     }
 }
@@ -177,8 +191,13 @@ impl<'a> FoldMapWriter<'a> {
     pub(crate) fn remove_folds<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        type_id: TypeId,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
-        self.remove_folds_with(ranges, |range, fold_range| range == fold_range, false)
+        self.remove_folds_with(
+            ranges,
+            |fold| fold.placeholder.type_tag == Some(type_id),
+            false,
+        )
     }
 
     /// Removes any folds whose ranges intersect the given ranges.
@@ -187,7 +206,7 @@ impl<'a> FoldMapWriter<'a> {
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
-        self.remove_folds_with(ranges, |_, _| true, inclusive)
+        self.remove_folds_with(ranges, |_| true, inclusive)
     }
 
     /// Removes any folds that intersect the given ranges and for which the given predicate
@@ -195,7 +214,7 @@ impl<'a> FoldMapWriter<'a> {
     fn remove_folds_with<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
-        should_unfold: fn(&Range<usize>, &Range<usize>) -> bool,
+        should_unfold: impl Fn(&Fold) -> bool,
         inclusive: bool,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
@@ -209,7 +228,7 @@ impl<'a> FoldMapWriter<'a> {
             while let Some(fold) = folds_cursor.item() {
                 let offset_range =
                     fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer);
-                if should_unfold(&range, &offset_range) {
+                if should_unfold(fold) {
                     if offset_range.end > offset_range.start {
                         let inlay_range = snapshot.to_inlay_offset(offset_range.start)
                             ..snapshot.to_inlay_offset(offset_range.end);

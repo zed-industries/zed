@@ -216,12 +216,13 @@ impl DisplayMap {
     }
 
     /// Removes any folds with the given ranges.
-    pub fn remove_folds<T: ToOffset>(
+    pub fn remove_folds_with_type<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        type_id: TypeId,
         cx: &mut ModelContext<Self>,
     ) {
-        self.update_fold_map(cx, |fold_map| fold_map.remove_folds(ranges))
+        self.update_fold_map(cx, |fold_map| fold_map.remove_folds(ranges, type_id))
     }
 
     /// Removes any folds whose ranges intersect any of the given ranges.

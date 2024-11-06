@@ -1866,8 +1866,7 @@ impl ContextEditor {
                                     IconName::PocketKnife,
                                     tool_use.name.clone().into(),
                                 ),
-                                constrain_width: false,
-                                merge_adjacent: false,
+                                ..Default::default()
                             };
                             let render_trailer =
                                 move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
@@ -1958,8 +1957,7 @@ impl ContextEditor {
                             });
                             let placeholder = FoldPlaceholder {
                                 render: Arc::new(move |_, _, _| Empty.into_any()),
-                                constrain_width: false,
-                                merge_adjacent: false,
+                                ..Default::default()
                             };
                             let render_toggle = {
                                 let confirm_command = confirm_command.clone();
@@ -2077,8 +2075,7 @@ impl ContextEditor {
                             IconName::PocketKnife,
                             format!("Tool Result: {tool_use_id}").into(),
                         ),
-                        constrain_width: false,
-                        merge_adjacent: false,
+                        ..Default::default()
                     };
                     let render_trailer =
                         move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
@@ -2137,7 +2134,12 @@ impl ContextEditor {
                     let end = buffer
                         .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
                         .unwrap();
-                    editor.remove_folds(&[start..end], false, cx);
+                    editor.remove_folds_with_type(
+                        &[start..end],
+                        TypeId::of::<PendingSlashCommand>(),
+                        false,
+                        cx,
+                    );
 
                     editor.remove_creases(
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
@@ -2254,8 +2256,7 @@ impl ContextEditor {
                             .unwrap_or_else(|| Empty.into_any())
                         })
                     },
-                    constrain_width: false,
-                    merge_adjacent: false,
+                    ..Default::default()
                 };
 
                 let should_refold;
@@ -2359,8 +2360,7 @@ impl ContextEditor {
                                 section.icon,
                                 section.label.clone(),
                             ),
-                            constrain_width: false,
-                            merge_adjacent: false,
+                            ..Default::default()
                         },
                         render_slash_command_output_toggle,
                         |_, _, _| Empty.into_any_element(),
@@ -3289,13 +3289,12 @@ impl ContextEditor {
                             Crease::new(
                                 start..end,
                                 FoldPlaceholder {
-                                    constrain_width: false,
                                     render: render_fold_icon_button(
                                         weak_editor.clone(),
                                         metadata.crease.icon,
                                         metadata.crease.label.clone(),
                                     ),
-                                    merge_adjacent: false,
+                                    ..Default::default()
                                 },
                                 render_slash_command_output_toggle,
                                 |_, _, _| Empty.into_any(),
@@ -4961,8 +4960,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                     .into_any_element()
             }
         }),
-        constrain_width: false,
-        merge_adjacent: false,
+        ..Default::default()
     }
 }
 
@@ -5090,6 +5088,8 @@ fn make_lsp_adapter_delegate(
     })
 }
 
+enum PendingSlashCommand {}
+
 fn invoked_slash_command_fold_placeholder(
     command_id: SlashCommandId,
     context: WeakModel<Context>,
@@ -5158,6 +5158,7 @@ fn invoked_slash_command_fold_placeholder(
                 })
                 .into_any_element()
         }),
+        type_tag: Some(TypeId::of::<PendingSlashCommand>()),
     }
 }
 
