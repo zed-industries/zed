@@ -6,11 +6,9 @@ use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
-    ViewContext,
 };
 use project::Fs;
 use settings::{Settings, SettingsStore};
-use ui::WindowContext;
 
 use crate::kernels::local_kernel_specifications;
 use crate::{JupyterSettings, KernelSpecification, Session};
@@ -157,20 +155,6 @@ impl ReplStore {
                 _ => false,
             })
             .cloned()
-    }
-
-    pub fn set_kernelspec(
-        &mut self,
-        entity_id: EntityId,
-        kernelspec: &KernelSpecification,
-        cx: &mut ModelContext<Self>,
-    ) {
-        dbg!("set_kernelspec");
-        dbg!(entity_id);
-        dbg!(kernelspec);
-
-        // We have to set it on the session or create a new one,
-        // but session is a `View<Session>` that we can't create using a `ModelContext`. We may have to pass a provisional `Session` in from the `confirm` flow...
     }
 
     pub fn get_session(&self, entity_id: EntityId) -> Option<&View<Session>> {

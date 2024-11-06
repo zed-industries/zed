@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use gpui::{percentage, Animation, AnimationExt, AnyElement, Entity, Transformation, View};
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},

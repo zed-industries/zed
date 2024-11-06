@@ -2,34 +2,8 @@ use crate::kernels::KernelSpecification;
 use crate::repl_store::ReplStore;
 use crate::KERNEL_DOCS_URL;
 
-// - [@nate] Add a split button for running/selecting kernels
-//   - In REPL editor mode show the REPL icon
-//   - In notebook editor mode show a play icon
-// - [@nate/@kyle] Display recently used kernels at the top of the menu, using namespaces for each category (`py:conda:agents-service`, `jupyter:deno`, `my-server:python3.9`)
-// - [ ] Categorize kernel options for selection
-//   - [ ] Local Kernel
-//   - [ ] Jupyter Kernel
-//   - [ ] Python Env
-//   - [ ] Remote Kernel
-// - [ ] Kernel selection via available Jupyter kernels in submenu
-//   - [ ] Display kernels like `deno`, `python3`, `rust`
-// - [ ] Kernel selection via available Python environments in submenu
-//   - [ ] Group listings by environment type (Pyenv, Poetry, Conda)
-//   - [ ] Display Python versions for each environment
-//   - [ ] List project-specific environments
-//   - [ ] Install ipykernel in the environment if necessary
-//   - [ ] Generate on-demand IPython kernelspec when selecting a python environment
-// - [ ] Remote kernel selection
-//   - [ ] Show server names for remote kernels
-//   - [ ] Each remote server has a submenu of kernels they offer
-//   - [ ] Allow adding new remote servers
-//     - [ ] Implement modal for new server input (name, URL, token)
-//   - [ ] Consider storing user's remote servers in their Zed.dev account
-//   - [ ] Treat kernel selection settings as the global default that gets overriden by project settings, a notebook, or selecting in the selector
-// ---
 use gpui::DismissEvent;
 
-use gpui::EntityId;
 use picker::Picker;
 use picker::PickerDelegate;
 
