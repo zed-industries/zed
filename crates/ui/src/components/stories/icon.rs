@@ -5,7 +5,7 @@ use strum::IntoEnumIterator;
 use crate::{prelude::*, DecoratedIcon, IconDecoration};
 use crate::{Icon, IconName};
 
-pub struct IconStory;
+pub struct IcoasdasdasdnStory;
 
 impl Render for IconStory {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
