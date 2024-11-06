@@ -616,6 +616,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         })
         .detach();
     });
+    std::fs::remove_dir_all(test_extension_dir.join("target")).unwrap();
 
     extension_store
         .update(cx, |store, cx| {
