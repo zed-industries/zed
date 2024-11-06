@@ -867,12 +867,10 @@ mod element {
             debug_assert!(flexes.len() == len);
             debug_assert!(flex_values_in_bounds(flexes.as_slice()));
 
-            let magnification_value = WorkspaceSettings::get(None, cx).active_pane_magnification;
-            let active_pane_magnification = if magnification_value == 1. {
-                None
-            } else {
-                Some(magnification_value)
-            };
+            let active_pane_magnification = WorkspaceSettings::get(None, cx)
+                .active_pane_modifiers
+                .magnification
+                .and_then(|val| if val == 1.0 { None } else { Some(val) });
 
             let total_flex = if let Some(flex) = active_pane_magnification {
                 self.children.len() as f32 - 1. + flex
@@ -910,6 +908,7 @@ mod element {
                     origin,
                     size: child_size,
                 };
+
                 bounding_boxes.push(Some(child_bounds));
                 child.layout_as_root(child_size.into(), cx);
                 child.prepaint_at(origin, cx);
@@ -944,7 +943,54 @@ mod element {
                 child.element.paint(cx);
             }
 
+            let overlay_opacity = WorkspaceSettings::get(None, cx)
+                .active_pane_modifiers
+                .inactive_opacity
+                .map(|val| val.clamp(0.0, 1.0))
+                .and_then(|val| (val <= 1.).then_some(val));
+
+            let mut overlay_background = cx.theme().colors().editor_background;
+            if let Some(opacity) = overlay_opacity {
+                overlay_background.fade_out(opacity);
+            }
+
+            let overlay_border = WorkspaceSettings::get(None, cx)
+                .active_pane_modifiers
+                .border_size
+                .and_then(|val| (val >= 0.).then_some(val));
+
             for (ix, child) in &mut layout.children.iter_mut().enumerate() {
+                if overlay_opacity.is_some() || overlay_border.is_some() {
+                    // the overlay has to be painted in origin+1px with size width-1px
+                    // in order to accommodate the divider between panels
+                    let overlay_bounds = Bounds {
+                        origin: child
+                            .bounds
+                            .origin
+                            .apply_along(Axis::Horizontal, |val| val + Pixels(1.)),
+                        size: child
+                            .bounds
+                            .size
+                            .apply_along(Axis::Horizontal, |val| val - Pixels(1.)),
+                    };
+
+                    if overlay_opacity.is_some() && self.active_pane_ix != Some(ix) {
+                        cx.paint_quad(gpui::fill(overlay_bounds, overlay_background));
+                    }
+
+                    if let Some(border) = overlay_border {
+                        if self.active_pane_ix == Some(ix) {
+                            cx.paint_quad(gpui::quad(
+                                overlay_bounds,
+                                0.,
+                                gpui::transparent_black(),
+                                border,
+                                cx.theme().colors().border_selected,
+                            ));
+                        }
+                    }
+                }
+
                 if let Some(handle) = child.handle.as_mut() {
                     let cursor_style = match self.axis {
                         Axis::Vertical => CursorStyle::ResizeRow,

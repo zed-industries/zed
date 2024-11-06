@@ -1,7 +1,7 @@
 use crate::{
-    FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext, SearchOptions,
-    SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored, ToggleRegex,
-    ToggleReplace, ToggleWholeWord,
+    BufferSearchBar, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll, ReplaceNext,
+    SearchOptions, SelectNextMatch, SelectPrevMatch, ToggleCaseSensitive, ToggleIncludeIgnored,
+    ToggleRegex, ToggleReplace, ToggleWholeWord,
 };
 use collections::{HashMap, HashSet};
 use editor::{
@@ -34,8 +34,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    h_flex, prelude::*, v_flex, Icon, IconButton, IconName, KeyBinding, Label, LabelCommon,
-    LabelSize, Selectable, Tooltip,
+    h_flex, prelude::*, v_flex, Icon, IconButton, IconButtonShape, IconName, KeyBinding, Label,
+    LabelCommon, LabelSize, Selectable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
@@ -44,9 +44,6 @@ use workspace::{
     DeploySearch, ItemNavHistory, NewSearch, ToolbarItemEvent, ToolbarItemLocation,
     ToolbarItemView, Workspace, WorkspaceId,
 };
-
-const MIN_INPUT_WIDTH_REMS: f32 = 15.;
-const MAX_INPUT_WIDTH_REMS: f32 = 30.;
 
 actions!(
     project_search,
@@ -669,7 +666,7 @@ impl ProjectSearchView {
 
         let query_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Search all files..", cx);
+            editor.set_placeholder_text("Search all files...", cx);
             editor.set_text(query_text, cx);
             editor
         });
@@ -692,7 +689,7 @@ impl ProjectSearchView {
         );
         let replacement_editor = cx.new_view(|cx| {
             let mut editor = Editor::single_line(cx);
-            editor.set_placeholder_text("Replace in project..", cx);
+            editor.set_placeholder_text("Replace in project...", cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, cx);
             }
@@ -866,6 +863,10 @@ impl ProjectSearchView {
         cx: &mut ViewContext<Workspace>,
     ) {
         let query = workspace.active_item(cx).and_then(|item| {
+            if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
+                return Some(buffer_search_query);
+            }
+
             let editor = item.act_as::<Editor>(cx)?;
             let query = editor.query_suggestion(cx);
             if query.is_empty() {
@@ -1167,7 +1168,11 @@ impl ProjectSearchView {
         let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
-            .child(Label::new("Hit enter to search. For more options:"))
+            .child(
+                Label::new("Hit enter to search. For more options:")
+                    .color(Color::Muted)
+                    .mb_2(),
+            )
             .child(
                 Button::new("filter-paths", "Include/exclude specific paths")
                     .icon(IconName::Filter)
@@ -1239,6 +1244,29 @@ impl ProjectSearchView {
     pub fn results_editor(&self) -> &View<Editor> {
         &self.results_editor
     }
+}
+
+fn buffer_search_query(
+    workspace: &mut Workspace,
+    item: &dyn ItemHandle,
+    cx: &mut ViewContext<'_, Workspace>,
+) -> Option<String> {
+    let buffer_search_bar = workspace
+        .pane_for(item)
+        .and_then(|pane| {
+            pane.read(cx)
+                .toolbar()
+                .read(cx)
+                .item_of_type::<BufferSearchBar>()
+        })?
+        .read(cx);
+    if buffer_search_bar.query_editor_focused() {
+        let buffer_search_query = buffer_search_bar.query(cx);
+        if !buffer_search_query.is_empty() {
+            return Some(buffer_search_query);
+        }
+    }
+    None
 }
 
 impl Default for ProjectSearchBar {
@@ -1555,23 +1583,25 @@ impl Render for ProjectSearchBar {
         let search = search.read(cx);
         let focus_handle = search.focus_handle(cx);
 
-        let query_column = h_flex()
-            .flex_1()
-            .h_8()
-            .mr_2()
-            .px_2()
-            .py_1()
-            .border_1()
-            .border_color(search.border_color_for(InputPanel::Query, cx))
-            .rounded_lg()
-            .min_w(rems(MIN_INPUT_WIDTH_REMS))
-            .max_w(rems(MAX_INPUT_WIDTH_REMS))
+        let input_base_styles = || {
+            h_flex()
+                .w_full()
+                .h_8()
+                .px_2()
+                .py_1()
+                .border_1()
+                .border_color(search.border_color_for(InputPanel::Query, cx))
+                .rounded_lg()
+        };
+
+        let query_column = input_base_styles()
             .on_action(cx.listener(|this, action, cx| this.confirm(action, cx)))
             .on_action(cx.listener(|this, action, cx| this.previous_history_query(action, cx)))
             .on_action(cx.listener(|this, action, cx| this.next_history_query(action, cx)))
             .child(self.render_text_input(&search.query_editor, cx))
             .child(
                 h_flex()
+                    .gap_0p5()
                     .child(SearchOptions::CASE_SENSITIVE.as_button(
                         self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
                         focus_handle.clone(),
@@ -1595,58 +1625,60 @@ impl Render for ProjectSearchBar {
                     )),
             );
 
-        let mode_column = v_flex().items_start().justify_start().child(
-            h_flex()
-                .child(
-                    IconButton::new("project-search-filter-button", IconName::Filter)
-                        .tooltip(|cx| Tooltip::for_action("Toggle filters", &ToggleFilters, cx))
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.toggle_filters(cx);
-                        }))
-                        .selected(
-                            self.active_project_search
-                                .as_ref()
-                                .map(|search| search.read(cx).filters_enabled)
-                                .unwrap_or_default(),
-                        )
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |cx| {
-                                Tooltip::for_action_in(
-                                    "Toggle filters",
-                                    &ToggleFilters,
-                                    &focus_handle,
-                                    cx,
-                                )
-                            }
-                        }),
-                )
-                .child(
-                    IconButton::new("project-search-toggle-replace", IconName::Replace)
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.toggle_replace(&ToggleReplace, cx);
-                        }))
-                        .selected(
-                            self.active_project_search
-                                .as_ref()
-                                .map(|search| search.read(cx).replace_enabled)
-                                .unwrap_or_default(),
-                        )
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |cx| {
-                                Tooltip::for_action_in(
-                                    "Toggle Replace",
-                                    &ToggleReplace,
-                                    &focus_handle,
-                                    cx,
-                                )
-                            }
-                        }),
-                ),
-        );
+        let mode_column = h_flex()
+            .gap_1()
+            .child(
+                IconButton::new("project-search-filter-button", IconName::Filter)
+                    .shape(IconButtonShape::Square)
+                    .tooltip(|cx| Tooltip::for_action("Toggle Filters", &ToggleFilters, cx))
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.toggle_filters(cx);
+                    }))
+                    .selected(
+                        self.active_project_search
+                            .as_ref()
+                            .map(|search| search.read(cx).filters_enabled)
+                            .unwrap_or_default(),
+                    )
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Filters",
+                                &ToggleFilters,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    }),
+            )
+            .child(
+                IconButton::new("project-search-toggle-replace", IconName::Replace)
+                    .shape(IconButtonShape::Square)
+                    .on_click(cx.listener(|this, _, cx| {
+                        this.toggle_replace(&ToggleReplace, cx);
+                    }))
+                    .selected(
+                        self.active_project_search
+                            .as_ref()
+                            .map(|search| search.read(cx).replace_enabled)
+                            .unwrap_or_default(),
+                    )
+                    .tooltip({
+                        let focus_handle = focus_handle.clone();
+                        move |cx| {
+                            Tooltip::for_action_in(
+                                "Toggle Replace",
+                                &ToggleReplace,
+                                &focus_handle,
+                                cx,
+                            )
+                        }
+                    }),
+            );
 
         let limit_reached = search.model.read(cx).limit_reached;
+
         let match_text = search
             .active_match_index
             .and_then(|index| {
@@ -1668,6 +1700,7 @@ impl Render for ProjectSearchBar {
         let matches_column = h_flex()
             .child(
                 IconButton::new("project-search-prev-match", IconName::ChevronLeft)
+                    .shape(IconButtonShape::Square)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(search) = this.active_project_search.as_ref() {
@@ -1680,7 +1713,7 @@ impl Render for ProjectSearchBar {
                         let focus_handle = focus_handle.clone();
                         move |cx| {
                             Tooltip::for_action_in(
-                                "Go to previous match",
+                                "Go To Previous Match",
                                 &SelectPrevMatch,
                                 &focus_handle,
                                 cx,
@@ -1690,6 +1723,7 @@ impl Render for ProjectSearchBar {
             )
             .child(
                 IconButton::new("project-search-next-match", IconName::ChevronRight)
+                    .shape(IconButtonShape::Square)
                     .disabled(search.active_match_index.is_none())
                     .on_click(cx.listener(|this, _, cx| {
                         if let Some(search) = this.active_project_search.as_ref() {
@@ -1702,7 +1736,7 @@ impl Render for ProjectSearchBar {
                         let focus_handle = focus_handle.clone();
                         move |cx| {
                             Tooltip::for_action_in(
-                                "Go to next match",
+                                "Go To Next Match",
                                 &SelectNextMatch,
                                 &focus_handle,
                                 cx,
@@ -1711,9 +1745,9 @@ impl Render for ProjectSearchBar {
                     }),
             )
             .child(
-                h_flex()
+                div()
                     .id("matches")
-                    .min_w(rems_from_px(40.))
+                    .ml_0p5()
                     .child(
                         Label::new(match_text).color(if search.active_match_index.is_some() {
                             Color::Default
@@ -1729,27 +1763,23 @@ impl Render for ProjectSearchBar {
             );
 
         let search_line = h_flex()
-            .flex_1()
+            .w_full()
+            .gap_1p5()
+            .pr_6()
             .child(query_column)
             .child(mode_column)
             .child(matches_column);
 
         let replace_line = search.replace_enabled.then(|| {
-            let replace_column = h_flex()
-                .flex_1()
-                .min_w(rems(MIN_INPUT_WIDTH_REMS))
-                .max_w(rems(MAX_INPUT_WIDTH_REMS))
-                .h_8()
-                .px_2()
-                .py_1()
-                .border_1()
-                .border_color(cx.theme().colors().border)
-                .rounded_lg()
-                .child(self.render_text_input(&search.replacement_editor, cx));
+            let replace_column =
+                input_base_styles().child(self.render_text_input(&search.replacement_editor, cx));
+
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
-            let replace_actions = h_flex().when(search.replace_enabled, |this| {
+
+            let replace_actions = h_flex().gap_1().when(search.replace_enabled, |this| {
                 this.child(
                     IconButton::new("project-search-replace-next", IconName::ReplaceNext)
+                        .shape(IconButtonShape::Square)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
                                 search.update(cx, |this, cx| {
@@ -1761,7 +1791,7 @@ impl Render for ProjectSearchBar {
                             let focus_handle = focus_handle.clone();
                             move |cx| {
                                 Tooltip::for_action_in(
-                                    "Replace next match",
+                                    "Replace Next Match",
                                     &ReplaceNext,
                                     &focus_handle,
                                     cx,
@@ -1771,6 +1801,7 @@ impl Render for ProjectSearchBar {
                 )
                 .child(
                     IconButton::new("project-search-replace-all", IconName::ReplaceAll)
+                        .shape(IconButtonShape::Square)
                         .on_click(cx.listener(|this, _, cx| {
                             if let Some(search) = this.active_project_search.as_ref() {
                                 search.update(cx, |this, cx| {
@@ -1782,7 +1813,7 @@ impl Render for ProjectSearchBar {
                             let focus_handle = focus_handle.clone();
                             move |cx| {
                                 Tooltip::for_action_in(
-                                    "Replace all matches",
+                                    "Replace All Matches",
                                     &ReplaceAll,
                                     &focus_handle,
                                     cx,
@@ -1791,9 +1822,11 @@ impl Render for ProjectSearchBar {
                         }),
                 )
             });
+
             h_flex()
-                .pr(rems(5.5))
-                .gap_2()
+                .w_full()
+                .gap_1p5()
+                .pr_24()
                 .child(replace_column)
                 .child(replace_actions)
         });
@@ -1801,20 +1834,10 @@ impl Render for ProjectSearchBar {
         let filter_line = search.filters_enabled.then(|| {
             h_flex()
                 .w_full()
-                .gap_2()
+                .gap_1p5()
+                .pr_24()
                 .child(
-                    h_flex()
-                        .flex_1()
-                        // chosen so the total width of the search bar line
-                        // is about the same as the include/exclude line
-                        .min_w(rems(10.25))
-                        .max_w(rems(20.))
-                        .h_8()
-                        .px_2()
-                        .py_1()
-                        .border_1()
-                        .border_color(search.border_color_for(InputPanel::Include, cx))
-                        .rounded_lg()
+                    input_base_styles()
                         .on_action(
                             cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
                         )
@@ -1824,16 +1847,7 @@ impl Render for ProjectSearchBar {
                         .child(self.render_text_input(&search.included_files_editor, cx)),
                 )
                 .child(
-                    h_flex()
-                        .flex_1()
-                        .min_w(rems(10.25))
-                        .max_w(rems(20.))
-                        .h_8()
-                        .px_2()
-                        .py_1()
-                        .border_1()
-                        .border_color(search.border_color_for(InputPanel::Exclude, cx))
-                        .rounded_lg()
+                    input_base_styles()
                         .on_action(
                             cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
                         )
@@ -1843,27 +1857,35 @@ impl Render for ProjectSearchBar {
                         .child(self.render_text_input(&search.excluded_files_editor, cx)),
                 )
                 .child(
-                    IconButton::new("project-search-opened-only", IconName::FileDoc)
-                        .selected(self.is_opened_only_enabled(cx))
-                        .tooltip(|cx| Tooltip::text("Only search open files", cx))
-                        .on_click(cx.listener(|this, _, cx| {
-                            this.toggle_opened_only(cx);
-                        })),
-                )
-                .child(
-                    SearchOptions::INCLUDE_IGNORED.as_button(
-                        search
-                            .search_options
-                            .contains(SearchOptions::INCLUDE_IGNORED),
-                        focus_handle.clone(),
-                        cx.listener(|this, _, cx| {
-                            this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
-                        }),
-                    ),
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            IconButton::new("project-search-opened-only", IconName::FileDoc)
+                                .shape(IconButtonShape::Square)
+                                .selected(self.is_opened_only_enabled(cx))
+                                .tooltip(|cx| Tooltip::text("Only Search Open Files", cx))
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.toggle_opened_only(cx);
+                                })),
+                        )
+                        .child(
+                            SearchOptions::INCLUDE_IGNORED.as_button(
+                                search
+                                    .search_options
+                                    .contains(SearchOptions::INCLUDE_IGNORED),
+                                focus_handle.clone(),
+                                cx.listener(|this, _, cx| {
+                                    this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
+                                }),
+                            ),
+                        ),
                 )
         });
+
         let mut key_context = KeyContext::default();
+
         key_context.add("ProjectSearchBar");
+
         if search.replacement_editor.focus_handle(cx).is_focused(cx) {
             key_context.add("in_replace");
         }
@@ -2002,6 +2024,7 @@ pub fn perform_project_search(
     text: impl Into<std::sync::Arc<str>>,
     cx: &mut gpui::VisualTestContext,
 ) {
+    cx.run_until_parked();
     search_view.update(cx, |search_view, cx| {
         search_view
             .query_editor
@@ -2013,11 +2036,11 @@ pub fn perform_project_search(
 
 #[cfg(test)]
 pub mod tests {
-    use std::sync::Arc;
+    use std::{ops::Deref as _, sync::Arc};
 
     use super::*;
     use editor::{display_map::DisplayRow, DisplayPoint};
-    use gpui::{Action, TestAppContext, WindowHandle};
+    use gpui::{Action, TestAppContext, VisualTestContext, WindowHandle};
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
@@ -3571,6 +3594,81 @@ pub mod tests {
                 });
             })
             .expect("unable to update search view");
+    }
+
+    #[gpui::test]
+    async fn test_buffer_search_query_reused(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            "/dir",
+            json!({
+                "one.rs": "const ONE: usize = 1;",
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let worktree_id = project.update(cx, |this, cx| {
+            this.worktrees(cx).next().unwrap().read(cx).id()
+        });
+        let window = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = window.root(cx).unwrap();
+        let mut cx = VisualTestContext::from_window(*window.deref(), cx);
+
+        let editor = workspace
+            .update(&mut cx, |workspace, cx| {
+                workspace.open_path((worktree_id, "one.rs"), None, true, cx)
+            })
+            .await
+            .unwrap()
+            .downcast::<Editor>()
+            .unwrap();
+
+        let buffer_search_bar = cx.new_view(|cx| {
+            let mut search_bar = BufferSearchBar::new(cx);
+            search_bar.set_active_pane_item(Some(&editor), cx);
+            search_bar.show(cx);
+            search_bar
+        });
+
+        let panes: Vec<_> = window
+            .update(&mut cx, |this, _| this.panes().to_owned())
+            .unwrap();
+        assert_eq!(panes.len(), 1);
+        let pane = panes.first().cloned().unwrap();
+        pane.update(&mut cx, |pane, cx| {
+            pane.toolbar().update(cx, |toolbar, cx| {
+                toolbar.add_item(buffer_search_bar.clone(), cx);
+            })
+        });
+
+        let buffer_search_query = "search bar query";
+        buffer_search_bar
+            .update(&mut cx, |buffer_search_bar, cx| {
+                buffer_search_bar.focus_handle(cx).focus(cx);
+                buffer_search_bar.search(buffer_search_query, None, cx)
+            })
+            .await
+            .unwrap();
+
+        workspace.update(&mut cx, |workspace, cx| {
+            ProjectSearchView::new_search(workspace, &workspace::NewSearch, cx)
+        });
+        cx.run_until_parked();
+        let project_search_view = pane
+            .update(&mut cx, |pane, _| {
+                pane.active_item()
+                    .and_then(|item| item.downcast::<ProjectSearchView>())
+            })
+            .expect("should open a project search view after spawning a new search");
+        project_search_view.update(&mut cx, |search_view, cx| {
+            assert_eq!(
+                search_view.search_query_text(cx),
+                buffer_search_query,
+                "Project search should take the query from the buffer search bar since it got focused and had a query inside"
+            );
+        });
     }
 
     fn init_test(cx: &mut TestAppContext) {

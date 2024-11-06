@@ -752,7 +752,7 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
     app_state: Arc<AppState>,
-    dispatching_keystrokes: Rc<RefCell<Vec<Keystroke>>>,
+    dispatching_keystrokes: Rc<RefCell<(HashSet<String>, Vec<Keystroke>)>>,
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
@@ -1784,6 +1784,11 @@ impl Workspace {
     }
 
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
+        let mut state = self.dispatching_keystrokes.borrow_mut();
+        if !state.0.insert(action.0.clone()) {
+            cx.propagate();
+            return;
+        }
         let mut keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')
@@ -1791,16 +1796,16 @@ impl Workspace {
             .collect();
         keystrokes.reverse();
 
-        self.dispatching_keystrokes
-            .borrow_mut()
-            .append(&mut keystrokes);
+        state.1.append(&mut keystrokes);
+        drop(state);
 
         let keystrokes = self.dispatching_keystrokes.clone();
         cx.window_context()
             .spawn(|mut cx| async move {
                 // limit to 100 keystrokes to avoid infinite recursion.
                 for _ in 0..100 {
-                    let Some(keystroke) = keystrokes.borrow_mut().pop() else {
+                    let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
+                        keystrokes.borrow_mut().0.clear();
                         return Ok(());
                     };
                     cx.update(|cx| {
@@ -1817,7 +1822,8 @@ impl Workspace {
                         }
                     })?;
                 }
-                keystrokes.borrow_mut().clear();
+
+                *keystrokes.borrow_mut() = Default::default();
                 Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
             })
             .detach_and_log_err(cx);
@@ -3217,6 +3223,21 @@ impl Workspace {
 
     pub fn active_pane(&self) -> &View<Pane> {
         &self.active_pane
+    }
+
+    pub fn focused_pane(&self, cx: &WindowContext) -> View<Pane> {
+        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+            if dock.focus_handle(cx).contains_focused(cx) {
+                if let Some(pane) = dock
+                    .read(cx)
+                    .active_panel()
+                    .and_then(|panel| panel.pane(cx))
+                {
+                    return pane;
+                }
+            }
+        }
+        self.active_pane().clone()
     }
 
     pub fn adjacent_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
@@ -4666,7 +4687,7 @@ enum ActivateInDirectionTarget {
 }
 
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
-    const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
+    const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml";
 
     workspace
         .update(cx, |workspace, cx| {

@@ -410,7 +410,7 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: 320
     default_height: Option<f32>,
-    /// The default model to use when creating new contexts.
+    /// The default model to use when creating new chats.
     default_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
@@ -498,11 +498,11 @@ pub struct LegacyAssistantSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
-    /// The default OpenAI model to use when creating new contexts.
+    /// The default OpenAI model to use when creating new chats.
     ///
     /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAiModel>,
-    /// OpenAI API base URL to use when creating new contexts.
+    /// OpenAI API base URL to use when creating new chats.
     ///
     /// Default: https://api.openai.com/v1
     pub openai_api_url: Option<String>,

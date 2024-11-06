@@ -56,6 +56,7 @@
 # Language Support
 
 - [All Languages](./languages.md)
+- [Ansible](./languages/ansible.md)
 - [AsciiDoc](./languages/asciidoc.md)
 - [Astro](./languages/astro.md)
 - [Bash](./languages/bash.md)

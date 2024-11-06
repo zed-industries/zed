@@ -800,7 +800,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     }
 
     log::info!("updating mutated diagnostics view");
-    mutated_view.update(cx, |view, _| view.enqueue_update_stale_excerpts(None));
+    mutated_view.update(cx, |view, cx| view.update_stale_excerpts(cx));
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");

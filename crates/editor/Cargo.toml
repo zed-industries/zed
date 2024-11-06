@@ -77,6 +77,7 @@ tree-sitter-html = { workspace = true, optional = true }
 tree-sitter-rust = { workspace = true, optional = true }
 tree-sitter-typescript = { workspace = true, optional = true }
 unicode-segmentation.workspace = true
+unicode-script.workspace = true
 unindent = { workspace = true, optional = true }
 ui.workspace = true
 url.workspace = true
