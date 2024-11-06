@@ -48,7 +48,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
-use text::BufferSnapshot;
+use text::{BufferSnapshot, ToPoint};
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use workspace::ui::IconName;
@@ -1818,13 +1818,15 @@ impl Context {
             self.buffer.update(cx, |buffer, cx| {
                 let command_source_range = command_source_range.to_offset(buffer);
                 buffer.edit(
-                    [(command_source_range.end..command_source_range.end, "\n\n")],
+                    [(command_source_range.end..command_source_range.end, "\n")],
                     None,
                     cx,
                 );
                 let insert_position = buffer.anchor_after(command_source_range.end + 1);
-                let output_range = buffer.anchor_before(command_source_range.start)
-                    ..buffer.anchor_after(command_source_range.end + 2);
+                let output_range =
+                    buffer.anchor_before(command_source_range.start)..insert_position;
+                let command_source_range = buffer.anchor_before(command_source_range.start)
+                    ..buffer.anchor_before(command_source_range.end + 1);
                 (insert_position, command_source_range, output_range)
             });
         self.reparse(cx);
@@ -1842,7 +1844,6 @@ impl Context {
 
                 let mut pending_section_stack: Vec<PendingSection> = Vec::new();
                 let mut run_commands_in_ranges: Vec<Range<language::Anchor>> = Vec::new();
-                let mut text_ends_with_newline = false;
                 let mut last_role: Option<Role> = None;
                 let mut last_section_range = None;
 
@@ -1874,71 +1875,68 @@ impl Context {
                             label,
                             metadata,
                         } => {
-                            this.read_with(&cx, |this, cx| {
-                                let buffer = this.buffer.read(cx);
-                                pending_section_stack.push(PendingSection {
-                                    start: buffer.anchor_before(insert_position),
-                                    icon,
-                                    label,
-                                    metadata,
+                            this.update(&mut cx, |this, cx| {
+                                this.buffer.update(cx, |buffer, cx| {
+                                    let insert_point = insert_position.to_point(buffer);
+                                    if insert_point.column > 0 {
+                                        buffer.edit([(insert_point..insert_point, "\n")], None, cx);
+                                    }
+
+                                    pending_section_stack.push(PendingSection {
+                                        start: buffer.anchor_before(insert_position),
+                                        icon,
+                                        label,
+                                        metadata,
+                                    });
                                 });
                             })?;
                         }
-                        SlashCommandEvent::Content(content) => match content {
-                            SlashCommandContent::Text {
-                                text,
-                                run_commands_in_text,
-                            } => {
-                                this.update(&mut cx, |this, cx| {
-                                    let start = this.buffer.read(cx).anchor_before(insert_position);
+                        SlashCommandEvent::Content(SlashCommandContent::Text {
+                            text,
+                            run_commands_in_text,
+                        }) => {
+                            this.update(&mut cx, |this, cx| {
+                                let start = this.buffer.read(cx).anchor_before(insert_position);
 
-                                    let result = this.buffer.update(cx, |buffer, cx| {
-                                        text_ends_with_newline = text.ends_with("\n");
-                                        buffer.edit(
-                                            [(insert_position..insert_position, text)],
-                                            None,
-                                            cx,
-                                        )
-                                    });
+                                let result = this.buffer.update(cx, |buffer, cx| {
+                                    buffer.edit(
+                                        [(insert_position..insert_position, text)],
+                                        None,
+                                        cx,
+                                    )
+                                });
 
-                                    let end = this.buffer.read(cx).anchor_before(insert_position);
-                                    if run_commands_in_text {
-                                        run_commands_in_ranges.push(start..end);
-                                    }
+                                let end = this.buffer.read(cx).anchor_before(insert_position);
+                                if run_commands_in_text {
+                                    run_commands_in_ranges.push(start..end);
+                                }
 
-                                    result
-                                })?;
-                            }
-                        },
+                                result
+                            })?;
+                        }
                         SlashCommandEvent::EndSection { metadata } => {
                             if let Some(pending_section) = pending_section_stack.pop() {
                                 this.update(&mut cx, |this, cx| {
-                                    let range =
-                                        pending_section.start.bias_right(this.buffer.read(cx))
-                                            ..insert_position.bias_left(this.buffer.read(cx));
-
-                                    let offset_range = range.to_offset(this.buffer.read(cx));
-                                    if !offset_range.is_empty() {
-                                        this.buffer.update(cx, |buffer, cx| {
-                                            if !buffer.contains_str_at(offset_range.end - 1, "\n") {
-                                                buffer.edit(
-                                                    [(offset_range.end..offset_range.end, "\n")],
-                                                    None,
-                                                    cx,
-                                                );
-                                            }
-                                        });
-                                        this.insert_slash_command_output_section(
-                                            SlashCommandOutputSection {
-                                                range: range.clone(),
-                                                icon: pending_section.icon,
-                                                label: pending_section.label,
-                                                metadata: metadata.or(pending_section.metadata),
-                                            },
-                                            cx,
-                                        );
-                                        last_section_range = Some(range);
+                                    let offset_range = (pending_section.start..insert_position)
+                                        .to_offset(this.buffer.read(cx));
+                                    if offset_range.is_empty() {
+                                        return;
                                     }
+
+                                    let range = this.buffer.update(cx, |buffer, _cx| {
+                                        buffer.anchor_after(offset_range.start)
+                                            ..buffer.anchor_before(offset_range.end)
+                                    });
+                                    this.insert_slash_command_output_section(
+                                        SlashCommandOutputSection {
+                                            range: range.clone(),
+                                            icon: pending_section.icon,
+                                            label: pending_section.label,
+                                            metadata: metadata.or(pending_section.metadata),
+                                        },
+                                        cx,
+                                    );
+                                    last_section_range = Some(range);
                                 })?;
                             }
                         }

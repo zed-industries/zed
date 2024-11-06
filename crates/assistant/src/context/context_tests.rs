@@ -510,8 +510,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &context_ranges,
         "
         ⟦«/file src/main.rs»
-
         ⟧
+
         "
         .unindent()
         .trim_end(),
@@ -526,7 +526,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         }))
         .unwrap();
     command_output_tx
-        .unbounded_send(Ok(SlashCommandEvent::Content("src/main.rs\n".into())))
+        .unbounded_send(Ok(SlashCommandEvent::Content("src/main.rs".into())))
         .unwrap();
     cx.run_until_parked();
     assert_text_and_context_ranges(
@@ -534,9 +534,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &context_ranges,
         "
         ⟦«/file src/main.rs»
-        src/main.rs
+        src/main.rs⟧
 
-        ⟧
         "
         .unindent()
         .trim_end(),
@@ -544,7 +543,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     );
 
     command_output_tx
-        .unbounded_send(Ok(SlashCommandEvent::Content("fn main() {}".into())))
+        .unbounded_send(Ok(SlashCommandEvent::Content("\nfn main() {}".into())))
         .unwrap();
     cx.run_until_parked();
     assert_text_and_context_ranges(
@@ -553,8 +552,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         "
         ⟦«/file src/main.rs»
         src/main.rs
-        fn main() {}
-        ⟧
+        fn main() {}⟧
+
         "
         .unindent()
         .trim_end(),
@@ -571,8 +570,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         "
         ⟦«/file src/main.rs»
         ⟪src/main.rs
-        fn main() {}⟫
-        ⟧
+        fn main() {}⟫⟧
+
         "
         .unindent()
         .trim_end(),
@@ -586,8 +585,8 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         &context_ranges,
         "
         ⟦⟪src/main.rs
-        fn main() {}⟫
-        ⟧
+        fn main() {}⟫⟧
+
         "
         .unindent()
         .trim_end(),
@@ -615,19 +614,11 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
                     offset: range.start.to_offset(buffer),
                     marker: '⟦',
                 });
-                endpoints.push(Endpoint {
-                    offset: range.end.to_offset(buffer),
-                    marker: '⟧',
-                });
             }
             for range in ranges.parsed_commands.iter() {
                 endpoints.push(Endpoint {
                     offset: range.start.to_offset(buffer),
                     marker: '«',
-                });
-                endpoints.push(Endpoint {
-                    offset: range.end.to_offset(buffer),
-                    marker: '»',
                 });
             }
             for range in ranges.output_sections.iter() {
@@ -635,9 +626,24 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
                     offset: range.start.to_offset(buffer),
                     marker: '⟪',
                 });
+            }
+
+            for range in ranges.output_sections.iter() {
                 endpoints.push(Endpoint {
                     offset: range.end.to_offset(buffer),
                     marker: '⟫',
+                });
+            }
+            for range in ranges.parsed_commands.iter() {
+                endpoints.push(Endpoint {
+                    offset: range.end.to_offset(buffer),
+                    marker: '»',
+                });
+            }
+            for range in ranges.command_outputs.values() {
+                endpoints.push(Endpoint {
+                    offset: range.end.to_offset(buffer),
+                    marker: '⟧',
                 });
             }
 
