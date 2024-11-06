@@ -2593,7 +2593,6 @@ impl ContextEditor {
                 h_flex()
                     .rounded_md()
                     .px_1()
-                    .pb_0p5()
                     .mr_0p5()
                     .border_1()
                     .border_color(theme::color_alpha(colors.border_variant, 0.6))
