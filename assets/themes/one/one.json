@@ -470,7 +470,7 @@
         "terminal.ansi.bright_white": "#242529ff",
         "terminal.ansi.dim_white": "#97979aff",
         "link_text.hover": "#5c78e2ff",
-        "conflict": "#dec184ff",
+        "conflict": "#a48819ff",
         "conflict.background": "#faf2e6ff",
         "conflict.border": "#f4e7d1ff",
         "created": "#669f59ff",
@@ -494,7 +494,7 @@
         "info": "#5c78e2ff",
         "info.background": "#e2e2faff",
         "info.border": "#cbcdf6ff",
-        "modified": "#a47a23ff",
+        "modified": "#a48819ff",
         "modified.background": "#faf2e6ff",
         "modified.border": "#f4e7d1ff",
         "predictive": "#9b9ec6ff",
@@ -509,7 +509,7 @@
         "unreachable": "#58585aff",
         "unreachable.background": "#dcdcddff",
         "unreachable.border": "#c9c9caff",
-        "warning": "#dec184ff",
+        "warning": "#a48819ff",
         "warning.background": "#faf2e6ff",
         "warning.border": "#f4e7d1ff",
         "players": [
@@ -544,7 +544,7 @@
             "selection": "#d361513d"
           },
           {
-            "cursor": "#dec184ff",
+            "cursor": "#a48819ff",
             "background": "#dec184ff",
             "selection": "#dec1843d"
           },
