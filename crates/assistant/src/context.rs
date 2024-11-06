@@ -908,6 +908,7 @@ impl Context {
                             status: InvokedSlashCommandStatus::Running(Task::ready(())),
                         },
                     );
+                    cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id: id });
                 }
                 ContextOperation::SlashCommandOutputSectionAdded { section, .. } => {
                     let buffer = self.buffer.read(cx);
