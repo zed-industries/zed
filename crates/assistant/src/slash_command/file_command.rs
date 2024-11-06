@@ -21,8 +21,6 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::slash_command::diagnostics_command::collect_buffer_diagnostics;
-
 pub(crate) struct FileSlashCommand;
 
 impl FileSlashCommand {
@@ -543,8 +541,6 @@ pub fn append_buffer_to_output(
     output.text.push('\n');
 
     let section_ix = output.sections.len();
-    collect_buffer_diagnostics(output, buffer, false);
-
     output.sections.insert(
         section_ix,
         build_entry_output_section(prev_len..output.text.len(), path, false, None),

@@ -4,10 +4,10 @@ mod context;
 pub use binding::*;
 pub use context::*;
 
-use crate::{Action, Keystroke, NoAction};
+use crate::{is_no_action, Action, Keystroke};
 use collections::HashMap;
 use smallvec::SmallVec;
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 
 /// An opaque identifier of which version of the keymap is currently active.
 /// The keymap's version is changed whenever bindings are added or removed.
@@ -19,6 +19,7 @@ pub struct KeymapVersion(usize);
 pub struct Keymap {
     bindings: Vec<KeyBinding>,
     binding_indices_by_action_id: HashMap<TypeId, SmallVec<[usize; 3]>>,
+    no_action_binding_indices: Vec<usize>,
     version: KeymapVersion,
 }
 
@@ -39,10 +40,14 @@ impl Keymap {
     pub fn add_bindings<T: IntoIterator<Item = KeyBinding>>(&mut self, bindings: T) {
         for binding in bindings {
             let action_id = binding.action().as_any().type_id();
-            self.binding_indices_by_action_id
-                .entry(action_id)
-                .or_default()
-                .push(self.bindings.len());
+            if is_no_action(&*binding.action) {
+                self.no_action_binding_indices.push(self.bindings.len());
+            } else {
+                self.binding_indices_by_action_id
+                    .entry(action_id)
+                    .or_default()
+                    .push(self.bindings.len());
+            }
             self.bindings.push(binding);
         }
 
@@ -53,6 +58,7 @@ impl Keymap {
     pub fn clear(&mut self) {
         self.bindings.clear();
         self.binding_indices_by_action_id.clear();
+        self.no_action_binding_indices.clear();
         self.version.0 += 1;
     }
 
@@ -67,12 +73,39 @@ impl Keymap {
         action: &'a dyn Action,
     ) -> impl 'a + DoubleEndedIterator<Item = &'a KeyBinding> {
         let action_id = action.type_id();
-        self.binding_indices_by_action_id
+        let binding_indices = self
+            .binding_indices_by_action_id
             .get(&action_id)
             .map_or(&[] as _, SmallVec::as_slice)
-            .iter()
-            .map(|ix| &self.bindings[*ix])
-            .filter(move |binding| binding.action().partial_eq(action))
+            .iter();
+
+        binding_indices.filter_map(|ix| {
+            let binding = &self.bindings[*ix];
+            if !binding.action().partial_eq(action) {
+                return None;
+            }
+
+            for null_ix in &self.no_action_binding_indices {
+                if null_ix > ix {
+                    let null_binding = &self.bindings[*null_ix];
+                    if null_binding.keystrokes == binding.keystrokes {
+                        let null_binding_matches =
+                            match (&null_binding.context_predicate, &binding.context_predicate) {
+                                (None, _) => true,
+                                (Some(_), None) => false,
+                                (Some(null_predicate), Some(predicate)) => {
+                                    null_predicate.is_superset(predicate)
+                                }
+                            };
+                        if null_binding_matches {
+                            return None;
+                        }
+                    }
+                }
+            }
+
+            Some(binding)
+        })
     }
 
     /// all bindings for input returns all bindings that might match the input
@@ -106,7 +139,7 @@ impl Keymap {
     pub fn bindings_for_input(
         &self,
         input: &[Keystroke],
-        context_stack: &[KeyContext],
+        context_path: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
         let possibilities = self.bindings().rev().filter_map(|binding| {
             binding
@@ -118,8 +151,8 @@ impl Keymap {
         let mut is_pending = None;
 
         'outer: for (binding, pending) in possibilities {
-            for depth in (0..=context_stack.len()).rev() {
-                if self.binding_enabled(binding, &context_stack[0..depth]) {
+            for depth in (0..=context_path.len()).rev() {
+                if self.binding_enabled(binding, &context_path[0..depth]) {
                     if is_pending.is_none() {
                         is_pending = Some(pending);
                     }
@@ -134,7 +167,7 @@ impl Keymap {
         let bindings = bindings
             .into_iter()
             .map_while(|(binding, _)| {
-                if binding.action.as_any().type_id() == (NoAction {}).type_id() {
+                if is_no_action(&*binding.action) {
                     None
                 } else {
                     Some(binding)
@@ -162,7 +195,7 @@ impl Keymap {
 mod tests {
     use super::*;
     use crate as gpui;
-    use gpui::actions;
+    use gpui::{actions, NoAction};
 
     actions!(
         keymap_test,
@@ -240,5 +273,32 @@ mod tests {
             )
             .0
             .is_empty());
+    }
+
+    #[test]
+    fn test_bindings_for_action() {
+        let bindings = [
+            KeyBinding::new("ctrl-a", ActionAlpha {}, Some("pane")),
+            KeyBinding::new("ctrl-b", ActionBeta {}, Some("editor && mode == full")),
+            KeyBinding::new("ctrl-c", ActionGamma {}, Some("workspace")),
+            KeyBinding::new("ctrl-a", NoAction {}, Some("pane && active")),
+            KeyBinding::new("ctrl-b", NoAction {}, Some("editor")),
+        ];
+
+        let mut keymap = Keymap::default();
+        keymap.add_bindings(bindings.clone());
+
+        assert_bindings(&keymap, &ActionAlpha {}, &["ctrl-a"]);
+        assert_bindings(&keymap, &ActionBeta {}, &[]);
+        assert_bindings(&keymap, &ActionGamma {}, &["ctrl-c"]);
+
+        #[track_caller]
+        fn assert_bindings(keymap: &Keymap, action: &dyn Action, expected: &[&str]) {
+            let actual = keymap
+                .bindings_for_action(action)
+                .map(|binding| binding.keystrokes[0].unparse())
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{:?}", action);
+        }
     }
 }

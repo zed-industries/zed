@@ -1593,8 +1593,13 @@ impl Pane {
                             Ok(0) => {}
                             Ok(1) => {
                                 // Don't save this file
-                                pane.update(cx, |_, cx| item.discarded(project, cx))
-                                    .log_err();
+                                pane.update(cx, |pane, cx| {
+                                    if pane.is_tab_pinned(item_ix) && !item.can_save(cx) {
+                                        pane.pinned_tab_count -= 1;
+                                    }
+                                    item.discarded(project, cx)
+                                })
+                                .log_err();
                                 return Ok(true);
                             }
                             _ => return Ok(false), // Cancel

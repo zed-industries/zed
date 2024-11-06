@@ -1404,6 +1404,32 @@ async fn test_remap_nested_pineapple(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_remap_recursion(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+    cx.update(|cx| {
+        cx.bind_keys([KeyBinding::new(
+            "x",
+            workspace::SendKeystrokes("\" _ x".to_string()),
+            Some("VimControl"),
+        )]);
+        cx.bind_keys([KeyBinding::new(
+            "y",
+            workspace::SendKeystrokes("2 x".to_string()),
+            Some("VimControl"),
+        )])
+    });
+    cx.neovim.exec("noremap x \"_x").await;
+    cx.neovim.exec("map y 2x").await;
+
+    cx.set_shared_state("ˇhello").await;
+    cx.simulate_shared_keystrokes("d l").await;
+    cx.shared_clipboard().await.assert_eq("h");
+    cx.simulate_shared_keystrokes("y").await;
+    cx.shared_clipboard().await.assert_eq("h");
+    cx.shared_state().await.assert_eq("ˇlo");
+}
+
+#[gpui::test]
 async fn test_escape_while_waiting(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
     cx.set_shared_state("ˇhi").await;
