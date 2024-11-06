@@ -1429,7 +1429,7 @@ struct FakeHandle {
 impl FileHandle for FakeHandle {
     fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
         let state = fs.as_fake().state.lock();
-        let Some(target) = state.moves.get(&self.inode).clone() else {
+        let Some(target) = state.moves.get(&self.inode) else {
             anyhow::bail!("fake fd not moved")
         };
 

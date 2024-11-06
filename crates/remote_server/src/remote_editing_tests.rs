@@ -1120,7 +1120,7 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
     .unwrap();
 
     cx.run_until_parked();
-    worktree.update(cx, |worktree, cx| {
+    worktree.update(cx, |worktree, _| {
         assert_eq!(worktree.root_name(), "project2")
     })
 }
