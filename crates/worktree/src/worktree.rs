@@ -54,6 +54,7 @@ use std::{
     future::Future,
     mem,
     ops::{AddAssign, Deref, DerefMut, Sub},
+    os::fd::RawFd,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -287,7 +288,7 @@ pub struct LocalSnapshot {
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     /// The file handle of the root dir
     /// (so we can find it after it's been moved)
-    root_file_descriptor: i64,
+    root_file_descriptor: Arc<dyn fs::FileHandle>,
 }
 
 struct BackgroundScannerState {
@@ -385,7 +386,7 @@ impl Worktree {
             true
         });
 
-        let handle = fs.open_sync(path)
+        let root_file_descriptor = fs.open_handle(&abs_path).await?;
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -398,6 +399,7 @@ impl Worktree {
                         .map_or(String::new(), |f| f.to_string_lossy().to_string()),
                     abs_path,
                 ),
+                root_file_descriptor,
             };
 
             if let Some(metadata) = metadata {
@@ -3737,8 +3739,21 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
-                log::error!("failed to canonicalize root path: {}", err);
-                return;
+                if let Some(new_path) = self
+                    .state
+                    .lock()
+                    .snapshot
+                    .root_file_descriptor
+                    .current_path()
+                    .log_err()
+                    .filter(|new_path| new_path != root_path)
+                {
+                    dbg!("root path changed: {}", new_path);
+                    self.state.lock().snapshot.abs_path = new_path;
+                } else {
+                    log::error!("failed to canonicalize root path: {}", err);
+                    return;
+                }
             }
         };
 

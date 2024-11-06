@@ -9,6 +9,14 @@ use git::GitHostingProviderRegistry;
 
 #[cfg(target_os = "linux")]
 use ashpd::desktop::trash;
+use libc::c_char;
+use libc::F_GETPATH;
+use std::ffi::{CStr, OsStr};
+use std::os::fd::AsFd;
+use std::os::fd::AsRawFd;
+use std::os::fd::IntoRawFd;
+use std::os::fd::RawFd;
+use std::os::unix::ffi::OsStrExt;
 #[cfg(target_os = "linux")]
 use std::{fs::File, os::fd::AsFd};
 
@@ -95,7 +103,7 @@ pub trait Fs: Send + Sync {
     async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.remove_file(path, options).await
     }
-    async fn open_handle(&self, path: &Path) -> Result<i64>;
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
@@ -186,6 +194,26 @@ pub struct Metadata {
 pub struct RealFs {
     git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
+}
+
+pub trait FileHandle: Send + Sync + std::fmt::Debug {
+    fn current_path(&self) -> Result<PathBuf>;
+}
+
+impl FileHandle for std::fs::File {
+    fn current_path(&self) -> Result<PathBuf> {
+        let fd = self.as_fd();
+        let mut path_buf: [c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
+
+        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
+        if result == -1 {
+            anyhow::bail!("Failed to get path for file descriptor".to_string());
+        }
+
+        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr()) };
+        let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
+        Ok(path)
+    }
 }
 
 pub struct RealWatcher {}
@@ -401,8 +429,8 @@ impl Fs for RealFs {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 
-    async fn open_handl(&self, path: &Path) -> Result<Box<dyn io::Read>> {
-        Ok(Box::new(std::fs::File::open(path)?))
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
+        Ok(Arc::new(std::fs::File::open(path)?))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
@@ -1367,6 +1395,15 @@ impl Watcher for FakeWatcher {
     }
 }
 
+#[derive(Debug)]
+struct FakeHandle;
+
+impl FileHandle for FakeHandle {
+    fn current_path(&self) -> Result<PathBuf> {
+        anyhow::bail!("current_path on FakeHandle not implemented")
+    }
+}
+
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
@@ -1647,6 +1684,14 @@ impl Fs for FakeFs {
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
         let bytes = self.load_internal(path).await?;
         Ok(Box::new(io::Cursor::new(bytes)))
+    }
+
+    async fn open_handle(&self, path: &Path) -> Result<Box<dyn FileHandle>> {
+        self.simulate_random_delay().await;
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        Ok(Box::new(FakeHandle))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
