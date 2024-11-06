@@ -1,6 +1,7 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
+use fancy_regex::Regex as FancyRegex;
 use gpui::Model;
 use language::{Buffer, BufferSnapshot};
 use regex::{Captures, Regex, RegexBuilder};
@@ -74,6 +75,15 @@ pub enum SearchQuery {
         include_ignored: bool,
         inner: SearchInputs,
     },
+    FancyRegex {
+        regex: FancyRegex,
+        replacement: Option<String>,
+        multiline: bool,
+        whole_word: bool,
+        case_sensitive: bool,
+        include_ignored: bool,
+        inner: SearchInputs,
+    },
 }
 
 impl SearchQuery {
@@ -129,7 +139,12 @@ impl SearchQuery {
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
             .multi_line(multiline)
-            .build()?;
+            .build()
+            .map_err(|e| {
+                // (?<!user|tenant)RecordId = randomUUID\(\);
+                log::error!("Failed to build regex: {}", e);
+                e
+            })?;
         let inner = SearchInputs {
             query: initial_query,
             files_to_exclude,
