@@ -112,6 +112,15 @@ pub enum SlashCommandContent {
     },
 }
 
+impl<'a> From<&'a str> for SlashCommandContent {
+    fn from(text: &'a str) -> Self {
+        Self::Text {
+            text: text.into(),
+            run_commands_in_text: false,
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub enum SlashCommandEvent {
     StartMessage {

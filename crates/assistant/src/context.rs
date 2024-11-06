@@ -1913,8 +1913,9 @@ impl Context {
                         SlashCommandEvent::EndSection { metadata } => {
                             if let Some(pending_section) = pending_section_stack.pop() {
                                 this.update(&mut cx, |this, cx| {
-                                    let range = pending_section.start
-                                        ..insert_position.bias_left(this.buffer.read(cx));
+                                    let range =
+                                        pending_section.start.bias_right(this.buffer.read(cx))
+                                            ..insert_position.bias_left(this.buffer.read(cx));
 
                                     let offset_range = range.to_offset(this.buffer.read(cx));
                                     if !offset_range.is_empty() {
