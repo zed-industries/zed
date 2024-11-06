@@ -2134,7 +2134,10 @@ impl ContextEditor {
                     let start = buffer
                         .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.start)
                         .unwrap();
-                    editor.unfold_ranges([start..start], true, false, cx);
+                    let end = buffer
+                        .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
+                        .unwrap();
+                    editor.remove_folds(&[start..end], false, cx);
 
                     editor.remove_creases(
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
@@ -2310,7 +2313,7 @@ impl ContextEditor {
                 }
 
                 if should_refold {
-                    editor.unfold_ranges([patch_start..patch_end], true, false, cx);
+                    editor.unfold_ranges(&[patch_start..patch_end], true, false, cx);
                     editor.fold_ranges([(patch_start..patch_end, header_placeholder)], false, cx);
                 }
             }
