@@ -9,6 +9,7 @@ pub use gpui::{
 
 pub use crate::styles::{rems_from_px, vh, vw, PlatformStyle, StyledTypography, TextSize};
 pub use crate::traits::clickable::*;
+pub use crate::traits::component_preview::*;
 pub use crate::traits::disableable::*;
 pub use crate::traits::fixed::*;
 pub use crate::traits::selectable::*;
