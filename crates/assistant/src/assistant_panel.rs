@@ -2596,8 +2596,8 @@ impl ContextEditor {
                     .pb_0p5()
                     .mr_0p5()
                     .border_1()
-                    .border_color(colors.border_variant)
-                    .bg(colors.element_background)
+                    .border_color(theme::color_alpha(colors.border_variant, 0.6))
+                    .bg(theme::color_alpha(colors.element_background, 0.6))
                     .child("esc"),
             )
             .child("to cancel")
