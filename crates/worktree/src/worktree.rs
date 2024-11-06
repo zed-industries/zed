@@ -285,6 +285,9 @@ pub struct LocalSnapshot {
     /// All of the git repositories in the worktree, indexed by the project entry
     /// id of their parent directory.
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
+    /// The file handle of the root dir
+    /// (so we can find it after it's been moved)
+    root_file_descriptor: i64,
 }
 
 struct BackgroundScannerState {
@@ -381,6 +384,8 @@ impl Worktree {
             );
             true
         });
+
+        let handle = fs.open_sync(path)
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = LocalSnapshot {

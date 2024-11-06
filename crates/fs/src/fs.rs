@@ -95,6 +95,7 @@ pub trait Fs: Send + Sync {
     async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.remove_file(path, options).await
     }
+    async fn open_handle(&self, path: &Path) -> Result<i64>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
@@ -397,6 +398,10 @@ impl Fs for RealFs {
     }
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
+        Ok(Box::new(std::fs::File::open(path)?))
+    }
+
+    async fn open_handl(&self, path: &Path) -> Result<Box<dyn io::Read>> {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 
