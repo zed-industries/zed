@@ -141,7 +141,7 @@ impl SearchQuery {
             .multi_line(multiline)
             .build()
             .map_err(|e| {
-                // (?<!user|tenant)RecordId = randomUUID\(\);
+                // REVIEW: Found by using: (?<!user|tenant)RecordId = randomUUID\(\);
                 log::error!("Failed to build regex: {}", e);
                 e
             })?;
