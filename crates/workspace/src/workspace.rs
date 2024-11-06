@@ -6211,7 +6211,7 @@ mod tests {
                     .map(|e| e.id)
             );
         });
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| {
