@@ -129,23 +129,26 @@ fi
 zyp=$(command -v zypper || true)
 if [[ -n $zyp ]]; then
   deps=(
+    alsa-devel
+    clang
+    cmake
+    fontconfig-devel
     gcc
     gcc-c++
-    clang
-    make
-    cmake
-    alsa-devel
-    fontconfig-devel
-    wayland-devel
-    libxkbcommon-x11-devel
-    openssl-devel
-    libzstd-devel
-    libvulkan1
-    sqlite3-devel
-    jq
     git
-    tar
     gzip
+    jq
+    libvulkan1
+    libxkbcommon-devel
+    libxkbcommon-x11-devel
+    libzstd-devel
+    make
+    mold
+    openssl-devel
+    sqlite3-devel
+    tar
+    wayland-devel
+    xcb-util-devel
   )
   $maysudo "$zyp" install -y "${deps[@]}"
   finalize
