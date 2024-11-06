@@ -127,7 +127,6 @@ impl SlashCommandCompletionProvider {
                                                             &command_name,
                                                             &[],
                                                             true,
-                                                            false,
                                                             workspace.clone(),
                                                             cx,
                                                         );
@@ -212,7 +211,6 @@ impl SlashCommandCompletionProvider {
                                                             &command_name,
                                                             &completed_arguments,
                                                             true,
-                                                            false,
                                                             workspace.clone(),
                                                             cx,
                                                         );

@@ -1580,7 +1580,6 @@ impl ContextEditor {
             &command.name,
             &command.arguments,
             false,
-            false,
             self.workspace.clone(),
             cx,
         );
@@ -1753,7 +1752,6 @@ impl ContextEditor {
                     &command.name,
                     &command.arguments,
                     true,
-                    false,
                     workspace.clone(),
                     cx,
                 );
@@ -1769,7 +1767,6 @@ impl ContextEditor {
         name: &str,
         arguments: &[String],
         ensure_trailing_newline: bool,
-        expand_result: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
@@ -1796,7 +1793,6 @@ impl ContextEditor {
                     name,
                     output,
                     ensure_trailing_newline,
-                    expand_result,
                     cx,
                 )
             });
@@ -1947,7 +1943,6 @@ impl ContextEditor {
                                                 &command.name,
                                                 &command.arguments,
                                                 false,
-                                                false,
                                                 workspace.clone(),
                                                 cx,
                                             );
@@ -2016,7 +2011,6 @@ impl ContextEditor {
             ContextEvent::SlashCommandFinished {
                 output_range: _output_range,
                 run_commands_in_ranges,
-                expand_result,
             } => {
                 for range in run_commands_in_ranges {
                     let commands = self.context.update(cx, |context, cx| {
@@ -2031,7 +2025,6 @@ impl ContextEditor {
                             command.source_range,
                             &command.name,
                             &command.arguments,
-                            false,
                             false,
                             self.workspace.clone(),
                             cx,
@@ -5098,7 +5091,7 @@ fn invoked_slash_command_fold_placeholder(
     FoldPlaceholder {
         constrain_width: false,
         merge_adjacent: false,
-        render: Arc::new(move |fold_id, fold_range, cx| {
+        render: Arc::new(move |fold_id, _, cx| {
             let Some(context) = context.upgrade() else {
                 return Empty.into_any();
             };

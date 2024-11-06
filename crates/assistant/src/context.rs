@@ -384,7 +384,6 @@ pub enum ContextEvent {
     SlashCommandFinished {
         output_range: Range<language::Anchor>,
         run_commands_in_ranges: Vec<Range<language::Anchor>>,
-        expand_result: bool,
     },
     UsePendingTools,
     ToolFinished {
@@ -1808,7 +1807,6 @@ impl Context {
         name: &str,
         output: Task<SlashCommandResult>,
         ensure_trailing_newline: bool,
-        expand_result: bool,
         cx: &mut ModelContext<Self>,
     ) {
         let version = self.version.clone();

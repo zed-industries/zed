@@ -492,7 +492,6 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
             "file",
             Task::ready(Ok(command_output_rx.boxed())),
             true,
-            false,
             cx,
         );
     });
@@ -1281,7 +1280,6 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         "/command",
                         Task::ready(Ok(stream::iter(events).boxed())),
                         true,
-                        false,
                         cx,
                     );
                 });
