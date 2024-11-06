@@ -11,7 +11,7 @@ If you're used to a specific editor's defaults you can set a `base_keymap` in yo
 - JetBrains
 - SublimeText
 - TextMate
-- None (disables *all* key bindings)
+- None (disables _all_ key bindings)
 
 You can also enable `vim_mode`, which adds vim bindings too.
 
@@ -30,14 +30,14 @@ For example:
   {
     "bindings": {
       "ctrl-right": "editor::SelectLargerSyntaxNode",
-      "ctrl-left": "editor::SelectSmallerSyntaxNode",
-    },
+      "ctrl-left": "editor::SelectSmallerSyntaxNode"
+    }
   },
   {
     "context": "ProjectPanel && not_editing",
     "bindings": {
-      "o": "project_panel::Open",
-    },
+      "o": "project_panel::Open"
+    }
   }
 ]
 ```
@@ -86,6 +86,7 @@ Zed's contexts make up a tree, with the root being `Workspace`. Workspaces conta
 Contexts can contain extra attributes in addition to the name, so that you can (for example) match only in markdown files with `"context": "Editor && extension==md"`. It's worth noting that you can only use attributes at the level they are defined.
 
 For example:
+
 ```
 # in an editor, it might look like this:
 Workspace os=macos
@@ -99,10 +100,11 @@ Workspace os=macos
 ```
 
 Context expressions can contain the following syntax:
-* `X && Y`, `X || Y` to and/or two conditions
-* `!X` to negate a condition
-* `(X)` for grouping
-* `X > Y` to match if a parent in the tree matches X and this layer matches Y.
+
+- `X && Y`, `X || Y` to and/or two conditions
+- `!X` to negate a condition
+- `(X)` for grouping
+- `X > Y` to match if a parent in the tree matches X and this layer matches Y.
 
 If you're using Vim mode, we have information on how [vim modes influence the context](./vim.md#contexts)
 
@@ -121,8 +123,8 @@ Most actions do not require any arguments, and so you can bind them as strings: 
 
 When multiple keybindings have the same keystroke and are active at the same time, precedence is resolved in two ways:
 
-* Bindings that match on lower nodes in the context tree win. This means that if you have a binding with a context of `Editor` it will take precedence over a binding with a context of `Workspace`. Bindings with no context match at the lowest level in the tree.
-* If there are multiple bindings that match at the same level in the tree, then the binding defined later takes precedence. As user keybindings are loaded after system keybindings, this allows user bindings to take precedence over builtin keybindings.
+- Bindings that match on lower nodes in the context tree win. This means that if you have a binding with a context of `Editor` it will take precedence over a binding with a context of `Workspace`. Bindings with no context match at the lowest level in the tree.
+- If there are multiple bindings that match at the same level in the tree, then the binding defined later takes precedence. As user keybindings are loaded after system keybindings, this allows user bindings to take precedence over builtin keybindings.
 
 The other kind of conflict that arises is when you have two bindings, one of which is a prefix of the other. For example if you have `"ctrl-w":"editor::DeleteToNextWordEnd"` and `"ctrl-w left":"editor::DeleteToEndOfLine"`.
 
@@ -165,7 +167,7 @@ A common request is to be able to map from a single keystroke to a sequence. You
     "bindings": {
       "j k": ["workspace::SendKeystrokes", "escape"]
     }
-  },
+  }
 ]
 ```
 
