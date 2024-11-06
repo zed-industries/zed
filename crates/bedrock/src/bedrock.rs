@@ -1,3 +1,5 @@
+mod models;
+
 use std::time::Duration;
 use std::{pin::Pin, str::FromStr};
 use std::any::Any;
@@ -22,99 +24,7 @@ pub use bedrock::types::ResponseStream;
 //TODO: Re-export the Bedrock stuff
 // https://doc.rust-lang.org/rustdoc/write-documentation/re-exports.html
 
-#[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
-pub enum Model {
-    #[default]
-    #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
-    Claude3_5Sonnet,
-    #[serde(rename = "claude-3-opus", alias = "claude-3-opus-latest")]
-    Claude3Opus,
-    #[serde(rename = "claude-3-sonnet", alias = "claude-3-sonnet-latest")]
-    Claude3Sonnet,
-    #[serde(rename = "claude-3-haiku", alias = "claude-3-haiku-latest")]
-    Claude3Haiku,
-    #[serde(rename = "custom")]
-    Custom {
-        name: String,
-        max_tokens: usize,
-        /// The name displayed in the UI, such as in the assistant panel model dropdown menu.
-        display_name: Option<String>,
-        max_output_tokens: Option<u32>,
-        default_temperature: Option<f32>,
-    },
-}
-
-impl Model {
-    pub fn from_id(id: &str) -> Result<Self> {
-        if id.starts_with("claude-3-5-sonnet") {
-            Ok(Self::Claude3_5Sonnet)
-        } else if id.starts_with("claude-3-opus") {
-            Ok(Self::Claude3Opus)
-        } else if id.starts_with("claude-3-sonnet") {
-            Ok(Self::Claude3Sonnet)
-        } else if id.starts_with("claude-3-haiku") {
-            Ok(Self::Claude3Haiku)
-        } else {
-            Err(anyhow!("invalid model id"))
-        }
-    }
-
-    pub fn id(&self) -> &str {
-        match self {
-            Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
-            Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-latest",
-            Model::Claude3Haiku => "claude-3-haiku-latest",
-            Self::Custom { name, .. } => name,
-        }
-    }
-
-    pub fn display_name(&self) -> &str {
-        match self {
-            Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
-            Self::Claude3Opus => "Claude 3 Opus",
-            Self::Claude3Sonnet => "Claude 3 Sonnet",
-            Self::Claude3Haiku => "Claude 3 Haiku",
-            Self::Custom {
-                name, display_name, ..
-            } => display_name.as_ref().unwrap_or(name),
-        }
-    }
-
-    pub fn max_token_count(&self) -> usize {
-        match self {
-            Self::Claude3_5Sonnet
-            | Self::Claude3Opus
-            | Self::Claude3Sonnet
-            | Self::Claude3Haiku => 200_000,
-            Self::Custom { max_tokens, .. } => *max_tokens,
-        }
-    }
-
-    pub fn max_output_tokens(&self) -> u32 {
-        match self {
-            Self::Claude3Opus | Self::Claude3Sonnet | Self::Claude3Haiku => 4_096,
-            Self::Claude3_5Sonnet => 8_192,
-            Self::Custom {
-                max_output_tokens, ..
-            } => max_output_tokens.unwrap_or(4_096),
-        }
-    }
-
-    pub fn default_temperature(&self) -> f32 {
-        match self {
-            Self::Claude3_5Sonnet
-            | Self::Claude3Opus
-            | Self::Claude3Sonnet
-            | Self::Claude3Haiku => 1.0,
-            Self::Custom {
-                default_temperature,
-                ..
-            } => default_temperature.unwrap_or(1.0),
-        }
-    }
-}
+pub use models::*;
 
 pub async fn complete(
     client: &bedrock::Client,
@@ -256,21 +166,6 @@ pub enum BedrockError {
     SdkError(bedrock::Error),
     Other(anyhow::Error)
 }
-
-// #[derive(Debug, Serialize, Deserialize)]
-// pub struct Response {
-//     pub id: String,
-//     #[serde(rename = "type")]
-//     pub response_type: String,
-//     pub role: ConversationRole,
-//     pub content: Vec<ResponseContent>,
-//     pub model: String,
-//     #[serde(default, skip_serializing_if = "Option::is_none")]
-//     pub stop_reason: Option<String>,
-//     #[serde(default, skip_serializing_if = "Option::is_none")]
-//     pub stop_sequence: Option<String>,
-//     pub usage: Usage,
-// }
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "type")]
