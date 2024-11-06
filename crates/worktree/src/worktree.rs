@@ -287,7 +287,7 @@ pub struct LocalSnapshot {
     git_repositories: TreeMap<ProjectEntryId, LocalRepositoryEntry>,
     /// The file handle of the root dir
     /// (so we can find it after it's been moved)
-    root_file_descriptor: Arc<dyn fs::FileHandle>,
+    root_file_handle: Option<Arc<dyn fs::FileHandle>>,
 }
 
 struct BackgroundScannerState {
@@ -388,7 +388,7 @@ impl Worktree {
             true
         });
 
-        let root_file_descriptor = fs.open_handle(&abs_path).await?;
+        let root_file_handle = fs.open_handle(&abs_path).await.log_err();
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
             let mut snapshot = LocalSnapshot {
@@ -401,7 +401,7 @@ impl Worktree {
                         .map_or(String::new(), |f| f.to_string_lossy().to_string()),
                     abs_path,
                 ),
-                root_file_descriptor,
+                root_file_handle,
             };
 
             if let Some(metadata) = metadata {
@@ -3768,9 +3768,9 @@ impl BackgroundScanner {
                     .state
                     .lock()
                     .snapshot
-                    .root_file_descriptor
-                    .current_path(&self.fs)
-                    .log_err()
+                    .root_file_handle
+                    .clone()
+                    .and_then(|handle| handle.current_path(&self.fs).log_err())
                     .filter(|new_path| **new_path != *root_path);
 
                 if let Some(new_path) = new_path.as_ref() {
