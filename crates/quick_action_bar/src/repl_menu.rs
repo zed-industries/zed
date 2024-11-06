@@ -60,7 +60,6 @@ impl QuickActionBar {
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
-                let spec = *spec;
                 return self.render_repl_launch_menu(spec, cx);
             }
             SessionSupport::RequiresSetup(language) => {
@@ -287,15 +286,14 @@ impl QuickActionBar {
 
         let session = repl::session(editor.downgrade(), cx);
 
-        let current_kernel_name = match session {
-            SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.name()),
-            SessionSupport::Inactive(kernel_specification) => Some(kernel_specification.name()),
+        let current_kernelspec = match session {
+            SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.clone()),
+            SessionSupport::Inactive(kernel_specification) => Some(kernel_specification),
             SessionSupport::RequiresSetup(_language_name) => None,
             SessionSupport::Unsupported => None,
         };
 
-        // let current_kernel_name = self.current_kernelspec.as_ref().map(|spec| spec.name());
-        let current_kernelspec: Option<KernelSpecification> = None;
+        let current_kernel_name = current_kernelspec.as_ref().map(|spec| spec.name());
 
         let menu_handle: PopoverMenuHandle<Picker<KernelPickerDelegate>> =
             PopoverMenuHandle::default();
@@ -305,6 +303,7 @@ impl QuickActionBar {
                     repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
                 })
             },
+            current_kernelspec.clone(),
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
                 .child(

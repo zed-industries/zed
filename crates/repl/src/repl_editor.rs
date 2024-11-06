@@ -148,7 +148,7 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
 
 pub enum SessionSupport {
     ActiveSession(View<Session>),
-    Inactive(Box<KernelSpecification>),
+    Inactive(KernelSpecification),
     RequiresSetup(LanguageName),
     Unsupported,
 }
@@ -169,7 +169,7 @@ pub fn session(editor: WeakView<Editor>, cx: &mut WindowContext) -> SessionSuppo
     });
 
     match kernelspec {
-        Some(kernelspec) => SessionSupport::Inactive(Box::new(kernelspec)),
+        Some(kernelspec) => SessionSupport::Inactive(kernelspec),
         None => {
             if language_supported(&language) {
                 SessionSupport::RequiresSetup(language.name())
