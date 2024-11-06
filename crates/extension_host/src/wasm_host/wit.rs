@@ -81,7 +81,7 @@ impl Extension {
         if version >= latest::MIN_VERSION {
             // Note: The release channel can be used to stage a new version of the extension API.
             // We always allow the latest in tests so that the extension tests pass on release branches.
-            let allow_latest_version = match dbg!(release_channel) {
+            let allow_latest_version = match release_channel {
                 ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
                 ReleaseChannel::Stable | ReleaseChannel::Preview => cfg!(test),
             };
