@@ -79,7 +79,7 @@
         "terminal.ansi.green": "#a1c181ff",
         "terminal.ansi.bright_green": "#4d6140ff",
         "terminal.ansi.dim_green": "#d1e0bfff",
-        "terminal.ansi.yellow": "#dec184ff",
+        "terminal.ansi.yellow": "#a48819ff",
         "terminal.ansi.bright_yellow": "#786441ff",
         "terminal.ansi.dim_yellow": "#f1dfc1ff",
         "terminal.ansi.blue": "#74ade8ff",
@@ -95,7 +95,7 @@
         "terminal.ansi.bright_white": "#dce0e5ff",
         "terminal.ansi.dim_white": "#575d65ff",
         "link_text.hover": "#74ade8ff",
-        "conflict": "#dec184ff",
+        "conflict": "#a48819ff",
         "conflict.background": "#dec1841a",
         "conflict.border": "#5d4c2fff",
         "created": "#a1c181ff",
@@ -119,7 +119,7 @@
         "info": "#74ade8ff",
         "info.background": "#74ade81a",
         "info.border": "#293b5bff",
-        "modified": "#dec184ff",
+        "modified": "#a48819ff",
         "modified.background": "#dec1841a",
         "modified.border": "#5d4c2fff",
         "predictive": "#5a6a87ff",
@@ -134,7 +134,7 @@
         "unreachable": "#a9afbcff",
         "unreachable.background": "#8389941a",
         "unreachable.border": "#464b57ff",
-        "warning": "#dec184ff",
+        "warning": "#a48819ff",
         "warning.background": "#dec1841a",
         "warning.border": "#5d4c2fff",
         "players": [
@@ -169,8 +169,8 @@
             "selection": "#d072773d"
           },
           {
-            "cursor": "#dec184ff",
-            "background": "#dec184ff",
+            "cursor": "#a48819ff",
+            "background": "#a48819ff",
             "selection": "#dec1843d"
           },
           {
