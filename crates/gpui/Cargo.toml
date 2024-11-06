@@ -90,8 +90,8 @@ profiling.workspace = true
 rand = { optional = true, workspace = true }
 raw-window-handle = "0.6"
 refineable.workspace = true
-resvg = { version = "0.41.0", default-features = false }
-usvg = { version = "0.41.0", default-features = false }
+resvg = { version = "0.44.0", default-features = false }
+usvg = { version = "0.44.0", default-features = false }
 schemars.workspace = true
 seahash = "4.1"
 semantic_version.workspace = true
