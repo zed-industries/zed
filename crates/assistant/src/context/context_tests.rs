@@ -473,7 +473,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         cx,
     );
 
-    // Undoing the insertion of an non-existant slash command resorts the previous one.
+    // Undoing the insertion of an non-existent slash command resorts the previous one.
     buffer.update(cx, |buffer, cx| buffer.undo(cx));
     assert_text_and_context_ranges(
         &buffer,
