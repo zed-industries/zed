@@ -1797,7 +1797,6 @@ impl ContextEditor {
                 context.insert_command_output(
                     command_range,
                     name,
-                    arguments,
                     output,
                     ensure_trailing_newline,
                     expand_result,

@@ -1805,7 +1805,6 @@ impl Context {
         &mut self,
         command_source_range: Range<language::Anchor>,
         name: &str,
-        arguments: &[String],
         output: Task<SlashCommandResult>,
         ensure_trailing_newline: bool,
         expand_result: bool,
@@ -1876,10 +1875,6 @@ impl Context {
                         } => {
                             this.read_with(&cx, |this, cx| {
                                 let buffer = this.buffer.read(cx);
-                                log::info!(
-                                    "Slash command output section start: {:?}",
-                                    insert_position
-                                );
                                 pending_section_stack.push(PendingSection {
                                     start: buffer.anchor_before(insert_position),
                                     icon,

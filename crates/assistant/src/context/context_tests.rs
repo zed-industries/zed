@@ -1113,7 +1113,6 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                     context.insert_command_output(
                         command_range,
                         "/command",
-                        &[],
                         Task::ready(Ok(stream::iter(events).boxed())),
                         true,
                         false,
