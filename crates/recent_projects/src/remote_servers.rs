@@ -386,7 +386,7 @@ impl RemoteServerProjects {
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
         let connection = connect_over_ssh(
-            ConnectionIdentifier::Setup,
+            ConnectionIdentifier::setup(),
             connection_options.clone(),
             ssh_prompt.clone(),
             cx,
@@ -477,7 +477,7 @@ impl RemoteServerProjects {
                     .clone();
 
                 let connect = connect_over_ssh(
-                    ConnectionIdentifier::Setup,
+                    ConnectionIdentifier::setup(),
                     connection_options.clone(),
                     prompt,
                     cx,
