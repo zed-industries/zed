@@ -345,6 +345,9 @@ enum ScanState {
         barrier: SmallVec<[barrier::Sender; 1]>,
         scanning: bool,
     },
+    RootUpdated {
+        new_path: Option<Arc<Path>>,
+    },
 }
 
 struct UpdateObservationState {
@@ -1082,6 +1085,17 @@ impl LocalWorktree {
                             *this.is_scanning.0.borrow_mut() = scanning;
                             this.set_snapshot(snapshot, changes, cx);
                             drop(barrier);
+                        }
+                        ScanState::RootUpdated { new_path } => {
+                            if let Some(new_path) = new_path {
+                                this.snapshot.git_repositories = Default::default();
+                                this.snapshot.ignores_by_parent_abs_path = Default::default();
+                                this.snapshot.root_name = new_path
+                                    .file_name()
+                                    .map_or(String::new(), |f| f.to_string_lossy().to_string());
+                                this.snapshot.abs_path = new_path;
+                            }
+                            this.restart_background_scanners(cx);
                         }
                     }
                     cx.notify();
@@ -3739,21 +3753,21 @@ impl BackgroundScanner {
         let root_canonical_path = match self.fs.canonicalize(&root_path).await {
             Ok(path) => path,
             Err(err) => {
-                if let Some(new_path) = self
+                let new_path = self
                     .state
                     .lock()
                     .snapshot
                     .root_file_descriptor
                     .current_path()
                     .log_err()
-                    .filter(|new_path| new_path != root_path)
-                {
-                    dbg!("root path changed: {}", new_path);
-                    self.state.lock().snapshot.abs_path = new_path;
-                } else {
-                    log::error!("failed to canonicalize root path: {}", err);
-                    return;
-                }
+                    .filter(|new_path| **new_path != *root_path);
+
+                log::error!("failed to canonicalize root path: {}", err);
+                self.status_updates_tx
+                    .unbounded_send(ScanState::RootUpdated {
+                        new_path: new_path.map(|p| p.into()),
+                    });
+                return;
             }
         };
 
