@@ -40,7 +40,7 @@ use std::{
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU32, Ordering::SeqCst},
+        atomic::{AtomicU32, AtomicU64, Ordering::SeqCst},
         Arc, Weak,
     },
     time::{Duration, Instant},
@@ -484,11 +484,16 @@ impl EventEmitter<SshRemoteEvent> for SshRemoteClient {}
 // Identifies the socket on the remote server so that reconnects
 // can re-join the same project.
 pub enum ConnectionIdentifier {
-    Setup,
+    Setup(u64),
     Workspace(i64),
 }
 
+static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+
 impl ConnectionIdentifier {
+    pub fn setup() -> Self {
+        Self::Setup(NEXT_ID.fetch_add(1, SeqCst))
+    }
     // This string gets used in a socket name, and so must be relatively short.
     // The total length of:
     //   /home/{username}/.local/share/zed/server_state/{name}/stdout.sock
@@ -501,7 +506,7 @@ impl ConnectionIdentifier {
             release_channel => format!("{}-", release_channel.dev_name()),
         };
         match self {
-            Self::Setup => format!("{identifier_prefix}setup"),
+            Self::Setup(setup_id) => format!("{identifier_prefix}setup-{setup_id}"),
             Self::Workspace(workspace_id) => {
                 format!("{identifier_prefix}workspace-{workspace_id}",)
             }
@@ -1079,7 +1084,7 @@ impl SshRemoteClient {
         client_cx
             .update(|cx| {
                 Self::new(
-                    ConnectionIdentifier::Setup,
+                    ConnectionIdentifier::setup(),
                     opts,
                     rx,
                     Arc::new(fake::Delegate),
