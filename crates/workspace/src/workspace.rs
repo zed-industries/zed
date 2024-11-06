@@ -6217,7 +6217,7 @@ mod tests {
         workspace.update(cx, |workspace, cx| {
             workspace.add_item_to_active_pane(Box::new(item2), None, true, cx)
         });
-        assert_eq!(cx.window_title().as_deref(), Some("two.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — two.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -6233,7 +6233,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -6250,11 +6250,11 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1, root2"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1, root2 — one.txt"));
 
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root2"));
+        assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
     }
 
     #[gpui::test]
