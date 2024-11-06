@@ -14,7 +14,7 @@ function finalize {
   # verify the mold situation
   if ! command -v mold >/dev/null 2>&1; then
     echo "Warning: Mold binaries are unavailable on your system." >&2
-    echo "    Builds will be slower without mold. Try: scripts/install-mold" >&2
+    echo "    Builds will be slower without mold. Try: script/install-mold" >&2
   fi
   echo "Finished installing Linux dependencies with script/linux"
 }
