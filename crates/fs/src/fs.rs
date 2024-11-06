@@ -55,14 +55,14 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum PathEventKind {
     Removed,
     Created,
     Changed,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct PathEvent {
     pub path: PathBuf,
     pub kind: Option<PathEventKind>,
@@ -974,6 +974,7 @@ impl FakeFs {
                 events_paused: false,
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
+                moves: Default::default(),
             }),
         });
 
@@ -1721,7 +1722,7 @@ impl Fs for FakeFs {
         Ok(Box::new(io::Cursor::new(bytes)))
     }
 
-    async fn open_handle(&self, path: &Path) -> Result<Box<dyn FileHandle>> {
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
         self.simulate_random_delay().await;
         let state = self.state.lock();
         let entry = state.read_path(&path)?;
@@ -1731,7 +1732,7 @@ impl Fs for FakeFs {
             FakeFsEntry::Dir { inode, .. } => inode,
             _ => unreachable!(),
         };
-        Ok(Box::new(FakeHandle { inode }))
+        Ok(Arc::new(FakeHandle { inode }))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
