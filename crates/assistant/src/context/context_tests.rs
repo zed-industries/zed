@@ -574,7 +574,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     );
 
     #[track_caller]
-    fn assert_text_and_context_ranges<'a>(
+    fn assert_text_and_context_ranges(
         buffer: &Model<Buffer>,
         ranges: &RefCell<ContextRanges>,
         expected_marked_text: &str,

@@ -23,7 +23,7 @@ use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use assistant_tool::ToolRegistry;
 use client::{proto, zed_urls, Client, Status};
-use collections::{BTreeSet, HashMap, HashSet};
+use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
     actions::{FoldAt, MoveToEndOfLine, Newline, ShowCompletions, UnfoldAt},
     display_map::{
@@ -2138,9 +2138,9 @@ impl ContextEditor {
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
                         cx,
                     );
-                } else if self.invoked_slash_command_creases.contains_key(&command_id) {
-                    cx.notify();
-                } else {
+                } else if let hash_map::Entry::Vacant(entry) =
+                    self.invoked_slash_command_creases.entry(command_id)
+                {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
                     let (&excerpt_id, _buffer_id, _buffer_snapshot) =
                         buffer.as_singleton().unwrap();
@@ -2162,11 +2162,10 @@ impl ContextEditor {
                         )],
                         cx,
                     );
-
                     editor.fold_ranges([(crease_start..crease_end, fold_placeholder)], false, cx);
-
-                    self.invoked_slash_command_creases
-                        .insert(command_id, crease_ids[0]);
+                    entry.insert(crease_ids[0]);
+                } else {
+                    cx.notify()
                 }
             } else {
                 editor.remove_creases(
