@@ -293,11 +293,7 @@ message Envelope {
         GetPanicFiles get_panic_files = 280;
         GetPanicFilesResponse get_panic_files_response = 281;
 
-        CancelLanguageServerWork cancel_language_server_work = 282;
-
-        SyncExtensions sync_extensions = 283;
-        SyncExtensionsResponse sync_extensions_response = 284;
-        InstallExtension install_extension = 285; // current max
+        CancelLanguageServerWork cancel_language_server_work = 282; // current max
     }
 
     reserved 87 to 88;
@@ -2514,23 +2510,4 @@ message CancelLanguageServerWork {
         uint64 language_server_id = 1;
         optional string token = 2;
     }
-}
-
-message Extension {
-    string id = 1;
-    string version = 2;
-}
-
-message SyncExtensions {
-    repeated Extension extensions = 1;
-}
-
-message SyncExtensionsResponse {
-    string tmp_dir = 1;
-    repeated Extension missing_extensions = 2;
-}
-
-message InstallExtension {
-    Extension extension = 1;
-    string tmp_dir = 2;
 }

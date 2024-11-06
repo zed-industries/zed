@@ -1,14 +1,8 @@
-use anyhow::{anyhow, Context, Result};
-use extension_host::{
-    extension_lsp_adapter::ExtensionLspAdapter, ExtensionRegistrationHooks, ExtensionVersion,
-    HeadlessExtensionStore,
-};
+use anyhow::{anyhow, Result};
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, Context as _, Model, ModelContext, PromptLevel};
 use http_client::HttpClient;
-use language::{
-    proto::serialize_operation, Buffer, BufferEvent, LanguageName, LanguageRegistry, LoadedLanguage,
-};
+use language::{proto::serialize_operation, Buffer, BufferEvent, LanguageRegistry};
 use node_runtime::NodeRuntime;
 use project::{
     buffer_store::{BufferStore, BufferStoreEvent},
@@ -43,7 +37,6 @@ pub struct HeadlessProject {
     pub settings_observer: Model<SettingsObserver>,
     pub next_entry_id: Arc<AtomicUsize>,
     pub languages: Arc<LanguageRegistry>,
-    pub extensions: Model<HeadlessExtensionStore>,
 }
 
 pub struct HeadlessAppState {
@@ -52,66 +45,6 @@ pub struct HeadlessAppState {
     pub http_client: Arc<dyn HttpClient>,
     pub node_runtime: NodeRuntime,
     pub languages: Arc<LanguageRegistry>,
-}
-
-struct HeadlessExtensionsApi {
-    language_registry: Arc<LanguageRegistry>,
-}
-
-impl HeadlessExtensionsApi {
-    fn new(language_registry: Arc<LanguageRegistry>) -> Self {
-        Self { language_registry }
-    }
-}
-
-impl ExtensionRegistrationHooks for HeadlessExtensionsApi {
-    fn register_language(
-        &self,
-        language: LanguageName,
-        _grammar: Option<Arc<str>>,
-        matcher: language::LanguageMatcher,
-        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
-    ) {
-        log::info!("registering language: {:?}", language);
-        self.language_registry
-            .register_language(language, None, matcher, load)
-    }
-    fn register_lsp_adapter(&self, language: LanguageName, adapter: ExtensionLspAdapter) {
-        log::info!("registering lsp adapter {:?}", language);
-        self.language_registry
-            .register_lsp_adapter(language, Arc::new(adapter) as _);
-    }
-
-    fn register_wasm_grammars(&self, grammars: Vec<(Arc<str>, PathBuf)>) {
-        self.language_registry.register_wasm_grammars(grammars)
-    }
-
-    fn remove_lsp_adapter(
-        &self,
-        language: &LanguageName,
-        server_name: &language::LanguageServerName,
-    ) {
-        self.language_registry
-            .remove_lsp_adapter(language, server_name)
-    }
-
-    fn remove_languages(
-        &self,
-        languages_to_remove: &[LanguageName],
-        _grammars_to_remove: &[Arc<str>],
-    ) {
-        self.language_registry
-            .remove_languages(languages_to_remove, &[])
-    }
-
-    fn update_lsp_status(
-        &self,
-        server_name: language::LanguageServerName,
-        status: language::LanguageServerBinaryStatus,
-    ) {
-        self.language_registry
-            .update_lsp_status(server_name, status)
-    }
 }
 
 impl HeadlessProject {
@@ -212,15 +145,6 @@ impl HeadlessProject {
         )
         .detach();
 
-        let extensions = extension_host::HeadlessExtensionStore::new(
-            fs.clone(),
-            http_client.clone(),
-            Arc::new(HeadlessExtensionsApi::new(languages.clone())),
-            paths::remote_extensions_dir().to_path_buf(),
-            node_runtime,
-            cx,
-        );
-
         let client: AnyProtoClient = session.clone().into();
 
         session.subscribe_to_entity(SSH_PROJECT_ID, &worktree_store);
@@ -247,12 +171,6 @@ impl HeadlessProject {
         client.add_model_request_handler(BufferStore::handle_update_buffer);
         client.add_model_message_handler(BufferStore::handle_close_buffer);
 
-        client.add_request_handler(extensions.clone().downgrade(), Self::handle_sync_extensions);
-        client.add_request_handler(
-            extensions.clone().downgrade(),
-            Self::handle_install_extension,
-        );
-
         BufferStore::init(&client);
         WorktreeStore::init(&client);
         SettingsObserver::init(&client);
@@ -270,7 +188,6 @@ impl HeadlessProject {
             task_store,
             next_entry_id: Default::default(),
             languages,
-            extensions,
         }
     }
 
@@ -656,66 +573,6 @@ impl HeadlessProject {
         _cx: AsyncAppContext,
     ) -> Result<proto::Ack> {
         log::debug!("Received ping from client");
-        Ok(proto::Ack {})
-    }
-
-    pub async fn handle_sync_extensions(
-        extension_store: Model<HeadlessExtensionStore>,
-        envelope: TypedEnvelope<proto::SyncExtensions>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::SyncExtensionsResponse> {
-        let requested_extensions =
-            envelope
-                .payload
-                .extensions
-                .into_iter()
-                .map(|p| ExtensionVersion {
-                    id: p.id,
-                    version: p.version,
-                });
-        let missing_extensions = extension_store
-            .update(&mut cx, |extension_store, cx| {
-                extension_store.sync_extensions(requested_extensions.collect(), cx)
-            })?
-            .await?;
-
-        Ok(proto::SyncExtensionsResponse {
-            missing_extensions: missing_extensions
-                .into_iter()
-                .map(|e| proto::Extension {
-                    id: e.id,
-                    version: e.version,
-                })
-                .collect(),
-            tmp_dir: paths::remote_extensions_uploads_dir()
-                .to_string_lossy()
-                .to_string(),
-        })
-    }
-
-    pub async fn handle_install_extension(
-        extensions: Model<HeadlessExtensionStore>,
-        envelope: TypedEnvelope<proto::InstallExtension>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::Ack> {
-        let extension = envelope
-            .payload
-            .extension
-            .with_context(|| anyhow!("Invalid InstallExtension request"))?;
-
-        extensions
-            .update(&mut cx, |extensions, cx| {
-                extensions.install_extension(
-                    ExtensionVersion {
-                        id: extension.id,
-                        version: extension.version,
-                    },
-                    PathBuf::from(envelope.payload.tmp_dir),
-                    cx,
-                )
-            })?
-            .await?;
-
         Ok(proto::Ack {})
     }
 }

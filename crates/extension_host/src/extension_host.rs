@@ -7,10 +7,10 @@ use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use client::{telemetry::Telemetry, Client, ExtensionMetadata, GetExtensionsResponse};
-use collections::{btree_map, BTreeMap, HashMap, HashSet};
+use collections::{btree_map, BTreeMap, HashSet};
 use extension::extension_builder::{CompileExtensionOptions, ExtensionBuilder};
 pub use extension::ExtensionManifest;
-use fs::{Fs, RemoveOptions, RenameOptions};
+use fs::{Fs, RemoveOptions};
 use futures::{
     channel::{
         mpsc::{unbounded, UnboundedSender},
@@ -25,13 +25,12 @@ use gpui::{
 };
 use http_client::{AsyncBody, HttpClient, HttpClientWithUrl};
 use language::{
-    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LanguageServerName,
-    LoadedLanguage, QUERY_FILENAME_PREFIXES,
+    LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
+    QUERY_FILENAME_PREFIXES,
 };
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
-use remote::SshRemoteClient;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use settings::Settings;
@@ -166,245 +165,6 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     }
 }
 
-pub struct HeadlessExtensionStore {
-    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
-    pub fs: Arc<dyn Fs>,
-    pub extension_dir: PathBuf,
-    pub wasm_host: Arc<WasmHost>,
-    pub loaded_extensions: HashMap<Arc<str>, Arc<str>>,
-    pub loaded_languages: HashMap<Arc<str>, Vec<LanguageName>>,
-    pub loaded_language_servers: HashMap<Arc<str>, Vec<(LanguageServerName, LanguageName)>>,
-}
-
-#[derive(Clone, Debug)]
-pub struct ExtensionVersion {
-    pub id: String,
-    pub version: String,
-}
-
-impl HeadlessExtensionStore {
-    pub fn new(
-        fs: Arc<dyn Fs>,
-        http_client: Arc<dyn HttpClient>,
-        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
-        extension_dir: PathBuf,
-        node_runtime: NodeRuntime,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
-        cx.new_model(|cx| Self {
-            registration_hooks: registration_hooks.clone(),
-            fs: fs.clone(),
-            wasm_host: WasmHost::new(
-                fs.clone(),
-                http_client.clone(),
-                node_runtime,
-                registration_hooks,
-                extension_dir.join("work"),
-                cx,
-            ),
-            extension_dir,
-            loaded_extensions: Default::default(),
-            loaded_languages: Default::default(),
-            loaded_language_servers: Default::default(),
-        })
-    }
-
-    pub fn sync_extensions(
-        &mut self,
-        extensions: Vec<ExtensionVersion>,
-        cx: &ModelContext<Self>,
-    ) -> Task<Result<Vec<ExtensionVersion>>> {
-        let on_client = HashSet::from_iter(extensions.iter().map(|e| e.id.as_str()));
-        let to_remove: Vec<Arc<str>> = self
-            .loaded_extensions
-            .keys()
-            .filter(|id| !on_client.contains(id.as_ref()))
-            .cloned()
-            .collect();
-        let to_load: Vec<ExtensionVersion> = extensions
-            .into_iter()
-            .filter(|e| {
-                !self
-                    .loaded_extensions
-                    .get(e.id.as_str())
-                    .is_some_and(|loaded| loaded.as_ref() == e.version.as_str())
-            })
-            .collect();
-
-        cx.spawn(|this, mut cx| async move {
-            let mut missing = Vec::new();
-
-            for extension_id in to_remove {
-                log::info!("removing extension: {}", extension_id);
-                this.update(&mut cx, |this, cx| {
-                    this.uninstall_extension(&extension_id, cx)
-                })?
-                .await?;
-            }
-
-            for extension in to_load {
-                if let Err(e) = Self::load_extension(this.clone(), extension.clone(), &mut cx).await
-                {
-                    log::info!("failed to load extension: {}, {:?}", extension.id, e);
-                    missing.push(extension)
-                }
-            }
-
-            Ok(missing)
-        })
-    }
-
-    pub async fn load_extension(
-        this: WeakModel<Self>,
-        extension: ExtensionVersion,
-        cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        let (fs, wasm_host, extension_dir) = this.update(cx, |this, _cx| {
-            this.loaded_extensions.insert(
-                extension.id.clone().into(),
-                extension.version.clone().into(),
-            );
-            (
-                this.fs.clone(),
-                this.wasm_host.clone(),
-                this.extension_dir.join(&extension.id),
-            )
-        })?;
-
-        let manifest = Arc::new(ExtensionManifest::load(fs.clone(), &extension_dir).await?);
-
-        debug_assert!(!manifest.languages.is_empty() || !manifest.language_servers.is_empty());
-
-        if manifest.version.as_ref() != extension.version.as_str() {
-            anyhow::bail!(
-                "mismatched versions: ({}) != ({})",
-                manifest.version,
-                extension.version
-            )
-        }
-
-        for language_path in &manifest.languages {
-            let language_path = extension_dir.join(language_path);
-            let config = fs.load(&language_path.join("config.toml")).await?;
-            let mut config = ::toml::from_str::<LanguageConfig>(&config)?;
-
-            this.update(cx, |this, _cx| {
-                this.loaded_languages
-                    .entry(manifest.id.clone())
-                    .or_default()
-                    .push(config.name.clone());
-
-                config.grammar = None;
-
-                this.registration_hooks.register_language(
-                    config.name.clone(),
-                    None,
-                    config.matcher.clone(),
-                    Arc::new(move || {
-                        Ok(LoadedLanguage {
-                            config: config.clone(),
-                            queries: LanguageQueries::default(),
-                            context_provider: None,
-                            toolchain_provider: None,
-                        })
-                    }),
-                );
-            })?;
-        }
-
-        if manifest.language_servers.is_empty() {
-            return Ok(());
-        }
-
-        let wasm_extension =
-            WasmExtension::load(extension_dir, &manifest, wasm_host.clone(), &cx).await?;
-
-        for (language_server_name, language_server_config) in &manifest.language_servers {
-            for language in language_server_config.languages() {
-                this.update(cx, |this, _cx| {
-                    this.loaded_language_servers
-                        .entry(manifest.id.clone())
-                        .or_default()
-                        .push((language_server_name.clone(), language.clone()));
-                    this.registration_hooks.register_lsp_adapter(
-                        language.clone(),
-                        ExtensionLspAdapter {
-                            extension: wasm_extension.clone(),
-                            host: wasm_host.clone(),
-                            language_server_id: language_server_name.clone(),
-                            config: wit::LanguageServerConfig {
-                                name: language_server_name.0.to_string(),
-                                language_name: language.to_string(),
-                            },
-                        },
-                    );
-                })?;
-            }
-        }
-
-        Ok(())
-    }
-
-    fn uninstall_extension(
-        &mut self,
-        extension_id: &Arc<str>,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        self.loaded_extensions.remove(extension_id);
-        let languages_to_remove = self
-            .loaded_languages
-            .remove(extension_id)
-            .unwrap_or_default();
-        self.registration_hooks
-            .remove_languages(&languages_to_remove, &[]);
-        for (language_server_name, language) in self
-            .loaded_language_servers
-            .remove(extension_id)
-            .unwrap_or_default()
-        {
-            self.registration_hooks
-                .remove_lsp_adapter(&language, &language_server_name);
-        }
-
-        let path = self.extension_dir.join(&extension_id.to_string());
-        let fs = self.fs.clone();
-        cx.spawn(|_, _| async move {
-            fs.remove_dir(
-                &path,
-                RemoveOptions {
-                    recursive: true,
-                    ignore_if_not_exists: true,
-                },
-            )
-            .await
-        })
-    }
-
-    pub fn install_extension(
-        &mut self,
-        extension: ExtensionVersion,
-        tmp_path: PathBuf,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
-        let path = self.extension_dir.join(&extension.id);
-        let fs = self.fs.clone();
-
-        cx.spawn(|this, mut cx| async move {
-            if fs.is_dir(&path).await {
-                this.update(&mut cx, |this, cx| {
-                    this.uninstall_extension(&extension.id.clone().into(), cx)
-                })?
-                .await?;
-            }
-
-            fs.rename(&tmp_path, &path, RenameOptions::default())
-                .await?;
-
-            Self::load_extension(this, extension, &mut cx).await
-        })
-    }
-}
-
 pub struct ExtensionStore {
     pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     pub builder: Arc<ExtensionBuilder>,
@@ -421,9 +181,6 @@ pub struct ExtensionStore {
     pub wasm_host: Arc<WasmHost>,
     pub wasm_extensions: Vec<(Arc<ExtensionManifest>, WasmExtension)>,
     pub tasks: Vec<Task<()>>,
-
-    pub ssh_clients: HashMap<String, WeakModel<SshRemoteClient>>,
-    pub ssh_registered_tx: UnboundedSender<()>,
 }
 
 #[derive(Clone, Copy)]
@@ -535,7 +292,6 @@ impl ExtensionStore {
         let index_path = extensions_dir.join("index.json");
 
         let (reload_tx, mut reload_rx) = unbounded();
-        let (connection_registered_tx, mut connection_registered_rx) = unbounded();
         let mut this = Self {
             registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
@@ -559,9 +315,6 @@ impl ExtensionStore {
             telemetry,
             reload_tx,
             tasks: Vec::new(),
-
-            ssh_clients: Default::default(),
-            ssh_registered_tx: connection_registered_tx,
         };
 
         // The extensions store maintains an index file, which contains a complete
@@ -636,15 +389,6 @@ impl ExtensionStore {
                                     .await;
                                 index_changed = false;
                             }
-
-                            dbg!("starting");
-                            dbg!(Self::update_ssh_clients(&this, &mut cx).await)?;
-                        }
-                        _ = connection_registered_rx.next() => {
-                            debounce_timer = cx
-                                .background_executor()
-                                .timer(RELOAD_DEBOUNCE_DURATION)
-                                .fuse();
                         }
                         extension_id = reload_rx.next() => {
                             let Some(extension_id) = extension_id else { break; };
@@ -1292,10 +1036,6 @@ impl ExtensionStore {
         }
 
         if extensions_to_load.is_empty() && extensions_to_unload.is_empty() {
-            // if is_init {
-            //     maintain_ssh_connection()
-            // }
-            // Ping the ssh connection
             return Task::ready(());
         }
 
@@ -1691,97 +1431,6 @@ impl ExtensionStore {
         );
 
         Ok(())
-    }
-
-    async fn sync_extensions_over_ssh(
-        this: &WeakModel<Self>,
-        client: WeakModel<SshRemoteClient>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        let extensions = this.update(cx, |this, _cx| {
-            this.extension_index
-                .extensions
-                .iter()
-                .filter_map(|(id, entry)| {
-                    if entry.manifest.language_servers.is_empty() {
-                        return None;
-                    }
-                    if entry.dev {
-                        return None;
-                    }
-                    Some(proto::Extension {
-                        id: id.to_string(),
-                        version: entry.manifest.version.to_string(),
-                    })
-                })
-                .collect()
-        })?;
-
-        let response = client
-            .update(cx, |client, _cx| {
-                client
-                    .proto_client()
-                    .request(proto::SyncExtensions { extensions })
-            })?
-            .await?;
-
-        for missing_extension in response.missing_extensions.into_iter() {
-            let src_dir = this.update(cx, |this, _cx| {
-                this.extensions_dir().join(missing_extension.clone().id)
-            })?;
-            let dest_dir = PathBuf::from(&response.tmp_dir).join(missing_extension.clone().id);
-            log::info!("Uploading extension {}", missing_extension.clone().id);
-
-            client
-                .update(cx, |client, cx| {
-                    client.upload_directory(src_dir, dest_dir.clone(), cx)
-                })?
-                .await?;
-
-            client
-                .update(cx, |client, _cx| {
-                    client.proto_client().request(proto::InstallExtension {
-                        tmp_dir: dest_dir.to_string_lossy().to_string(),
-                        extension: Some(missing_extension),
-                    })
-                })?
-                .await?;
-        }
-
-        anyhow::Ok(())
-    }
-
-    pub async fn update_ssh_clients(
-        this: &WeakModel<Self>,
-        cx: &mut AsyncAppContext,
-    ) -> Result<()> {
-        let clients = this.update(cx, |this, _cx| {
-            this.ssh_clients.retain(|_k, v| v.upgrade().is_some());
-            this.ssh_clients.values().cloned().collect::<Vec<_>>()
-        })?;
-
-        for client in clients {
-            Self::sync_extensions_over_ssh(&this, client, cx)
-                .await
-                .log_err();
-        }
-
-        anyhow::Ok(())
-    }
-
-    pub fn register_ssh_client(
-        &mut self,
-        client: Model<SshRemoteClient>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let connection_options = client.read(cx).connection_options();
-        if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
-            return;
-        }
-
-        self.ssh_clients
-            .insert(connection_options.ssh_url(), client.downgrade());
-        self.ssh_registered_tx.unbounded_send(()).ok();
     }
 }
 

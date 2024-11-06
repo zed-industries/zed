@@ -1294,24 +1294,6 @@ impl RemoteConnection for SshRemoteConnection {
         })
     }
 
-    async fn get_remote_binary_path(
-        &self,
-        delegate: &Arc<dyn SshClientDelegate>,
-        reconnect: bool,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        let platform = self.platform;
-        let remote_binary_path = delegate.remote_server_binary_path(platform, cx)?;
-        if !reconnect {
-            self.ensure_server_binary(&delegate, &remote_binary_path, platform, cx)
-                .await?;
-        }
-
-        let socket = self.socket.clone();
-        run_cmd(socket.ssh_command(&remote_binary_path.to_string_lossy(), &["version"])).await?;
-        Ok(remote_binary_path)
-    }
-
     fn start_proxy(
         &self,
         unique_identifier: String,
