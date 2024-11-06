@@ -78,6 +78,7 @@ pub struct ProjectPanel {
     // Currently selected leaf entry (see auto-folding for a definition of that) in a file tree
     selection: Option<SelectedEntry>,
     marked_entries: BTreeSet<SelectedEntry>,
+    previous_focus: Option<SelectedEntry>,
     context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
     edit_state: Option<EditState>,
     filename_editor: View<Editor>,
@@ -337,6 +338,7 @@ impl ProjectPanel {
                     .parent_view(cx.view()),
                 max_width_item_index: None,
                 scroll_handle,
+                previous_focus: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -882,6 +884,7 @@ impl ProjectPanel {
             let new_entry = edit_task.await;
             project_panel.update(&mut cx, |project_panel, cx| {
                 project_panel.edit_state = None;
+                project_panel.previous_focus = None;
                 cx.notify();
             })?;
 
@@ -948,6 +951,10 @@ impl ProjectPanel {
         self.edit_state = None;
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
+        if let Some(previous_focus) = self.previous_focus.take() {
+            self.selection = Some(previous_focus);
+            self.autoscroll(cx);
+        }
         cx.focus(&self.focus_handle);
         cx.notify();
     }
@@ -986,6 +993,7 @@ impl ProjectPanel {
             entry_id,
         }) = self.selection
         {
+            self.previous_focus = self.selection;
             let directory_id;
             let new_entry_id = self.resolve_entry(entry_id);
             if let Some((worktree, expanded_dir_ids)) = self
