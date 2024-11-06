@@ -118,9 +118,35 @@ impl Model {
             Self::Claude3Opus => "Claude 3 Opus",
             Self::Claude3Sonnet => "Claude 3 Sonnet",
             Self::Claude3_5Haiku => "Claude 3.5 Haiku",
-            Self::Custom {
-                name, display_name, ..
-            } => display_name.as_ref().unwrap_or(name),
+            Self::AI21J2GrandeInstruct => "AI21 Jurassic2 Grande Instruct",
+            Self::AI21J2JumboInstruct => "AI21 Jurassic2 Jumbo Instruct",
+            Self::AI21J2Mid => "AI21 Jurassic2 Mid",
+            Self::AI21J2MidV1 => "AI21 Jurassic2 Mid V1",
+            Self::AI21J2Ultra => "AI21 Jurassic2 Ultra",
+            Self::AI21J2UltraV1_8k => "AI21 Jurassic2 Ultra V1 8K",
+            Self::AI21J2UltraV1 => "AI21 Jurassic2 Ultra V1",
+            Self::AI21JambaInstructV1 => "AI21 Jamba Instruct",
+            Self::AI21Jamba15LargeV1 => "AI21 Jamba 1.5 Large",
+            Self::AI21Jamba15MiniV1 => "AI21 Jamba 1.5 Mini",
+            Self::CohereCommandTextV14_4k => "Cohere Command Text V14 4K",
+            Self::CohereCommandRV1 => "Cohere Command R V1",
+            Self::CohereCommandRPlusV1 => "Cohere Command R Plus V1",
+            Self::CohereCommandLightTextV14_4k => "Cohere Command Light Text V14 4K",
+            Self::MetaLlama38BInstructV1 => "Meta Llama 3 8B Instruct V1",
+            Self::MetaLlama370BInstructV1 => "Meta Llama 3 70B Instruct V1",
+            Self::MetaLlama318BInstructV1_128k => "Meta Llama 3 1.8B Instruct V1 128K",
+            Self::MetaLlama318BInstructV1 => "Meta Llama 3 1.8B Instruct V1",
+            Self::MetaLlama3170BInstructV1_128k => "Meta Llama 3 1 70B Instruct V1 128K",
+            Self::MetaLlama3170BInstructV1 => "Meta Llama 3 1 70B Instruct V1",
+            Self::MetaLlama3211BInstructV1 => "Meta Llama 3 2 11B Instruct V1",
+            Self::MetaLlama3290BInstructV1 => "Meta Llama 3 2 90B Instruct V1",
+            Self::MetaLlama321BInstructV1 => "Meta Llama 3 2 1B Instruct V1",
+            Self::MetaLlama323BInstructV1 => "Meta Llama 3 2 3B Instruct V1",
+            Self::MistralMistral7BInstructV0 => "Mistral 7B Instruct V0",
+            Self::MistralMixtral8x7BInstructV0 => "Mistral Mixtral 8x7B Instruct V0",
+            Self::MistralMistralLarge2402V1 => "Mistral Large 2402 V1",
+            Self::MistralMistralSmall2402V1 => "Mistral Small 2402 V1",
+            Self::Custom { display_name, name, .. } => display_name.as_deref().unwrap_or(name),
         }
     }
 
@@ -131,6 +157,9 @@ impl Model {
             | Self::Claude3Sonnet
             | Self::Claude3_5Haiku => 200_000,
             Self::Custom { max_tokens, .. } => *max_tokens,
+            _ => {
+                200_000
+            }
         }
     }
 
@@ -141,6 +170,9 @@ impl Model {
             Self::Custom {
                 max_output_tokens, ..
             } => max_output_tokens.unwrap_or(4_096),
+            _ => {
+                4_096
+            }
         }
     }
 
@@ -154,42 +186,9 @@ impl Model {
                 default_temperature,
                 ..
             } => default_temperature.unwrap_or(1.0),
+            _ => {
+                1.0
+            }
         }
     }
 }
-
-/**
-"ai21.j2-grande-instruct"
-"ai21.j2-jumbo-instruct"
-"ai21.j2-mid"
-"ai21.j2-mid-v1"
-"ai21.j2-ultra"
-"ai21.j2-ultra-v1:0:8k"
-"ai21.j2-ultra-v1"
-"ai21.jamba-instruct-v1:0"
-"ai21.jamba-1-5-large-v1:0"
-"ai21.jamba-1-5-mini-v1:0"
-"anthropic.claude-3-sonnet-20240229-v1:0"
-"anthropic.claude-3-haiku-20240307-v1:0"
-"anthropic.claude-3-opus-20240229-v1:0"
-"anthropic.claude-3-5-sonnet-20241022-v2:0"
-"anthropic.claude-3-5-haiku-20241022-v1:0"
-"cohere.command-text-v14:7:4k"
-"cohere.command-r-v1:0"
-"cohere.command-r-plus-v1:0"
-"cohere.command-light-text-v14:7:4k"
-"meta.llama3-8b-instruct-v1:0"
-"meta.llama3-70b-instruct-v1:0"
-"meta.llama3-1-8b-instruct-v1:0:128k"
-"meta.llama3-1-8b-instruct-v1:0"
-"meta.llama3-1-70b-instruct-v1:0:128k"
-"meta.llama3-1-70b-instruct-v1:0"
-"meta.llama3-2-11b-instruct-v1:0"
-"meta.llama3-2-90b-instruct-v1:0"
-"meta.llama3-2-1b-instruct-v1:0"
-"meta.llama3-2-3b-instruct-v1:0"
-"mistral.mistral-7b-instruct-v0:2"
-"mistral.mixtral-8x7b-instruct-v0:1"
-"mistral.mistral-large-2402-v1:0"
-"mistral.mistral-small-2402-v1:0"
-**/
