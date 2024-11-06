@@ -1089,10 +1089,10 @@ impl LocalWorktree {
                             if let Some(new_path) = new_path {
                                 this.snapshot.git_repositories = Default::default();
                                 this.snapshot.ignores_by_parent_abs_path = Default::default();
-                                this.snapshot.root_name = new_path
+                                let root_name = new_path
                                     .file_name()
                                     .map_or(String::new(), |f| f.to_string_lossy().to_string());
-                                this.snapshot.abs_path = new_path;
+                                this.snapshot.update_abs_path(new_path, root_name);
                             }
                             this.restart_background_scanners(cx);
                         }
@@ -2093,11 +2093,23 @@ impl Snapshot {
             .and_then(|entry| entry.git_status)
     }
 
+    fn update_abs_path(&mut self, abs_path: Arc<Path>, root_name: String) {
+        self.abs_path = abs_path;
+        if root_name != self.root_name {
+            self.root_char_bag = root_name.chars().map(|c| c.to_ascii_lowercase()).collect();
+            self.root_name = root_name;
+        }
+    }
+
     pub(crate) fn apply_remote_update(&mut self, mut update: proto::UpdateWorktree) -> Result<()> {
         log::trace!(
             "applying remote worktree update. {} entries updated, {} removed",
             update.updated_entries.len(),
             update.removed_entries.len()
+        );
+        self.update_abs_path(
+            Arc::from(PathBuf::from(update.abs_path).as_path()),
+            update.root_name,
         );
 
         let mut entries_by_path_edits = Vec::new();
@@ -3757,11 +3769,19 @@ impl BackgroundScanner {
                     .lock()
                     .snapshot
                     .root_file_descriptor
-                    .current_path()
+                    .current_path(&self.fs)
                     .log_err()
                     .filter(|new_path| **new_path != *root_path);
 
-                log::error!("failed to canonicalize root path: {}", err);
+                if let Some(new_path) = new_path.as_ref() {
+                    log::info!(
+                        "root renamed from {} to {}",
+                        root_path.display(),
+                        new_path.display()
+                    )
+                } else {
+                    log::warn!("root path could not be canonicalized: {}", err);
+                }
                 self.status_updates_tx
                     .unbounded_send(ScanState::RootUpdated {
                         new_path: new_path.map(|p| p.into()),

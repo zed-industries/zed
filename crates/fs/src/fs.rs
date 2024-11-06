@@ -9,8 +9,11 @@ use git::GitHostingProviderRegistry;
 
 #[cfg(target_os = "linux")]
 use ashpd::desktop::trash;
+#[cfg(target_os = "linux")]
 use std::fs::File;
+#[cfg(unix)]
 use std::os::fd::AsFd;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 
 #[cfg(unix)]
@@ -190,34 +193,39 @@ pub struct RealFs {
 }
 
 pub trait FileHandle: Send + Sync + std::fmt::Debug {
-    fn current_path(&self) -> Result<PathBuf>;
+    fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf>;
 }
 
 impl FileHandle for std::fs::File {
     #[cfg(target_os = "macos")]
-    fn current_path(&self) -> Result<PathBuf> {
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        use std::{
+            ffi::{CStr, OsStr},
+            os::unix::ffi::OsStrExt,
+        };
+
         let fd = self.as_fd();
-        let mut path_buf: [c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
+        let mut path_buf: [libc::c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
         if result == -1 {
             anyhow::bail!("fcntl returned -1".to_string());
         }
 
-        let c_str = unsafe { std::ffi::CStr::from_ptr(path_buf.as_ptr()) };
-        let path = PathBuf::from(std::ffi::OsStr::from_bytes(c_str.to_bytes()));
+        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr()) };
+        let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
     }
 
     #[cfg(target_os = "linux")]
-    fn current_path(&self) -> Result<PathBuf> {
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
         let fd = self.as_fd();
         let fd_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
         Ok(std::fs::read_link(fd_path)?)
     }
 
     #[cfg(target_os = "windows")]
-    fn current_path(&self) -> Result<PathBuf> {
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
         anyhow::bail!("unimplemented")
     }
 }
@@ -794,6 +802,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    moves: std::collections::HashMap<u64, PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -1403,12 +1412,22 @@ impl Watcher for FakeWatcher {
 
 #[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
-struct FakeHandle;
+struct FakeHandle {
+    inode: u64,
+}
 
 #[cfg(any(test, feature = "test-support"))]
 impl FileHandle for FakeHandle {
-    fn current_path(&self) -> Result<PathBuf> {
-        anyhow::bail!("current_path on FakeHandle not implemented")
+    fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
+        let state = fs.as_fake().state.lock();
+        let Some(target) = state.moves.get(&self.inode).clone() else {
+            anyhow::bail!("fake fd not moved")
+        };
+
+        if state.try_read_path(&target, false).is_some() {
+            return Ok(target.clone());
+        }
+        anyhow::bail!("fake fd target not found")
     }
 }
 
@@ -1549,6 +1568,14 @@ impl Fs for FakeFs {
                 Err(anyhow!("path does not exist: {}", &old_path.display()))
             }
         })?;
+
+        let inode = match *moved_entry.lock() {
+            FakeFsEntry::File { inode, .. } => inode,
+            FakeFsEntry::Dir { inode, .. } => inode,
+            _ => 0,
+        };
+
+        state.moves.insert(inode, new_path.clone());
 
         state.write_path(&new_path, |e| {
             match e {
@@ -1699,7 +1726,12 @@ impl Fs for FakeFs {
         let state = self.state.lock();
         let entry = state.read_path(&path)?;
         let entry = entry.lock();
-        Ok(Box::new(FakeHandle))
+        let inode = match *entry {
+            FakeFsEntry::File { inode, .. } => inode,
+            FakeFsEntry::Dir { inode, .. } => inode,
+            _ => unreachable!(),
+        };
+        Ok(Box::new(FakeHandle { inode }))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
