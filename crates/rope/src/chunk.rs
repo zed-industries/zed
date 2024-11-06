@@ -674,14 +674,13 @@ mod tests {
         let mut offset_utf16 = OffsetUtf16(0);
         let mut point = Point::zero();
         let mut point_utf16 = PointUtf16::zero();
-        let mut char_offset = 0;
 
         log::info!("Verifying chunk {:?}", text);
         assert_eq!(chunk.offset_to_point(0), Point::zero());
 
         let mut expected_tab_positions = Vec::new();
 
-        for c in text.chars() {
+        for (char_offset, c) in text.chars().enumerate() {
             let expected_point = chunk.offset_to_point(offset);
             assert_eq!(point, expected_point, "mismatch at offset {}", offset);
             assert_eq!(
@@ -806,7 +805,6 @@ mod tests {
                 });
             }
 
-            char_offset += 1;
             offset += c.len_utf8();
             offset_utf16.0 += c.len_utf16();
         }
