@@ -442,49 +442,45 @@ impl AssistantPanel {
                             .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
                     );
                 let _pane = cx.view().clone();
-                let right_children =
-                    h_flex()
-                        .gap(Spacing::XSmall.rems(cx))
-                        .child(
-                            IconButton::new("new-context", IconName::Plus)
-                                .on_click(cx.listener(|_, _, cx| {
+                let right_children = h_flex()
+                    .gap(Spacing::XSmall.rems(cx))
+                    .child(
+                        IconButton::new("new-chat", IconName::Plus)
+                            .on_click(
+                                cx.listener(|_, _, cx| {
                                     cx.dispatch_action(NewContext.boxed_clone())
+                                }),
+                            )
+                            .tooltip(move |cx| {
+                                Tooltip::for_action_in("New Chat", &NewContext, &focus_handle, cx)
+                            }),
+                    )
+                    .child(
+                        PopoverMenu::new("assistant-panel-popover-menu")
+                            .trigger(
+                                IconButton::new("menu", IconName::EllipsisVertical)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip(|cx| Tooltip::text("Toggle Assistant Menu", cx)),
+                            )
+                            .menu(move |cx| {
+                                let zoom_label = if _pane.read(cx).is_zoomed() {
+                                    "Zoom Out"
+                                } else {
+                                    "Zoom In"
+                                };
+                                let focus_handle = _pane.focus_handle(cx);
+                                Some(ContextMenu::build(cx, move |menu, _| {
+                                    menu.context(focus_handle.clone())
+                                        .action("New Chat", Box::new(NewContext))
+                                        .action("History", Box::new(DeployHistory))
+                                        .action("Prompt Library", Box::new(DeployPromptLibrary))
+                                        .action("Configure", Box::new(ShowConfiguration))
+                                        .action(zoom_label, Box::new(ToggleZoom))
                                 }))
-                                .tooltip(move |cx| {
-                                    Tooltip::for_action_in(
-                                        "New Context",
-                                        &NewContext,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }),
-                        )
-                        .child(
-                            PopoverMenu::new("assistant-panel-popover-menu")
-                                .trigger(
-                                    IconButton::new("menu", IconName::EllipsisVertical)
-                                        .icon_size(IconSize::Small)
-                                        .tooltip(|cx| Tooltip::text("Toggle Assistant Menu", cx)),
-                                )
-                                .menu(move |cx| {
-                                    let zoom_label = if _pane.read(cx).is_zoomed() {
-                                        "Zoom Out"
-                                    } else {
-                                        "Zoom In"
-                                    };
-                                    let focus_handle = _pane.focus_handle(cx);
-                                    Some(ContextMenu::build(cx, move |menu, _| {
-                                        menu.context(focus_handle.clone())
-                                            .action("New Context", Box::new(NewContext))
-                                            .action("History", Box::new(DeployHistory))
-                                            .action("Prompt Library", Box::new(DeployPromptLibrary))
-                                            .action("Configure", Box::new(ShowConfiguration))
-                                            .action(zoom_label, Box::new(ToggleZoom))
-                                    }))
-                                }),
-                        )
-                        .into_any_element()
-                        .into();
+                            }),
+                    )
+                    .into_any_element()
+                    .into();
 
                 (Some(left_children.into_any_element()), right_children)
             });
@@ -1499,7 +1495,7 @@ pub struct ContextEditor {
     dragged_file_worktrees: Vec<Model<Worktree>>,
 }
 
-const DEFAULT_TAB_TITLE: &str = "New Context";
+const DEFAULT_TAB_TITLE: &str = "New Chat";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl ContextEditor {
@@ -4778,7 +4774,7 @@ impl ConfigurationView {
                             h_flex().justify_end().child(
                                 Button::new(
                                     SharedString::from(format!("new-context-{provider_id}")),
-                                    "Open new context",
+                                    "Open New Chat",
                                 )
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::Plus)

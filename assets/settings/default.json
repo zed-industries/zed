@@ -485,7 +485,7 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new contexts.
+    // The default model to use when creating new chats.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
