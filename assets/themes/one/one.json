@@ -485,7 +485,7 @@
         "hidden": "#7e8086ff",
         "hidden.background": "#dcdcddff",
         "hidden.border": "#d3d3d4ff",
-        "hint": "#9294beff",
+        "hint": "#7274a7ff",
         "hint.background": "#e2e2faff",
         "hint.border": "#cbcdf6ff",
         "ignored": "#7e8086ff",
@@ -611,7 +611,7 @@
             "font_weight": null
           },
           "hint": {
-            "color": "#9294beff",
+            "color": "#7274a7ff",
             "font_style": null,
             "font_weight": 700
           },
