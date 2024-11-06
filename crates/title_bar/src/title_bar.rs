@@ -588,7 +588,7 @@ impl TitleBar {
                     ButtonLike::new("user-menu")
                         .child(
                             h_flex()
-                                .gap_0p5()
+                                .gap_1()
                                 .child(Avatar::new(user.avatar_uri.clone()))
                                 .child(
                                     Icon::new(IconName::ChevronDown)

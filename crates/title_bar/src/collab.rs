@@ -222,6 +222,7 @@ impl TitleBar {
                     Facepile::empty()
                         .child(
                             Avatar::new(user.avatar_uri.clone())
+                                .fallback_initials(user.github_login.clone().to_string())
                                 .grayscale(!is_present)
                                 .border_color(if is_speaking {
                                     cx.theme().status().info

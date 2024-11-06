@@ -4,8 +4,8 @@ use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
     prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, ElevationIndex, Facepile,
-    TintColor, Tooltip,
+    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, AvatarOld, ButtonLike, ElevationIndex,
+    Facepile, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -98,6 +98,7 @@ impl Item for ThemePreview {
 }
 
 const AVATAR_URL: &str = "https://avatars.githubusercontent.com/u/1714999?v=4";
+const PLAYER_HANDLES: [&str; 4] = ["iamnbutler", "Danilo Leal", "zed-fan-89", ""];
 
 impl ThemePreview {
     fn preview_bg(cx: &WindowContext) -> Hsla {
@@ -105,10 +106,84 @@ impl ThemePreview {
     }
 
     fn render_avatars(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let avatar_url = SharedString::from(AVATAR_URL);
+
         v_flex()
             .gap_1()
             .child(
-                Headline::new("Avatars")
+                Headline::new("Avatar")
+                    .size(HeadlineSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                v_flex().items_start().gap_4().child(
+                    h_flex()
+                        .items_start()
+                        .gap_3()
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Default").color(Color::Muted))
+                                .child(Avatar::new(avatar_url.clone()))
+                                .child(Label::new("Default, Grayscale").color(Color::Muted))
+                                .child(Avatar::new(avatar_url.clone()).grayscale(true)),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Anonymous").color(Color::Muted))
+                                .child(h_flex().gap_1().children(
+                                    (0..=5).map(|ix| Avatar::new_fallback().fallback_anonymous(ix)),
+                                ))
+                                .child(Label::new("Anonymous, Grayscale").color(Color::Muted))
+                                .child(h_flex().gap_1().children((0..=5).map(|ix| {
+                                    Avatar::new_fallback()
+                                        .fallback_anonymous(ix)
+                                        .grayscale(true)
+                                }))),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Initials").color(Color::Muted))
+                                .child(h_flex().gap_1().children(
+                                    PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
+                                        Avatar::new_fallback()
+                                            .fallback_initials(handle.to_string())
+                                            .fallback_anonymous(ix as u32)
+                                    }),
+                                ))
+                                .child(Label::new("Initials, Grayscale").color(Color::Muted))
+                                .child(h_flex().gap_1().children(
+                                    PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
+                                        Avatar::new_fallback()
+                                            .fallback_initials(handle.to_string())
+                                            .fallback_anonymous(ix as u32)
+                                            .grayscale(true)
+                                    }),
+                                )),
+                        )
+                        .child(
+                            v_flex()
+                                .gap_1()
+                                .child(Label::new("Indicators").color(Color::Muted))
+                                .child(
+                                    h_flex()
+                                        .gap_2()
+                                        .child(Avatar::new(avatar_url.clone()).indicator(
+                                            AvatarAudioStatusIndicator::new(AudioStatus::Deafened),
+                                        ))
+                                        .child(Avatar::new(avatar_url.clone()).indicator(
+                                            AvatarAvailabilityIndicator::new(Availability::Free),
+                                        )),
+                                )
+                                .child(Label::new("Loading").color(Color::Muted))
+                                .child(Avatar::new(avatar_url.clone()).loading(true)),
+                        ),
+                ),
+            )
+            .child(
+                Headline::new("Old Avatars")
                     .size(HeadlineSize::Small)
                     .color(Color::Muted),
             )
@@ -116,50 +191,50 @@ impl ThemePreview {
                 h_flex()
                     .items_start()
                     .gap_4()
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)))
-                    .child(Avatar::new(AVATAR_URL).size(px(24.)).grayscale(true))
+                    .child(AvatarOld::new(AVATAR_URL).size(px(24.)))
+                    .child(AvatarOld::new(AVATAR_URL).size(px(24.)).grayscale(true))
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Muted)),
                     )
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAudioStatusIndicator::new(AudioStatus::Deafened)),
                     )
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
                     )
                     .child(
-                        Avatar::new(AVATAR_URL)
+                        AvatarOld::new(AVATAR_URL)
                             .size(px(24.))
                             .indicator(AvatarAvailabilityIndicator::new(Availability::Free)),
                     )
                     .child(
                         Facepile::empty()
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),
                             )
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),
                             )
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),
                             )
                             .child(
-                                Avatar::new(AVATAR_URL)
+                                AvatarOld::new(AVATAR_URL)
                                     .border_color(Self::preview_bg(cx))
                                     .size(px(22.))
                                     .into_any_element(),
