@@ -78,7 +78,7 @@ impl HeadlessProject {
         });
         let prettier_store = cx.new_model(|cx| {
             PrettierStore::new(
-                node_runtime,
+                node_runtime.clone(),
                 fs.clone(),
                 languages.clone(),
                 worktree_store.clone(),
@@ -124,7 +124,7 @@ impl HeadlessProject {
                 toolchain_store.clone(),
                 environment,
                 languages.clone(),
-                http_client,
+                http_client.clone(),
                 fs.clone(),
                 cx,
             );

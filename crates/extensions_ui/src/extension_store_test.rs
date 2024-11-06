@@ -1,13 +1,13 @@
-use crate::extension_settings::ExtensionSettings;
-use crate::{
+use assistant_slash_command::SlashCommandRegistry;
+use async_compression::futures::bufread::GzipEncoder;
+use collections::BTreeMap;
+use extension_host::ExtensionSettings;
+use extension_host::SchemaVersion;
+use extension_host::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionStore, GrammarManifestEntry,
     RELOAD_DEBOUNCE_DURATION,
 };
-use assistant_slash_command::SlashCommandRegistry;
-use async_compression::futures::bufread::GzipEncoder;
-use collections::BTreeMap;
-use extension::SchemaVersion;
 use fs::{FakeFs, Fs, RealFs};
 use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
@@ -267,24 +267,29 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
+        let extension_registration_hooks = crate::ConcreteExtensionRegistrationHooks::new(
+            theme_registry.clone(),
+            slash_command_registry.clone(),
+            indexed_docs_registry.clone(),
+            snippet_registry.clone(),
+            language_registry.clone(),
+            cx,
+        );
+
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
+            extension_registration_hooks,
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
             None,
             node_runtime.clone(),
-            language_registry.clone(),
-            theme_registry.clone(),
-            slash_command_registry.clone(),
-            indexed_docs_registry.clone(),
-            snippet_registry.clone(),
             cx,
         )
     });
 
-    cx.executor().advance_clock(super::RELOAD_DEBOUNCE_DURATION);
+    cx.executor().advance_clock(RELOAD_DEBOUNCE_DURATION);
     store.read_with(cx, |store, _| {
         let index = &store.extension_index;
         assert_eq!(index.extensions, expected_index.extensions);
@@ -395,19 +400,24 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     // Create new extension store, as if Zed were restarting.
     drop(store);
     let store = cx.new_model(|cx| {
+        let extension_api = crate::ConcreteExtensionRegistrationHooks::new(
+            theme_registry.clone(),
+            slash_command_registry,
+            indexed_docs_registry,
+            snippet_registry,
+            language_registry.clone(),
+            cx,
+        );
+
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),
             None,
+            extension_api,
             fs.clone(),
             http_client.clone(),
             http_client.clone(),
             None,
             node_runtime.clone(),
-            language_registry.clone(),
-            theme_registry.clone(),
-            slash_command_registry,
-            indexed_docs_registry,
-            snippet_registry,
             cx,
         )
     });
@@ -580,19 +590,23 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         Arc::new(ReqwestClient::user_agent(&user_agent).expect("Could not create HTTP client"));
 
     let extension_store = cx.new_model(|cx| {
+        let extension_api = crate::ConcreteExtensionRegistrationHooks::new(
+            theme_registry.clone(),
+            slash_command_registry,
+            indexed_docs_registry,
+            snippet_registry,
+            language_registry.clone(),
+            cx,
+        );
         ExtensionStore::new(
             extensions_dir.clone(),
             Some(cache_dir),
+            extension_api,
             fs.clone(),
             extension_client.clone(),
             builder_client,
             None,
             node_runtime,
-            language_registry.clone(),
-            theme_registry.clone(),
-            slash_command_registry,
-            indexed_docs_registry,
-            snippet_registry,
             cx,
         )
     });
@@ -602,7 +616,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let executor = cx.executor();
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
-            if let crate::Event::StartedReloading = event {
+            if let extension_host::Event::StartedReloading = event {
                 executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }
