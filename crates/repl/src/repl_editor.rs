@@ -146,6 +146,7 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
     anyhow::Ok(())
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum SessionSupport {
     ActiveSession(View<Session>),
     Inactive(KernelSpecification),

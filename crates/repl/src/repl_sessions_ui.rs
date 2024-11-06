@@ -1,9 +1,9 @@
-use collections::HashMap;
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     FontWeight, Subscription, View,
 };
+use std::collections::HashMap;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
@@ -247,9 +247,8 @@ impl Render for ReplSessionsPage {
                     acc
                 });
 
-        // Sort each language's kernels by name
         for kernels in kernels_by_language.values_mut() {
-            kernels.sort_by(|a, b| a.name().cmp(&b.name()));
+            kernels.sort_by_key(|a| a.name())
         }
 
         // Convert to a sorted Vec of tuples
