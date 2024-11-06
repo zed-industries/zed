@@ -70,9 +70,9 @@ impl PickerDelegate for KernelPickerDelegate {
             self.filtered_kernels
                 .iter()
                 .position(|k| k == kernelspec)
-                .unwrap_or(2)
+                .unwrap_or(0)
         } else {
-            1
+            0
         }
     }
 
