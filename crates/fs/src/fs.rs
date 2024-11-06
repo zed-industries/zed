@@ -9,16 +9,9 @@ use git::GitHostingProviderRegistry;
 
 #[cfg(target_os = "linux")]
 use ashpd::desktop::trash;
-use libc::c_char;
-use libc::F_GETPATH;
-use std::ffi::{CStr, OsStr};
+use std::fs::File;
 use std::os::fd::AsFd;
 use std::os::fd::AsRawFd;
-use std::os::fd::IntoRawFd;
-use std::os::fd::RawFd;
-use std::os::unix::ffi::OsStrExt;
-#[cfg(target_os = "linux")]
-use std::{fs::File, os::fd::AsFd};
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -201,18 +194,31 @@ pub trait FileHandle: Send + Sync + std::fmt::Debug {
 }
 
 impl FileHandle for std::fs::File {
+    #[cfg(target_os = "macos")]
     fn current_path(&self) -> Result<PathBuf> {
         let fd = self.as_fd();
         let mut path_buf: [c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
 
         let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
         if result == -1 {
-            anyhow::bail!("Failed to get path for file descriptor".to_string());
+            anyhow::bail!("fcntl returned -1".to_string());
         }
 
-        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr()) };
-        let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
+        let c_str = unsafe { std::ffi::CStr::from_ptr(path_buf.as_ptr()) };
+        let path = PathBuf::from(std::ffi::OsStr::from_bytes(c_str.to_bytes()));
         Ok(path)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn current_path(&self) -> Result<PathBuf> {
+        let fd = self.as_fd();
+        let fd_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
+        Ok(std::fs::read_link(fd_path)?)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn current_path(&self) -> Result<PathBuf> {
+        anyhow::bail!("unimplemented")
     }
 }
 
@@ -1395,9 +1401,11 @@ impl Watcher for FakeWatcher {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Debug)]
 struct FakeHandle;
 
+#[cfg(any(test, feature = "test-support"))]
 impl FileHandle for FakeHandle {
     fn current_path(&self) -> Result<PathBuf> {
         anyhow::bail!("current_path on FakeHandle not implemented")

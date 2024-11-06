@@ -54,7 +54,6 @@ use std::{
     future::Future,
     mem,
     ops::{AddAssign, Deref, DerefMut, Sub},
-    os::fd::RawFd,
     path::{Path, PathBuf},
     pin::Pin,
     sync::{
@@ -3766,7 +3765,8 @@ impl BackgroundScanner {
                 self.status_updates_tx
                     .unbounded_send(ScanState::RootUpdated {
                         new_path: new_path.map(|p| p.into()),
-                    });
+                    })
+                    .ok();
                 return;
             }
         };
