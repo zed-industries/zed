@@ -1814,20 +1814,31 @@ impl Context {
         let version = self.version.clone();
         let command_id = SlashCommandId(self.next_timestamp());
 
-        let (insert_position, command_source_range, command_range) =
+        const PENDING_OUTPUT_END_MARKER: &str = "…";
+
+        let (command_range, command_source_range, insert_position) =
             self.buffer.update(cx, |buffer, cx| {
                 let command_source_range = command_source_range.to_offset(buffer);
+                let mut insertion = format!("\n{PENDING_OUTPUT_END_MARKER}");
+                if ensure_trailing_newline {
+                    insertion.push('\n');
+                }
                 buffer.edit(
-                    [(command_source_range.end..command_source_range.end, "\n")],
+                    [(
+                        command_source_range.end..command_source_range.end,
+                        insertion,
+                    )],
                     None,
                     cx,
                 );
                 let insert_position = buffer.anchor_after(command_source_range.end + 1);
-                let output_range =
-                    buffer.anchor_before(command_source_range.start)..insert_position;
+                let command_range = buffer.anchor_before(command_source_range.start)
+                    ..buffer.anchor_after(
+                        command_source_range.end + 1 + PENDING_OUTPUT_END_MARKER.len(),
+                    );
                 let command_source_range = buffer.anchor_before(command_source_range.start)
                     ..buffer.anchor_before(command_source_range.end + 1);
-                (insert_position, command_source_range, output_range)
+                (command_range, command_source_range, insert_position)
             });
         self.reparse(cx);
 
@@ -1945,21 +1956,33 @@ impl Context {
 
                 this.update(&mut cx, |this, cx| {
                     this.buffer.update(cx, |buffer, cx| {
-                        buffer.edit([(command_source_range, "")], None, cx);
+                        let mut deletions = vec![(command_source_range.to_offset(buffer), "")];
+                        let insert_position = insert_position.to_offset(buffer);
+                        let command_range_end = command_range.end.to_offset(buffer);
 
-                        if ensure_trailing_newline {
-                            let offset = insert_position.to_offset(buffer);
-                            let newline_offset = offset.saturating_sub(1);
-                            if !buffer.contains_str_at(newline_offset, "\n")
-                                || last_section_range.map_or(false, |last_section_range| {
-                                    last_section_range
+                        if buffer.contains_str_at(insert_position, PENDING_OUTPUT_END_MARKER) {
+                            deletions.push((
+                                insert_position..insert_position + PENDING_OUTPUT_END_MARKER.len(),
+                                "",
+                            ));
+                        }
+
+                        if ensure_trailing_newline
+                            && buffer.contains_str_at(command_range_end, "\n")
+                        {
+                            let newline_offset = insert_position.saturating_sub(1);
+                            if buffer.contains_str_at(newline_offset, "\n")
+                                && last_section_range.map_or(true, |last_section_range| {
+                                    !last_section_range
                                         .to_offset(buffer)
                                         .contains(&newline_offset)
                                 })
                             {
-                                buffer.edit([(offset..offset, "\n")], None, cx);
+                                deletions.push((command_range_end..command_range_end + 1, ""));
                             }
                         }
+
+                        buffer.edit(deletions, None, cx);
                     });
                 })?;
 

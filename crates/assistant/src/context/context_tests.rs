@@ -435,11 +435,9 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
-        «/file src/lib.rs»
-        "
-        .unindent()
-        .trim_end(),
+        &"
+        «/file src/lib.rs»"
+            .unindent(),
         cx,
     );
 
@@ -451,11 +449,9 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
-        «/file src/main.rs»
-        "
-        .unindent()
-        .trim_end(),
+        &"
+        «/file src/main.rs»"
+            .unindent(),
         cx,
     );
 
@@ -471,11 +467,9 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
-        /unknown src/main.rs
-        "
-        .unindent()
-        .trim_end(),
+        &"
+        /unknown src/main.rs"
+            .unindent(),
         cx,
     );
 
@@ -484,23 +478,20 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
-        «/file src/main.rs»
-        "
-        .unindent()
-        .trim_end(),
+        &"
+        «/file src/main.rs»"
+            .unindent(),
         cx,
     );
 
     let (command_output_tx, command_output_rx) = mpsc::unbounded();
     context.update(cx, |context, cx| {
-        let buffer = context.buffer.read(cx);
-        let command_source_range = buffer.anchor_after(0)..buffer.anchor_before(buffer.len());
+        let command_source_range = context.parsed_slash_commands[0].source_range.clone();
         context.insert_command_output(
             command_source_range,
             "file",
             Task::ready(Ok(command_output_rx.boxed())),
-            false,
+            true,
             false,
             cx,
         );
@@ -508,13 +499,11 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
+        &"
         ⟦«/file src/main.rs»
-        ⟧
-
+        …⟧
         "
-        .unindent()
-        .trim_end(),
+        .unindent(),
         cx,
     );
 
@@ -532,13 +521,11 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
+        &"
         ⟦«/file src/main.rs»
-        src/main.rs⟧
-
+        src/main.rs…⟧
         "
-        .unindent()
-        .trim_end(),
+        .unindent(),
         cx,
     );
 
@@ -549,14 +536,12 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
+        &"
         ⟦«/file src/main.rs»
         src/main.rs
-        fn main() {}⟧
-
+        fn main() {}…⟧
         "
-        .unindent()
-        .trim_end(),
+        .unindent(),
         cx,
     );
 
@@ -567,14 +552,12 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
+        &"
         ⟦«/file src/main.rs»
         ⟪src/main.rs
-        fn main() {}⟫⟧
-
+        fn main() {}⟫…⟧
         "
-        .unindent()
-        .trim_end(),
+        .unindent(),
         cx,
     );
 
@@ -583,13 +566,11 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     assert_text_and_context_ranges(
         &buffer,
         &context_ranges,
-        "
+        &"
         ⟦⟪src/main.rs
         fn main() {}⟫⟧
-
         "
-        .unindent()
-        .trim_end(),
+        .unindent(),
         cx,
     );
 
