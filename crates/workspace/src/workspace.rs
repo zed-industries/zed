@@ -3436,26 +3436,6 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
-        if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
-            let filename = path
-                .path
-                .file_name()
-                .map(|s| s.to_string_lossy())
-                .or_else(|| {
-                    Some(Cow::Borrowed(
-                        project
-                            .worktree_for_id(path.worktree_id, cx)?
-                            .read(cx)
-                            .root_name(),
-                    ))
-                });
-
-            if let Some(filename) = filename {
-                title.push_str(filename.as_ref());
-                title.push_str(" — ");
-            }
-        }
-
         for (i, name) in project.worktree_root_names(cx).enumerate() {
             if i > 0 {
                 title.push_str(", ");
@@ -3471,6 +3451,26 @@ impl Workspace {
             title.push_str(" ↙");
         } else if project.is_shared() {
             title.push_str(" ↗");
+        }
+
+        if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
+            let filename = path
+                .path
+                .file_name()
+                .map(|s| s.to_string_lossy())
+                .or_else(|| {
+                    Some(Cow::Borrowed(
+                        project
+                            .worktree_for_id(path.worktree_id, cx)?
+                            .read(cx)
+                            .root_name(),
+                    ))
+                });
+
+            if let Some(filename) = filename {
+                title.push_str(" — ");
+                title.push_str(filename.as_ref());
+            }
         }
 
         cx.set_window_title(&title);
