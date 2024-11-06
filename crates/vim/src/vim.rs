@@ -114,12 +114,13 @@ pub fn init(cx: &mut AppContext) {
         });
 
         workspace.register_action(|workspace, _: &SearchSubmit, cx| {
-            let Some(vim) = workspace
-                .active_item_as::<Editor>(cx)
-                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned())
-            else {
-                return;
-            };
+            let vim = workspace
+                .focused_pane(cx)
+                .read(cx)
+                .active_item()
+                .and_then(|item| item.act_as::<Editor>(cx))
+                .and_then(|editor| editor.read(cx).addon::<VimAddon>().cloned());
+            let Some(vim) = vim else { return };
             vim.view
                 .update(cx, |_, cx| cx.defer(|vim, cx| vim.search_submit(cx)))
         });
@@ -334,13 +335,15 @@ impl Vim {
         self.editor.upgrade()
     }
 
-    pub fn workspace(&self, cx: &ViewContext<Self>) -> Option<View<Workspace>> {
-        self.editor().and_then(|editor| editor.read(cx).workspace())
+    pub fn workspace(&self, cx: &mut ViewContext<Self>) -> Option<View<Workspace>> {
+        cx.window_handle()
+            .downcast::<Workspace>()
+            .and_then(|handle| handle.root(cx).ok())
     }
 
-    pub fn pane(&self, cx: &ViewContext<Self>) -> Option<View<Pane>> {
+    pub fn pane(&self, cx: &mut ViewContext<Self>) -> Option<View<Pane>> {
         self.workspace(cx)
-            .and_then(|workspace| workspace.read(cx).pane_for(&self.editor()?))
+            .map(|workspace| workspace.read(cx).focused_pane(cx))
     }
 
     pub fn enabled(cx: &mut AppContext) -> bool {

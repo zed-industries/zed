@@ -103,6 +103,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use similar::{ChangeTag, TextDiff};
+use std::iter::Peekable;
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -13044,12 +13045,12 @@ impl Editor {
     }
 }
 
-fn len_with_expanded_tabs(offset: usize, comment_prefix: &str, tab_size: NonZeroU32) -> usize {
+fn char_len_with_expanded_tabs(offset: usize, text: &str, tab_size: NonZeroU32) -> usize {
     let tab_size = tab_size.get() as usize;
     let mut width = offset;
 
-    for c in comment_prefix.chars() {
-        width += if c == '\t' {
+    for ch in text.chars() {
+        width += if ch == '\t' {
             tab_size - (width % tab_size)
         } else {
             1
@@ -13066,14 +13067,182 @@ mod tests {
     #[test]
     fn test_string_size_with_expanded_tabs() {
         let nz = |val| NonZeroU32::new(val).unwrap();
-        assert_eq!(len_with_expanded_tabs(0, "", nz(4)), 0);
-        assert_eq!(len_with_expanded_tabs(0, "hello", nz(4)), 5);
-        assert_eq!(len_with_expanded_tabs(0, "\thello", nz(4)), 9);
-        assert_eq!(len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
-        assert_eq!(len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
-        assert_eq!(len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
-        assert_eq!(len_with_expanded_tabs(0, "x\t", nz(8)), 8);
-        assert_eq!(len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+        assert_eq!(char_len_with_expanded_tabs(0, "", nz(4)), 0);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello", nz(4)), 5);
+        assert_eq!(char_len_with_expanded_tabs(0, "\thello", nz(4)), 9);
+        assert_eq!(char_len_with_expanded_tabs(0, "abc\tab", nz(4)), 6);
+        assert_eq!(char_len_with_expanded_tabs(0, "hello\t", nz(4)), 8);
+        assert_eq!(char_len_with_expanded_tabs(0, "\t\t", nz(8)), 16);
+        assert_eq!(char_len_with_expanded_tabs(0, "x\t", nz(8)), 8);
+        assert_eq!(char_len_with_expanded_tabs(7, "x\t", nz(8)), 9);
+    }
+}
+
+/// Tokenizes a string into runs of text that should stick together, or that is whitespace.
+struct WordBreakingTokenizer<'a> {
+    input: &'a str,
+}
+
+impl<'a> WordBreakingTokenizer<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input }
+    }
+}
+
+fn is_char_ideographic(ch: char) -> bool {
+    use unicode_script::Script::*;
+    use unicode_script::UnicodeScript;
+    matches!(ch.script(), Han | Tangut | Yi)
+}
+
+fn is_grapheme_ideographic(text: &str) -> bool {
+    text.chars().any(is_char_ideographic)
+}
+
+fn is_grapheme_whitespace(text: &str) -> bool {
+    text.chars().any(|x| x.is_whitespace())
+}
+
+fn should_stay_with_preceding_ideograph(text: &str) -> bool {
+    text.chars().next().map_or(false, |ch| {
+        matches!(ch, '。' | '、' | '，' | '？' | '！' | '：' | '；' | '…')
+    })
+}
+
+#[derive(PartialEq, Eq, Debug, Clone, Copy)]
+struct WordBreakToken<'a> {
+    token: &'a str,
+    grapheme_len: usize,
+    is_whitespace: bool,
+}
+
+impl<'a> Iterator for WordBreakingTokenizer<'a> {
+    /// Yields a span, the count of graphemes in the token, and whether it was
+    /// whitespace. Note that it also breaks at word boundaries.
+    type Item = WordBreakToken<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        use unicode_segmentation::UnicodeSegmentation;
+        if self.input.is_empty() {
+            return None;
+        }
+
+        let mut iter = self.input.graphemes(true).peekable();
+        let mut offset = 0;
+        let mut graphemes = 0;
+        if let Some(first_grapheme) = iter.next() {
+            let is_whitespace = is_grapheme_whitespace(first_grapheme);
+            offset += first_grapheme.len();
+            graphemes += 1;
+            if is_grapheme_ideographic(first_grapheme) && !is_whitespace {
+                if let Some(grapheme) = iter.peek().copied() {
+                    if should_stay_with_preceding_ideograph(grapheme) {
+                        offset += grapheme.len();
+                        graphemes += 1;
+                    }
+                }
+            } else {
+                let mut words = self.input[offset..].split_word_bound_indices().peekable();
+                let mut next_word_bound = words.peek().copied();
+                if next_word_bound.map_or(false, |(i, _)| i == 0) {
+                    next_word_bound = words.next();
+                }
+                while let Some(grapheme) = iter.peek().copied() {
+                    if next_word_bound.map_or(false, |(i, _)| i == offset) {
+                        break;
+                    };
+                    if is_grapheme_whitespace(grapheme) != is_whitespace {
+                        break;
+                    };
+                    offset += grapheme.len();
+                    graphemes += 1;
+                    iter.next();
+                }
+            }
+            let token = &self.input[..offset];
+            self.input = &self.input[offset..];
+            if is_whitespace {
+                Some(WordBreakToken {
+                    token: " ",
+                    grapheme_len: 1,
+                    is_whitespace: true,
+                })
+            } else {
+                Some(WordBreakToken {
+                    token,
+                    grapheme_len: graphemes,
+                    is_whitespace: false,
+                })
+            }
+        } else {
+            None
+        }
+    }
+}
+
+#[test]
+fn test_word_breaking_tokenizer() {
+    let tests: &[(&str, &[(&str, usize, bool)])] = &[
+        ("", &[]),
+        ("  ", &[(" ", 1, true)]),
+        ("Ʒ", &[("Ʒ", 1, false)]),
+        ("Ǽ", &[("Ǽ", 1, false)]),
+        ("⋑", &[("⋑", 1, false)]),
+        ("⋑⋑", &[("⋑⋑", 2, false)]),
+        (
+            "原理，进而",
+            &[
+                ("原", 1, false),
+                ("理，", 2, false),
+                ("进", 1, false),
+                ("而", 1, false),
+            ],
+        ),
+        (
+            "hello world",
+            &[("hello", 5, false), (" ", 1, true), ("world", 5, false)],
+        ),
+        (
+            "hello, world",
+            &[("hello,", 6, false), (" ", 1, true), ("world", 5, false)],
+        ),
+        (
+            "  hello world",
+            &[
+                (" ", 1, true),
+                ("hello", 5, false),
+                (" ", 1, true),
+                ("world", 5, false),
+            ],
+        ),
+        (
+            "这是什么 \n 钢笔",
+            &[
+                ("这", 1, false),
+                ("是", 1, false),
+                ("什", 1, false),
+                ("么", 1, false),
+                (" ", 1, true),
+                ("钢", 1, false),
+                ("笔", 1, false),
+            ],
+        ),
+        (" mutton", &[(" ", 1, true), ("mutton", 6, false)]),
+    ];
+
+    for (input, result) in tests {
+        assert_eq!(
+            WordBreakingTokenizer::new(input).collect::<Vec<_>>(),
+            result
+                .iter()
+                .copied()
+                .map(|(token, grapheme_len, is_whitespace)| WordBreakToken {
+                    token,
+                    grapheme_len,
+                    is_whitespace,
+                })
+                .collect::<Vec<_>>()
+        );
     }
 }
 
@@ -13083,29 +13252,80 @@ fn wrap_with_prefix(
     wrap_column: usize,
     tab_size: NonZeroU32,
 ) -> String {
-    let line_prefix_display_len = len_with_expanded_tabs(0, &line_prefix, tab_size);
+    let line_prefix_len = char_len_with_expanded_tabs(0, &line_prefix, tab_size);
     let mut wrapped_text = String::new();
-    let mut current_line = line_prefix.to_string();
-    let prefix_extra_chars = line_prefix_display_len - line_prefix.len();
+    let mut current_line = line_prefix.clone();
 
-    for word in unwrapped_text.split_whitespace() {
-        if current_line.len() + prefix_extra_chars + word.len() >= wrap_column {
-            wrapped_text.push_str(&current_line);
+    let tokenizer = WordBreakingTokenizer::new(&unwrapped_text);
+    let mut current_line_len = line_prefix_len;
+    for WordBreakToken {
+        token,
+        grapheme_len,
+        is_whitespace,
+    } in tokenizer
+    {
+        if current_line_len + grapheme_len > wrap_column && current_line_len != line_prefix_len {
+            wrapped_text.push_str(current_line.trim_end());
             wrapped_text.push('\n');
             current_line.truncate(line_prefix.len());
-        }
-
-        if current_line.len() > line_prefix.len() {
+            current_line_len = line_prefix_len;
+            if !is_whitespace {
+                current_line.push_str(token);
+                current_line_len += grapheme_len;
+            }
+        } else if !is_whitespace {
+            current_line.push_str(token);
+            current_line_len += grapheme_len;
+        } else if current_line_len != line_prefix_len {
             current_line.push(' ');
+            current_line_len += 1;
         }
-
-        current_line.push_str(word);
     }
 
     if !current_line.is_empty() {
         wrapped_text.push_str(&current_line);
     }
     wrapped_text
+}
+
+#[test]
+fn test_wrap_with_prefix() {
+    assert_eq!(
+        wrap_with_prefix(
+            "# ".to_string(),
+            "abcdefg".to_string(),
+            4,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "# abcdefg"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            "".to_string(),
+            "\thello world".to_string(),
+            8,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "hello\nworld"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            "// ".to_string(),
+            "xx \nyy zz aa bb cc".to_string(),
+            12,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "// xx yy zz\n// aa bb cc"
+    );
+    assert_eq!(
+        wrap_with_prefix(
+            String::new(),
+            "这是什么 \n 钢笔".to_string(),
+            3,
+            NonZeroU32::new(4).unwrap()
+        ),
+        "这是什\n么 钢\n笔"
+    );
 }
 
 fn hunks_for_selections(
@@ -13607,7 +13827,7 @@ fn consume_contiguous_rows(
     contiguous_row_selections: &mut Vec<Selection<Point>>,
     selection: &Selection<Point>,
     display_map: &DisplaySnapshot,
-    selections: &mut std::iter::Peekable<std::slice::Iter<Selection<Point>>>,
+    selections: &mut Peekable<std::slice::Iter<Selection<Point>>>,
 ) -> (MultiBufferRow, MultiBufferRow) {
     contiguous_row_selections.push(selection.clone());
     let start_row = MultiBufferRow(selection.start.row);

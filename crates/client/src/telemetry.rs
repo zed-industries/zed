@@ -13,6 +13,7 @@ use parking_lot::Mutex;
 use release_channel::ReleaseChannel;
 use settings::{Settings, SettingsStore};
 use sha2::{Digest, Sha256};
+use std::fs::File;
 use std::io::Write;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use sysinfo::{CpuRefreshKind, Pid, ProcessRefreshKind, RefreshKind, System};
@@ -21,10 +22,7 @@ use telemetry_events::{
     EventRequestBody, EventWrapper, ExtensionEvent, InlineCompletionEvent, MemoryEvent, ReplEvent,
     SettingEvent,
 };
-use tempfile::NamedTempFile;
-#[cfg(not(debug_assertions))]
-use util::ResultExt;
-use util::TryFutureExt;
+use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
 use self::event_coalescer::EventCoalescer;
@@ -46,7 +44,7 @@ struct TelemetryState {
     architecture: &'static str,
     events_queue: Vec<EventWrapper>,
     flush_events_task: Option<Task<()>>,
-    log_file: Option<NamedTempFile>,
+    log_file: Option<File>,
     is_staff: Option<bool>,
     first_event_date_time: Option<DateTime<Utc>>,
     event_coalescer: EventCoalescer,
@@ -223,15 +221,13 @@ impl Telemetry {
             os_name: os_name(),
             app_version: release_channel::AppVersion::global(cx).to_string(),
         }));
+        Self::log_file_path();
 
-        #[cfg(not(debug_assertions))]
         cx.background_executor()
             .spawn({
                 let state = state.clone();
                 async move {
-                    if let Some(tempfile) =
-                        NamedTempFile::new_in(paths::logs_dir().as_path()).log_err()
-                    {
+                    if let Some(tempfile) = File::create(Self::log_file_path()).log_err() {
                         state.lock().log_file = Some(tempfile);
                     }
                 }
@@ -280,8 +276,8 @@ impl Telemetry {
         Task::ready(())
     }
 
-    pub fn log_file_path(&self) -> Option<PathBuf> {
-        Some(self.state.lock().log_file.as_ref()?.path().to_path_buf())
+    pub fn log_file_path() -> PathBuf {
+        paths::logs_dir().join("telemetry.log")
     }
 
     pub fn start(
@@ -645,7 +641,6 @@ impl Telemetry {
                     let mut json_bytes = Vec::new();
 
                     if let Some(file) = &mut this.state.lock().log_file {
-                        let file = file.as_file_mut();
                         for event in &mut events {
                             json_bytes.clear();
                             serde_json::to_writer(&mut json_bytes, event)?;

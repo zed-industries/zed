@@ -269,6 +269,30 @@ impl KeyBindingContextPredicate {
         }
     }
 
+    /// Returns whether or not this predicate matches all possible contexts matched by
+    /// the other predicate.
+    pub fn is_superset(&self, other: &Self) -> bool {
+        if self == other {
+            return true;
+        }
+
+        if let KeyBindingContextPredicate::Or(left, right) = self {
+            return left.is_superset(other) || right.is_superset(other);
+        }
+
+        match other {
+            KeyBindingContextPredicate::Child(_, child) => self.is_superset(child),
+            KeyBindingContextPredicate::And(left, right) => {
+                self.is_superset(left) || self.is_superset(right)
+            }
+            KeyBindingContextPredicate::Identifier(_) => false,
+            KeyBindingContextPredicate::Equal(_, _) => false,
+            KeyBindingContextPredicate::NotEqual(_, _) => false,
+            KeyBindingContextPredicate::Not(_) => false,
+            KeyBindingContextPredicate::Or(_, _) => false,
+        }
+    }
+
     fn parse_expr(mut source: &str, min_precedence: u32) -> anyhow::Result<(Self, &str)> {
         type Op = fn(
             KeyBindingContextPredicate,
@@ -558,5 +582,28 @@ mod tests {
                 Box::new(Identifier("b".into())),
             )
         );
+    }
+
+    #[test]
+    fn test_is_superset() {
+        assert_is_superset("editor", "editor", true);
+        assert_is_superset("editor", "workspace", false);
+
+        assert_is_superset("editor", "editor && vim_mode", true);
+        assert_is_superset("editor", "mode == full && editor", true);
+        assert_is_superset("editor && mode == full", "editor", false);
+
+        assert_is_superset("editor", "something > editor", true);
+        assert_is_superset("editor", "editor > menu", false);
+
+        assert_is_superset("foo || bar || baz", "bar", true);
+        assert_is_superset("foo || bar || baz", "quux", false);
+
+        #[track_caller]
+        fn assert_is_superset(a: &str, b: &str, result: bool) {
+            let a = KeyBindingContextPredicate::parse(a).unwrap();
+            let b = KeyBindingContextPredicate::parse(b).unwrap();
+            assert_eq!(a.is_superset(&b), result, "({a:?}).is_superset({b:?})");
+        }
     }
 }
