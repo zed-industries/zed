@@ -625,12 +625,15 @@ impl Project {
             cx.subscribe(&worktree_store, Self::on_worktree_store_event)
                 .detach();
 
+            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
+
             let dap_store = cx.new_model(|cx| {
                 DapStore::new(
                     Some(client.http_client()),
                     Some(node.clone()),
                     fs.clone(),
                     languages.clone(),
+                    environment.clone(),
                     cx,
                 )
             });
@@ -650,8 +653,6 @@ impl Project {
                     cx,
                 )
             });
-
-            let environment = ProjectEnvironment::new(&worktree_store, env, cx);
 
             let task_store = cx.new_model(|cx| {
                 TaskStore::local(
@@ -804,6 +805,7 @@ impl Project {
                     Some(node.clone()),
                     fs.clone(),
                     languages.clone(),
+                    environment.clone(),
                     cx,
                 )
             });
@@ -964,12 +966,15 @@ impl Project {
             BufferStore::remote(worktree_store.clone(), client.clone().into(), remote_id, cx)
         })?;
 
+        let environment = cx.update(|cx| ProjectEnvironment::new(&worktree_store, None, cx))?;
+
         let dap_store = cx.new_model(|cx| {
             DapStore::new(
                 Some(client.http_client()),
                 None,
                 fs.clone(),
                 languages.clone(),
+                environment.clone(),
                 cx,
             )
         })?;
@@ -1068,7 +1073,7 @@ impl Project {
                 search_history: Self::new_search_history(),
                 search_included_history: Self::new_search_history(),
                 search_excluded_history: Self::new_search_history(),
-                environment: ProjectEnvironment::new(&worktree_store, None, cx),
+                environment,
                 remotely_created_models: Arc::new(Mutex::new(RemotelyCreatedModels::default())),
                 toolchain_store: None,
             };

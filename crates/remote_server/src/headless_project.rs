@@ -73,8 +73,18 @@ impl HeadlessProject {
             store
         });
 
-        let dap_store =
-            cx.new_model(|cx| DapStore::new(None, None, fs.clone(), languages.clone(), cx));
+        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
+
+        let dap_store = cx.new_model(|cx| {
+            DapStore::new(
+                None,
+                None,
+                fs.clone(),
+                languages.clone(),
+                environment.clone(),
+                cx,
+            )
+        });
         let buffer_store = cx.new_model(|cx| {
             let mut buffer_store =
                 BufferStore::local(worktree_store.clone(), dap_store.clone(), cx);
@@ -91,7 +101,6 @@ impl HeadlessProject {
             )
         });
 
-        let environment = project::ProjectEnvironment::new(&worktree_store, None, cx);
         let task_store = cx.new_model(|cx| {
             let mut task_store = TaskStore::local(
                 fs.clone(),

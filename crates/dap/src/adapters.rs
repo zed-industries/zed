@@ -9,7 +9,7 @@ use serde_json::Value;
 use smol::{self, fs::File, lock::Mutex, process};
 use std::{
     collections::{HashMap, HashSet},
-    ffi::OsString,
+    ffi::{OsStr, OsString},
     fmt::Debug,
     ops::Deref,
     path::{Path, PathBuf},
@@ -26,12 +26,15 @@ pub enum DapStatus {
     Failed { error: String },
 }
 
+#[async_trait(?Send)]
 pub trait DapDelegate {
     fn http_client(&self) -> Option<Arc<dyn HttpClient>>;
     fn node_runtime(&self) -> Option<NodeRuntime>;
     fn fs(&self) -> Arc<dyn Fs>;
     fn updated_adapters(&self) -> Arc<Mutex<HashSet<DebugAdapterName>>>;
     fn update_status(&self, dap_name: DebugAdapterName, status: DapStatus);
+    fn which(&self, command: &OsStr) -> Option<PathBuf>;
+    async fn shell_env(&self) -> collections::HashMap<String, String>;
 }
 
 #[derive(PartialEq, Eq, Hash, Debug)]

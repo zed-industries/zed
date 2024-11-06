@@ -1,5 +1,5 @@
 use dap::transport::{TcpTransport, Transport};
-use std::{net::Ipv4Addr, path::PathBuf};
+use std::{ffi::OsStr, net::Ipv4Addr, path::PathBuf};
 use util::maybe;
 
 use crate::*;
@@ -56,7 +56,7 @@ impl DebugAdapter for PythonDebugAdapter {
 
     async fn get_installed_binary(
         &self,
-        _: &dyn DapDelegate,
+        delegate: &dyn DapDelegate,
         config: &DebugAdapterConfig,
         user_installed_path: Option<PathBuf>,
     ) -> Result<DebugAdapterBinary> {
@@ -87,8 +87,26 @@ impl DebugAdapter for PythonDebugAdapter {
             None => adapter_info?,
         };
 
+        let python_cmds = [
+            OsStr::new("python3"),
+            OsStr::new("python"),
+            OsStr::new("py"),
+        ];
+        let python_path = python_cmds
+            .iter()
+            .filter_map(|cmd| {
+                delegate
+                    .which(cmd)
+                    .and_then(|path| path.to_str().map(|str| str.to_string()))
+            })
+            .find(|_| true);
+
+        let python_path = python_path.ok_or(anyhow!(
+            "Failed to start debugger because python couldn't be found in PATH"
+        ))?;
+
         Ok(DebugAdapterBinary {
-            command: "python3".to_string(),
+            command: python_path,
             arguments: Some(vec![
                 debugpy_dir.join(Self::ADAPTER_PATH).into(),
                 format!("--port={}", self.port).into(),
