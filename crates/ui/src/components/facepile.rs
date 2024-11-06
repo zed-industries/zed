@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use crate::prelude::*;
 use gpui::{AnyElement, StyleRefinement};
 use smallvec::SmallVec;
@@ -15,10 +14,12 @@ pub struct Facepile {
 }
 
 impl Facepile {
+    /// Creates a new empty facepile.
     pub fn empty() -> Self {
         Self::new(SmallVec::new())
     }
 
+    /// Creates a new facepile with the given faces.
     pub fn new(faces: SmallVec<[AnyElement; 2]>) -> Self {
         Self { base: div(), faces }
     }
