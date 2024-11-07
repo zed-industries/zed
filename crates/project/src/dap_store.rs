@@ -241,7 +241,7 @@ impl DapStore {
                 .or_default()
                 .insert(Breakpoint {
                     active_position: None,
-                    cache_position: serialize_breakpoint.position.saturating_sub(1u32),
+                    cache_position: serialize_breakpoint.position,
                     kind: serialize_breakpoint.kind,
                 });
         }
