@@ -23,7 +23,6 @@ use crate::{
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
-use assistant_tool::ToolRegistry;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{
@@ -1473,6 +1472,7 @@ pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
     slash_commands: Arc<SlashCommandWorkingSet>,
+    tools: Arc<ToolWorkingSet>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
@@ -1542,9 +1542,11 @@ impl ContextEditor {
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
         let slash_commands = context.read(cx).slash_commands.clone();
+        let tools = context.read(cx).tools.clone();
         let mut this = Self {
             context,
             slash_commands,
+            tools,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -2050,8 +2052,7 @@ impl ContextEditor {
                     .collect::<Vec<_>>();
 
                 for tool_use in pending_tool_uses {
-                    let tool_registry = ToolRegistry::global(cx);
-                    if let Some(tool) = tool_registry.tool(&tool_use.name) {
+                    if let Some(tool) = self.tools.tool(&tool_use.name, cx) {
                         let task = tool.run(tool_use.input, self.workspace.clone(), cx);
 
                         self.context.update(cx, |context, cx| {

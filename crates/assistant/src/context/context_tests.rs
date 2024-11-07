@@ -1,5 +1,6 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::slash_command_working_set::SlashCommandWorkingSet;
+use crate::ToolWorkingSet;
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
@@ -57,6 +58,7 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });
@@ -198,6 +200,7 @@ fn test_message_splitting(cx: &mut AppContext) {
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });
@@ -301,6 +304,7 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });
@@ -415,6 +419,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });
@@ -705,6 +710,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });
@@ -969,6 +975,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             registry.clone(),
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             None,
             None,
             cx,
@@ -1084,6 +1091,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
             None,
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });
@@ -1127,6 +1135,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
             registry.clone(),
             prompt_builder.clone(),
             Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             None,
             None,
             cx,
@@ -1186,6 +1195,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 registry.clone(),
                 prompt_builder.clone(),
                 Arc::new(SlashCommandWorkingSet::default()),
+                Arc::new(ToolWorkingSet::default()),
                 None,
                 None,
                 cx,
@@ -1439,14 +1449,14 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let slash_commands = Arc::new(SlashCommandWorkingSet::default());
     let context = cx.new_model(|cx| {
         Context::local(
             registry,
             None,
             None,
             prompt_builder.clone(),
-            slash_commands,
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });

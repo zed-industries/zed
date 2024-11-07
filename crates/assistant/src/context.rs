@@ -2,6 +2,7 @@
 mod context_tests;
 
 use crate::slash_command_working_set::SlashCommandWorkingSet;
+use crate::ToolWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
@@ -11,7 +12,6 @@ use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
-use assistant_tool::ToolRegistry;
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
@@ -546,6 +546,7 @@ pub struct Context {
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
     pub(crate) slash_commands: Arc<SlashCommandWorkingSet>,
+    pub(crate) tools: Arc<ToolWorkingSet>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
@@ -600,6 +601,7 @@ impl Context {
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
+        tools: Arc<ToolWorkingSet>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::new(
@@ -609,6 +611,7 @@ impl Context {
             language_registry,
             prompt_builder,
             slash_commands,
+            tools,
             project,
             telemetry,
             cx,
@@ -623,6 +626,7 @@ impl Context {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
+        tools: Arc<ToolWorkingSet>,
         project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
@@ -668,6 +672,7 @@ impl Context {
             project,
             language_registry,
             slash_commands,
+            tools,
             patches: Vec::new(),
             xml_tags: Vec::new(),
             prompt_builder,
@@ -744,6 +749,7 @@ impl Context {
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
+        tools: Arc<ToolWorkingSet>,
         project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
@@ -756,6 +762,7 @@ impl Context {
             language_registry,
             prompt_builder,
             slash_commands,
+            tools,
             project,
             telemetry,
             cx,
@@ -2234,9 +2241,9 @@ impl Context {
         let mut request = self.to_completion_request(request_type, cx);
 
         if cx.has_flag::<ToolUseFeatureFlag>() {
-            let tool_registry = ToolRegistry::global(cx);
-            request.tools = tool_registry
-                .tools()
+            request.tools = self
+                .tools
+                .tools(cx)
                 .into_iter()
                 .map(|tool| LanguageModelRequestTool {
                     name: tool.name(),

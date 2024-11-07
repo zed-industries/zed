@@ -21,13 +21,26 @@ struct WorkingSetState {
 }
 
 impl ToolWorkingSet {
-    pub fn tools(&self, name: &str, cx: &AppContext) -> Option<Arc<dyn Tool>> {
+    pub fn tool(&self, name: &str, cx: &AppContext) -> Option<Arc<dyn Tool>> {
         self.state
             .lock()
             .context_server_tools_by_name
             .get(name)
             .cloned()
             .or_else(|| ToolRegistry::global(cx).tool(name))
+    }
+
+    pub fn tools(&self, cx: &AppContext) -> Vec<Arc<dyn Tool>> {
+        let mut tools = ToolRegistry::global(cx).tools();
+        tools.extend(
+            self.state
+                .lock()
+                .context_server_tools_by_id
+                .values()
+                .cloned(),
+        );
+
+        tools
     }
 
     pub fn insert(&self, command: Arc<dyn Tool>) -> ToolId {
