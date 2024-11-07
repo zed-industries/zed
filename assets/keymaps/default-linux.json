@@ -418,8 +418,8 @@
       "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
       "ctrl-shift-x": "zed::Extensions",
-      "crtl-shift-r": "task::Rerun",
-      "crtl-alt-r": "task::Rerun",
+      "ctrl-shift-r": "task::Rerun",
+      "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
