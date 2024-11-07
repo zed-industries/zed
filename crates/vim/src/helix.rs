@@ -80,7 +80,7 @@ impl Vim {
                             let right_kind = classifier.kind(right);
                             let at_newline = right == '\n';
                 
-                            let found = left_kind != right_kind && right_kind != CharKind::Whitespace && !at_newline;
+                            let found = left_kind != right_kind && right_kind != CharKind::Whitespace || at_newline;
                                 
                             found
                         });
@@ -258,3 +258,47 @@ impl Vim {
 }
 }
 
+#[cfg(test)]
+mod test {
+    use indoc::indoc;
+
+    use crate::{
+        state::Mode,
+        test::VimTestContext
+    };
+    
+    #[gpui::test]
+    async fn test_next_word_start(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+        // «
+        // ˇ
+        // »
+        cx.set_state(
+            indoc! {"
+            The quˇick brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal
+        );
+        
+        cx.simulate_keystrokes("w");
+
+        cx.assert_state(
+            indoc! {"
+            The qu«ick ˇ»brown
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal
+        );
+
+        cx.simulate_keystrokes("w");
+
+        cx.assert_state(
+            indoc! {"
+            The quick «brownˇ»
+            fox jumps over
+            the lazy dog."},
+            Mode::HelixNormal
+        );
+    }
+}
