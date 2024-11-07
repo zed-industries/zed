@@ -90,8 +90,8 @@ impl Model {
             Self::Gpt4o => 128000,
             Self::Gpt4 => 8192,
             Self::Gpt3_5Turbo => 16385,
-            Self::O1Mini => 128000,
-            Self::O1Preview => 128000,
+            Self::O1Mini => 20000,
+            Self::O1Preview => 20000,
             Self::Claude3_5Sonnet => 200_000,
         }
     }
