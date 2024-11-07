@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, ElevationIndex, IconPosition, KeyBinding, Spacing};
+use crate::{prelude::*, ElevationIndex, IconPosition, KeyBinding, Spacing, TintColor};
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
 };
@@ -435,5 +435,105 @@ impl RenderOnce for Button {
                     }))
                 }),
         )
+    }
+}
+
+impl ComponentPreview for Button {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A button allows users to take actions, and make choices, with a single tap."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group(
+                "Styles",
+                vec![
+                    single_example("Default", Button::new("default", "Default")),
+                    single_example(
+                        "Filled",
+                        Button::new("filled", "Filled").style(ButtonStyle::Filled),
+                    ),
+                    single_example(
+                        "Subtle",
+                        Button::new("outline", "Subtle").style(ButtonStyle::Subtle),
+                    ),
+                    single_example(
+                        "Transparent",
+                        Button::new("transparent", "Transparent").style(ButtonStyle::Transparent),
+                    ),
+                ],
+            ),
+            example_group(
+                "Tinted",
+                vec![
+                    single_example(
+                        "Accent",
+                        Button::new("tinted_accent", "Accent")
+                            .style(ButtonStyle::Tinted(TintColor::Accent)),
+                    ),
+                    single_example(
+                        "Negative",
+                        Button::new("tinted_negative", "Negative")
+                            .style(ButtonStyle::Tinted(TintColor::Negative)),
+                    ),
+                    single_example(
+                        "Warning",
+                        Button::new("tinted_warning", "Warning")
+                            .style(ButtonStyle::Tinted(TintColor::Warning)),
+                    ),
+                    single_example(
+                        "Positive",
+                        Button::new("tinted_positive", "Positive")
+                            .style(ButtonStyle::Tinted(TintColor::Positive)),
+                    ),
+                ],
+            ),
+            example_group(
+                "States",
+                vec![
+                    single_example("Default", Button::new("default_state", "Default")),
+                    single_example(
+                        "Disabled",
+                        Button::new("disabled", "Disabled").disabled(true),
+                    ),
+                    single_example(
+                        "Selected",
+                        Button::new("selected", "Selected").selected(true),
+                    ),
+                ],
+            ),
+            example_group(
+                "With Icons",
+                vec![
+                    single_example(
+                        "Icon Start",
+                        Button::new("icon_start", "Icon Start")
+                            .icon(IconName::Check)
+                            .icon_position(IconPosition::Start),
+                    ),
+                    single_example(
+                        "Icon End",
+                        Button::new("icon_end", "Icon End")
+                            .icon(IconName::Check)
+                            .icon_position(IconPosition::End),
+                    ),
+                    single_example(
+                        "Icon Color",
+                        Button::new("icon_color", "Icon Color")
+                            .icon(IconName::Check)
+                            .icon_color(Color::Accent),
+                    ),
+                    single_example(
+                        "Tinted Icons",
+                        Button::new("icon_color", "Delete")
+                            .style(ButtonStyle::Tinted(TintColor::Negative))
+                            .color(Color::Error)
+                            .icon_color(Color::Error)
+                            .icon(IconName::Trash)
+                            .icon_position(IconPosition::Start),
+                    ),
+                ],
+            ),
+        ]
     }
 }
