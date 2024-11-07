@@ -2498,6 +2498,10 @@ impl Editor {
         buffer_position: language::Anchor,
         cx: &AppContext,
     ) -> bool {
+        if !self.snippet_stack.is_empty() {
+            return false;
+        }
+
         if let Some(provider) = self.inline_completion_provider() {
             if let Some(show_inline_completions) = self.show_inline_completions_override {
                 show_inline_completions
