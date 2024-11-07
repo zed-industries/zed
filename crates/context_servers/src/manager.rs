@@ -142,7 +142,7 @@ impl ContextServerManager {
     pub fn add_server(
         &mut self,
         config: ServerConfig,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
         let server_id = config.id.clone();
 
@@ -174,11 +174,7 @@ impl ContextServerManager {
         self.servers.get(id).cloned()
     }
 
-    pub fn remove_server(
-        &mut self,
-        id: &str,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<()>> {
+    pub fn remove_server(&mut self, id: &str, cx: &ModelContext<Self>) -> Task<anyhow::Result<()>> {
         let id = id.to_string();
         cx.spawn(|this, mut cx| async move {
             if let Some(server) = this.update(&mut cx, |this, _cx| this.servers.remove(&id))? {
@@ -224,8 +220,7 @@ impl ContextServerManager {
         self.servers.values().cloned().collect()
     }
 
-    pub fn maintain_servers(&mut self, cx: &mut ModelContext<Self>) {
-        let settings = ContextServerSettings::get_global(cx);
+    pub fn maintain_servers(&mut self, settings: &ContextServerSettings, cx: &ModelContext<Self>) {
         let current_servers = self
             .servers()
             .into_iter()

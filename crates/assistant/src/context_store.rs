@@ -8,7 +8,9 @@ use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
-use context_servers::manager::ContextServerManager;
+use command_palette_hooks::CommandPaletteFilter;
+use context_servers::manager::{ContextServerManager, ContextServerSettings};
+use context_servers::CONTEXT_SERVERS_NAMESPACE;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -20,6 +22,7 @@ use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
 use rpc::AnyProtoClient;
+use settings::{Settings as _, SettingsStore};
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -152,15 +155,38 @@ impl ContextStore {
                 .log_err();
 
             this.update(&mut cx, |this, cx| {
-                context_servers::watch_context_server_settings(
-                    this.context_server_manager.clone(),
-                    cx,
-                );
+                this.watch_context_server_settings(cx);
             })
             .log_err();
 
             Ok(this)
         })
+    }
+
+    fn watch_context_server_settings(&self, cx: &mut ModelContext<Self>) {
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.context_server_manager.update(cx, |manager, cx| {
+                let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
+                    settings::SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: Path::new(""),
+                    }
+                });
+                let settings = ContextServerSettings::get(location, cx);
+
+                manager.maintain_servers(settings, cx);
+
+                let has_any_context_servers = !manager.servers().is_empty();
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    if has_any_context_servers {
+                        filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
+                    } else {
+                        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
+                    }
+                });
+            })
+        })
+        .detach();
     }
 
     async fn handle_advertise_contexts(
