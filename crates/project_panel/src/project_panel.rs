@@ -34,7 +34,9 @@ use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowIndentGuides, ShowDiagnostics};
+use project_panel_settings::{
+    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
+};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -48,8 +50,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, Icon, IndentGuideColors, IndentGuideLayout, KeyBinding, Label, DecoratedIcon,
-    ListItem, Tooltip,
+    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IndentGuideColors, IndentGuideLayout,
+    KeyBinding, Label, ListItem, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2416,8 +2418,14 @@ impl ProjectPanel {
                         .get(&(*worktree_id, entry.path.to_path_buf()))
                         .cloned();
 
-                    let filename_text_color =
-                        entry_git_aware_label_color(status, entry.is_ignored, is_marked);
+                    let filename_text_color = if entry.kind.is_file()
+                        && diagnostic_severity
+                            .map_or(false, |severity| severity == DiagnosticSeverity::ERROR)
+                    {
+                        Color::Error
+                    } else {
+                        entry_git_aware_label_color(status, entry.is_ignored, is_marked)
+                    };
 
                     let mut details = EntryDetails {
                         filename,
