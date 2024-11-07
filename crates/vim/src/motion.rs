@@ -443,7 +443,7 @@ impl Vim {
                     }
                 }
 
-                Mode::HelixNormal | Mode::HelixVisual => {}
+                Mode::HelixNormal  => {}
             }
         }
 
@@ -476,9 +476,6 @@ impl Vim {
 
             Mode::HelixNormal => {
                 self.helix_normal_motion(motion.clone(), count, cx)
-            }
-            Mode::HelixVisual => {
-                
             }
         }
         self.clear_operator(cx);

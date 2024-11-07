@@ -552,7 +552,6 @@ impl Vim {
             }
             Mode::Replace => CursorShape::Underline,
             Mode::HelixNormal
-            | Mode::HelixVisual
             | Mode::Visual
             | Mode::VisualLine
             | Mode::VisualBlock => CursorShape::Block,
@@ -571,7 +570,6 @@ impl Vim {
             }
             Mode::Normal
             | Mode::HelixNormal
-            | Mode::HelixVisual
             | Mode::Replace
             | Mode::Visual
             | Mode::VisualLine
@@ -590,8 +588,7 @@ impl Vim {
             | Mode::VisualLine
             | Mode::VisualBlock
             | Mode::Replace
-            | Mode::HelixNormal
-            | Mode::HelixVisual => false,
+            | Mode::HelixNormal => false,
             Mode::Normal => true,
         }
     }
@@ -603,7 +600,6 @@ impl Vim {
             Mode::Insert => "insert",
             Mode::Replace => "replace",
             Mode::HelixNormal => "helix_normal",
-            Mode::HelixVisual => "helix_visual",
         }
         .to_string();
 
@@ -922,7 +918,7 @@ impl Vim {
                     })
                 });
             }
-            Mode::Insert | Mode::Replace | Mode::HelixNormal | Mode::HelixVisual => {}
+            Mode::Insert | Mode::Replace | Mode::HelixNormal => {}
         }
     }
 
