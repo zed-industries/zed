@@ -9,8 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection,
-    SlashCommandResult,
+    SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
 use assistant_tool::ToolRegistry;
 use client::{self, proto, telemetry::Telemetry};

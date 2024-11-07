@@ -29,12 +29,13 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn restart_servers(_workspace: &mut Workspace, _action: &Restart, cx: &mut ViewContext<Workspace>) {
-    let model = ContextServerManager::global(cx);
-    cx.update_model(&model, |manager, cx| {
-        for server in manager.servers() {
-            manager
-                .restart_server(&server.id, cx)
-                .detach_and_log_err(cx);
-        }
-    });
+    // todo!()
+    // let model = ContextServerManager::global(cx);
+    // cx.update_model(&model, |manager, cx| {
+    //     for server in manager.servers() {
+    //         manager
+    //             .restart_server(&server.id, cx)
+    //             .detach_and_log_err(cx);
+    //     }
+    // });
 }

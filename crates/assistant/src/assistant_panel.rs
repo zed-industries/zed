@@ -536,7 +536,6 @@ impl AssistantPanel {
             client_status: None,
             watch_client_status: Some(watch_client_status),
             show_zed_ai_notice: false,
-
         };
         this.new_context(cx);
         this
@@ -4152,11 +4151,7 @@ impl Render for ContextEditor {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .bg(cx.theme().colors().editor_background)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(self.render_inject_context_menu(cx)),
-                        )
+                        .child(h_flex().gap_1().child(self.render_inject_context_menu(cx)))
                         .child(
                             h_flex()
                                 .w_full()

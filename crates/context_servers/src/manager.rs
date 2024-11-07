@@ -16,7 +16,7 @@
 
 use collections::{HashMap, HashSet};
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Global, Model, ModelContext, Task};
+use gpui::{AppContext, AsyncAppContext, Context, EventEmitter, Model, ModelContext, Task};
 use log;
 use parking_lot::RwLock;
 use schemars::JsonSchema;
@@ -124,7 +124,6 @@ pub enum Event {
     ServerStopped { server_id: String },
 }
 
-impl Global for ContextServerManager {}
 impl EventEmitter<Event> for ContextServerManager {}
 
 impl Default for ContextServerManager {
@@ -139,9 +138,6 @@ impl ContextServerManager {
             servers: HashMap::default(),
             pending_servers: HashSet::default(),
         }
-    }
-    pub fn global(cx: &AppContext) -> Model<Self> {
-        cx.global::<GlobalContextServerManager>().0.clone()
     }
 
     pub fn add_server(
@@ -234,70 +230,60 @@ impl ContextServerManager {
     }
 }
 
-pub struct GlobalContextServerManager(Model<ContextServerManager>);
-impl Global for GlobalContextServerManager {}
-
-impl GlobalContextServerManager {
-    fn register(cx: &mut AppContext) {
-        let model = ContextServerManager::model(cx);
-        cx.set_global(Self(model));
-    }
-}
-
 pub fn init(cx: &mut AppContext) {
     ContextServerSettings::register(cx);
-    GlobalContextServerManager::register(cx);
 
     CommandPaletteFilter::update_global(cx, |filter, _cx| {
         filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
     });
 
-    cx.observe_global::<SettingsStore>(|cx| {
-        let manager = ContextServerManager::global(cx);
-        cx.update_model(&manager, |manager, cx| {
-            let settings = ContextServerSettings::get_global(cx);
-            let current_servers = manager
-                .servers()
-                .into_iter()
-                .map(|server| (server.id.clone(), server.config.clone()))
-                .collect::<HashMap<_, _>>();
+    // todo!()
+    // cx.observe_global::<SettingsStore>(|cx| {
+    //     let manager = ContextServerManager::global(cx);
+    //     cx.update_model(&manager, |manager, cx| {
+    //         let settings = ContextServerSettings::get_global(cx);
+    //         let current_servers = manager
+    //             .servers()
+    //             .into_iter()
+    //             .map(|server| (server.id.clone(), server.config.clone()))
+    //             .collect::<HashMap<_, _>>();
 
-            let new_servers = settings
-                .servers
-                .iter()
-                .map(|config| (config.id.clone(), config.clone()))
-                .collect::<HashMap<_, _>>();
+    //         let new_servers = settings
+    //             .servers
+    //             .iter()
+    //             .map(|config| (config.id.clone(), config.clone()))
+    //             .collect::<HashMap<_, _>>();
 
-            let servers_to_add = new_servers
-                .values()
-                .filter(|config| !current_servers.contains_key(&config.id))
-                .cloned()
-                .collect::<Vec<_>>();
+    //         let servers_to_add = new_servers
+    //             .values()
+    //             .filter(|config| !current_servers.contains_key(&config.id))
+    //             .cloned()
+    //             .collect::<Vec<_>>();
 
-            let servers_to_remove = current_servers
-                .keys()
-                .filter(|id| !new_servers.contains_key(*id))
-                .cloned()
-                .collect::<Vec<_>>();
+    //         let servers_to_remove = current_servers
+    //             .keys()
+    //             .filter(|id| !new_servers.contains_key(*id))
+    //             .cloned()
+    //             .collect::<Vec<_>>();
 
-            log::trace!("servers_to_add={:?}", servers_to_add);
-            for config in servers_to_add {
-                manager.add_server(config, cx).detach_and_log_err(cx);
-            }
+    //         log::trace!("servers_to_add={:?}", servers_to_add);
+    //         for config in servers_to_add {
+    //             manager.add_server(config, cx).detach_and_log_err(cx);
+    //         }
 
-            for id in servers_to_remove {
-                manager.remove_server(&id, cx).detach_and_log_err(cx);
-            }
+    //         for id in servers_to_remove {
+    //             manager.remove_server(&id, cx).detach_and_log_err(cx);
+    //         }
 
-            let has_any_context_servers = !manager.servers().is_empty();
-            CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                if has_any_context_servers {
-                    filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
-                } else {
-                    filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
-                }
-            });
-        })
-    })
-    .detach();
+    //         let has_any_context_servers = !manager.servers().is_empty();
+    //         CommandPaletteFilter::update_global(cx, |filter, _cx| {
+    //             if has_any_context_servers {
+    //                 filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
+    //             } else {
+    //                 filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
+    //             }
+    //         });
+    //     })
+    // })
+    // .detach();
 }

@@ -45,9 +45,11 @@ impl SlashCommandWorkingSet {
         command_id
     }
 
-    pub fn remove(&mut self, command_id: SlashCommandId) {
+    pub fn remove(&self, command_ids_to_remove: &[SlashCommandId]) {
         let mut state = self.state.lock();
-        state.context_server_commands_by_id.remove(&command_id);
+        state
+            .context_server_commands_by_id
+            .retain(|id, _| !command_ids_to_remove.contains(id));
         state.slash_commands_changed();
     }
 }
