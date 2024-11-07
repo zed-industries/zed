@@ -7033,28 +7033,19 @@ impl Editor {
 
     pub fn rewrap_impl(&mut self, is_vim_mode: IsVimMode, cx: &mut ViewContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
-        let selections = self.selections.all::<Point>(cx);
-        let mut selections = selections.iter().peekable();
-
+        let row_ranges = self.selections.all_row_ranges(cx);
         let mut edits = Vec::new();
-        let mut rewrapped_row_ranges = Vec::<RangeInclusive<u32>>::new();
+        let mut last_wrapped_row = None;
 
-        while let Some(selection) = selections.next() {
-            let mut start_row = selection.start.row;
-            let mut end_row = selection.end.row;
-
-            // Skip selections that overlap with a range that has already been rewrapped.
-            let selection_range = start_row..end_row;
-            if rewrapped_row_ranges
-                .iter()
-                .any(|range| range.overlaps(&selection_range))
-            {
-                continue;
-            }
+        for row_range in row_ranges.iter() {
+            let mut start_row = row_range.start().0;
+            let mut end_row = row_range.end().0;
 
             let mut should_rewrap = is_vim_mode == IsVimMode::Yes;
 
-            if let Some(language_scope) = buffer.language_scope_at(selection.head()) {
+            let start_point = Point::new(start_row, 0);
+            let scope = buffer.language_scope_at(start_point);
+            if let Some(language_scope) = &scope {
                 match language_scope.language_name().0.as_ref() {
                     "Markdown" | "Plain Text" => {
                         should_rewrap = true;
@@ -7063,11 +7054,9 @@ impl Editor {
                 }
             }
 
-            let tab_size = buffer.settings_at(selection.head(), cx).tab_size;
+            let tab_size = buffer.settings_at(start_point, cx).tab_size;
 
-            // Since not all lines in the selection may be at the same indent
-            // level, choose the indent size that is the most common between all
-            // of the lines.
+            // Since not all lines in the selection may be at the same indent level, choose the indent size that is the most common between all of the lines.
             //
             // If there is a tie, we use the deepest indent.
             let (indent_size, indent_end) = {
@@ -7093,17 +7082,13 @@ impl Editor {
 
             let mut line_prefix = indent_size.chars().collect::<String>();
 
-            if let Some(comment_prefix) =
-                buffer
-                    .language_scope_at(selection.head())
-                    .and_then(|language| {
-                        language
-                            .line_comment_prefixes()
-                            .iter()
-                            .find(|prefix| buffer.contains_str_at(indent_end, prefix))
-                            .cloned()
-                    })
-            {
+            if let Some(comment_prefix) = scope.and_then(|language| {
+                language
+                    .line_comment_prefixes()
+                    .iter()
+                    .find(|prefix| buffer.contains_str_at(indent_end, prefix.trim_end()))
+                    .cloned()
+            }) {
                 line_prefix.push_str(&comment_prefix);
                 should_rewrap = true;
             }
@@ -7112,28 +7097,35 @@ impl Editor {
                 continue;
             }
 
-            if selection.is_empty() {
-                'expand_upwards: while start_row > 0 {
-                    let prev_row = start_row - 1;
-                    if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
-                    {
-                        start_row = prev_row;
-                    } else {
-                        break 'expand_upwards;
-                    }
+            'expand_upwards: while start_row > last_wrapped_row.unwrap_or(0) {
+                let prev_row = start_row - 1;
+                if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
+                    && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+                {
+                    start_row = prev_row;
+                } else {
+                    break 'expand_upwards;
                 }
+            }
 
-                'expand_downwards: while end_row < buffer.max_point().row {
-                    let next_row = end_row + 1;
-                    if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
-                        && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
-                    {
-                        end_row = next_row;
-                    } else {
-                        break 'expand_downwards;
-                    }
+            'expand_downwards: while end_row < buffer.max_point().row {
+                let next_row = end_row + 1;
+                if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
+                    && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+                {
+                    end_row = next_row;
+                } else {
+                    break 'expand_downwards;
                 }
+            }
+
+            // Avoid rewrapping due
+            if let Some(last_wrapped_row) = last_wrapped_row {
+                start_row = start_row.max(last_wrapped_row + 1);
+            }
+            last_wrapped_row = Some(end_row);
+            if start_row > end_row {
+                continue;
             }
 
             let start = Point::new(start_row, 0);
@@ -7205,8 +7197,6 @@ impl Editor {
                     }
                 }
             }
-
-            rewrapped_row_ranges.push(start_row..=end_row);
         }
 
         self.buffer
@@ -14918,6 +14908,18 @@ trait RowRangeExt {
     fn len(&self) -> usize;
 
     fn iter_rows(&self) -> impl DoubleEndedIterator<Item = Self::Row>;
+}
+
+impl RowRangeExt for RangeInclusive<MultiBufferRow> {
+    type Row = MultiBufferRow;
+
+    fn len(&self) -> usize {
+        (self.end().0 - self.start().0 + 1) as usize
+    }
+
+    fn iter_rows(&self) -> impl DoubleEndedIterator<Item = MultiBufferRow> {
+        (self.start().0..=self.end().0).map(MultiBufferRow)
+    }
 }
 
 impl RowRangeExt for Range<MultiBufferRow> {
