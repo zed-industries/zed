@@ -24,7 +24,9 @@ collections.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
+itertools.workspace = true
 log.workspace = true
+paths.workspace = true
 parking_lot.workspace = true
 prost.workspace = true
 rpc = { workspace = true, features = ["gpui"] }

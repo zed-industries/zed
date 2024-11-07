@@ -1,18 +1,22 @@
 #![allow(unused, dead_code)]
+use std::future::Future;
 use std::{path::PathBuf, sync::Arc};
 
+use anyhow::{Context as _, Result};
 use client::proto::ViewId;
 use collections::HashMap;
 use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
+use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{
-    actions, list, prelude::*, AppContext, EventEmitter, FocusHandle, FocusableView,
-    ListScrollEvent, ListState, Model, Task,
+    actions, list, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    ListScrollEvent, ListState, Model, Point, Task, View,
 };
-use language::LanguageRegistry;
+use language::{Language, LanguageRegistry};
 use project::{Project, ProjectEntryId, ProjectPath};
 use ui::{prelude::*, Tooltip};
-use workspace::item::ItemEvent;
+use workspace::item::{ItemEvent, TabContentParams};
+use workspace::searchable::SearchableItemHandle;
 use workspace::{Item, ItemHandle, ProjectItem, ToolbarItemLocation};
 use workspace::{ToolbarItemEvent, ToolbarItemView};
 
@@ -20,9 +24,6 @@ use super::{Cell, CellPosition, RenderableCell};
 
 use nbformat::v4::CellId;
 use nbformat::v4::Metadata as NotebookMetadata;
-
-pub(crate) const DEFAULT_NOTEBOOK_FORMAT: i32 = 4;
-pub(crate) const DEFAULT_NOTEBOOK_FORMAT_MINOR: i32 = 0;
 
 actions!(
     notebook,
@@ -65,17 +66,14 @@ pub fn init(cx: &mut AppContext) {
 
 pub struct NotebookEditor {
     languages: Arc<LanguageRegistry>,
+    project: Model<Project>,
 
     focus_handle: FocusHandle,
-    project: Model<Project>,
-    path: ProjectPath,
+    notebook_item: Model<NotebookItem>,
 
     remote_id: Option<ViewId>,
     cell_list: ListState,
 
-    metadata: NotebookMetadata,
-    nbformat: i32,
-    nbformat_minor: i32,
     selected_cell_index: usize,
     cell_order: Vec<CellId>,
     cell_map: HashMap<CellId, Cell>,
@@ -89,47 +87,23 @@ impl NotebookEditor {
     ) -> Self {
         let focus_handle = cx.focus_handle();
 
-        let notebook = notebook_item.read(cx).notebook.clone();
-
         let languages = project.read(cx).languages().clone();
+        let language_name = notebook_item.read(cx).language_name();
 
-        let metadata = notebook.metadata;
-        let nbformat = notebook.nbformat;
-        let nbformat_minor = notebook.nbformat_minor;
+        let notebook_language = notebook_item.read(cx).notebook_language();
+        let notebook_language = cx.spawn(|_, _| notebook_language).shared();
 
-        let language_name = metadata
-            .language_info
-            .as_ref()
-            .map(|l| l.name.clone())
-            .or(metadata
-                .kernelspec
-                .as_ref()
-                .and_then(|spec| spec.language.clone()));
+        let mut cell_order = vec![]; // Vec<CellId>
+        let mut cell_map = HashMap::default(); // HashMap<CellId, Cell>
 
-        let notebook_language = if let Some(language_name) = language_name {
-            cx.spawn(|_, _| {
-                let languages = languages.clone();
-                async move { languages.language_for_name(&language_name).await.ok() }
-            })
-            .shared()
-        } else {
-            Task::ready(None).shared()
-        };
-
-        let languages = project.read(cx).languages().clone();
-        let notebook_language = cx
-            .spawn(|_, _| {
-                // todo: pull from notebook metadata
-                const TODO: &'static str = "Python";
-                let languages = languages.clone();
-                async move { languages.language_for_name(TODO).await.ok() }
-            })
-            .shared();
-
-        let mut cell_order = vec![];
-        let mut cell_map = HashMap::default();
-
-        for (index, cell) in notebook.cells.iter().enumerate() {
+        for (index, cell) in notebook_item
+            .read(cx)
+            .notebook
+            .clone()
+            .cells
+            .iter()
+            .enumerate()
+        {
             let cell_id = cell.id();
             cell_order.push(cell_id.clone());
             cell_map.insert(
@@ -140,44 +114,35 @@ impl NotebookEditor {
 
         let view = cx.view().downgrade();
         let cell_count = cell_order.len();
-        let cell_order_for_list = cell_order.clone();
-        let cell_map_for_list = cell_map.clone();
 
+        let this = cx.view();
         let cell_list = ListState::new(
             cell_count,
             gpui::ListAlignment::Top,
-            // TODO: This is a totally random number,
-            // not sure what this should be
-            px(3000.),
+            px(1000.),
             move |ix, cx| {
-                let cell_order_for_list = cell_order_for_list.clone();
-                let cell_id = cell_order_for_list[ix].clone();
-                if let Some(view) = view.upgrade() {
-                    let cell_id = cell_id.clone();
-                    if let Some(cell) = cell_map_for_list.clone().get(&cell_id) {
-                        view.update(cx, |view, cx| {
-                            view.render_cell(ix, cell, cx).into_any_element()
+                view.upgrade()
+                    .and_then(|notebook_handle| {
+                        notebook_handle.update(cx, |notebook, cx| {
+                            notebook
+                                .cell_order
+                                .get(ix)
+                                .and_then(|cell_id| notebook.cell_map.get(cell_id))
+                                .map(|cell| notebook.render_cell(ix, cell, cx).into_any_element())
                         })
-                    } else {
-                        div().into_any()
-                    }
-                } else {
-                    div().into_any()
-                }
+                    })
+                    .unwrap_or_else(|| div().into_any())
             },
         );
 
         Self {
+            project,
             languages: languages.clone(),
             focus_handle,
-            project,
-            path: notebook_item.read(cx).project_path.clone(),
+            notebook_item,
             remote_id: None,
             cell_list,
             selected_cell_index: 0,
-            metadata,
-            nbformat,
-            nbformat_minor,
             cell_order: cell_order.clone(),
             cell_map: cell_map.clone(),
         }
@@ -524,10 +489,15 @@ impl FocusableView for NotebookEditor {
     }
 }
 
+// Intended to be a NotebookBuffer
 pub struct NotebookItem {
     path: PathBuf,
     project_path: ProjectPath,
+    languages: Arc<LanguageRegistry>,
+    // Raw notebook data
     notebook: nbformat::v4::Notebook,
+    // Store our version of the notebook in memory (cell_order, cell_map)
+    id: ProjectEntryId,
 }
 
 impl project::Item for NotebookItem {
@@ -538,6 +508,8 @@ impl project::Item for NotebookItem {
     ) -> Option<Task<gpui::Result<Model<Self>>>> {
         let path = path.clone();
         let project = project.clone();
+        let fs = project.read(cx).fs().clone();
+        let languages = project.read(cx).languages().clone();
 
         if path.path.extension().unwrap_or_default() == "ipynb" {
             Some(cx.spawn(|mut cx| async move {
@@ -545,26 +517,36 @@ impl project::Item for NotebookItem {
                     .read_with(&cx, |project, cx| project.absolute_path(&path, cx))?
                     .ok_or_else(|| anyhow::anyhow!("Failed to find the absolute path"))?;
 
-                let file_content = std::fs::read_to_string(abs_path.clone())?;
+                // todo: watch for changes to the file
+                let file_content = fs.load(&abs_path.as_path()).await?;
                 let notebook = nbformat::parse_notebook(&file_content);
 
                 let notebook = match notebook {
                     Ok(nbformat::Notebook::V4(notebook)) => notebook,
+                    // 4.1 - 4.4 are converted to 4.5
                     Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
                         // todo!(): Decide if we want to mutate the notebook by including Cell IDs
                         // and any other conversions
                         let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
                         notebook
                     }
+                    // Bad notebooks and notebooks v4.0 and below are not supported
                     Err(e) => {
                         anyhow::bail!("Failed to parse notebook: {:?}", e);
                     }
                 };
 
+                let id = project
+                    .update(&mut cx, |project, cx| project.entry_for_path(&path, cx))?
+                    .context("Entry not found")?
+                    .id;
+
                 cx.new_model(|_| NotebookItem {
                     path: abs_path,
                     project_path: path,
+                    languages,
                     notebook,
+                    id,
                 })
             }))
         } else {
@@ -573,11 +555,40 @@ impl project::Item for NotebookItem {
     }
 
     fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
-        None
+        Some(self.id)
     }
 
     fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
         Some(self.project_path.clone())
+    }
+}
+
+impl NotebookItem {
+    pub fn language_name(&self) -> Option<String> {
+        self.notebook
+            .metadata
+            .language_info
+            .as_ref()
+            .map(|l| l.name.clone())
+            .or(self
+                .notebook
+                .metadata
+                .kernelspec
+                .as_ref()
+                .and_then(|spec| spec.language.clone()))
+    }
+
+    pub fn notebook_language(&self) -> impl Future<Output = Option<Arc<Language>>> {
+        let language_name = self.language_name();
+        let languages = self.languages.clone();
+
+        async move {
+            if let Some(language_name) = language_name {
+                languages.language_for_name(&language_name).await.ok()
+            } else {
+                None
+            }
+        }
     }
 }
 
@@ -631,12 +642,41 @@ impl EventEmitter<()> for NotebookEditor {}
 impl Item for NotebookEditor {
     type Event = ();
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
-        let path = self.path.path.clone();
+    fn clone_on_split(
+        &self,
+        _workspace_id: Option<workspace::WorkspaceId>,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<gpui::View<Self>>
+    where
+        Self: Sized,
+    {
+        Some(cx.new_view(|cx| Self::new(self.project.clone(), self.notebook_item.clone(), cx)))
+    }
 
-        path.file_stem()
-            .map(|stem| stem.to_string_lossy().into_owned())
-            .map(SharedString::from)
+    fn for_each_project_item(
+        &self,
+        cx: &AppContext,
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+    ) {
+        f(self.notebook_item.entity_id(), self.notebook_item.read(cx))
+    }
+
+    fn is_singleton(&self, _cx: &AppContext) -> bool {
+        true
+    }
+
+    fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
+        let path = &self.notebook_item.read(cx).path;
+        let title = path
+            .file_name()
+            .unwrap_or_else(|| path.as_os_str())
+            .to_string_lossy()
+            .to_string();
+        Label::new(title)
+            .single_line()
+            .color(params.text_color())
+            .italic(params.preview)
+            .into_any_element()
     }
 
     fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
@@ -647,8 +687,54 @@ impl Item for NotebookEditor {
         false
     }
 
+    // TODO
+    fn pixel_position_of_cursor(&self, _: &AppContext) -> Option<Point<Pixels>> {
+        None
+    }
+
+    // TODO
+    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        None
+    }
+
+    fn set_nav_history(&mut self, _: workspace::ItemNavHistory, _: &mut ViewContext<Self>) {
+        // TODO
+    }
+
+    // TODO
+    fn can_save(&self, _cx: &AppContext) -> bool {
+        false
+    }
+    // TODO
+    fn save(
+        &mut self,
+        _format: bool,
+        _project: Model<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save() must be implemented if can_save() returns true")
+    }
+
+    // TODO
+    fn save_as(
+        &mut self,
+        _project: Model<Project>,
+        _path: ProjectPath,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("save_as() must be implemented if can_save() returns true")
+    }
+    // TODO
+    fn reload(
+        &mut self,
+        _project: Model<Project>,
+        _cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        unimplemented!("reload() must be implemented if can_save() returns true")
+    }
+
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        // self.is_dirty(cx)
+        // self.is_dirty(cx) TODO
         false
     }
 }

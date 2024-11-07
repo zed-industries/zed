@@ -46,6 +46,7 @@ serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
 strum.workspace = true
+telemetry_events.workspace = true
 theme.workspace = true
 thiserror.workspace = true
 tiktoken-rs.workspace = true

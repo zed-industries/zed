@@ -9,6 +9,7 @@ pub mod searchable;
 pub mod shared_screen;
 mod status_bar;
 pub mod tasks;
+mod theme_preview;
 mod toolbar;
 mod workspace_settings;
 
@@ -63,8 +64,7 @@ use postage::stream::Stream;
 use project::{
     DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
 };
-use release_channel::ReleaseChannel;
-use remote::{SshClientDelegate, SshConnectionOptions};
+use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -323,6 +323,7 @@ pub fn init_settings(cx: &mut AppContext) {
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
+    theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
     cx.on_action(reload);
@@ -751,7 +752,7 @@ pub struct Workspace {
     leader_updates_tx: mpsc::UnboundedSender<(PeerId, proto::UpdateFollowers)>,
     database_id: Option<WorkspaceId>,
     app_state: Arc<AppState>,
-    dispatching_keystrokes: Rc<RefCell<Vec<Keystroke>>>,
+    dispatching_keystrokes: Rc<RefCell<(HashSet<String>, Vec<Keystroke>)>>,
     _subscriptions: Vec<Subscription>,
     _apply_leader_updates: Task<Result<()>>,
     _observe_current_user: Task<Result<()>>,
@@ -1783,6 +1784,11 @@ impl Workspace {
     }
 
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
+        let mut state = self.dispatching_keystrokes.borrow_mut();
+        if !state.0.insert(action.0.clone()) {
+            cx.propagate();
+            return;
+        }
         let mut keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')
@@ -1790,16 +1796,16 @@ impl Workspace {
             .collect();
         keystrokes.reverse();
 
-        self.dispatching_keystrokes
-            .borrow_mut()
-            .append(&mut keystrokes);
+        state.1.append(&mut keystrokes);
+        drop(state);
 
         let keystrokes = self.dispatching_keystrokes.clone();
         cx.window_context()
             .spawn(|mut cx| async move {
                 // limit to 100 keystrokes to avoid infinite recursion.
                 for _ in 0..100 {
-                    let Some(keystroke) = keystrokes.borrow_mut().pop() else {
+                    let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
+                        keystrokes.borrow_mut().0.clear();
                         return Ok(());
                     };
                     cx.update(|cx| {
@@ -1816,7 +1822,8 @@ impl Workspace {
                         }
                     })?;
                 }
-                keystrokes.borrow_mut().clear();
+
+                *keystrokes.borrow_mut() = Default::default();
                 Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
             })
             .detach_and_log_err(cx);
@@ -2212,7 +2219,13 @@ impl Workspace {
 
         if retain_active_pane {
             if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems { save_intent: None }, cx)
+                pane.close_inactive_items(
+                    &CloseInactiveItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    cx,
+                )
             }) {
                 tasks.push(current_pane_close);
             };
@@ -2227,6 +2240,7 @@ impl Workspace {
                 pane.close_all_items(
                     &CloseAllItems {
                         save_intent: Some(save_intent),
+                        close_pinned: false,
                     },
                     cx,
                 )
@@ -3218,6 +3232,21 @@ impl Workspace {
         &self.active_pane
     }
 
+    pub fn focused_pane(&self, cx: &WindowContext) -> View<Pane> {
+        for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
+            if dock.focus_handle(cx).contains_focused(cx) {
+                if let Some(pane) = dock
+                    .read(cx)
+                    .active_panel()
+                    .and_then(|panel| panel.pane(cx))
+                {
+                    return pane;
+                }
+            }
+        }
+        self.active_pane().clone()
+    }
+
     pub fn adjacent_pane(&mut self, cx: &mut ViewContext<Self>) -> View<Pane> {
         self.find_pane_in_direction(SplitDirection::Right, cx)
             .or_else(|| self.find_pane_in_direction(SplitDirection::Left, cx))
@@ -3414,6 +3443,17 @@ impl Workspace {
         let project = self.project().read(cx);
         let mut title = String::new();
 
+        for (i, name) in project.worktree_root_names(cx).enumerate() {
+            if i > 0 {
+                title.push_str(", ");
+            }
+            title.push_str(name);
+        }
+
+        if title.is_empty() {
+            title = "empty project".to_string();
+        }
+
         if let Some(path) = self.active_item(cx).and_then(|item| item.project_path(cx)) {
             let filename = path
                 .path
@@ -3429,20 +3469,9 @@ impl Workspace {
                 });
 
             if let Some(filename) = filename {
-                title.push_str(filename.as_ref());
                 title.push_str(" — ");
+                title.push_str(filename.as_ref());
             }
-        }
-
-        for (i, name) in project.worktree_root_names(cx).enumerate() {
-            if i > 0 {
-                title.push_str(", ");
-            }
-            title.push_str(name);
-        }
-
-        if title.is_empty() {
-            title = "empty project".to_string();
         }
 
         if project.is_via_collab() {
@@ -4665,7 +4694,7 @@ enum ActivateInDirectionTarget {
 }
 
 fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncAppContext) {
-    const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=defect%2Ctriage&template=2_bug_report.yml";
+    const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml";
 
     workspace
         .update(cx, |workspace, cx| {
@@ -5494,26 +5523,14 @@ pub fn open_ssh_project(
     paths: Vec<PathBuf>,
     cx: &mut AppContext,
 ) -> Task<Result<()>> {
-    let release_channel = ReleaseChannel::global(cx);
-
     cx.spawn(|mut cx| async move {
         let (serialized_ssh_project, workspace_id, serialized_workspace) =
             serialize_ssh_project(connection_options.clone(), paths.clone(), &cx).await?;
 
-        let identifier_prefix = match release_channel {
-            ReleaseChannel::Stable => None,
-            _ => Some(format!("{}-", release_channel.dev_name())),
-        };
-        let unique_identifier = format!(
-            "{}workspace-{}",
-            identifier_prefix.unwrap_or_default(),
-            workspace_id.0
-        );
-
         let session = match cx
             .update(|cx| {
                 remote::SshRemoteClient::new(
-                    unique_identifier,
+                    ConnectionIdentifier::Workspace(workspace_id.0),
                     connection_options,
                     cancel_rx,
                     delegate,
@@ -6201,13 +6218,13 @@ mod tests {
                     .map(|e| e.id)
             );
         });
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
 
         // Add a second item to a non-empty pane
         workspace.update(cx, |workspace, cx| {
             workspace.add_item_to_active_pane(Box::new(item2), None, true, cx)
         });
-        assert_eq!(cx.window_title().as_deref(), Some("two.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — two.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -6223,7 +6240,7 @@ mod tests {
         })
         .await
         .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1 — one.txt"));
         project.update(cx, |project, cx| {
             assert_eq!(
                 project.active_entry(),
@@ -6240,11 +6257,11 @@ mod tests {
             })
             .await
             .unwrap();
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root1, root2"));
+        assert_eq!(cx.window_title().as_deref(), Some("root1, root2 — one.txt"));
 
         // Remove a project folder
         project.update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
-        assert_eq!(cx.window_title().as_deref(), Some("one.txt — root2"));
+        assert_eq!(cx.window_title().as_deref(), Some("root2 — one.txt"));
     }
 
     #[gpui::test]

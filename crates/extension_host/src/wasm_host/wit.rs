@@ -3,9 +3,11 @@ mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
-use indexed_docs::IndexedDocsDatabase;
+// use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
+
+use crate::DocsDatabase;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
@@ -20,7 +22,9 @@ use wasmtime::{
 #[cfg(test)]
 pub use latest::CodeLabelSpanLiteral;
 pub use latest::{
-    zed::extension::lsp::{Completion, CompletionKind, InsertTextFormat, Symbol, SymbolKind},
+    zed::extension::lsp::{
+        Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
+    },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
     CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
 };
@@ -262,7 +266,11 @@ impl Extension {
                     .await
             }
             Extension::V010(ext) => Ok(ext
-                .call_labels_for_completions(store, &language_server_id.0, &completions)
+                .call_labels_for_completions(
+                    store,
+                    &language_server_id.0,
+                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -271,7 +279,11 @@ impl Extension {
                         .collect()
                 })),
             Extension::V006(ext) => Ok(ext
-                .call_labels_for_completions(store, &language_server_id.0, &completions)
+                .call_labels_for_completions(
+                    store,
+                    &language_server_id.0,
+                    &completions.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -295,7 +307,11 @@ impl Extension {
                     .await
             }
             Extension::V010(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -304,7 +320,11 @@ impl Extension {
                         .collect()
                 })),
             Extension::V006(ext) => Ok(ext
-                .call_labels_for_symbols(store, &language_server_id.0, &symbols)
+                .call_labels_for_symbols(
+                    store,
+                    &language_server_id.0,
+                    &symbols.into_iter().map(Into::into).collect::<Vec<_>>(),
+                )
                 .await?
                 .map(|labels| {
                     labels
@@ -376,7 +396,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         provider: &str,
         package_name: &str,
-        database: Resource<Arc<IndexedDocsDatabase>>,
+        database: Resource<Arc<dyn DocsDatabase>>,
     ) -> Result<Result<(), String>> {
         match self {
             Extension::V020(ext) => {

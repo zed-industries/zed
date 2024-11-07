@@ -53,6 +53,7 @@ serde_json.workspace = true
 settings.workspace = true
 shellexpand.workspace = true
 smol.workspace = true
+sysinfo.workspace = true
 telemetry_events.workspace = true
 util.workspace = true
 worktree.workspace = true

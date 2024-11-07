@@ -13,6 +13,7 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 - `/symbols`: Inserts the current tab's active symbols into the context
 - `/tab`: Inserts the content of the active tab or all open tabs into the context
 - `/terminal`: Inserts a select number of lines of output from the terminal
+- `/selection`: Inserts the selected text into the context
 
 ### Other Commands:
 
@@ -94,6 +95,14 @@ The `/terminal` command inserts a select number of lines of output from the term
 Usage: `/terminal [<number>]`
 
 - `<number>`: Optional parameter to specify the number of lines to insert (default is a 50).
+
+## `/selection`
+
+The `/selection` command inserts the selected text in the editor into the context. This is useful for referencing specific parts of your code.
+
+This is equivalent to the `assistant: quote selection` command ({#kb assistant::QuoteSelection}). See [Interacting with the Assistant](./assistant-panel.md#interacting-with-the-assistant)).
+
+Usage: `/selection`
 
 ## `/workflow`
 

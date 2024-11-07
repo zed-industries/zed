@@ -36,7 +36,7 @@ use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
 pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
-use fold_map::{FoldMap, FoldSnapshot};
+use fold_map::{FoldMap, FoldMapWriter, FoldOffset, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
@@ -65,7 +65,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::LineIndent;
+use text::{Edit, LineIndent};
 use ui::{div, px, IntoElement, ParentElement, SharedString, Styled, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -206,34 +206,41 @@ impl DisplayMap {
         );
     }
 
+    /// Creates folds for the given ranges.
     pub fn fold<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = (Range<T>, FoldPlaceholder)>,
         cx: &mut ModelContext<Self>,
     ) {
-        let snapshot = self.buffer.read(cx).snapshot(cx);
-        let edits = self.buffer_subscription.consume().into_inner();
-        let tab_size = Self::tab_size(&self.buffer, cx);
-        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
-        let (mut fold_map, snapshot, edits) = self.fold_map.write(snapshot, edits);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = fold_map.fold(ranges);
-        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
-        let (snapshot, edits) = self
-            .wrap_map
-            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
-        self.block_map.read(snapshot, edits);
+        self.update_fold_map(cx, |fold_map| fold_map.fold(ranges))
     }
 
-    pub fn unfold<T: ToOffset>(
+    /// Removes any folds with the given ranges.
+    pub fn remove_folds_with_type<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        type_id: TypeId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.update_fold_map(cx, |fold_map| fold_map.remove_folds(ranges, type_id))
+    }
+
+    /// Removes any folds whose ranges intersect any of the given ranges.
+    pub fn unfold_intersecting<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
         inclusive: bool,
         cx: &mut ModelContext<Self>,
+    ) {
+        self.update_fold_map(cx, |fold_map| {
+            fold_map.unfold_intersecting(ranges, inclusive)
+        })
+    }
+
+    fn update_fold_map(
+        &mut self,
+        cx: &mut ModelContext<Self>,
+        callback: impl FnOnce(&mut FoldMapWriter) -> (FoldSnapshot, Vec<Edit<FoldOffset>>),
     ) {
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let edits = self.buffer_subscription.consume().into_inner();
@@ -245,7 +252,7 @@ impl DisplayMap {
             .wrap_map
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         self.block_map.read(snapshot, edits);
-        let (snapshot, edits) = fold_map.unfold(ranges, inclusive);
+        let (snapshot, edits) = callback(&mut fold_map);
         let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
         let (snapshot, edits) = self
             .wrap_map
@@ -660,7 +667,7 @@ impl DisplaySnapshot {
         new_start..new_end
     }
 
-    fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
+    pub fn point_to_display_point(&self, point: MultiBufferPoint, bias: Bias) -> DisplayPoint {
         let inlay_point = self.inlay_snapshot.to_inlay_point(point);
         let fold_point = self.fold_snapshot.to_fold_point(inlay_point, bias);
         let tab_point = self.tab_snapshot.to_tab_point(fold_point);
@@ -669,7 +676,7 @@ impl DisplaySnapshot {
         DisplayPoint(block_point)
     }
 
-    fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
+    pub fn display_point_to_point(&self, point: DisplayPoint, bias: Bias) -> Point {
         self.inlay_snapshot
             .to_buffer_point(self.display_point_to_inlay_point(point, bias))
     }
@@ -691,7 +698,7 @@ impl DisplaySnapshot {
 
     fn display_point_to_inlay_point(&self, point: DisplayPoint, bias: Bias) -> InlayPoint {
         let block_point = point.0;
-        let wrap_point = self.block_snapshot.to_wrap_point(block_point);
+        let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = self.tab_snapshot.to_fold_point(tab_point, bias).0;
         fold_point.to_inlay_point(&self.fold_snapshot)
@@ -699,7 +706,7 @@ impl DisplaySnapshot {
 
     pub fn display_point_to_fold_point(&self, point: DisplayPoint, bias: Bias) -> FoldPoint {
         let block_point = point.0;
-        let wrap_point = self.block_snapshot.to_wrap_point(block_point);
+        let wrap_point = self.block_snapshot.to_wrap_point(block_point, bias);
         let tab_point = self.wrap_snapshot.to_tab_point(wrap_point);
         self.tab_snapshot.to_fold_point(tab_point, bias).0
     }
@@ -990,7 +997,7 @@ impl DisplaySnapshot {
     pub fn soft_wrap_indent(&self, display_row: DisplayRow) -> Option<u32> {
         let wrap_row = self
             .block_snapshot
-            .to_wrap_point(BlockPoint::new(display_row.0, 0))
+            .to_wrap_point(BlockPoint::new(display_row.0, 0), Bias::Left)
             .row();
         self.wrap_snapshot.soft_wrap_indent(wrap_row)
     }
@@ -1172,7 +1179,7 @@ impl Sub for DisplayPoint {
 #[serde(transparent)]
 pub struct DisplayRow(pub u32);
 
-impl Add for DisplayRow {
+impl Add<DisplayRow> for DisplayRow {
     type Output = Self;
 
     fn add(self, other: Self) -> Self::Output {
@@ -1180,11 +1187,27 @@ impl Add for DisplayRow {
     }
 }
 
-impl Sub for DisplayRow {
+impl Add<u32> for DisplayRow {
+    type Output = Self;
+
+    fn add(self, other: u32) -> Self::Output {
+        DisplayRow(self.0 + other)
+    }
+}
+
+impl Sub<DisplayRow> for DisplayRow {
     type Output = Self;
 
     fn sub(self, other: Self) -> Self::Output {
         DisplayRow(self.0 - other.0)
+    }
+}
+
+impl Sub<u32> for DisplayRow {
+    type Output = Self;
+
+    fn sub(self, other: u32) -> Self::Output {
+        DisplayRow(self.0 - other)
     }
 }
 
@@ -1222,7 +1245,7 @@ impl DisplayPoint {
     }
 
     pub fn to_offset(self, map: &DisplaySnapshot, bias: Bias) -> usize {
-        let wrap_point = map.block_snapshot.to_wrap_point(self.0);
+        let wrap_point = map.block_snapshot.to_wrap_point(self.0, bias);
         let tab_point = map.wrap_snapshot.to_tab_point(wrap_point);
         let fold_point = map.tab_snapshot.to_fold_point(tab_point, bias).0;
         let inlay_point = fold_point.to_inlay_point(&map.fold_snapshot);
@@ -1426,7 +1449,7 @@ pub mod tests {
                     if rng.gen() && fold_count > 0 {
                         log::info!("unfolding ranges: {:?}", ranges);
                         map.update(cx, |map, cx| {
-                            map.unfold(ranges, true, cx);
+                            map.unfold_intersecting(ranges, true, cx);
                         });
                     } else {
                         log::info!("folding ranges: {:?}", ranges);
@@ -2046,6 +2069,112 @@ pub mod tests {
                 (";\n".into(), None, black),
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_point_translation_with_replace_blocks(cx: &mut gpui::TestAppContext) {
+        cx.background_executor
+            .set_block_on_ticks(usize::MAX..=usize::MAX);
+
+        cx.update(|cx| init_test(cx, |_| {}));
+
+        let buffer = cx.update(|cx| MultiBuffer::build_simple("abcde\nfghij\nklmno\npqrst", cx));
+        let buffer_snapshot = buffer.read_with(cx, |buffer, cx| buffer.snapshot(cx));
+        let map = cx.new_model(|cx| {
+            DisplayMap::new(
+                buffer.clone(),
+                font("Courier"),
+                px(16.0),
+                None,
+                true,
+                1,
+                1,
+                0,
+                FoldPlaceholder::test(),
+                cx,
+            )
+        });
+
+        let snapshot = map.update(cx, |map, cx| {
+            map.insert_blocks(
+                [BlockProperties {
+                    placement: BlockPlacement::Replace(
+                        buffer_snapshot.anchor_before(Point::new(1, 2))
+                            ..buffer_snapshot.anchor_after(Point::new(2, 3)),
+                    ),
+                    height: 4,
+                    style: BlockStyle::Fixed,
+                    render: Box::new(|_| div().into_any()),
+                    priority: 0,
+                }],
+                cx,
+            );
+            map.snapshot(cx)
+        });
+
+        assert_eq!(snapshot.text(), "abcde\n\n\n\n\npqrst");
+
+        let point_to_display_points = [
+            (Point::new(1, 0), DisplayPoint::new(DisplayRow(1), 0)),
+            (Point::new(2, 0), DisplayPoint::new(DisplayRow(1), 0)),
+            (Point::new(3, 0), DisplayPoint::new(DisplayRow(5), 0)),
+        ];
+        for (buffer_point, display_point) in point_to_display_points {
+            assert_eq!(
+                snapshot.point_to_display_point(buffer_point, Bias::Left),
+                display_point,
+                "point_to_display_point({:?}, Bias::Left)",
+                buffer_point
+            );
+            assert_eq!(
+                snapshot.point_to_display_point(buffer_point, Bias::Right),
+                display_point,
+                "point_to_display_point({:?}, Bias::Right)",
+                buffer_point
+            );
+        }
+
+        let display_points_to_points = [
+            (
+                DisplayPoint::new(DisplayRow(1), 0),
+                Point::new(1, 0),
+                Point::new(2, 5),
+            ),
+            (
+                DisplayPoint::new(DisplayRow(2), 0),
+                Point::new(1, 0),
+                Point::new(2, 5),
+            ),
+            (
+                DisplayPoint::new(DisplayRow(3), 0),
+                Point::new(1, 0),
+                Point::new(2, 5),
+            ),
+            (
+                DisplayPoint::new(DisplayRow(4), 0),
+                Point::new(1, 0),
+                Point::new(2, 5),
+            ),
+            (
+                DisplayPoint::new(DisplayRow(5), 0),
+                Point::new(3, 0),
+                Point::new(3, 0),
+            ),
+        ];
+        for (display_point, left_buffer_point, right_buffer_point) in display_points_to_points {
+            assert_eq!(
+                snapshot.display_point_to_point(display_point, Bias::Left),
+                left_buffer_point,
+                "display_point_to_point({:?}, Bias::Left)",
+                display_point
+            );
+            assert_eq!(
+                snapshot.display_point_to_point(display_point, Bias::Right),
+                right_buffer_point,
+                "display_point_to_point({:?}, Bias::Right)",
+                display_point
+            );
+        }
     }
 
     // todo(linux) fails due to pixel differences in text rendering

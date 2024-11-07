@@ -5,7 +5,7 @@ use crate::{
 };
 use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
 use gpui::{actions, ViewContext};
-use language::{AutoindentMode, Point};
+use language::Point;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -58,15 +58,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(
-                        edits.clone(),
-                        Some(AutoindentMode::Block {
-                            original_indent_columns: Vec::new(),
-                        }),
-                        cx,
-                    );
-                });
+                editor.edit_with_block_indent(edits.clone(), Vec::new(), cx);
 
                 editor.change_selections(None, cx, |s| {
                     s.select_anchor_ranges(edits.iter().map(|(range, _)| range.end..range.end));
@@ -113,9 +105,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
 
                 editor.change_selections(None, cx, |s| {
                     s.select_ranges(new_selections);

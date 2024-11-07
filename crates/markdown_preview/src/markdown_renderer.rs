@@ -5,8 +5,8 @@ use crate::markdown_elements::{
     ParsedMarkdownTableRow, ParsedMarkdownText,
 };
 use gpui::{
-    div, px, rems, AbsoluteLength, AnyElement, DefiniteLength, Div, Element, ElementId,
-    HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
+    div, px, rems, AbsoluteLength, AnyElement, ClipboardItem, DefiniteLength, Div, Element,
+    ElementId, HighlightStyle, Hsla, InteractiveText, IntoElement, Keystroke, Length, Modifiers,
     ParentElement, SharedString, Styled, StyledText, TextStyle, WeakView, WindowContext,
 };
 use settings::Settings;
@@ -16,8 +16,9 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, v_flex, Checkbox, FluentBuilder, InteractiveElement, LinkPreview, Selection,
-    StatefulInteractiveElement, Tooltip,
+    h_flex, relative, v_flex, Checkbox, Clickable, FluentBuilder, IconButton, IconName, IconSize,
+    InteractiveElement, LinkPreview, Selection, StatefulInteractiveElement, StyledExt, Tooltip,
+    VisibleOnHover,
 };
 use workspace::Workspace;
 
@@ -369,6 +370,16 @@ fn render_markdown_code_block(
         StyledText::new(parsed.contents.clone())
     };
 
+    let copy_block_button = IconButton::new("copy-code", IconName::Copy)
+        .icon_size(IconSize::Small)
+        .on_click({
+            let contents = parsed.contents.clone();
+            move |_, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
+            }
+        })
+        .visible_on_hover("markdown-block");
+
     cx.with_common_p(div())
         .font_family(cx.buffer_font_family.clone())
         .px_3()
@@ -376,6 +387,14 @@ fn render_markdown_code_block(
         .bg(cx.code_block_background_color)
         .rounded_md()
         .child(body)
+        .child(
+            div()
+                .h_flex()
+                .absolute()
+                .right_1()
+                .top_1()
+                .child(copy_block_button),
+        )
         .into_any()
 }
 

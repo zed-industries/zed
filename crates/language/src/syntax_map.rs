@@ -1520,18 +1520,24 @@ impl<'a> SyntaxLayer<'a> {
         let config = self.language.grammar.as_ref()?.override_config.as_ref()?;
 
         let mut query_cursor = QueryCursorHandle::new();
-        query_cursor.set_byte_range(offset..offset);
+        query_cursor.set_byte_range(offset.saturating_sub(1)..offset.saturating_add(1));
 
         let mut smallest_match: Option<(u32, Range<usize>)> = None;
         for mat in query_cursor.matches(&config.query, self.node(), text) {
             for capture in mat.captures {
-                if !config.values.contains_key(&capture.index) {
+                let Some(override_entry) = config.values.get(&capture.index) else {
                     continue;
-                }
+                };
 
                 let range = capture.node.byte_range();
-                if offset <= range.start || offset >= range.end {
-                    continue;
+                if override_entry.range_is_inclusive {
+                    if offset < range.start || offset > range.end {
+                        continue;
+                    }
+                } else {
+                    if offset <= range.start || offset >= range.end {
+                        continue;
+                    }
                 }
 
                 if let Some((_, smallest_range)) = &smallest_match {

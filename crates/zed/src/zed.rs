@@ -154,7 +154,7 @@ pub fn initialize_workspace(
         .detach();
 
         #[cfg(target_os = "linux")]
-        if let Err(e) = fs::watcher::global(|_| {}) {
+        if let Err(e) = fs::linux_watcher::global(|_| {}) {
             let message = format!(db::indoc!{r#"
                 inotify_init returned {}
 
@@ -999,7 +999,7 @@ fn open_telemetry_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Works
         let app_state = workspace.app_state().clone();
         cx.spawn(|workspace, mut cx| async move {
             async fn fetch_log_string(app_state: &Arc<AppState>) -> Option<String> {
-                let path = app_state.client.telemetry().log_file_path()?;
+                let path = client::telemetry::Telemetry::log_file_path();
                 app_state.fs.load(&path).await.log_err()
             }
 
@@ -3424,7 +3424,7 @@ mod tests {
         theme::init(theme::LoadThemes::JustBase, cx);
 
         let mut has_default_theme = false;
-        for theme_name in themes.list(false).into_iter().map(|meta| meta.name) {
+        for theme_name in themes.list().into_iter().map(|meta| meta.name) {
             let theme = themes.get(&theme_name).unwrap();
             assert_eq!(theme.name, theme_name);
             if theme.name == ThemeSettings::get(None, cx).active_theme.name {

@@ -46,6 +46,7 @@ use std::{
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
+    num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -4324,6 +4325,13 @@ impl IndentSize {
             }
         }
         self
+    }
+
+    pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
+        match self.kind {
+            IndentKind::Space => self.len as usize,
+            IndentKind::Tab => self.len as usize * tab_size.get() as usize,
+        }
     }
 }
 

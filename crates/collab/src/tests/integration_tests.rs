@@ -6497,7 +6497,7 @@ async fn test_context_collaboration_with_reconnect(
         .await
         .unwrap();
 
-    // Client A creates a new context.
+    // Client A creates a new chats.
     let context_a = context_store_a.update(cx_a, |store, cx| store.create(cx));
     executor.run_until_parked();
 

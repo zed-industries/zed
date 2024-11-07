@@ -310,7 +310,7 @@ impl PromptBuilder {
             .render("terminal_assistant_prompt", &context)
     }
 
-    pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
+    pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
         self.handlebars.lock().render("suggest_edits", &())
     }
 

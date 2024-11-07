@@ -5,6 +5,7 @@ use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
+pub use language_model::Role;
 use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{
@@ -103,7 +104,7 @@ pub type RenderFoldPlaceholder = Arc<
         + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
 >;
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq)]
 pub enum SlashCommandContent {
     Text {
         text: String,
@@ -111,8 +112,21 @@ pub enum SlashCommandContent {
     },
 }
 
-#[derive(Debug, PartialEq, Eq)]
+impl<'a> From<&'a str> for SlashCommandContent {
+    fn from(text: &'a str) -> Self {
+        Self::Text {
+            text: text.into(),
+            run_commands_in_text: false,
+        }
+    }
+}
+
+#[derive(Debug, PartialEq)]
 pub enum SlashCommandEvent {
+    StartMessage {
+        role: Role,
+        merge_same_roles: bool,
+    },
     StartSection {
         icon: IconName,
         label: SharedString,
@@ -232,6 +246,7 @@ impl SlashCommandOutput {
                         output.sections.push(section);
                     }
                 }
+                SlashCommandEvent::StartMessage { .. } => {}
             }
         }
 

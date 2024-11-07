@@ -25,7 +25,7 @@ use crate::{
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
 use gpui::Subscription;
 use gpui::{
@@ -809,10 +809,12 @@ impl EditorElement {
         cx.notify()
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn layout_selections(
         &self,
         start_anchor: Anchor,
         end_anchor: Anchor,
+        local_selections: &[Selection<Point>],
         snapshot: &EditorSnapshot,
         start_row: DisplayRow,
         end_row: DisplayRow,
@@ -827,13 +829,9 @@ impl EditorElement {
         let mut newest_selection_head = None;
         self.editor.update(cx, |editor, cx| {
             if editor.show_local_selections {
-                let mut local_selections: Vec<Selection<Point>> = editor
-                    .selections
-                    .disjoint_in_range(start_anchor..end_anchor, cx);
-                local_selections.extend(editor.selections.pending(cx));
                 let mut layouts = Vec::new();
                 let newest = editor.selections.newest(cx);
-                for selection in local_selections.drain(..) {
+                for selection in local_selections.iter().cloned() {
                     let is_empty = selection.start == selection.end;
                     let is_newest = selection == newest;
 
@@ -996,6 +994,7 @@ impl EditorElement {
         &self,
         snapshot: &EditorSnapshot,
         selections: &[(PlayerColor, Vec<SelectionLayout>)],
+        block_start_rows: &HashSet<DisplayRow>,
         visible_display_row_range: Range<DisplayRow>,
         line_layouts: &[LineWithInvisibles],
         text_hitbox: &Hitbox,
@@ -1015,7 +1014,10 @@ impl EditorElement {
                     let cursor_position = selection.head;
 
                     let in_range = visible_display_row_range.contains(&cursor_position.row());
-                    if (selection.is_local && !editor.show_local_cursors(cx)) || !in_range {
+                    if (selection.is_local && !editor.show_local_cursors(cx))
+                        || !in_range
+                        || block_start_rows.contains(&cursor_position.row())
+                    {
                         continue;
                     }
 
@@ -2068,14 +2070,14 @@ impl EditorElement {
         editor_width: Pixels,
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
+        selections: &[Selection<Point>],
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
             Block::Custom(block) => {
-                let align_to = block
-                    .start()
-                    .to_point(&snapshot.buffer_snapshot)
-                    .to_display_point(snapshot);
+                let block_start = block.start().to_point(&snapshot.buffer_snapshot);
+                let block_end = block.end().to_point(&snapshot.buffer_snapshot);
+                let align_to = block_start.to_display_point(snapshot);
                 let anchor_x = text_x
                     + if rows.contains(&align_to.row()) {
                         line_layouts[align_to.row().minus(rows.start) as usize]
@@ -2084,6 +2086,18 @@ impl EditorElement {
                         layout_line(align_to.row(), snapshot, &self.style, editor_width, cx)
                             .x_for_index(align_to.column() as usize)
                     };
+
+                let selected = selections
+                    .binary_search_by(|selection| {
+                        if selection.end <= block_start {
+                            Ordering::Less
+                        } else if selection.start >= block_end {
+                            Ordering::Greater
+                        } else {
+                            Ordering::Equal
+                        }
+                    })
+                    .is_ok();
 
                 div()
                     .size_full()
@@ -2094,6 +2108,7 @@ impl EditorElement {
                         line_height,
                         em_width,
                         block_id,
+                        selected,
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
@@ -2431,6 +2446,7 @@ impl EditorElement {
         text_x: Pixels,
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
+        selections: &[Selection<Point>],
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2467,6 +2483,7 @@ impl EditorElement {
                 editor_width,
                 scroll_width,
                 &mut resized_blocks,
+                selections,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2511,6 +2528,7 @@ impl EditorElement {
                 editor_width,
                 scroll_width,
                 &mut resized_blocks,
+                selections,
                 cx,
             );
 
@@ -2556,6 +2574,7 @@ impl EditorElement {
                             editor_width,
                             scroll_width,
                             &mut resized_blocks,
+                            selections,
                             cx,
                         );
 
@@ -2584,6 +2603,7 @@ impl EditorElement {
     fn layout_blocks(
         &self,
         blocks: &mut Vec<BlockLayout>,
+        block_starts: &mut HashSet<DisplayRow>,
         hitbox: &Hitbox,
         line_height: Pixels,
         scroll_pixel_position: gpui::Point<Pixels>,
@@ -2591,6 +2611,7 @@ impl EditorElement {
     ) {
         for block in blocks {
             let mut origin = if let Some(row) = block.row {
+                block_starts.insert(row);
                 hitbox.origin
                     + point(
                         Pixels::ZERO,
@@ -5101,9 +5122,19 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let local_selections: Vec<Selection<Point>> =
+                        self.editor.update(cx, |editor, cx| {
+                            let mut selections = editor
+                                .selections
+                                .disjoint_in_range(start_anchor..end_anchor, cx);
+                            selections.extend(editor.selections.pending(cx));
+                            selections
+                        });
+
                     let (selections, active_rows, newest_selection_head) = self.layout_selections(
                         start_anchor,
                         end_anchor,
+                        &local_selections,
                         &snapshot,
                         start_row,
                         end_row,
@@ -5176,6 +5207,7 @@ impl Element for EditorElement {
                             gutter_dimensions.full_width(),
                             line_height,
                             &line_layouts,
+                            &local_selections,
                             cx,
                         )
                     });
@@ -5315,9 +5347,11 @@ impl Element for EditorElement {
                         cx,
                     );
 
+                    let mut block_start_rows = HashSet::default();
                     cx.with_element_namespace("blocks", |cx| {
                         self.layout_blocks(
                             &mut blocks,
+                            &mut block_start_rows,
                             &hitbox,
                             line_height,
                             scroll_pixel_position,
@@ -5334,6 +5368,7 @@ impl Element for EditorElement {
                     let visible_cursors = self.layout_visible_cursors(
                         &snapshot,
                         &selections,
+                        &block_start_rows,
                         start_row..end_row,
                         &line_layouts,
                         &text_hitbox,

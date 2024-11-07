@@ -7,6 +7,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use async_trait::async_trait;
+use collections::HashMap;
 use gpui::{AsyncAppContext, SharedString};
 use settings::WorktreeId;
 
@@ -23,7 +24,11 @@ pub struct Toolchain {
 
 #[async_trait(?Send)]
 pub trait ToolchainLister: Send + Sync {
-    async fn list(&self, _: PathBuf) -> ToolchainList;
+    async fn list(
+        &self,
+        worktree_root: PathBuf,
+        project_env: Option<HashMap<String, String>>,
+    ) -> ToolchainList;
 }
 
 #[async_trait(?Send)]
