@@ -27,8 +27,6 @@ use assistant_tool::ToolRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
-use context_servers::manager::ContextServerManager;
-use context_servers::ContextServerRegistry;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;

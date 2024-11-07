@@ -5,10 +5,7 @@ use workspace::Workspace;
 pub mod client;
 pub mod manager;
 pub mod protocol;
-mod registry;
 pub mod types;
-
-pub use registry::*;
 
 actions!(context_servers, [Restart]);
 
@@ -18,7 +15,6 @@ const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
 pub fn init(cx: &mut AppContext) {
     log::info!("initializing context server client");
     manager::init(cx);
-    ContextServerRegistry::register(cx);
 
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
