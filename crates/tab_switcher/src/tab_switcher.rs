@@ -372,7 +372,7 @@ impl PickerDelegate for TabSwitcherDelegate {
             icon.color(git_status_color.unwrap_or_default())
         });
 
-        let indicator = render_item_indicator(tab_match.item.boxed_clone(), cx);
+        let indicator = render_item_indicator(tab_match.item.boxed_clone(), None, cx);
         let indicator_color = if let Some(ref indicator) = indicator {
             indicator.color
         } else {

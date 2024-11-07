@@ -1835,6 +1835,18 @@ impl Pane {
         focus_handle: &FocusHandle,
         cx: &mut ViewContext<'_, Pane>,
     ) -> impl IntoElement {
+        let pending_keystrokes = cx.pending_input_keystrokes().unwrap_or(&[]);
+        let char_to_type = cx.bindings_for_action(&ActivateItem(ix)).iter().find_map(
+            |keybinding| match keybinding.remaining_keystrokes(pending_keystrokes) {
+                Some([keystroke])
+                    if keystroke.modifiers == cx.modifiers() && keystroke.key.len() == 1 =>
+                {
+                    keystroke.key.chars().next()
+                }
+                _ => None,
+            },
+        );
+
         let project_path = item.project_path(cx);
 
         let is_active = ix == self.active_item_index;
@@ -1866,7 +1878,7 @@ impl Pane {
 
         let icon = item.tab_icon(cx);
         let close_side = &ItemSettings::get_global(cx).close_position;
-        let indicator = render_item_indicator(item.boxed_clone(), cx);
+        let indicator = render_item_indicator(item.boxed_clone(), char_to_type, cx);
         let item_id = item.item_id();
         let is_first_item = ix == 0;
         let is_last_item = ix == self.items.len() - 1;
@@ -2997,16 +3009,22 @@ pub fn tab_details(items: &[Box<dyn ItemHandle>], cx: &AppContext) -> Vec<usize>
     tab_details
 }
 
-pub fn render_item_indicator(item: Box<dyn ItemHandle>, cx: &WindowContext) -> Option<Indicator> {
-    maybe!({
-        let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
-            (true, _) => Color::Warning,
-            (_, true) => Color::Accent,
-            (false, false) => return None,
-        };
+pub fn render_item_indicator(
+    item: Box<dyn ItemHandle>,
+    char_to_type: Option<char>,
+    cx: &WindowContext,
+) -> Option<Indicator> {
+    if let Some(char) = char_to_type {
+        return Some(Indicator::character(char));
+    }
 
-        Some(Indicator::dot().color(indicator_color))
-    })
+    let indicator_color = match (item.has_conflict(cx), item.is_dirty(cx)) {
+        (true, _) => Color::Warning,
+        (_, true) => Color::Accent,
+        (false, false) => return None,
+    };
+
+    Some(Indicator::dot().color(indicator_color))
 }
 
 impl Render for DraggedTab {

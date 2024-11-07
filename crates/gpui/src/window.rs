@@ -3216,24 +3216,11 @@ impl<'a> WindowContext<'a> {
             self.draw();
         }
 
-        let node_id = self
-            .window
-            .focus
-            .and_then(|focus_id| {
-                self.window
-                    .rendered_frame
-                    .dispatch_tree
-                    .focusable_node_id(focus_id)
-            })
-            .unwrap_or_else(|| self.window.rendered_frame.dispatch_tree.root_node_id());
-
         let dispatch_path = self
             .window
             .rendered_frame
             .dispatch_tree
-            .dispatch_path(node_id);
-
-        let mut keystroke: Option<Keystroke> = None;
+            .dispatch_path(self.focused_node_id());
 
         if let Some(event) = event.downcast_ref::<ModifiersChangedEvent>() {
             if event.modifiers.number_of_modifiers() == 0
@@ -3249,30 +3236,36 @@ impl<'a> WindowContext<'a> {
                     _ => None,
                 };
                 if let Some(key) = key {
-                    keystroke = Some(Keystroke {
+                    let keystroke = Keystroke {
                         key: key.to_string(),
                         ime_key: None,
                         modifiers: Modifiers::default(),
-                    });
+                    };
+                    self.finish_dispatch_keystroke(keystroke, &dispatch_path);
                 }
             }
 
             if self.window.pending_modifier.modifiers.number_of_modifiers() == 0
                 && event.modifiers.number_of_modifiers() == 1
             {
-                self.window.pending_modifier.saw_keystroke = false
+                self.window.pending_modifier.saw_keystroke = false;
             }
-            self.window.pending_modifier.modifiers = event.modifiers
+            self.window.pending_modifier.modifiers = event.modifiers;
+
+            self.finish_dispatch_key_event(event, &dispatch_path);
         } else if let Some(key_down_event) = event.downcast_ref::<KeyDownEvent>() {
             self.window.pending_modifier.saw_keystroke = true;
-            keystroke = Some(key_down_event.keystroke.clone());
+            self.finish_dispatch_keystroke(key_down_event.keystroke.clone(), &dispatch_path);
+        } else {
+            self.finish_dispatch_key_event(event, &dispatch_path);
         }
+    }
 
-        let Some(keystroke) = keystroke else {
-            self.finish_dispatch_key_event(event, dispatch_path);
-            return;
-        };
-
+    fn finish_dispatch_keystroke(
+        &self,
+        keystroke: Keystroke,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
+    ) {
         let mut currently_pending = self.window.pending_input.take().unwrap_or_default();
         if currently_pending.focus.is_some() && currently_pending.focus != self.window.focus {
             currently_pending = PendingInput::default();
@@ -3306,7 +3299,8 @@ impl<'a> WindowContext<'a> {
                         .window
                         .rendered_frame
                         .dispatch_tree
-                        .dispatch_path(node_id);
+                        // FIXME: valid?
+                        .dispatch_path(cx.focused_node_id());
 
                     let to_replay = cx
                         .window
@@ -3334,13 +3328,13 @@ impl<'a> WindowContext<'a> {
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path)
+        self.finish_dispatch_key_event(event, &dispatch_path)
     }
 
     fn finish_dispatch_key_event(
         &mut self,
         event: &dyn Any,
-        dispatch_path: SmallVec<[DispatchNodeId; 32]>,
+        dispatch_path: &SmallVec<[DispatchNodeId; 32]>,
     ) {
         self.dispatch_key_down_up_event(event, &dispatch_path);
         if !self.propagate_event {

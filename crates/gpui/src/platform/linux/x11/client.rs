@@ -824,7 +824,7 @@ impl X11Client {
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
                 state.xkb.update_mask(
-                    event.base_mods.into(),
+                    dbg!(event).base_mods.into(),
                     event.latched_mods.into(),
                     event.locked_mods.into(),
                     event.base_group as u32,
@@ -836,7 +836,7 @@ impl X11Client {
                     latched_layout: event.latched_group as u32,
                     locked_layout: event.locked_group.into(),
                 };
-                let modifiers = Modifiers::from_xkb(&state.xkb);
+                let modifiers = dbg!(Modifiers::from_xkb(&state.xkb));
                 if state.modifiers == modifiers {
                     drop(state);
                 } else {
@@ -919,7 +919,7 @@ impl X11Client {
                 }));
             }
             Event::KeyRelease(event) => {
-                let window = self.get_window(event.event)?;
+                let window = self.get_window(dbg!(event).event)?;
                 let mut state = self.0.borrow_mut();
 
                 let modifiers = modifiers_from_state(event.state);

@@ -7,6 +7,7 @@ enum IndicatorKind {
     Dot,
     Bar,
     Icon(AnyIcon),
+    Character(char),
 }
 
 #[derive(IntoElement)]
@@ -37,12 +38,18 @@ impl Indicator {
         }
     }
 
+    pub fn character(character: char) -> Self {
+        Self {
+            kind: IndicatorKind::Character(character),
+            color: Color::Default,
+        }
+    }
+
     pub fn color(mut self, color: Color) -> Self {
         self.color = color;
         self
     }
 }
-
 impl RenderOnce for Indicator {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let container = div().flex_none();
@@ -60,6 +67,9 @@ impl RenderOnce for Indicator {
                 .h_1p5()
                 .rounded_t_md()
                 .bg(self.color.color(cx)),
+            IndicatorKind::Character(character) => container
+                .text_color(self.color.color(cx))
+                .child(character.to_string()),
         }
     }
 }
