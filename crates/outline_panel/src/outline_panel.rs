@@ -829,6 +829,32 @@ impl OutlinePanel {
         }
     }
 
+    fn open_excerpts(&mut self, action: &editor::OpenExcerpts, cx: &mut ViewContext<Self>) {
+        if self.filter_editor.focus_handle(cx).is_focused(cx) {
+            cx.propagate()
+        } else if let Some((active_editor, selected_entry)) =
+            self.active_editor().zip(self.selected_entry().cloned())
+        {
+            self.open_entry(&selected_entry, true, cx);
+            active_editor.update(cx, |editor, cx| editor.open_excerpts(action, cx));
+        }
+    }
+
+    fn open_excerpts_split(
+        &mut self,
+        action: &editor::OpenExcerptsSplit,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if self.filter_editor.focus_handle(cx).is_focused(cx) {
+            cx.propagate()
+        } else if let Some((active_editor, selected_entry)) =
+            self.active_editor().zip(self.selected_entry().cloned())
+        {
+            self.open_entry(&selected_entry, true, cx);
+            active_editor.update(cx, |editor, cx| editor.open_excerpts_in_split(action, cx));
+        }
+    }
+
     fn open_entry(
         &mut self,
         entry: &PanelEntry,
@@ -4246,6 +4272,8 @@ impl Render for OutlinePanel {
             .on_action(cx.listener(Self::toggle_active_editor_pin))
             .on_action(cx.listener(Self::unfold_directory))
             .on_action(cx.listener(Self::fold_directory))
+            .on_action(cx.listener(Self::open_excerpts))
+            .on_action(cx.listener(Self::open_excerpts_split))
             .when(is_local, |el| {
                 el.on_action(cx.listener(Self::reveal_in_finder))
             })
