@@ -77,8 +77,8 @@ use text::SelectionGoal;
 use ui::{
     prelude::*,
     utils::{format_distance_from_now, DateTimeType},
-    Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, IconButtonShape, KeyBinding,
-    ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip,
+    Avatar, ButtonLike, ContextMenu, Disclosure, ElevationIndex, KeyBinding, ListItem,
+    ListItemSpacing, PopoverMenu, PopoverMenuHandle, TintColor, Tooltip,
 };
 use util::{maybe, ResultExt};
 use workspace::{
@@ -2111,7 +2111,6 @@ impl ContextEditor {
         command_id: SlashCommandId,
         cx: &mut ViewContext<Self>,
     ) {
-        let context_editor = cx.view().downgrade();
         self.editor.update(cx, |editor, cx| {
             if let Some(invoked_slash_command) =
                 self.context.read(cx).invoked_slash_command(&command_id)
@@ -2152,7 +2151,7 @@ impl ContextEditor {
                         .anchor_in_excerpt(excerpt_id, invoked_slash_command.range.end)
                         .unwrap();
                     let fold_placeholder =
-                        invoked_slash_command_fold_placeholder(command_id, context, context_editor);
+                        invoked_slash_command_fold_placeholder(command_id, context);
                     let crease_ids = editor.insert_creases(
                         [Crease::new(
                             crease_start..crease_end,
@@ -2352,6 +2351,7 @@ impl ContextEditor {
                                 section.icon,
                                 section.label.clone(),
                             ),
+                            merge_adjacent: false,
                             ..Default::default()
                         },
                         render_slash_command_output_toggle,
@@ -4963,6 +4963,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                     .into_any_element()
             }
         }),
+        merge_adjacent: false,
         ..Default::default()
     }
 }
@@ -5096,7 +5097,6 @@ enum PendingSlashCommand {}
 fn invoked_slash_command_fold_placeholder(
     command_id: SlashCommandId,
     context: WeakModel<Context>,
-    context_editor: WeakView<ContextEditor>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {
         constrain_width: false,
@@ -5126,37 +5126,11 @@ fn invoked_slash_command_fold_placeholder(
                             |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
                         ))
                     }
-                    InvokedSlashCommandStatus::Error(message) => parent
-                        .child(
-                            Label::new(format!("error: {message}"))
-                                .single_line()
-                                .color(Color::Error),
-                        )
-                        .child(
-                            IconButton::new("dismiss-error", IconName::Close)
-                                .shape(IconButtonShape::Square)
-                                .icon_size(IconSize::XSmall)
-                                .icon_color(Color::Muted)
-                                .on_click({
-                                    let context_editor = context_editor.clone();
-                                    move |_event, cx| {
-                                        context_editor
-                                            .update(cx, |context_editor, cx| {
-                                                context_editor.editor.update(cx, |editor, cx| {
-                                                    editor.remove_creases(
-                                                        HashSet::from_iter(
-                                                            context_editor
-                                                                .invoked_slash_command_creases
-                                                                .remove(&command_id),
-                                                        ),
-                                                        cx,
-                                                    );
-                                                })
-                                            })
-                                            .log_err();
-                                    }
-                                }),
-                        ),
+                    InvokedSlashCommandStatus::Error(message) => parent.child(
+                        Label::new(format!("error: {message}"))
+                            .single_line()
+                            .color(Color::Error),
+                    ),
                     InvokedSlashCommandStatus::Finished => parent,
                 })
                 .into_any_element()

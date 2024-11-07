@@ -1357,7 +1357,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
         let first_context = contexts[0].read(cx);
         for context in &contexts[1..] {
             let context = context.read(cx);
-            assert!(context.pending_ops.is_empty());
+            assert!(context.pending_ops.is_empty(), "pending ops: {:?}", context.pending_ops);
             assert_eq!(
                 context.buffer.read(cx).text(),
                 first_context.buffer.read(cx).text(),
