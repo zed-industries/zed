@@ -23,9 +23,9 @@ use editor::{
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
+    actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement,
+    AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
+    ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
     IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, MouseButton,
     MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy, SharedString, Stateful,
     StatefulInteractiveElement as _, Styled, Subscription, Task, UniformListScrollHandle, View,
@@ -58,13 +58,6 @@ use workspace::{
 };
 use worktree::{Entry, ProjectEntryId, WorktreeId};
 
-#[derive(Clone, Default, Deserialize, PartialEq)]
-pub struct Open {
-    change_selection: bool,
-}
-
-impl_actions!(outline_panel, [Open]);
-
 actions!(
     outline_panel,
     [
@@ -75,9 +68,10 @@ actions!(
         ExpandAllEntries,
         ExpandSelectedEntry,
         FoldDirectory,
-        ToggleActiveEditorPin,
+        Open,
         RevealInFileManager,
         SelectParent,
+        ToggleActiveEditorPin,
         ToggleFocus,
         UnfoldDirectory,
     ]
@@ -813,11 +807,12 @@ impl OutlinePanel {
         self.update_cached_entries(None, cx);
     }
 
-    fn open(&mut self, open: &Open, cx: &mut ViewContext<Self>) {
+    fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         if self.filter_editor.focus_handle(cx).is_focused(cx) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
-            self.open_entry(&selected_entry, open.change_selection, cx);
+            self.toggle_expanded(&selected_entry, cx);
+            self.open_entry(&selected_entry, true, cx);
         }
     }
 
@@ -851,7 +846,6 @@ impl OutlinePanel {
             Point::new(0.0, -(active_editor.read(cx).file_header_size() as f32))
         };
 
-        self.toggle_expanded(entry, cx);
         let scroll_target = match entry {
             PanelEntry::FoldedDirs(..) | PanelEntry::Fs(FsEntry::Directory(..)) => None,
             PanelEntry::Fs(FsEntry::ExternalFile(buffer_id, _)) => {
@@ -949,6 +943,9 @@ impl OutlinePanel {
         } else {
             self.select_first(&SelectFirst {}, cx)
         }
+        if let Some(selected_entry) = self.selected_entry().cloned() {
+            self.open_entry(&selected_entry, false, cx);
+        }
     }
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
@@ -964,6 +961,9 @@ impl OutlinePanel {
             self.select_entry(entry_to_select, true, cx);
         } else {
             self.select_last(&SelectLast, cx)
+        }
+        if let Some(selected_entry) = self.selected_entry().cloned() {
+            self.open_entry(&selected_entry, false, cx);
         }
     }
 
@@ -2006,6 +2006,7 @@ impl OutlinePanel {
                         return;
                     }
                     let change_selection = event.down.click_count > 1;
+                    outline_panel.toggle_expanded(&clicked_entry, cx);
                     outline_panel.open_entry(&clicked_entry, change_selection, cx);
                 })
             })
