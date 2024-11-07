@@ -112,6 +112,17 @@ impl SlashCommand for DeltaSlashCommand {
                 }
             }
 
+            // // If no changes detected, add a message section
+            // if !changes_detected {
+            //     output.sections.push(SlashCommandOutputSection {
+            //         range: 0..0,
+            //         icon: IconName::Info, // Use an appropriate icon
+            //         label: Some("Info".into()),
+            //         metadata: Some(serde_json::json!({"message": "No changes detected"})),
+            //     });
+            //     output.text.push_str("No changes detected\n");
+            // }
+
             Ok(output.to_event_stream())
         })
     }

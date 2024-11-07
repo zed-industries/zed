@@ -1747,7 +1747,7 @@ impl Render for ProjectSearchBar {
             .child(
                 div()
                     .id("matches")
-                    .ml_0p5()
+                    .ml_1()
                     .child(
                         Label::new(match_text).color(if search.active_match_index.is_some() {
                             Color::Default
@@ -1765,10 +1765,8 @@ impl Render for ProjectSearchBar {
         let search_line = h_flex()
             .w_full()
             .gap_1p5()
-            .pr_6()
             .child(query_column)
-            .child(mode_column)
-            .child(matches_column);
+            .child(h_flex().min_w_40().child(mode_column).child(matches_column));
 
         let replace_line = search.replace_enabled.then(|| {
             let replace_column =
@@ -1776,57 +1774,60 @@ impl Render for ProjectSearchBar {
 
             let focus_handle = search.replacement_editor.read(cx).focus_handle(cx);
 
-            let replace_actions = h_flex().gap_1().when(search.replace_enabled, |this| {
-                this.child(
-                    IconButton::new("project-search-replace-next", IconName::ReplaceNext)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, cx| {
-                            if let Some(search) = this.active_project_search.as_ref() {
-                                search.update(cx, |this, cx| {
-                                    this.replace_next(&ReplaceNext, cx);
-                                })
-                            }
-                        }))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |cx| {
-                                Tooltip::for_action_in(
-                                    "Replace Next Match",
-                                    &ReplaceNext,
-                                    &focus_handle,
-                                    cx,
-                                )
-                            }
-                        }),
-                )
-                .child(
-                    IconButton::new("project-search-replace-all", IconName::ReplaceAll)
-                        .shape(IconButtonShape::Square)
-                        .on_click(cx.listener(|this, _, cx| {
-                            if let Some(search) = this.active_project_search.as_ref() {
-                                search.update(cx, |this, cx| {
-                                    this.replace_all(&ReplaceAll, cx);
-                                })
-                            }
-                        }))
-                        .tooltip({
-                            let focus_handle = focus_handle.clone();
-                            move |cx| {
-                                Tooltip::for_action_in(
-                                    "Replace All Matches",
-                                    &ReplaceAll,
-                                    &focus_handle,
-                                    cx,
-                                )
-                            }
-                        }),
-                )
-            });
+            let replace_actions =
+                h_flex()
+                    .min_w_40()
+                    .gap_1()
+                    .when(search.replace_enabled, |this| {
+                        this.child(
+                            IconButton::new("project-search-replace-next", IconName::ReplaceNext)
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(|this, _, cx| {
+                                    if let Some(search) = this.active_project_search.as_ref() {
+                                        search.update(cx, |this, cx| {
+                                            this.replace_next(&ReplaceNext, cx);
+                                        })
+                                    }
+                                }))
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |cx| {
+                                        Tooltip::for_action_in(
+                                            "Replace Next Match",
+                                            &ReplaceNext,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                }),
+                        )
+                        .child(
+                            IconButton::new("project-search-replace-all", IconName::ReplaceAll)
+                                .shape(IconButtonShape::Square)
+                                .on_click(cx.listener(|this, _, cx| {
+                                    if let Some(search) = this.active_project_search.as_ref() {
+                                        search.update(cx, |this, cx| {
+                                            this.replace_all(&ReplaceAll, cx);
+                                        })
+                                    }
+                                }))
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |cx| {
+                                        Tooltip::for_action_in(
+                                            "Replace All Matches",
+                                            &ReplaceAll,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                }),
+                        )
+                    });
 
             h_flex()
                 .w_full()
                 .gap_1p5()
-                .pr_24()
                 .child(replace_column)
                 .child(replace_actions)
         });
@@ -1835,7 +1836,6 @@ impl Render for ProjectSearchBar {
             h_flex()
                 .w_full()
                 .gap_1p5()
-                .pr_24()
                 .child(
                     input_base_styles()
                         .on_action(
@@ -1858,10 +1858,12 @@ impl Render for ProjectSearchBar {
                 )
                 .child(
                     h_flex()
+                        .min_w_40()
                         .gap_1()
                         .child(
-                            IconButton::new("project-search-opened-only", IconName::FileDoc)
+                            IconButton::new("project-search-opened-only", IconName::FileSearch)
                                 .shape(IconButtonShape::Square)
+                                .icon_size(IconSize::XSmall)
                                 .selected(self.is_opened_only_enabled(cx))
                                 .tooltip(|cx| Tooltip::text("Only Search Open Files", cx))
                                 .on_click(cx.listener(|this, _, cx| {
