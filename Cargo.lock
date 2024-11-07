@@ -6278,7 +6278,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "pretty_assertions",
- "pulldown-cmark 0.12.1",
+ "pulldown-cmark 0.12.2",
  "rand 0.8.5",
  "regex",
  "rpc",
@@ -6807,7 +6807,7 @@ dependencies = [
  "linkify",
  "log",
  "node_runtime",
- "pulldown-cmark 0.12.1",
+ "pulldown-cmark 0.12.2",
  "settings",
  "theme",
  "ui",
@@ -6827,7 +6827,7 @@ dependencies = [
  "linkify",
  "log",
  "pretty_assertions",
- "pulldown-cmark 0.12.1",
+ "pulldown-cmark 0.12.2",
  "settings",
  "theme",
  "ui",
@@ -9126,9 +9126,9 @@ dependencies = [
 
 [[package]]
 name = "pulldown-cmark"
-version = "0.12.1"
+version = "0.12.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "666f0f59e259aea2d72e6012290c09877a780935cc3c18b1ceded41f3890d59c"
+checksum = "f86ba2052aebccc42cbbb3ed234b8b13ce76f75c3551a303cb2bcffcff12bb14"
 dependencies = [
  "bitflags 2.6.0",
  "memchr",
@@ -9850,7 +9850,7 @@ dependencies = [
  "gpui",
  "language",
  "linkify",
- "pulldown-cmark 0.12.1",
+ "pulldown-cmark 0.12.2",
  "theme",
  "ui",
  "util",
