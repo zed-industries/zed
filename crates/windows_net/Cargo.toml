@@ -1,0 +1,22 @@
+[package]
+name = "windows_net"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "Apache-2.0"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/windows_net.rs"
+doctest = false
+
+[dependencies]
+smol.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
+
+[package.metadata.docs.rs]
+targets = ["x86_64-pc-windows-msvc"]
