@@ -47,7 +47,7 @@ pub struct AttachConfig {
 
 /// Represents the type that will determine which request to call on the debug adapter
 #[derive(Default, Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
-#[serde(rename_all = "lowercase", tag = "request")]
+#[serde(rename_all = "lowercase")]
 pub enum DebugRequestType {
     /// Call the `launch` request on the debug adapter
     #[default]
@@ -132,18 +132,18 @@ pub enum DebugConnectionType {
 #[derive(Deserialize, Serialize, PartialEq, Eq, JsonSchema, Clone, Debug)]
 #[serde(rename_all = "snake_case")]
 pub struct DebugTaskDefinition {
+    /// The adapter to run
+    #[serde(flatten)]
+    kind: DebugAdapterKind,
+    /// The type of request that should be called on the debug adapter
+    #[serde(default)]
+    request: DebugRequestType,
     /// Name of the debug task
     label: String,
     /// Program to run the debugger on
     program: Option<String>,
     /// The current working directory of your project
     cwd: Option<String>,
-    /// The type of request that should be called on the debug adapter
-    #[serde(default, flatten)]
-    request: DebugRequestType,
-    /// The adapter to run
-    #[serde(flatten)]
-    kind: DebugAdapterKind,
     /// Additional initialization arguments to be sent on DAP initialization
     initialize_args: Option<serde_json::Value>,
 }
