@@ -115,3 +115,51 @@ impl RenderOnce for Checkbox {
             )
     }
 }
+
+impl ComponentPreview for Checkbox {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group(
+                "Default",
+                vec![
+                    single_example(
+                        "Unselected",
+                        Checkbox::new("checkbox_unselected", Selection::Unselected),
+                    ),
+                    single_example(
+                        "Indeterminate",
+                        Checkbox::new("checkbox_indeterminate", Selection::Indeterminate),
+                    ),
+                    single_example(
+                        "Selected",
+                        Checkbox::new("checkbox_selected", Selection::Selected),
+                    ),
+                ],
+            ),
+            example_group(
+                "Disabled",
+                vec![
+                    single_example(
+                        "Unselected",
+                        Checkbox::new("checkbox_disabled_unselected", Selection::Unselected)
+                            .disabled(true),
+                    ),
+                    single_example(
+                        "Indeterminate",
+                        Checkbox::new("checkbox_disabled_indeterminate", Selection::Indeterminate)
+                            .disabled(true),
+                    ),
+                    single_example(
+                        "Selected",
+                        Checkbox::new("checkbox_disabled_selected", Selection::Selected)
+                            .disabled(true),
+                    ),
+                ],
+            ),
+        ]
+    }
+}

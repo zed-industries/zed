@@ -2,7 +2,7 @@
 description = "The fast, collaborative code editor."
 edition = "2021"
 name = "zed"
-version = "0.161.0"
+version = "0.162.0"
 publish = false
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
@@ -15,6 +15,7 @@ name = "zed"
 path = "src/main.rs"
 
 [dependencies]
+assistant_slash_command.workspace = true
 activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
@@ -53,6 +54,7 @@ go_to_line.workspace = true
 gpui = { workspace = true, features = ["wayland", "x11", "font-kit"] }
 http_client.workspace = true
 image_viewer.workspace = true
+indexed_docs.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
 journal.workspace = true

@@ -746,7 +746,7 @@ impl SettingsStore {
         };
 
         let settings = SchemaSettings::draft07().with(|settings| {
-            settings.option_add_null_type = false;
+            settings.option_add_null_type = true;
         });
         let mut generator = SchemaGenerator::new(settings);
         let mut combined_schema = RootSchema::default();

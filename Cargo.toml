@@ -381,6 +381,7 @@ palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 pathdiff = "0.2"
 pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
 pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
 pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
 pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c"  }
@@ -475,6 +476,7 @@ tree-sitter-yaml = { git = "https://github.com/zed-industries/tree-sitter-yaml",
 unicase = "2.6"
 unindent = "0.1.7"
 unicode-segmentation = "1.10"
+unicode-script = "0.5.7"
 url = "2.2"
 uuid = { version = "1.1.2", features = ["v4", "v5", "serde"] }
 wasmparser = "0.215"

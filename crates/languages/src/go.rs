@@ -408,6 +408,8 @@ fn adjust_runs(
 pub(crate) struct GoContextProvider;
 
 const GO_PACKAGE_TASK_VARIABLE: VariableName = VariableName::Custom(Cow::Borrowed("GO_PACKAGE"));
+const GO_MODULE_ROOT_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("GO_MODULE_ROOT"));
 const GO_SUBTEST_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("GO_SUBTEST_NAME"));
 
@@ -447,15 +449,33 @@ impl ContextProvider for GoContextProvider {
                 (GO_PACKAGE_TASK_VARIABLE.clone(), package_name.to_string())
             });
 
+        let go_module_root_variable = local_abs_path
+            .as_deref()
+            .and_then(|local_abs_path| local_abs_path.parent())
+            .map(|buffer_dir| {
+                // Walk dirtree up until getting the first go.mod file
+                let module_dir = buffer_dir
+                    .ancestors()
+                    .find(|dir| dir.join("go.mod").is_file())
+                    .map(|dir| dir.to_string_lossy().to_string())
+                    .unwrap_or_else(|| ".".to_string());
+
+                (GO_MODULE_ROOT_TASK_VARIABLE.clone(), module_dir)
+            });
+
         let _subtest_name = variables.get(&VariableName::Custom(Cow::Borrowed("_subtest_name")));
 
         let go_subtest_variable = extract_subtest_name(_subtest_name.unwrap_or(""))
             .map(|subtest_name| (GO_SUBTEST_NAME_TASK_VARIABLE.clone(), subtest_name));
 
         Ok(TaskVariables::from_iter(
-            [go_package_variable, go_subtest_variable]
-                .into_iter()
-                .flatten(),
+            [
+                go_package_variable,
+                go_subtest_variable,
+                go_module_root_variable,
+            ]
+            .into_iter()
+            .flatten(),
         ))
     }
 
@@ -469,6 +489,7 @@ impl ContextProvider for GoContextProvider {
         } else {
             Some("$ZED_DIRNAME".to_string())
         };
+        let module_cwd = Some(GO_MODULE_ROOT_TASK_VARIABLE.template_value());
 
         Some(TaskTemplates(vec![
             TaskTemplate {
@@ -498,7 +519,7 @@ impl ContextProvider for GoContextProvider {
                 label: "go test ./...".into(),
                 command: "go".into(),
                 args: vec!["test".into(), "./...".into()],
-                cwd: package_cwd.clone(),
+                cwd: module_cwd.clone(),
                 ..TaskTemplate::default()
             },
             TaskTemplate {
@@ -561,7 +582,7 @@ impl ContextProvider for GoContextProvider {
                 label: "go generate ./...".into(),
                 command: "go".into(),
                 args: vec!["generate".into(), "./...".into()],
-                cwd: package_cwd.clone(),
+                cwd: module_cwd.clone(),
                 ..TaskTemplate::default()
             },
         ]))

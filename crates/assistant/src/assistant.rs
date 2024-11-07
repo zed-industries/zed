@@ -41,10 +41,12 @@ use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
+use slash_command::search_command::SearchSlashCommandFeatureFlag;
 use slash_command::{
     auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
     diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
-    prompt_command, search_command, symbols_command, tab_command, terminal_command,
+    prompt_command, search_command, selection_command, symbols_command, tab_command,
+    terminal_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -211,21 +213,23 @@ pub fn init(
         });
     }
 
-    cx.spawn(|mut cx| {
-        let client = client.clone();
-        async move {
-            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticDb::new(
-                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
-                Arc::new(embedding_provider),
-                &mut cx,
-            )
-            .await?;
+    if cx.has_flag::<SearchSlashCommandFeatureFlag>() {
+        cx.spawn(|mut cx| {
+            let client = client.clone();
+            async move {
+                let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+                let semantic_index = SemanticDb::new(
+                    paths::embeddings_dir().join("semantic-index-db.0.mdb"),
+                    Arc::new(embedding_provider),
+                    &mut cx,
+                )
+                .await?;
 
-            cx.update(|cx| cx.set_global(semantic_index))
-        }
-    })
-    .detach();
+                cx.update(|cx| cx.set_global(semantic_index))
+            }
+        })
+        .detach();
+    }
 
     context_store::init(&client.clone().into());
     prompt_library::init(cx);
@@ -436,6 +440,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry
         .register_command(cargo_workspace_command::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
+    slash_command_registry.register_command(selection_command::SelectionCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
     slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
