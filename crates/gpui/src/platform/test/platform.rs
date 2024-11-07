@@ -162,6 +162,14 @@ impl Platform for TestPlatform {
         self.text_system.clone()
     }
 
+    fn keyboard_layout(&self) -> String {
+        "zed.keyboard.example".to_string()
+    }
+
+    fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {
+        unimplemented!()
+    }
+
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
         unimplemented!()
     }
