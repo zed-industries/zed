@@ -317,9 +317,15 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
             let mut chars_ignoring_modifiers_and_shift =
                 chars_for_modified_key(native_event.keyCode(), false, false);
 
-            // Honor ⌘ when Dvorak-QWERTY is used.
+            // If the cmd key is down, we should use that layout (e.g. Dvorak-QWERTY)
+            // Otherwise, if the base layout does not type ASCII, we prefer the command layout
+            // and rely on the IME key as necessary.
             let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
-            if command && chars_ignoring_modifiers_and_shift != chars_with_cmd {
+            if chars_ignoring_modifiers_and_shift != chars_with_cmd
+                && (command
+                    || (!chars_ignoring_modifiers_and_shift.is_ascii()
+                        && chars_with_cmd.is_ascii()))
+            {
                 chars_ignoring_modifiers =
                     chars_for_modified_key(native_event.keyCode(), true, shift);
                 chars_ignoring_modifiers_and_shift = chars_with_cmd;
