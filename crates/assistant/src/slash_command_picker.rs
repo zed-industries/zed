@@ -1,16 +1,15 @@
 use std::sync::Arc;
 
-use assistant_slash_command::SlashCommandRegistry;
-
 use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
 
 use crate::assistant_panel::ContextEditor;
+use crate::SlashCommandWorkingSet;
 
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
-    registry: Arc<SlashCommandRegistry>,
+    working_set: Arc<SlashCommandWorkingSet>,
     active_context_editor: WeakView<ContextEditor>,
     trigger: T,
 }
@@ -51,12 +50,12 @@ pub(crate) struct SlashCommandDelegate {
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
     pub(crate) fn new(
-        registry: Arc<SlashCommandRegistry>,
+        working_set: Arc<SlashCommandWorkingSet>,
         active_context_editor: WeakView<ContextEditor>,
         trigger: T,
     ) -> Self {
         SlashCommandSelector {
-            registry,
+            working_set,
             active_context_editor,
             trigger,
         }
@@ -231,11 +230,11 @@ impl PickerDelegate for SlashCommandDelegate {
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let all_models = self
-            .registry
-            .featured_command_names()
+            .working_set
+            .featured_command_names(cx)
             .into_iter()
             .filter_map(|command_name| {
-                let command = self.registry.command(&command_name)?;
+                let command = self.working_set.command(&command_name, cx)?;
                 let menu_text = SharedString::from(Arc::from(command.menu_text()));
                 let label = command.label(cx);
                 let args = label.filter_range.end.ne(&label.text.len()).then(|| {
