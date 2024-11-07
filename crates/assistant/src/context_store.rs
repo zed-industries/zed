@@ -108,7 +108,7 @@ impl ContextStore {
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| {
-                let context_server_manager = cx.new_model(|cx| ContextServerManager::new());
+                let context_server_manager = cx.new_model(|_cx| ContextServerManager::new());
                 let mut this = Self {
                     contexts: Vec::new(),
                     contexts_metadata: Vec::new(),
@@ -776,6 +776,19 @@ impl ContextStore {
                 cx.notify();
             })
         })
+    }
+
+    pub fn restart_context_servers(&mut self, cx: &mut ModelContext<Self>) {
+        cx.update_model(
+            &self.context_server_manager,
+            |context_server_manager, cx| {
+                for server in context_server_manager.servers() {
+                    context_server_manager
+                        .restart_server(&server.id, cx)
+                        .detach_and_log_err(cx);
+                }
+            },
+        );
     }
 
     fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {

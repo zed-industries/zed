@@ -113,7 +113,8 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(ContextEditor::copy_code)
                 .register_action(ContextEditor::insert_dragged_files)
                 .register_action(AssistantPanel::show_configuration)
-                .register_action(AssistantPanel::create_new_context);
+                .register_action(AssistantPanel::create_new_context)
+                .register_action(AssistantPanel::restart_context_servers);
         },
     )
     .detach();
@@ -1296,6 +1297,24 @@ impl AssistantPanel {
         LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map_or(None, |provider| Some(provider.authenticate(cx)))
+    }
+
+    fn restart_context_servers(
+        workspace: &mut Workspace,
+        _action: &context_servers::Restart,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        assistant_panel.update(cx, |assistant_panel, cx| {
+            assistant_panel
+                .context_store
+                .update(cx, |context_store, cx| {
+                    context_store.restart_context_servers(cx);
+                });
+        });
     }
 }
 
