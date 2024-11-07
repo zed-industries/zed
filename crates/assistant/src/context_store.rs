@@ -150,6 +150,15 @@ impl ContextStore {
             this.update(&mut cx, |this, cx| this.reload(cx))?
                 .await
                 .log_err();
+
+            this.update(&mut cx, |this, cx| {
+                context_servers::watch_context_server_settings(
+                    this.context_server_manager.clone(),
+                    cx,
+                );
+            })
+            .log_err();
+
             Ok(this)
         })
     }

@@ -30,8 +30,8 @@ pub use context::*;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::{actions, AppContext, Global, Model, SharedString, UpdateGlobal};
-use gpui::{impl_actions, Context as _};
+use gpui::impl_actions;
+use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -46,10 +46,9 @@ use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
 use slash_command::search_command::SearchSlashCommandFeatureFlag;
 use slash_command::{
-    auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
-    diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
-    prompt_command, search_command, selection_command, symbols_command, tab_command,
-    terminal_command,
+    auto_command, cargo_workspace_command, default_command, delta_command, diagnostics_command,
+    docs_command, fetch_command, file_command, now_command, project_command, prompt_command,
+    search_command, selection_command, symbols_command, tab_command, terminal_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
