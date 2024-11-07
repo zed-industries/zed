@@ -463,6 +463,7 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "language",
+ "language_model",
  "parking_lot",
  "pretty_assertions",
  "serde",
