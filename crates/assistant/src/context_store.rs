@@ -3,7 +3,7 @@ use crate::{
     prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
     ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
 };
-use crate::{tools, SlashCommandId};
+use crate::{tools, SlashCommandId, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_tool::ToolRegistry;
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
@@ -55,6 +55,7 @@ pub struct ContextStore {
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
     slash_commands: Arc<SlashCommandWorkingSet>,
+    tools: Arc<ToolWorkingSet>,
     telemetry: Arc<Telemetry>,
     _watch_updates: Task<Option<()>>,
     client: Arc<Client>,
@@ -97,6 +98,7 @@ impl ContextStore {
         project: Model<Project>,
         prompt_builder: Arc<PromptBuilder>,
         slash_commands: Arc<SlashCommandWorkingSet>,
+        tools: Arc<ToolWorkingSet>,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let fs = project.read(cx).fs().clone();
@@ -117,6 +119,7 @@ impl ContextStore {
                     fs,
                     languages,
                     slash_commands,
+                    tools,
                     telemetry,
                     _watch_updates: cx.spawn(|this, mut cx| {
                         async move {

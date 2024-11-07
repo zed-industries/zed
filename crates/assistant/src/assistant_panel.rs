@@ -1,5 +1,6 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
+use crate::ToolWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -317,10 +318,11 @@ impl AssistantPanel {
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
             let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+            let tools = Arc::new(ToolWorkingSet::default());
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    ContextStore::new(project, prompt_builder.clone(), slash_commands, cx)
+                    ContextStore::new(project, prompt_builder.clone(), slash_commands, tools, cx)
                 })?
                 .await?;
 
