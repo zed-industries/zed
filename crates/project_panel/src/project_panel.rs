@@ -163,6 +163,7 @@ actions!(
         CopyRelativePath,
         Duplicate,
         RevealInFileManager,
+        RemoveFromProject,
         OpenWithSystem,
         Cut,
         Paste,
@@ -492,7 +493,6 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) {
-        let this = cx.view().clone();
         let project = self.project.read(cx);
 
         let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
@@ -513,12 +513,11 @@ impl ProjectPanel {
             let is_dir = entry.is_dir();
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
-            let worktree_id = worktree.id();
             let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_via_collab();
             let is_local = project.is_local();
 
-            let context_menu = ContextMenu::build(cx, |menu, cx| {
+            let context_menu = ContextMenu::build(cx, |menu, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
                         menu.when(is_dir, |menu| {
@@ -575,15 +574,7 @@ impl ProjectPanel {
                                         "Add Folder to Project…",
                                         Box::new(workspace::AddFolderToProject),
                                     )
-                                    .entry(
-                                        "Remove from Project",
-                                        None,
-                                        cx.handler_for(&this, move |this, cx| {
-                                            this.project.update(cx, |project, cx| {
-                                                project.remove_worktree(worktree_id, cx)
-                                            });
-                                        }),
-                                    )
+                                    .action("Remove from Project", Box::new(RemoveFromProject))
                             })
                             .when(is_root, |menu| {
                                 menu.separator()
@@ -1583,6 +1574,14 @@ impl ProjectPanel {
     fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
             cx.reveal_path(&worktree.read(cx).abs_path().join(&entry.path));
+        }
+    }
+
+    fn remove_from_project(&mut self, _: &RemoveFromProject, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
+            let worktree_id = worktree.read(cx).id();
+            self.project
+                .update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         }
     }
 
@@ -3163,6 +3162,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
+                .on_action(cx.listener(Self::remove_from_project))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
