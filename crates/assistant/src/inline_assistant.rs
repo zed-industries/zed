@@ -1907,14 +1907,13 @@ impl PromptEditor {
 
         let get_model_name = |index: usize| -> String {
             let name = |model: &Arc<dyn LanguageModel>| model.name().0.to_string();
-            let default_value = || String::new();
 
             match index {
-                0 => default_model.as_ref().map_or_else(default_value, name),
+                0 => default_model.as_ref().map_or_else(String::new, name),
                 index if index <= alternative_models.len() => alternative_models
                     .get(index - 1)
-                    .map_or_else(default_value, name),
-                _ => default_value(),
+                    .map_or_else(String::new, name),
+                _ => String::new(),
             }
         };
 
