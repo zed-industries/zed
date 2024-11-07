@@ -125,7 +125,7 @@ See this [issue](https://github.com/zed-industries/zed/issues/18393) for more in
 
 You may receive an error like the following when building
 
-```rs
+```
 error: failed to get `pet` as a dependency of package `languages v0.1.0 (D:\a\zed-windows-builds\zed-windows-builds\crates\languages)`
 
 Caused by:
