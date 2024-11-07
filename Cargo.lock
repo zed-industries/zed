@@ -2814,7 +2814,6 @@ dependencies = [
  "smol",
  "url",
  "util",
- "workspace",
 ]
 
 [[package]]
