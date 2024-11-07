@@ -6,6 +6,13 @@ use language::LanguageRegistry;
 use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
 use std::{ops::Range, path::PathBuf, sync::Arc};
 
+#[cfg(test)]
+use cowstr::CowStr;
+#[cfg(test)]
+use proptest;
+#[cfg(test)]
+use proptest::prelude::*;
+
 pub async fn parse_markdown(
     markdown_input: &str,
     file_location_directory: Option<PathBuf>,
@@ -1221,6 +1228,35 @@ fn main() {
                 Some(vec![])
             )]
         );
+    }
+
+    fn arbitrary_events<'a>() -> impl Strategy<Value = Vec<Event<'static>>> {
+        proptest::collection::vec(arbitrary_event(), 1..100)
+    }
+
+    fn arbitrary_event() -> impl Strategy<Value = Event<'static>> {
+        prop_oneof![
+            arbitrary_tag().prop_map(Event::Start),
+            arbitrary_tag_end().prop_map(Event::End),
+            any::<CowStr>().prop_map(Event::Text),
+            any::<CowStr>().prop_map(Event::Code),
+            any::<CowStr>().prop_map(Event::InlineMath),
+            any::<CowStr>().prop_map(Event::DisplayMath),
+            any::<CowStr>().prop_map(Event::Html),
+            any::<CowStr>().prop_map(Event::InlineHtml),
+            any::<CowStr>().prop_map(Event::FootnoteReference),
+            Just(Event::SoftBreak),
+            Just(Event::HardBreak),
+            Just(Event::Rule),
+            any::<bool>().prop_map(Event::TaskListMarker),
+        ]
+    }
+
+    proptest! {
+        #[test]
+        fn test_text_preservation_property(events in arbitrary_events()) {
+            assert_eq!(events, vec![])
+        }
     }
 
     fn rust_lang() -> Arc<Language> {
