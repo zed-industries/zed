@@ -53,7 +53,9 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
-use ui::{prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
+use ui::{
+    prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
+};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 
@@ -1898,6 +1900,36 @@ impl PromptEditor {
     fn render_cycle_controls(&self, cx: &ViewContext<Self>) -> AnyElement {
         let codegen = self.codegen.read(cx);
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
+
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let default_model = model_registry.active_model();
+        let alternative_models = model_registry.inline_alternative_models();
+
+        let get_model_name = |index: usize| -> String {
+            let name = |model: &Arc<dyn LanguageModel>| model.name().0.to_string();
+            let default_value = || String::new();
+
+            match index {
+                0 => default_model.as_ref().map_or_else(default_value, name),
+                index if index <= alternative_models.len() => alternative_models
+                    .get(index - 1)
+                    .map_or_else(default_value, name),
+                _ => default_value(),
+            }
+        };
+
+        let total_models = alternative_models.len() + 1;
+
+        if total_models <= 1 {
+            return div().into_any_element();
+        }
+
+        let current_index = codegen.active_alternative;
+        let prev_index = (current_index + total_models - 1) % total_models;
+        let next_index = (current_index + 1) % total_models;
+
+        let prev_model_name = get_model_name(prev_index);
+        let next_model_name = get_model_name(next_index);
 
         h_flex()
             .child(
