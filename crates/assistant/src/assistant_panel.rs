@@ -14,10 +14,10 @@ use crate::{
     Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
     ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
     DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
-    InsertIntoEditor, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
-    MessageStatus, ModelPickerDelegate, ModelSelector, NewContext, ParsedSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata, RequestType,
-    SavedContextMetadata, SlashCommandId, Split, ToggleFocus, ToggleModelSelector,
+    InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
+    MessageMetadata, MessageStatus, ModelPickerDelegate, ModelSelector, NewContext,
+    ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
+    RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
@@ -1477,7 +1477,7 @@ pub struct ContextEditor {
     scroll_position: Option<ScrollPosition>,
     remote_id: Option<workspace::ViewId>,
     pending_slash_command_creases: HashMap<Range<language::Anchor>, CreaseId>,
-    invoked_slash_command_creases: HashMap<SlashCommandId, CreaseId>,
+    invoked_slash_command_creases: HashMap<InvokedSlashCommandId, CreaseId>,
     pending_tool_use_creases: HashMap<Range<language::Anchor>, CreaseId>,
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
@@ -2108,7 +2108,7 @@ impl ContextEditor {
 
     fn update_invoked_slash_command(
         &mut self,
-        command_id: SlashCommandId,
+        command_id: InvokedSlashCommandId,
         cx: &mut ViewContext<Self>,
     ) {
         self.editor.update(cx, |editor, cx| {
@@ -5095,7 +5095,7 @@ fn make_lsp_adapter_delegate(
 enum PendingSlashCommand {}
 
 fn invoked_slash_command_fold_placeholder(
-    command_id: SlashCommandId,
+    command_id: InvokedSlashCommandId,
     context: WeakModel<Context>,
 ) -> FoldPlaceholder {
     FoldPlaceholder {

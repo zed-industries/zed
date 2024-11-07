@@ -12,6 +12,7 @@ mod prompts;
 mod slash_command;
 pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
+mod slash_command_working_set;
 mod streaming_diff;
 mod terminal_inline_assistant;
 mod tools;

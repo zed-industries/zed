@@ -2,7 +2,7 @@ use super::{AssistantEdit, MessageCacheMetadata};
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
-    SlashCommandId,
+    InvokedSlashCommandId,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -389,7 +389,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     #[derive(Default)]
     struct ContextRanges {
         parsed_commands: HashSet<Range<language::Anchor>>,
-        command_outputs: HashMap<SlashCommandId, Range<language::Anchor>>,
+        command_outputs: HashMap<InvokedSlashCommandId, Range<language::Anchor>>,
         output_sections: HashSet<Range<language::Anchor>>,
     }
 

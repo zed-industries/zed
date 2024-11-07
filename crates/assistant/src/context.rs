@@ -95,13 +95,13 @@ pub enum ContextOperation {
         version: clock::Global,
     },
     SlashCommandStarted {
-        id: SlashCommandId,
+        id: InvokedSlashCommandId,
         output_range: Range<language::Anchor>,
         name: String,
         version: clock::Global,
     },
     SlashCommandFinished {
-        id: SlashCommandId,
+        id: InvokedSlashCommandId,
         timestamp: clock::Lamport,
         error_message: Option<String>,
         version: clock::Global,
@@ -167,7 +167,7 @@ impl ContextOperation {
             }),
             proto::context_operation::Variant::SlashCommandStarted(message) => {
                 Ok(Self::SlashCommandStarted {
-                    id: SlashCommandId(language::proto::deserialize_timestamp(
+                    id: InvokedSlashCommandId(language::proto::deserialize_timestamp(
                         message.id.context("invalid id")?,
                     )),
                     output_range: language::proto::deserialize_anchor_range(
@@ -198,7 +198,7 @@ impl ContextOperation {
             }
             proto::context_operation::Variant::SlashCommandCompleted(message) => {
                 Ok(Self::SlashCommandFinished {
-                    id: SlashCommandId(language::proto::deserialize_timestamp(
+                    id: InvokedSlashCommandId(language::proto::deserialize_timestamp(
                         message.id.context("invalid id")?,
                     )),
                     timestamp: language::proto::deserialize_timestamp(
@@ -372,7 +372,7 @@ pub enum ContextEvent {
         updated: Vec<Range<language::Anchor>>,
     },
     InvokedSlashCommandChanged {
-        command_id: SlashCommandId,
+        command_id: InvokedSlashCommandId,
     },
     ParsedSlashCommandsUpdated {
         removed: Vec<Range<language::Anchor>>,
@@ -513,7 +513,7 @@ struct PendingCompletion {
 }
 
 #[derive(Copy, Clone, Debug, Hash, Eq, PartialEq)]
-pub struct SlashCommandId(clock::Lamport);
+pub struct InvokedSlashCommandId(clock::Lamport);
 
 #[derive(Clone, Debug)]
 pub struct XmlTag {
@@ -543,7 +543,7 @@ pub struct Context {
     operations: Vec<ContextOperation>,
     buffer: Model<Buffer>,
     parsed_slash_commands: Vec<ParsedSlashCommand>,
-    invoked_slash_commands: HashMap<SlashCommandId, InvokedSlashCommand>,
+    invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
@@ -1086,7 +1086,7 @@ impl Context {
 
     pub fn invoked_slash_command(
         &self,
-        command_id: &SlashCommandId,
+        command_id: &InvokedSlashCommandId,
     ) -> Option<&InvokedSlashCommand> {
         self.invoked_slash_commands.get(command_id)
     }
@@ -1847,7 +1847,7 @@ impl Context {
         cx: &mut ModelContext<Self>,
     ) {
         let version = self.version.clone();
-        let command_id = SlashCommandId(self.next_timestamp());
+        let command_id = InvokedSlashCommandId(self.next_timestamp());
 
         const PENDING_OUTPUT_END_MARKER: &str = "…";
 
