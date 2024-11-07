@@ -511,6 +511,7 @@ impl ThemePreview {
             .gap_2()
             .child(Checkbox::render_component_previews(cx))
             .child(Facepile::render_component_previews(cx))
+            .child(Button::render_component_previews(cx))
             .child(Indicator::render_component_previews(cx))
             .child(Icon::render_component_previews(cx))
             .child(self.render_avatars(cx))
