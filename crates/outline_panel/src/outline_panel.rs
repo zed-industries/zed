@@ -2513,10 +2513,6 @@ impl OutlinePanel {
                 .matches
                 .iter()
                 .rev()
-                .filter(|(match_range, _)| {
-                    match_range.start.excerpt_id == excerpt_id
-                        || match_range.end.excerpt_id == excerpt_id
-                })
                 .min_by_key(|&(match_range, _)| {
                     let match_display_range =
                         match_range.clone().to_display_points(&editor_snapshot);
