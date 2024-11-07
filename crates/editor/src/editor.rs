@@ -6278,30 +6278,13 @@ impl Editor {
         if self.read_only(cx) {
             return;
         }
-        let mut row_ranges = Vec::<Range<MultiBufferRow>>::new();
-        for selection in self.selections.all::<Point>(cx) {
-            let start = MultiBufferRow(selection.start.row);
-            let end = if selection.start.row == selection.end.row {
-                MultiBufferRow(selection.start.row + 1)
-            } else {
-                MultiBufferRow(selection.end.row)
-            };
-
-            if let Some(last_row_range) = row_ranges.last_mut() {
-                if start <= last_row_range.end {
-                    last_row_range.end = end;
-                    continue;
-                }
-            }
-            row_ranges.push(start..end);
-        }
-
+        let row_ranges = self.selections.all_row_ranges(cx);
         let snapshot = self.buffer.read(cx).snapshot(cx);
         let mut cursor_positions = Vec::new();
         for row_range in &row_ranges {
             let anchor = snapshot.anchor_before(Point::new(
-                row_range.end.previous_row().0,
-                snapshot.line_len(row_range.end.previous_row()),
+                row_range.end().0,
+                snapshot.line_len(*row_range.end()),
             ));
             cursor_positions.push(anchor..anchor);
         }
@@ -14896,6 +14879,18 @@ impl RowRangeExt for Range<MultiBufferRow> {
 
     fn iter_rows(&self) -> impl DoubleEndedIterator<Item = MultiBufferRow> {
         (self.start.0..self.end.0).map(MultiBufferRow)
+    }
+}
+
+impl RowRangeExt for RangeInclusive<MultiBufferRow> {
+    type Row = MultiBufferRow;
+
+    fn len(&self) -> usize {
+        (self.end().0 - self.start().0 + 1) as usize
+    }
+
+    fn iter_rows(&self) -> impl DoubleEndedIterator<Item = MultiBufferRow> {
+        (self.start().0..=self.end().0).map(MultiBufferRow)
     }
 }
 

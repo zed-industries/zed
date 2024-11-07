@@ -1,7 +1,7 @@
 use std::{
     cell::Ref,
     cmp, iter, mem,
-    ops::{Deref, DerefMut, Range, Sub},
+    ops::{Deref, DerefMut, Range, RangeInclusive, Sub},
     sync::Arc,
 };
 
@@ -14,8 +14,8 @@ use util::post_inc;
 use crate::{
     display_map::{DisplayMap, DisplaySnapshot, ToDisplayPoint},
     movement::TextLayoutDetails,
-    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferSnapshot, SelectMode,
-    ToOffset, ToPoint,
+    Anchor, DisplayPoint, DisplayRow, ExcerptId, MultiBuffer, MultiBufferRow, MultiBufferSnapshot,
+    SelectMode, ToOffset, ToPoint,
 };
 
 #[derive(Debug, Clone)]
@@ -248,6 +248,23 @@ impl SelectionsCollection {
         })
         .collect();
         (map, selections)
+    }
+
+    pub fn all_row_ranges(&self, cx: &mut AppContext) -> Vec<RangeInclusive<MultiBufferRow>> {
+        let mut row_ranges = Vec::<RangeInclusive<MultiBufferRow>>::new();
+        for selection in self.all::<Point>(cx) {
+            let start = MultiBufferRow(selection.start.row);
+            let end = MultiBufferRow(selection.end.row);
+
+            if let Some(last_row_range) = row_ranges.last_mut() {
+                if start <= *last_row_range.end() {
+                    *last_row_range = (*last_row_range.start())..=end;
+                    continue;
+                }
+            }
+            row_ranges.push(start..=end);
+        }
+        row_ranges
     }
 
     pub fn newest_anchor(&self) -> &Selection<Anchor> {
