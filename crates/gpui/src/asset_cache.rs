@@ -4,10 +4,14 @@ use std::hash::{Hash, Hasher};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// TODO
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub(crate) enum UriOrPath {
+pub enum UriOrPath {
+    /// TODO
     Uri(SharedUri),
+    /// TODO
     Path(Arc<PathBuf>),
+    /// TODO
     Embedded(SharedString),
 }
 
