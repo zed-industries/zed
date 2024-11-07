@@ -10,7 +10,11 @@ use git::GitHostingProviderRegistry;
 #[cfg(target_os = "linux")]
 use ashpd::desktop::trash;
 #[cfg(target_os = "linux")]
-use std::{fs::File, os::fd::AsFd};
+use std::fs::File;
+#[cfg(unix)]
+use std::os::fd::AsFd;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -51,14 +55,14 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum PathEventKind {
     Removed,
     Created,
     Changed,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct PathEvent {
     pub path: PathBuf,
     pub kind: Option<PathEventKind>,
@@ -95,6 +99,7 @@ pub trait Fs: Send + Sync {
     async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.remove_file(path, options).await
     }
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
@@ -185,6 +190,52 @@ pub struct Metadata {
 pub struct RealFs {
     git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
+}
+
+pub trait FileHandle: Send + Sync + std::fmt::Debug {
+    fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf>;
+}
+
+impl FileHandle for std::fs::File {
+    #[cfg(target_os = "macos")]
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        use std::{
+            ffi::{CStr, OsStr},
+            os::unix::ffi::OsStrExt,
+        };
+
+        let fd = self.as_fd();
+        let mut path_buf: [libc::c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
+
+        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
+        if result == -1 {
+            anyhow::bail!("fcntl returned -1".to_string());
+        }
+
+        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr()) };
+        let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
+        Ok(path)
+    }
+
+    #[cfg(target_os = "linux")]
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        let fd = self.as_fd();
+        let fd_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
+        let new_path = std::fs::read_link(fd_path)?;
+        if new_path
+            .file_name()
+            .is_some_and(|f| f.to_string_lossy().ends_with(" (deleted)"))
+        {
+            anyhow::bail!("file was deleted")
+        };
+
+        Ok(new_path)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        anyhow::bail!("unimplemented")
+    }
 }
 
 pub struct RealWatcher {}
@@ -398,6 +449,10 @@ impl Fs for RealFs {
 
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
         Ok(Box::new(std::fs::File::open(path)?))
+    }
+
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
+        Ok(Arc::new(std::fs::File::open(path)?))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
@@ -755,6 +810,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    moves: std::collections::HashMap<u64, PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -926,6 +982,7 @@ impl FakeFs {
                 events_paused: false,
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
+                moves: Default::default(),
             }),
         });
 
@@ -1363,6 +1420,27 @@ impl Watcher for FakeWatcher {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+struct FakeHandle {
+    inode: u64,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FileHandle for FakeHandle {
+    fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
+        let state = fs.as_fake().state.lock();
+        let Some(target) = state.moves.get(&self.inode) else {
+            anyhow::bail!("fake fd not moved")
+        };
+
+        if state.try_read_path(&target, false).is_some() {
+            return Ok(target.clone());
+        }
+        anyhow::bail!("fake fd target not found")
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -1499,6 +1577,14 @@ impl Fs for FakeFs {
                 Err(anyhow!("path does not exist: {}", &old_path.display()))
             }
         })?;
+
+        let inode = match *moved_entry.lock() {
+            FakeFsEntry::File { inode, .. } => inode,
+            FakeFsEntry::Dir { inode, .. } => inode,
+            _ => 0,
+        };
+
+        state.moves.insert(inode, new_path.clone());
 
         state.write_path(&new_path, |e| {
             match e {
@@ -1642,6 +1728,19 @@ impl Fs for FakeFs {
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
         let bytes = self.load_internal(path).await?;
         Ok(Box::new(io::Cursor::new(bytes)))
+    }
+
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
+        self.simulate_random_delay().await;
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        let inode = match *entry {
+            FakeFsEntry::File { inode, .. } => inode,
+            FakeFsEntry::Dir { inode, .. } => inode,
+            _ => unreachable!(),
+        };
+        Ok(Arc::new(FakeHandle { inode }))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
