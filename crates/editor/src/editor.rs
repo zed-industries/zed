@@ -49,6 +49,7 @@ pub mod test;
 
 use ::git::diff::DiffHunkStatus;
 pub(crate) use actions::*;
+pub use actions::{OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
@@ -12579,11 +12580,11 @@ impl Editor {
         });
     }
 
-    fn open_excerpts_in_split(&mut self, _: &OpenExcerptsSplit, cx: &mut ViewContext<Self>) {
+    pub fn open_excerpts_in_split(&mut self, _: &OpenExcerptsSplit, cx: &mut ViewContext<Self>) {
         self.open_excerpts_common(true, cx)
     }
 
-    fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
+    pub fn open_excerpts(&mut self, _: &OpenExcerpts, cx: &mut ViewContext<Self>) {
         self.open_excerpts_common(false, cx)
     }
 

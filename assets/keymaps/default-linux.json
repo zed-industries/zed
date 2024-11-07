@@ -567,9 +567,11 @@
       "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFileManager",
-      "space": ["outline_panel::Open", { "change_selection": false }],
+      "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
-      "shift-up": "menu::SelectPrev"
+      "shift-up": "menu::SelectPrev",
+      "alt-enter": "editor::OpenExcerpts",
+      "ctrl-k enter": "editor::OpenExcerptsSplit"
     }
   },
   {
