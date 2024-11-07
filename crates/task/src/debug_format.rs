@@ -108,7 +108,7 @@ pub struct DebugAdapterConfig {
     #[serde(flatten)]
     pub kind: DebugAdapterKind,
     /// The type of request that should be called on the debug adapter
-    #[serde(default, flatten)]
+    #[serde(default)]
     pub request: DebugRequestType,
     /// The program that you trying to debug
     pub program: Option<String>,
