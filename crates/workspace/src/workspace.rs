@@ -2219,7 +2219,13 @@ impl Workspace {
 
         if retain_active_pane {
             if let Some(current_pane_close) = current_pane.update(cx, |pane, cx| {
-                pane.close_inactive_items(&CloseInactiveItems { save_intent: None }, cx)
+                pane.close_inactive_items(
+                    &CloseInactiveItems {
+                        save_intent: None,
+                        close_pinned: false,
+                    },
+                    cx,
+                )
             }) {
                 tasks.push(current_pane_close);
             };
@@ -2234,6 +2240,7 @@ impl Workspace {
                 pane.close_all_items(
                     &CloseAllItems {
                         save_intent: Some(save_intent),
+                        close_pinned: false,
                     },
                     cx,
                 )
