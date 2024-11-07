@@ -1546,6 +1546,17 @@ async fn test_sentence_forwards(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_ctrl_o_visual(cx: &mut gpui::TestAppContext) {
+    let mut cx = NeovimBackedTestContext::new(cx).await;
+
+    cx.set_shared_state("helloˇ world.").await;
+    cx.simulate_shared_keystrokes("i ctrl-o v b r l").await;
+    cx.shared_state().await.assert_eq("ˇllllllworld.");
+    cx.simulate_shared_keystrokes("ctrl-o v f w d").await;
+    cx.shared_state().await.assert_eq("ˇorld.");
+}
+
+#[gpui::test]
 async fn test_ctrl_o_position(cx: &mut gpui::TestAppContext) {
     let mut cx = NeovimBackedTestContext::new(cx).await;
 
