@@ -4291,6 +4291,32 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         &mut cx,
     );
 
+    // // Test that blank lines are preserved when rewrapping
+    // assert_rewrap(
+    //     indoc! {"
+    //         // Lorem «ipsum dolor sit amet, consectetur adipiscing elit.
+    //         // Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque.
+    //         //
+    //         // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+    //         // blanditˇ» quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
+    //     "},
+    //     indoc! {"
+    //         // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+    //         // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
+    //         // auctor, eu lacinia sapien scelerisque.
+    //         //
+    //         // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
+    //         // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
+    //         // blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
+    //         // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
+    //         // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
+    //         // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
+    //         // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ
+    //     "},
+    //     language_with_c_comments.clone(),
+    //     &mut cx,
+    // );
+
     // Test that different comment prefixes are supported.
     assert_rewrap(
         indoc! {"
