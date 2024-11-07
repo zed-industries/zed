@@ -18,8 +18,6 @@ pub enum AvatarSource {
     AnonymousAvatar(AnonymousAvatarIcon),
     /// The avatar's content is a string (user's initials)
     FallbackAvatar(SharedString),
-    /// The avatar's content is loading
-    LoadingAvatar,
 }
 
 /// A collection of effects that can be applied to the avatar's content
@@ -105,6 +103,8 @@ pub struct Avatar {
     border_color: Option<Hsla>,
     indicator: Option<AnyElement>,
     grayscale: bool,
+    loading: bool,
+    player_index: Option<usize>,
 }
 
 impl Avatar {
@@ -116,21 +116,56 @@ impl Avatar {
             border_color: None,
             indicator: None,
             grayscale: false,
+            loading: false,
+            player_index: None,
         }
     }
 
     /// Creates an avatar that can have image empty but filled by a fallback option
-    pub fn new_fallback() -> Self {
+    pub fn with_fallback(fallback: impl Into<Option<SharedString>>) -> Self {
+        let fallback = fallback.into();
+        let source = fallback
+            .map(AvatarSource::FallbackAvatar)
+            .unwrap_or(AvatarSource::FallbackAvatar("".into()));
+
         Avatar {
-            source: AvatarSource::LoadingAvatar,
+            source,
             size: None,
             border_color: None,
             indicator: None,
             grayscale: false,
+            loading: false,
+            player_index: None,
         }
     }
 
-    /// Uses the user name's first letter as the fallback avatar
+    /// Creates an avatar that shows a random icon
+    pub fn new_anonymous(player_index: impl Into<Option<usize>>) -> Self {
+        let player_index = player_index.into();
+        let icon = match player_index {
+            Some(index) => AnonymousAvatarIcon::from_index(index),
+            None => AnonymousAvatarIcon::default(),
+        };
+
+        Avatar {
+            source: AvatarSource::AnonymousAvatar(icon),
+            size: None,
+            border_color: None,
+            indicator: None,
+            grayscale: false,
+            loading: false,
+            player_index,
+        }
+    }
+
+    /// Sets the player index for the avatar
+    pub fn player_index(mut self, index: usize) -> Self {
+        self.player_index = Some(index);
+        self
+    }
+
+    /// Uses the user name's first letter as a fallback if their avatar image
+    /// fails to load
     ///
     /// # Examples
     ///
@@ -168,13 +203,16 @@ impl Avatar {
     /// })))
     ///
     /// ```
-    pub fn fallback_anonymous(mut self, index: u32) -> Self {
+    pub fn fallback_anonymous(self, index: u32) -> Self {
+        let source = self.source.clone();
+        let mut self_with_index = self.player_index(index as usize);
+
         // Only set anonymous avatar if there's no initials
-        if !matches!(self.source, AvatarSource::FallbackAvatar(_)) {
-            self.source =
+        if !matches!(source, AvatarSource::FallbackAvatar(_)) {
+            self_with_index.source =
                 AvatarSource::AnonymousAvatar(AnonymousAvatarIcon::from_index(index as usize));
         }
-        self
+        self_with_index
     }
 
     /// Uses a pulsating background animation to indicate the loading state
@@ -186,10 +224,8 @@ impl Avatar {
     ///
     /// let avatar = Avatar::new("path/to/image.png").loading(true);
     /// ```
-    pub fn loading(mut self, is_loading: bool) -> Self {
-        if is_loading {
-            self.source = AvatarSource::LoadingAvatar;
-        }
+    pub fn loading(mut self, loading: bool) -> Self {
+        self.loading = loading;
         self
     }
 
@@ -240,6 +276,10 @@ impl Avatar {
     }
 
     fn render_content(&self, content_size: Pixels, cx: &WindowContext) -> AnyElement {
+        if self.loading {
+            return self.render_loading_avatar(content_size, cx);
+        }
+
         match &self.source {
             AvatarSource::Avatar(image) => self.render_image(image, content_size),
             AvatarSource::AnonymousAvatar(icon) => {
@@ -248,7 +288,6 @@ impl Avatar {
             AvatarSource::FallbackAvatar(initials) => {
                 self.render_fallback_avatar(initials, content_size, cx)
             }
-            AvatarSource::LoadingAvatar => self.render_loading_avatar(content_size, cx),
         }
     }
 
@@ -331,31 +370,31 @@ impl Avatar {
     }
 
     fn color(&self, cx: &WindowContext) -> Hsla {
+        if self.grayscale {
+            return hsla(0.0, 0.0, 0.5, 1.0);
+        }
+
+        if let Some(player_index) = self.player_index {
+            return cx
+                .theme()
+                .players()
+                .color_for_participant(player_index as u32)
+                .cursor;
+        }
+
         match &self.source {
             AvatarSource::AnonymousAvatar(icon) => {
-                let base_color = cx
-                    .theme()
+                cx.theme()
                     .players()
                     .color_for_participant((*icon as u8).into())
-                    .cursor;
-                if !self.grayscale {
-                    base_color
-                } else {
-                    hsla(0.0, 0.0, 0.5, 1.0)
-                }
+                    .cursor
             }
             AvatarSource::FallbackAvatar(initials) => {
                 let index = initials.chars().next().map(|c| c as u8).unwrap_or(0);
-                let base_color = cx
-                    .theme()
+                cx.theme()
                     .players()
                     .color_for_participant(index.into())
-                    .cursor;
-                if !self.grayscale {
-                    base_color
-                } else {
-                    hsla(0.0, 0.0, 0.5, 1.0)
-                }
+                    .cursor
             }
             _ => cx.theme().colors().text,
         }

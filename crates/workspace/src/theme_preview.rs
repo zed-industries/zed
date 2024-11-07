@@ -132,33 +132,27 @@ impl ThemePreview {
                             v_flex()
                                 .gap_1()
                                 .child(Label::new("Anonymous").color(Color::Muted))
-                                .child(h_flex().gap_1().children(
-                                    (0..=5).map(|ix| Avatar::new_fallback().fallback_anonymous(ix)),
-                                ))
+                                .child(
+                                    h_flex()
+                                        .gap_1()
+                                        .children((0..=5).map(|ix| Avatar::new_anonymous(ix))),
+                                )
                                 .child(Label::new("Anonymous, Grayscale").color(Color::Muted))
-                                .child(h_flex().gap_1().children((0..=5).map(|ix| {
-                                    Avatar::new_fallback()
-                                        .fallback_anonymous(ix)
-                                        .grayscale(true)
-                                }))),
+                                .child(h_flex().gap_1().children(
+                                    (0..=5).map(|ix| Avatar::new_anonymous(ix).grayscale(true)),
+                                )),
                         )
                         .child(
                             v_flex()
                                 .gap_1()
                                 .child(Label::new("Initials").color(Color::Muted))
-                                .child(h_flex().gap_1().children(
-                                    PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
-                                        Avatar::new_fallback()
-                                            .fallback_initials(handle.to_string())
-                                            .fallback_anonymous(ix as u32)
-                                    }),
-                                ))
+                                .child(h_flex().gap_1().children(PLAYER_HANDLES.iter().map(
+                                    |handle| Avatar::with_fallback(Some(handle.to_string().into())),
+                                )))
                                 .child(Label::new("Initials, Grayscale").color(Color::Muted))
                                 .child(h_flex().gap_1().children(
                                     PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
-                                        Avatar::new_fallback()
-                                            .fallback_initials(handle.to_string())
-                                            .fallback_anonymous(ix as u32)
+                                        Avatar::with_fallback(Some(handle.to_string().into()))
                                             .grayscale(true)
                                     }),
                                 )),
