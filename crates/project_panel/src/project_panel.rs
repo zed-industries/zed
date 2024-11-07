@@ -1108,13 +1108,17 @@ impl ProjectPanel {
             }
             let project = self.project.read(cx);
             let items_to_delete = self.marked_entries();
+
+            let mut dirty_buffers = 0;
             let file_paths = items_to_delete
                 .into_iter()
                 .filter_map(|selection| {
+                    let project_path = project.path_for_entry(selection.entry_id, cx)?;
+                    dirty_buffers +=
+                        project.dirty_buffers(cx).any(|path| path == project_path) as usize;
                     Some((
                         selection.entry_id,
-                        project
-                            .path_for_entry(selection.entry_id, cx)?
+                        project_path
                             .path
                             .file_name()?
                             .to_string_lossy()
@@ -1127,11 +1131,17 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
+                let prompt = match file_paths.first() {
+                    Some((_, path)) if file_paths.len() == 1 => {
+                        let unsaved_warning = if dirty_buffers > 0 {
+                            "\n\nIt has unsaved changes, which will be lost."
+                        } else {
+                            ""
+                        };
 
-                let prompt =
-                    if let Some((_, path)) = file_paths.first().filter(|_| file_paths.len() == 1) {
-                        format!("{operation} {path}?")
-                    } else {
+                        format!("{operation} {path}?{unsaved_warning}")
+                    }
+                    _ => {
                         const CUTOFF_POINT: usize = 10;
                         let names = if file_paths.len() > CUTOFF_POINT {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
@@ -1150,14 +1160,22 @@ impl ProjectPanel {
                         } else {
                             file_paths.iter().map(|(_, path)| path.clone()).collect()
                         };
+                        let unsaved_warning = if dirty_buffers == 0 {
+                            String::new()
+                        } else if dirty_buffers == 1 {
+                            "\n\n1 of these has unsaved changes, which will be lost.".to_string()
+                        } else {
+                            format!("\n\n{dirty_buffers} of these have unsaved changes, which will be lost.")
+                        };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}",
+                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
                             operation.to_lowercase(),
                             file_paths.len(),
                             names.join("\n")
                         )
-                    };
+                    }
+                };
                 Some(cx.prompt(PromptLevel::Info, &prompt, None, &[operation, "Cancel"]))
             } else {
                 None
