@@ -1,4 +1,5 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
+use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
@@ -7,7 +8,7 @@ use crate::{
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command, SlashCommandCompletionProvider, SlashCommandRegistry,
+        file_command, SlashCommandCompletionProvider,
     },
     slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant,
@@ -315,10 +316,11 @@ impl AssistantPanel {
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
+            let slash_commands = Arc::new(SlashCommandWorkingSet::default());
             let context_store = workspace
                 .update(&mut cx, |workspace, cx| {
                     let project = workspace.project().clone();
-                    ContextStore::new(project, prompt_builder.clone(), cx)
+                    ContextStore::new(project, prompt_builder.clone(), slash_commands, cx)
                 })?
                 .await?;
 
@@ -534,6 +536,7 @@ impl AssistantPanel {
             client_status: None,
             watch_client_status: Some(watch_client_status),
             show_zed_ai_notice: false,
+
         };
         this.new_context(cx);
         this
@@ -1468,6 +1471,7 @@ enum AssistError {
 pub struct ContextEditor {
     context: Model<Context>,
     fs: Arc<dyn Fs>,
+    slash_commands: Arc<SlashCommandWorkingSet>,
     workspace: WeakView<Workspace>,
     project: Model<Project>,
     lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
@@ -1536,8 +1540,10 @@ impl ContextEditor {
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
+        let slash_commands = context.read(cx).slash_commands.clone();
         let mut this = Self {
             context,
+            slash_commands,
             editor,
             lsp_adapter_delegate,
             blocks: Default::default(),
@@ -1688,7 +1694,7 @@ impl ContextEditor {
     }
 
     pub fn insert_command(&mut self, name: &str, cx: &mut ViewContext<Self>) {
-        if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
+        if let Some(command) = self.slash_commands.command(name, cx) {
             self.editor.update(cx, |editor, cx| {
                 editor.transact(cx, |editor, cx| {
                     editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.try_cancel());
@@ -1770,7 +1776,7 @@ impl ContextEditor {
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) {
-        if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
+        if let Some(command) = self.slash_commands.command(name, cx) {
             let context = self.context.read(cx);
             let sections = context
                 .slash_command_output_sections()
@@ -3719,6 +3725,19 @@ impl ContextEditor {
             })
     }
 
+    fn render_inject_context_menu(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        slash_command_picker::SlashCommandSelector::new(
+            self.slash_commands.clone(),
+            cx.view().downgrade(),
+            Button::new("trigger", "Add Context")
+                .icon(IconName::Plus)
+                .icon_size(IconSize::Small)
+                .icon_color(Color::Muted)
+                .icon_position(IconPosition::Start)
+                .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
+        )
+    }
+
     fn render_last_error(&self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
         let last_error = self.last_error.as_ref()?;
 
@@ -4136,7 +4155,7 @@ impl Render for ContextEditor {
                         .child(
                             h_flex()
                                 .gap_1()
-                                .child(render_inject_context_menu(cx.view().downgrade(), cx)),
+                                .child(self.render_inject_context_menu(cx)),
                         )
                         .child(
                             h_flex()
@@ -4417,24 +4436,6 @@ pub struct ContextEditorToolbarItem {
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
     model_selector_menu_handle: PopoverMenuHandle<Picker<ModelPickerDelegate>>,
-}
-
-fn render_inject_context_menu(
-    active_context_editor: WeakView<ContextEditor>,
-    cx: &mut WindowContext<'_>,
-) -> impl IntoElement {
-    let commands = SlashCommandRegistry::global(cx);
-
-    slash_command_picker::SlashCommandSelector::new(
-        commands.clone(),
-        active_context_editor,
-        Button::new("trigger", "Add Context")
-            .icon(IconName::Plus)
-            .icon_size(IconSize::Small)
-            .icon_color(Color::Muted)
-            .icon_position(IconPosition::Start)
-            .tooltip(|cx| Tooltip::text("Type / to insert via keyboard", cx)),
-    )
 }
 
 impl ContextEditorToolbarItem {

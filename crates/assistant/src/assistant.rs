@@ -17,6 +17,7 @@ mod streaming_diff;
 mod terminal_inline_assistant;
 mod tools;
 
+pub use crate::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;

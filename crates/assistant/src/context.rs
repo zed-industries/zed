@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod context_tests;
 
+use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
@@ -8,7 +9,7 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandRegistry,
+    SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection,
     SlashCommandResult,
 };
 use assistant_tool::ToolRegistry;
@@ -545,6 +546,7 @@ pub struct Context {
     parsed_slash_commands: Vec<ParsedSlashCommand>,
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
+    pub(crate) slash_commands: Arc<SlashCommandWorkingSet>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<Arc<str>, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
@@ -598,6 +600,7 @@ impl Context {
         project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         prompt_builder: Arc<PromptBuilder>,
+        slash_commands: Arc<SlashCommandWorkingSet>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self::new(
@@ -606,6 +609,7 @@ impl Context {
             language::Capability::ReadWrite,
             language_registry,
             prompt_builder,
+            slash_commands,
             project,
             telemetry,
             cx,
@@ -619,6 +623,7 @@ impl Context {
         capability: language::Capability,
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
+        slash_commands: Arc<SlashCommandWorkingSet>,
         project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
@@ -663,6 +668,7 @@ impl Context {
             telemetry,
             project,
             language_registry,
+            slash_commands,
             patches: Vec::new(),
             xml_tags: Vec::new(),
             prompt_builder,
@@ -738,6 +744,7 @@ impl Context {
         path: PathBuf,
         language_registry: Arc<LanguageRegistry>,
         prompt_builder: Arc<PromptBuilder>,
+        slash_commands: Arc<SlashCommandWorkingSet>,
         project: Option<Model<Project>>,
         telemetry: Option<Arc<Telemetry>>,
         cx: &mut ModelContext<Self>,
@@ -749,6 +756,7 @@ impl Context {
             language::Capability::ReadWrite,
             language_registry,
             prompt_builder,
+            slash_commands,
             project,
             telemetry,
             cx,
@@ -1455,7 +1463,7 @@ impl Context {
                     })
                     .map(ToOwned::to_owned)
                     .collect::<SmallVec<_>>();
-                if let Some(command) = SlashCommandRegistry::global(cx).command(name) {
+                if let Some(command) = self.slash_commands.command(name, cx) {
                     if !command.requires_argument() || !arguments.is_empty() {
                         let start_ix = offset + command_line.name.start - 1;
                         let end_ix = offset

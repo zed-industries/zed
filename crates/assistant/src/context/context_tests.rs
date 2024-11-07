@@ -1,8 +1,9 @@
 use super::{AssistantEdit, MessageCacheMetadata};
+use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
-    Context, ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
-    InvokedSlashCommandId,
+    Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
+    MessageStatus, PromptBuilder,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -49,8 +50,16 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry,
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -182,8 +191,16 @@ fn test_message_splitting(cx: &mut AppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -277,8 +294,16 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry,
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -383,8 +408,16 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry.clone(), None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            cx,
+        )
+    });
 
     #[derive(Default)]
     struct ContextRanges {
@@ -671,6 +704,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             Some(project),
             None,
             prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
             cx,
         )
     });
@@ -934,6 +968,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             Default::default(),
             registry.clone(),
             prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
             None,
             None,
             cx,
@@ -1042,8 +1077,16 @@ async fn test_serialization(cx: &mut TestAppContext) {
     cx.update(assistant_panel::init);
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry.clone(), None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read_with(cx, |context, _| context.buffer.clone());
     let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
     let message_1 = context.update(cx, |context, cx| {
@@ -1083,6 +1126,7 @@ async fn test_serialization(cx: &mut TestAppContext) {
             Default::default(),
             registry.clone(),
             prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
             None,
             None,
             cx,
@@ -1141,6 +1185,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 language::Capability::ReadWrite,
                 registry.clone(),
                 prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
                 None,
                 None,
                 cx,
@@ -1394,8 +1439,17 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry,
+            None,
+            None,
+            prompt_builder.clone(),
+            slash_commands,
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     // Create a test cache configuration

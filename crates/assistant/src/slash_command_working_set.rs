@@ -1,12 +1,20 @@
 use assistant_slash_command::{SlashCommand, SlashCommandRegistry};
 use collections::HashMap;
 use gpui::AppContext;
+use parking_lot::Mutex;
 use std::sync::Arc;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct SlashCommandId(usize);
 
+/// A working set of slash commands for use in one instance of the Assistant Panel.
+#[derive(Default)]
 pub struct SlashCommandWorkingSet {
+    state: Mutex<WorkingSetState>,
+}
+
+#[derive(Default)]
+struct WorkingSetState {
     context_server_commands_by_id: HashMap<SlashCommandId, Arc<dyn SlashCommand>>,
     context_server_commands_by_name: HashMap<String, Arc<dyn SlashCommand>>,
     next_command_id: SlashCommandId,
@@ -14,26 +22,37 @@ pub struct SlashCommandWorkingSet {
 
 impl SlashCommandWorkingSet {
     pub fn command(&self, name: &str, cx: &AppContext) -> Option<Arc<dyn SlashCommand>> {
-        self.context_server_commands_by_name
+        self.state
+            .lock()
+            .context_server_commands_by_name
             .get(name)
             .cloned()
             .or_else(|| SlashCommandRegistry::global(cx).command(name))
     }
 
-    pub fn insert(&mut self, command: Arc<dyn SlashCommand>) -> SlashCommandId {
-        let command_id = self.next_command_id;
-        self.next_command_id.0 += 1;
-        self.context_server_commands_by_id
+    pub fn featured_command_names(&self, cx: &AppContext) -> Vec<Arc<str>> {
+        SlashCommandRegistry::global(cx).featured_command_names()
+    }
+
+    pub fn insert(&self, command: Arc<dyn SlashCommand>) -> SlashCommandId {
+        let mut state = self.state.lock();
+        let command_id = state.next_command_id;
+        state.next_command_id.0 += 1;
+        state
+            .context_server_commands_by_id
             .insert(command_id, command.clone());
-        self.slash_commands_changed();
+        state.slash_commands_changed();
         command_id
     }
 
     pub fn remove(&mut self, command_id: SlashCommandId) {
-        self.context_server_commands_by_id.remove(&command_id);
-        self.slash_commands_changed();
+        let mut state = self.state.lock();
+        state.context_server_commands_by_id.remove(&command_id);
+        state.slash_commands_changed();
     }
+}
 
+impl WorkingSetState {
     fn slash_commands_changed(&mut self) {
         self.context_server_commands_by_name.clear();
         self.context_server_commands_by_name.extend(

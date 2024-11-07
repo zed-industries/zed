@@ -1,6 +1,6 @@
 use crate::{
-    prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
-    SavedContext, SavedContextMetadata,
+    prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
+    ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
@@ -46,6 +46,7 @@ pub struct ContextStore {
     host_contexts: Vec<RemoteContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
+    slash_commands: Arc<SlashCommandWorkingSet>,
     telemetry: Arc<Telemetry>,
     _watch_updates: Task<Option<()>>,
     client: Arc<Client>,
@@ -87,6 +88,7 @@ impl ContextStore {
     pub fn new(
         project: Model<Project>,
         prompt_builder: Arc<PromptBuilder>,
+        slash_commands: Arc<SlashCommandWorkingSet>,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let fs = project.read(cx).fs().clone();
@@ -103,6 +105,7 @@ impl ContextStore {
                     host_contexts: Vec::new(),
                     fs,
                     languages,
+                    slash_commands,
                     telemetry,
                     _watch_updates: cx.spawn(|this, mut cx| {
                         async move {
@@ -342,6 +345,7 @@ impl ContextStore {
                 Some(self.project.clone()),
                 Some(self.telemetry.clone()),
                 self.prompt_builder.clone(),
+                self.slash_commands.clone(),
                 cx,
             )
         });
@@ -364,6 +368,7 @@ impl ContextStore {
         let project = self.project.clone();
         let telemetry = self.telemetry.clone();
         let prompt_builder = self.prompt_builder.clone();
+        let slash_commands = self.slash_commands.clone();
         let request = self.client.request(proto::CreateContext { project_id });
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
@@ -376,6 +381,7 @@ impl ContextStore {
                     capability,
                     language_registry,
                     prompt_builder,
+                    slash_commands,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -425,6 +431,7 @@ impl ContextStore {
             }
         });
         let prompt_builder = self.prompt_builder.clone();
+        let slash_commands = self.slash_commands.clone();
 
         cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
@@ -434,6 +441,7 @@ impl ContextStore {
                     path.clone(),
                     languages,
                     prompt_builder,
+                    slash_commands,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -500,6 +508,7 @@ impl ContextStore {
             context_id: context_id.to_proto(),
         });
         let prompt_builder = self.prompt_builder.clone();
+        let slash_commands = self.slash_commands.clone();
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
             let context_proto = response.context.context("invalid context")?;
@@ -510,6 +519,7 @@ impl ContextStore {
                     capability,
                     language_registry,
                     prompt_builder,
+                    slash_commands,
                     Some(project),
                     Some(telemetry),
                     cx,
