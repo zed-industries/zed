@@ -192,6 +192,7 @@ pub enum IconName {
     FileGit,
     FileLock,
     FileRust,
+    FileSearch,
     FileText,
     FileToml,
     FileTree,
