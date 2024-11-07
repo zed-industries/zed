@@ -1489,26 +1489,29 @@ impl Context {
         buffer: &BufferSnapshot,
         cx: &mut ModelContext<Self>,
     ) {
-        let version = self.version.clone();
-        let timestamp = self.next_timestamp();
-        let mut operations = Vec::new();
+        let mut invalidated_command_ids = Vec::new();
         for (&command_id, command) in self.invoked_slash_commands.iter_mut() {
             if !matches!(command.status, InvokedSlashCommandStatus::Finished)
                 && (!command.range.start.is_valid(buffer) || !command.range.end.is_valid(buffer))
             {
                 command.status = InvokedSlashCommandStatus::Finished;
                 cx.emit(ContextEvent::InvokedSlashCommandChanged { command_id });
-                operations.push(ContextOperation::SlashCommandFinished {
+                invalidated_command_ids.push(command_id);
+            }
+        }
+
+        for command_id in invalidated_command_ids {
+            let version = self.version.clone();
+            let timestamp = self.next_timestamp();
+            self.push_op(
+                ContextOperation::SlashCommandFinished {
                     id: command_id,
                     timestamp,
                     error_message: None,
                     version: version.clone(),
-                });
-            }
-        }
-
-        for operation in operations {
-            self.push_op(operation, cx);
+                },
+                cx,
+            );
         }
     }
 
@@ -1970,24 +1973,22 @@ impl Context {
                                 if let Some(pending_section) = pending_section_stack.pop() {
                                     let offset_range = (pending_section.start..insert_position)
                                         .to_offset(this.buffer.read(cx));
-                                    if offset_range.is_empty() {
-                                        return;
+                                    if !offset_range.is_empty() {
+                                        let range = this.buffer.update(cx, |buffer, _cx| {
+                                            buffer.anchor_after(offset_range.start)
+                                                ..buffer.anchor_before(offset_range.end)
+                                        });
+                                        this.insert_slash_command_output_section(
+                                            SlashCommandOutputSection {
+                                                range: range.clone(),
+                                                icon: pending_section.icon,
+                                                label: pending_section.label,
+                                                metadata: metadata.or(pending_section.metadata),
+                                            },
+                                            cx,
+                                        );
+                                        last_section_range = Some(range);
                                     }
-
-                                    let range = this.buffer.update(cx, |buffer, _cx| {
-                                        buffer.anchor_after(offset_range.start)
-                                            ..buffer.anchor_before(offset_range.end)
-                                    });
-                                    this.insert_slash_command_output_section(
-                                        SlashCommandOutputSection {
-                                            range: range.clone(),
-                                            icon: pending_section.icon,
-                                            label: pending_section.label,
-                                            metadata: metadata.or(pending_section.metadata),
-                                        },
-                                        cx,
-                                    );
-                                    last_section_range = Some(range);
                                 }
                             }
                         }
