@@ -185,6 +185,8 @@ impl LanguageModel for CopilotChatLanguageModel {
             _ => {
                 let model = match self.model {
                     CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
+                    CopilotChatModel::Gpt4oMini => open_ai::Model::FourOmniMini,
+                    CopilotChatModel::Gpt4Turbo => open_ai::Model::FourTurbo,
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
                     CopilotChatModel::O1Preview | CopilotChatModel::O1Mini => open_ai::Model::Four,

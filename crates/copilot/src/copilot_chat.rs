@@ -29,32 +29,38 @@ pub enum Role {
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
     #[default]
-    #[serde(alias = "gpt-4o", rename = "gpt-4o-2024-05-13")]
+    #[serde(rename = "gpt-4o")]
     Gpt4o,
-    #[serde(alias = "gpt-4", rename = "gpt-4")]
+    #[serde(rename = "gpt-4o-mini")]
+    Gpt4oMini,
+    #[serde(rename = "gpt-4")]
     Gpt4,
-    #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
+    #[serde(rename = "gpt-4-turbo")]
+    Gpt4Turbo,
+    #[serde(rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
-    #[serde(alias = "o1-preview", rename = "o1-preview-2024-09-12")]
+    #[serde(rename = "o1-preview")]
     O1Preview,
-    #[serde(alias = "o1-mini", rename = "o1-mini-2024-09-12")]
+    #[serde(rename = "o1-mini")]
     O1Mini,
-    #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
+    #[serde(rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,
 }
 
 impl Model {
     pub fn uses_streaming(&self) -> bool {
         match self {
-            Self::Gpt4o | Self::Gpt4 | Self::Gpt3_5Turbo | Self::Claude3_5Sonnet => true,
             Self::O1Mini | Self::O1Preview => false,
+            _ => true,
         }
     }
 
     pub fn from_id(id: &str) -> Result<Self> {
         match id {
             "gpt-4o" => Ok(Self::Gpt4o),
+            "gpt-4o-mini" => Ok(Self::Gpt4oMini),
             "gpt-4" => Ok(Self::Gpt4),
+            "gpt-4-turbo" => Ok(Self::Gpt4Turbo),
             "gpt-3.5-turbo" => Ok(Self::Gpt3_5Turbo),
             "o1-preview" => Ok(Self::O1Preview),
             "o1-mini" => Ok(Self::O1Mini),
@@ -67,18 +73,21 @@ impl Model {
         match self {
             Self::Gpt3_5Turbo => "gpt-3.5-turbo",
             Self::Gpt4 => "gpt-4",
+            Self::Gpt4Turbo => "gpt-4-turbo",
             Self::Gpt4o => "gpt-4o",
+            Self::Gpt4oMini => "gpt-4o-mini",
             Self::O1Mini => "o1-mini",
             Self::O1Preview => "o1-preview",
             Self::Claude3_5Sonnet => "claude-3-5-sonnet",
         }
     }
-
     pub fn display_name(&self) -> &'static str {
         match self {
             Self::Gpt3_5Turbo => "GPT-3.5",
             Self::Gpt4 => "GPT-4",
+            Self::Gpt4Turbo => "GPT-4 Turbo",
             Self::Gpt4o => "GPT-4o",
+            Self::Gpt4oMini => "GPT-4o Mini",
             Self::O1Mini => "o1-mini",
             Self::O1Preview => "o1-preview",
             Self::Claude3_5Sonnet => "Claude 3.5 Sonnet",
@@ -88,7 +97,9 @@ impl Model {
     pub fn max_token_count(&self) -> usize {
         match self {
             Self::Gpt4o => 64000,
+            Self::Gpt4oMini => 12288,
             Self::Gpt4 => 32768,
+            Self::Gpt4Turbo => 64000,
             Self::Gpt3_5Turbo => 12288,
             Self::O1Mini => 20000,
             Self::O1Preview => 20000,
