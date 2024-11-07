@@ -185,9 +185,9 @@ pub fn app_menus() -> Vec<Menu> {
                     },
                 ),
                 MenuItem::action(
-                    "Zed Twitter",
+                    "Zed X Account",
                     super::OpenBrowser {
-                        url: "https://twitter.com/zeddotdev".into(),
+                        url: "https://x.com/zeddotdev".into(),
                     },
                 ),
                 MenuItem::action(
