@@ -1830,8 +1830,8 @@ impl Context {
                     cx,
                 );
                 let insert_position = buffer.anchor_after(command_source_range.end + 1);
-                let command_range = buffer.anchor_before(command_source_range.start)
-                    ..buffer.anchor_after(
+                let command_range = buffer.anchor_after(command_source_range.start)
+                    ..buffer.anchor_before(
                         command_source_range.end + 1 + PENDING_OUTPUT_END_MARKER.len(),
                     );
                 let command_source_range = buffer.anchor_before(command_source_range.start)

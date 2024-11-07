@@ -2352,6 +2352,7 @@ impl ContextEditor {
                                 section.icon,
                                 section.label.clone(),
                             ),
+                            merge_adjacent: false,
                             ..Default::default()
                         },
                         render_slash_command_output_toggle,
@@ -4963,6 +4964,7 @@ fn quote_selection_fold_placeholder(title: String, editor: WeakView<Editor>) -> 
                     .into_any_element()
             }
         }),
+        merge_adjacent: false,
         ..Default::default()
     }
 }
