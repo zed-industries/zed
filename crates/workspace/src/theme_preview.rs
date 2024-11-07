@@ -147,12 +147,13 @@ impl ThemePreview {
                                 .gap_1()
                                 .child(Label::new("Initials").color(Color::Muted))
                                 .child(h_flex().gap_1().children(PLAYER_HANDLES.iter().map(
-                                    |handle| Avatar::with_fallback(Some(handle.to_string().into())),
+                                    |handle| Avatar::empty().fallback_initials(handle.to_string()),
                                 )))
                                 .child(Label::new("Initials, Grayscale").color(Color::Muted))
                                 .child(h_flex().gap_1().children(
                                     PLAYER_HANDLES.iter().enumerate().map(|(ix, handle)| {
-                                        Avatar::with_fallback(Some(handle.to_string().into()))
+                                        Avatar::empty()
+                                            .fallback_initials(handle.to_string())
                                             .grayscale(true)
                                     }),
                                 )),
