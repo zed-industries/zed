@@ -607,6 +607,8 @@ fn main() {
             KeyBinding::new("end", End, None),
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
         ]);
+        cx.on_keyboard_layout_change(|cx| log::info!(cx.keyboard_layout()));
+
         let window = cx
             .open_window(
                 WindowOptions {

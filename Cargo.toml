@@ -339,6 +339,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = "0.11.6"
 cocoa = "0.26"
+cocoa-foundation = "0.2.0"
 convert_case = "0.6.0"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"

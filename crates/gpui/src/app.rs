@@ -356,6 +356,25 @@ impl AppContext {
         }
     }
 
+    /// Get the id of the current keyboard layout
+    pub fn keyboard_layout(&self) -> String {
+        self.platform.keyboard_layout()
+    }
+
+    /// Invokes a handler when the current keyboard layout changes
+    pub fn on_keyboard_layout_change<F>(&self, mut callback: F) -> &Self
+    where
+        F: 'static + FnMut(&mut AppContext),
+    {
+        let this = self.this.clone();
+        self.platform.on_keyboard_layout_change(Box::new(move || {
+            if let Some(app) = this.upgrade() {
+                callback(&mut app.borrow_mut());
+            }
+        }));
+        self
+    }
+
     /// Gracefully quit the application via the platform's standard routine.
     pub fn quit(&self) {
         self.platform.quit();
