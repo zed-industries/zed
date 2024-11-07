@@ -1935,17 +1935,25 @@ impl PromptEditor {
             .child(
                 IconButton::new("previous", IconName::ChevronLeft)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == 0)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Previous Alternative",
-                                &CyclePreviousInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CyclePreviousInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != 0 {
+                                    tooltip = tooltip.meta(prev_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
@@ -1969,17 +1977,25 @@ impl PromptEditor {
             .child(
                 IconButton::new("next", IconName::ChevronRight)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == total_models - 1)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Next Alternative",
-                                &CycleNextInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Next Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CycleNextInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != total_models - 1 {
+                                    tooltip = tooltip.meta(next_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
