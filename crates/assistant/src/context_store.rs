@@ -10,7 +10,7 @@ use clock::ReplicaId;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use context_servers::manager::{ContextServerManager, ContextServerSettings};
-use context_servers::CONTEXT_SERVERS_NAMESPACE;
+use context_servers::{ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -148,6 +148,28 @@ impl ContextStore {
                 this.handle_project_changed(project, cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
+
+                // TODO: This task is running before the extensions are loaded, so it doesn't end up registering anything.
+                // We'll need to find a different want to delay this until the extensions are loaded.
+                cx.spawn({
+                    let registry = ContextServerFactoryRegistry::global(cx);
+                    |context_store, mut cx| async move {
+                        let mut servers_to_register = Vec::new();
+                        for (_id, factory) in registry.context_server_factories() {
+                            servers_to_register.push(factory(&cx).await?);
+                        }
+
+                        context_store.update(&mut cx, |this, cx| {
+                            this.context_server_manager.update(cx, |this, cx| {
+                                for server in servers_to_register {
+                                    this.add_server(server.config(), cx).detach_and_log_err(cx);
+                                }
+                            })
+                        })
+                    }
+                })
+                .detach_and_log_err(cx);
+
                 this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?

@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, ReadGlobal};
+use gpui::{AppContext, AsyncAppContext, ReadGlobal};
 use gpui::{Global, Task};
 use parking_lot::RwLock;
 
 use crate::ContextServer;
 
 pub type ContextServerFactory =
-    Arc<dyn Fn(&AppContext) -> Task<Result<Arc<dyn ContextServer>>> + Send + Sync + 'static>;
+    Arc<dyn Fn(&AsyncAppContext) -> Task<Result<Arc<dyn ContextServer>>> + Send + Sync + 'static>;
 
 #[derive(Default)]
 struct GlobalContextServerFactoryRegistry(Arc<ContextServerFactoryRegistry>);
@@ -47,6 +47,15 @@ impl ContextServerFactoryRegistry {
                 context_servers: HashMap::default(),
             }),
         })
+    }
+
+    pub fn context_server_factories(&self) -> Vec<(Arc<str>, ContextServerFactory)> {
+        self.state
+            .read()
+            .context_servers
+            .iter()
+            .map(|(id, factory)| (id.clone(), factory.clone()))
+            .collect()
     }
 
     /// Registers the provided [`ContextServerFactory`].
