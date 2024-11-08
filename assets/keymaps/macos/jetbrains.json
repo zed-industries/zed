@@ -1,7 +1,6 @@
 [
   {
     "bindings": {
-      "cmd-,": "zed::OpenSettings",
       "cmd-shift-[": "pane::ActivatePrevItem",
       "cmd-shift-]": "pane::ActivateNextItem"
     }
@@ -43,7 +42,6 @@
       "shift-f2": "editor::GoToPrevDiagnostic",
       "ctrl-alt-shift-down": "editor::GoToHunk",
       "ctrl-alt-shift-up": "editor::GoToPrevHunk",
-      "cmd-alt-z": "editor::RevertSelectedHunks",
       "cmd-home": "editor::MoveToBeginning",
       "cmd-end": "editor::MoveToEnd",
       "cmd-shift-home": "editor::SelectToBeginning",
