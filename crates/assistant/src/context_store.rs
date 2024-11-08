@@ -156,35 +156,36 @@ impl ContextStore {
                 // I tried doing this in a subscription on the `ExtensionStore`, but it never seemed to fire.
                 //
                 // We should find a more elegant way to do this.
-                cx.spawn({
-                    let registry = ContextServerFactoryRegistry::global(cx);
-                    |context_store, mut cx| async move {
-                        loop {
-                            let mut servers_to_register = Vec::new();
-                            for (_id, factory) in registry.context_server_factories() {
-                                if let Some(server) = factory(&cx).await.log_err() {
-                                    servers_to_register.push(server);
-                                }
+                let context_server_factory_registry =
+                    ContextServerFactoryRegistry::default_global(cx);
+                cx.spawn(|context_store, mut cx| async move {
+                    loop {
+                        let mut servers_to_register = Vec::new();
+                        for (_id, factory) in
+                            context_server_factory_registry.context_server_factories()
+                        {
+                            if let Some(server) = factory(&cx).await.log_err() {
+                                servers_to_register.push(server);
                             }
-
-                            let Some(_) = context_store
-                                .update(&mut cx, |this, cx| {
-                                    this.context_server_manager.update(cx, |this, cx| {
-                                        for server in servers_to_register {
-                                            this.add_server(server, cx).detach_and_log_err(cx);
-                                        }
-                                    })
-                                })
-                                .log_err()
-                            else {
-                                break;
-                            };
-
-                            smol::Timer::after(Duration::from_millis(100)).await;
                         }
 
-                        anyhow::Ok(())
+                        let Some(_) = context_store
+                            .update(&mut cx, |this, cx| {
+                                this.context_server_manager.update(cx, |this, cx| {
+                                    for server in servers_to_register {
+                                        this.add_server(server, cx).detach_and_log_err(cx);
+                                    }
+                                })
+                            })
+                            .log_err()
+                        else {
+                            break;
+                        };
+
+                        smol::Timer::after(Duration::from_millis(100)).await;
                     }
+
+                    anyhow::Ok(())
                 })
                 .detach_and_log_err(cx);
 
