@@ -271,7 +271,7 @@ impl InlineAssistant {
                     editor.read(cx).buffer().clone(),
                     range.clone(),
                     None,
-                    Some(self.telemetry.clone()),
+                    self.telemetry.clone(),
                     self.prompt_builder.clone(),
                     cx,
                 )
@@ -378,7 +378,7 @@ impl InlineAssistant {
                 editor.read(cx).buffer().clone(),
                 range.clone(),
                 initial_transaction_id,
-                Some(self.telemetry.clone()),
+                self.telemetry.clone(),
                 self.prompt_builder.clone(),
                 cx,
             )
@@ -2349,7 +2349,7 @@ pub struct Codegen {
     buffer: Model<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     is_insertion: bool,
 }
@@ -2359,7 +2359,7 @@ impl Codegen {
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        telemetry: Option<Arc<Telemetry>>,
+        telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -2368,7 +2368,7 @@ impl Codegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                telemetry.clone(),
+                Some(telemetry.clone()),
                 builder.clone(),
                 cx,
             )
@@ -2459,7 +2459,7 @@ impl Codegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    self.telemetry.clone(),
+                    Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
                 )
