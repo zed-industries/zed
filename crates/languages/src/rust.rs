@@ -139,7 +139,7 @@ impl LspAdapter for RustLspAdapter {
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
-                    &extract_path,
+                    &bin_path,
                     <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
                 )
                 .await?;
