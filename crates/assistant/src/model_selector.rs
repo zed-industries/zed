@@ -1,21 +1,17 @@
 use feature_flags::ZedPro;
-use gpui::Action;
-use gpui::DismissEvent;
 
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 use workspace::ShowConfiguration;
 
 use std::sync::Arc;
-use ui::ListItemSpacing;
 
 use crate::assistant_settings::AssistantSettings;
 use fs::Fs;
-use gpui::SharedString;
-use gpui::Task;
+use gpui::{Action, AnyElement, DismissEvent, SharedString, Task};
 use picker::{Picker, PickerDelegate};
 use settings::update_settings_file;
-use ui::{prelude::*, ListItem, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
 const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
@@ -163,6 +159,29 @@ impl PickerDelegate for ModelPickerDelegate {
 
     fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
 
+    fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        let configured_models_count = LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .filter(|provider| provider.is_authenticated(cx))
+            .count();
+
+        if configured_models_count > 0 {
+            Some(
+                Label::new("Configured Models")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .mt_1()
+                    .mb_0p5()
+                    .ml_3()
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+
     fn render_match(
         &self,
         ix: usize,
@@ -188,27 +207,32 @@ impl PickerDelegate for ModelPickerDelegate {
                     ),
                 )
                 .child(
-                    h_flex().w_full().justify_between().min_w(px(200.)).child(
-                        h_flex()
-                            .gap_1p5()
-                            .child(Label::new(model_info.model.name().0.clone()))
-                            .child(
-                                Label::new(provider_name)
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            )
-                            .children(match model_info.availability {
-                                LanguageModelAvailability::Public => None,
-                                LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
-                                LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => {
-                                    show_badges.then(|| {
-                                        Label::new("Pro")
-                                            .size(LabelSize::XSmall)
-                                            .color(Color::Muted)
-                                    })
-                                }
-                            }),
-                    ),
+                    h_flex()
+                        .w_full()
+                        .items_center()
+                        .gap_1p5()
+                        .min_w(px(200.))
+                        .child(Label::new(model_info.model.name().0.clone()))
+                        .child(
+                            h_flex()
+                                .gap_0p5()
+                                .child(
+                                    Label::new(provider_name)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                                .children(match model_info.availability {
+                                    LanguageModelAvailability::Public => None,
+                                    LanguageModelAvailability::RequiresPlan(Plan::Free) => None,
+                                    LanguageModelAvailability::RequiresPlan(Plan::ZedPro) => {
+                                        show_badges.then(|| {
+                                            Label::new("Pro")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted)
+                                        })
+                                    }
+                                }),
+                        ),
                 )
                 .end_slot(div().when(model_info.is_selected, |this| {
                     this.child(
@@ -236,7 +260,7 @@ impl PickerDelegate for ModelPickerDelegate {
                 .justify_between()
                 .when(cx.has_flag::<ZedPro>(), |this| {
                     this.child(match plan {
-                        // Already a zed pro subscriber
+                        // Already a Zed Pro subscriber
                         Plan::ZedPro => Button::new("zed-pro", "Zed Pro")
                             .icon(IconName::ZedAssistant)
                             .icon_size(IconSize::Small)
@@ -277,6 +301,7 @@ impl<T: PopoverTrigger> RenderOnce for ModelSelector<T> {
         let selected_provider = LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map(|m| m.id());
+
         let selected_model = LanguageModelRegistry::read_global(cx)
             .active_model()
             .map(|m| m.id());
