@@ -1,4 +1,4 @@
-use super::latest;
+use super::{latest, since_v0_1_0};
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -16,7 +16,7 @@ wasmtime::component::bindgen!({
     with: {
          "worktree": ExtensionWorktree,
          "zed:extension/github": latest::zed::extension::github,
-         "zed:extension/lsp": latest::zed::extension::lsp,
+         "zed:extension/lsp": since_v0_1_0::zed::extension::lsp,
          "zed:extension/nodejs": latest::zed::extension::nodejs,
          "zed:extension/platform": latest::zed::extension::platform,
     },

@@ -169,8 +169,12 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let mut now = Instant::now();
-    let buffer = cx.new_model(|cx| language::Buffer::local("123456", cx));
-    let group_interval = buffer.update(cx, |buffer, _| buffer.transaction_group_interval());
+    let group_interval = Duration::from_millis(1);
+    let buffer = cx.new_model(|cx| {
+        let mut buf = language::Buffer::local("123456", cx);
+        buf.set_group_interval(group_interval);
+        buf
+    });
     let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
     let editor = cx.add_window(|cx| build_editor(buffer.clone(), cx));
 
@@ -8381,6 +8385,74 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
             );
         } else {
             panic!("expected completion menu to stay open after PageUp");
+        }
+    });
+}
+
+#[gpui::test]
+async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+    cx.lsp
+        .handle_request::<lsp::request::Completion, _, _>(move |_, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: "Range".into(),
+                    sort_text: Some("a".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "r".into(),
+                    sort_text: Some("b".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "ret".into(),
+                    sort_text: Some("c".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "return".into(),
+                    sort_text: Some("d".into()),
+                    ..Default::default()
+                },
+                lsp::CompletionItem {
+                    label: "slice".into(),
+                    sort_text: Some("d".into()),
+                    ..Default::default()
+                },
+            ])))
+        });
+    cx.set_state("rˇ");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.show_completions(
+            &ShowCompletions {
+                trigger: Some("r".into()),
+            },
+            cx,
+        );
+    });
+    cx.executor().run_until_parked();
+
+    cx.update_editor(|editor, _| {
+        if let Some(ContextMenu::Completions(menu)) = editor.context_menu.read().as_ref() {
+            assert_eq!(
+                menu.matches.iter().map(|m| &m.string).collect::<Vec<_>>(),
+                &["r", "ret", "Range", "return"]
+            );
+        } else {
+            panic!("expected completion menu to be open");
         }
     });
 }

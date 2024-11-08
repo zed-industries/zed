@@ -70,6 +70,7 @@ text.workspace = true
 util.workspace = true
 url.workspace = true
 which.workspace = true
+fancy-regex.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

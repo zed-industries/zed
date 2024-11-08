@@ -639,7 +639,12 @@ impl Project {
             cx.subscribe(&settings_observer, Self::on_settings_observer_event)
                 .detach();
             let toolchain_store = cx.new_model(|cx| {
-                ToolchainStore::local(languages.clone(), worktree_store.clone(), cx)
+                ToolchainStore::local(
+                    languages.clone(),
+                    worktree_store.clone(),
+                    environment.clone(),
+                    cx,
+                )
             });
             let lsp_store = cx.new_model(|cx| {
                 LspStore::new_local(
@@ -2214,7 +2219,7 @@ impl Project {
         match event {
             BufferEvent::ReloadNeeded => {
                 if !self.is_via_collab() {
-                    self.reload_buffers([buffer.clone()].into_iter().collect(), false, cx)
+                    self.reload_buffers([buffer.clone()].into_iter().collect(), true, cx)
                         .detach_and_log_err(cx);
                 }
             }
@@ -2369,10 +2374,16 @@ impl Project {
         language_name: LanguageName,
         cx: &AppContext,
     ) -> Task<Option<ToolchainList>> {
-        if let Some(toolchain_store) = self.toolchain_store.as_ref() {
-            toolchain_store
-                .read(cx)
-                .list_toolchains(worktree_id, language_name, cx)
+        if let Some(toolchain_store) = self.toolchain_store.clone() {
+            cx.spawn(|cx| async move {
+                cx.update(|cx| {
+                    toolchain_store
+                        .read(cx)
+                        .list_toolchains(worktree_id, language_name, cx)
+                })
+                .unwrap_or(Task::Ready(None))
+                .await
+            })
         } else {
             Task::ready(None)
         }
@@ -3957,6 +3968,21 @@ impl Project {
 
     pub fn worktree_metadata_protos(&self, cx: &AppContext) -> Vec<proto::WorktreeMetadata> {
         self.worktree_store.read(cx).worktree_metadata_protos(cx)
+    }
+
+    /// Iterator of all open buffers that have unsaved changes
+    pub fn dirty_buffers<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = ProjectPath> + 'a {
+        self.buffer_store.read(cx).buffers().filter_map(|buf| {
+            let buf = buf.read(cx);
+            if buf.is_dirty() {
+                buf.project_path(cx)
+            } else {
+                None
+            }
+        })
     }
 
     fn set_worktrees_from_proto(

@@ -1,10 +1,16 @@
+use crate::slash_command::context_server_command;
 use crate::{
-    prompts::PromptBuilder, Context, ContextEvent, ContextId, ContextOperation, ContextVersion,
-    SavedContext, SavedContextMetadata,
+    prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
+    ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
 };
+use crate::{tools, SlashCommandId, ToolId, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
+use collections::HashMap;
+use command_palette_hooks::CommandPaletteFilter;
+use context_servers::manager::{ContextServerManager, ContextServerSettings};
+use context_servers::CONTEXT_SERVERS_NAMESPACE;
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -16,6 +22,7 @@ use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
 use rpc::AnyProtoClient;
+use settings::{Settings as _, SettingsStore};
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -43,9 +50,14 @@ pub struct RemoteContextMetadata {
 pub struct ContextStore {
     contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
+    context_server_manager: Model<ContextServerManager>,
+    context_server_slash_command_ids: HashMap<String, Vec<SlashCommandId>>,
+    context_server_tool_ids: HashMap<String, Vec<ToolId>>,
     host_contexts: Vec<RemoteContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
+    slash_commands: Arc<SlashCommandWorkingSet>,
+    tools: Arc<ToolWorkingSet>,
     telemetry: Arc<Telemetry>,
     _watch_updates: Task<Option<()>>,
     client: Arc<Client>,
@@ -87,6 +99,8 @@ impl ContextStore {
     pub fn new(
         project: Model<Project>,
         prompt_builder: Arc<PromptBuilder>,
+        slash_commands: Arc<SlashCommandWorkingSet>,
+        tools: Arc<ToolWorkingSet>,
         cx: &mut AppContext,
     ) -> Task<Result<Model<Self>>> {
         let fs = project.read(cx).fs().clone();
@@ -97,12 +111,18 @@ impl ContextStore {
             let (mut events, _) = fs.watch(contexts_dir(), CONTEXT_WATCH_DURATION).await;
 
             let this = cx.new_model(|cx: &mut ModelContext<Self>| {
+                let context_server_manager = cx.new_model(|_cx| ContextServerManager::new());
                 let mut this = Self {
                     contexts: Vec::new(),
                     contexts_metadata: Vec::new(),
+                    context_server_manager,
+                    context_server_slash_command_ids: HashMap::default(),
+                    context_server_tool_ids: HashMap::default(),
                     host_contexts: Vec::new(),
                     fs,
                     languages,
+                    slash_commands,
+                    tools,
                     telemetry,
                     _watch_updates: cx.spawn(|this, mut cx| {
                         async move {
@@ -127,13 +147,46 @@ impl ContextStore {
                 };
                 this.handle_project_changed(project, cx);
                 this.synchronize_contexts(cx);
+                this.register_context_server_handlers(cx);
                 this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
                 .await
                 .log_err();
+
+            this.update(&mut cx, |this, cx| {
+                this.watch_context_server_settings(cx);
+            })
+            .log_err();
+
             Ok(this)
         })
+    }
+
+    fn watch_context_server_settings(&self, cx: &mut ModelContext<Self>) {
+        cx.observe_global::<SettingsStore>(move |this, cx| {
+            this.context_server_manager.update(cx, |manager, cx| {
+                let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
+                    settings::SettingsLocation {
+                        worktree_id: worktree.read(cx).id(),
+                        path: Path::new(""),
+                    }
+                });
+                let settings = ContextServerSettings::get(location, cx);
+
+                manager.maintain_servers(settings, cx);
+
+                let has_any_context_servers = !manager.servers().is_empty();
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    if has_any_context_servers {
+                        filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
+                    } else {
+                        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
+                    }
+                });
+            })
+        })
+        .detach();
     }
 
     async fn handle_advertise_contexts(
@@ -342,6 +395,8 @@ impl ContextStore {
                 Some(self.project.clone()),
                 Some(self.telemetry.clone()),
                 self.prompt_builder.clone(),
+                self.slash_commands.clone(),
+                self.tools.clone(),
                 cx,
             )
         });
@@ -364,6 +419,8 @@ impl ContextStore {
         let project = self.project.clone();
         let telemetry = self.telemetry.clone();
         let prompt_builder = self.prompt_builder.clone();
+        let slash_commands = self.slash_commands.clone();
+        let tools = self.tools.clone();
         let request = self.client.request(proto::CreateContext { project_id });
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
@@ -376,6 +433,8 @@ impl ContextStore {
                     capability,
                     language_registry,
                     prompt_builder,
+                    slash_commands,
+                    tools,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -425,6 +484,8 @@ impl ContextStore {
             }
         });
         let prompt_builder = self.prompt_builder.clone();
+        let slash_commands = self.slash_commands.clone();
+        let tools = self.tools.clone();
 
         cx.spawn(|this, mut cx| async move {
             let saved_context = load.await?;
@@ -434,6 +495,8 @@ impl ContextStore {
                     path.clone(),
                     languages,
                     prompt_builder,
+                    slash_commands,
+                    tools,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -500,6 +563,8 @@ impl ContextStore {
             context_id: context_id.to_proto(),
         });
         let prompt_builder = self.prompt_builder.clone();
+        let slash_commands = self.slash_commands.clone();
+        let tools = self.tools.clone();
         cx.spawn(|this, mut cx| async move {
             let response = request.await?;
             let context_proto = response.context.context("invalid context")?;
@@ -510,6 +575,8 @@ impl ContextStore {
                     capability,
                     language_registry,
                     prompt_builder,
+                    slash_commands,
+                    tools,
                     Some(project),
                     Some(telemetry),
                     cx,
@@ -744,5 +811,115 @@ impl ContextStore {
                 cx.notify();
             })
         })
+    }
+
+    pub fn restart_context_servers(&mut self, cx: &mut ModelContext<Self>) {
+        cx.update_model(
+            &self.context_server_manager,
+            |context_server_manager, cx| {
+                for server in context_server_manager.servers() {
+                    context_server_manager
+                        .restart_server(&server.id, cx)
+                        .detach_and_log_err(cx);
+                }
+            },
+        );
+    }
+
+    fn register_context_server_handlers(&self, cx: &mut ModelContext<Self>) {
+        cx.subscribe(
+            &self.context_server_manager.clone(),
+            Self::handle_context_server_event,
+        )
+        .detach();
+    }
+
+    fn handle_context_server_event(
+        &mut self,
+        context_server_manager: Model<ContextServerManager>,
+        event: &context_servers::manager::Event,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let slash_command_working_set = self.slash_commands.clone();
+        let tool_working_set = self.tools.clone();
+        match event {
+            context_servers::manager::Event::ServerStarted { server_id } => {
+                if let Some(server) = context_server_manager.read(cx).get_server(server_id) {
+                    let context_server_manager = context_server_manager.clone();
+                    cx.spawn({
+                        let server = server.clone();
+                        let server_id = server_id.clone();
+                        |this, mut cx| async move {
+                            let Some(protocol) = server.client.read().clone() else {
+                                return;
+                            };
+
+                            if protocol.capable(context_servers::protocol::ServerCapability::Prompts) {
+                                if let Some(prompts) = protocol.list_prompts().await.log_err() {
+                                    let slash_command_ids = prompts
+                                        .into_iter()
+                                        .filter(context_server_command::acceptable_prompt)
+                                        .map(|prompt| {
+                                            log::info!(
+                                                "registering context server command: {:?}",
+                                                prompt.name
+                                            );
+                                            slash_command_working_set.insert(Arc::new(
+                                                context_server_command::ContextServerSlashCommand::new(
+                                                    context_server_manager.clone(),
+                                                    &server,
+                                                    prompt,
+                                                ),
+                                            ))
+                                        })
+                                        .collect::<Vec<_>>();
+
+                                    this.update(&mut cx, |this, _cx| {
+                                        this.context_server_slash_command_ids
+                                            .insert(server_id.clone(), slash_command_ids);
+                                    })
+                                    .log_err();
+                                }
+                            }
+
+                            if protocol.capable(context_servers::protocol::ServerCapability::Tools) {
+                                if let Some(tools) = protocol.list_tools().await.log_err() {
+                                    let tool_ids = tools.tools.into_iter().map(|tool| {
+                                        log::info!("registering context server tool: {:?}", tool.name);
+                                        tool_working_set.insert(
+                                            Arc::new(tools::context_server_tool::ContextServerTool::new(
+                                                context_server_manager.clone(),
+                                                server.id.clone(),
+                                                tool,
+                                            )),
+                                        )
+
+                                    }).collect::<Vec<_>>();
+
+
+                                    this.update(&mut cx, |this, _cx| {
+                                        this.context_server_tool_ids
+                                            .insert(server_id, tool_ids);
+                                    })
+                                    .log_err();
+                                }
+                            }
+                        }
+                    })
+                    .detach();
+                }
+            }
+            context_servers::manager::Event::ServerStopped { server_id } => {
+                if let Some(slash_command_ids) =
+                    self.context_server_slash_command_ids.remove(server_id)
+                {
+                    slash_command_working_set.remove(&slash_command_ids);
+                }
+
+                if let Some(tool_ids) = self.context_server_tool_ids.remove(server_id) {
+                    tool_working_set.remove(&tool_ids);
+                }
+            }
+        }
     }
 }

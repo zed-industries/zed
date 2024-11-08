@@ -45,6 +45,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+picker.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

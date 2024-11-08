@@ -53,7 +53,9 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
-use ui::{prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
+use ui::{
+    prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
+};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 
@@ -1899,21 +1901,58 @@ impl PromptEditor {
         let codegen = self.codegen.read(cx);
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let default_model = model_registry.active_model();
+        let alternative_models = model_registry.inline_alternative_models();
+
+        let get_model_name = |index: usize| -> String {
+            let name = |model: &Arc<dyn LanguageModel>| model.name().0.to_string();
+
+            match index {
+                0 => default_model.as_ref().map_or_else(String::new, name),
+                index if index <= alternative_models.len() => alternative_models
+                    .get(index - 1)
+                    .map_or_else(String::new, name),
+                _ => String::new(),
+            }
+        };
+
+        let total_models = alternative_models.len() + 1;
+
+        if total_models <= 1 {
+            return div().into_any_element();
+        }
+
+        let current_index = codegen.active_alternative;
+        let prev_index = (current_index + total_models - 1) % total_models;
+        let next_index = (current_index + 1) % total_models;
+
+        let prev_model_name = get_model_name(prev_index);
+        let next_model_name = get_model_name(next_index);
+
         h_flex()
             .child(
                 IconButton::new("previous", IconName::ChevronLeft)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == 0)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Previous Alternative",
-                                &CyclePreviousInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CyclePreviousInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != 0 {
+                                    tooltip = tooltip.meta(prev_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
@@ -1937,17 +1976,25 @@ impl PromptEditor {
             .child(
                 IconButton::new("next", IconName::ChevronRight)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == total_models - 1)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Next Alternative",
-                                &CycleNextInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Next Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CycleNextInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != total_models - 1 {
+                                    tooltip = tooltip.meta(next_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {

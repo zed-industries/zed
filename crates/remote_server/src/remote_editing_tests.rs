@@ -1087,6 +1087,45 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    fs.rename(
+        &PathBuf::from("/code/project1"),
+        &PathBuf::from("/code/project2"),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+
+    cx.run_until_parked();
+    worktree.update(cx, |worktree, _| {
+        assert_eq!(worktree.root_name(), "project2")
+    })
+}
+
+#[gpui::test]
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
@@ -1185,6 +1224,9 @@ pub async fn init_test(
 ) -> (Model<Project>, Model<HeadlessProject>) {
     let server_fs = server_fs.clone();
     cx.update(|cx| {
+        release_channel::init(SemanticVersion::default(), cx);
+    });
+    server_cx.update(|cx| {
         release_channel::init(SemanticVersion::default(), cx);
     });
     init_logger();

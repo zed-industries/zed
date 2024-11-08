@@ -4,7 +4,7 @@
 
 Prompts are an essential part of interacting with AI assistants in Zed. They help guide the AI's responses and ensure you get the most relevant and useful information.
 
-Every new context will start with the [default prompt](#default-prompt), which can be customized.
+Every new chat will start with the [default prompt](#default-prompt), which can be customized.
 
 Remember that effective prompting is an iterative process. Experiment with different prompt structures and wordings to find what works best for your specific needs and the model you're using.
 
@@ -50,7 +50,7 @@ More on prompt engineering:
 
 ## Editing the Default Prompt {#default-prompt}
 
-Zed allows you to customize the default prompt used in new context editors. Or to be more precise, it uses a series of prompts that are combined to form the default prompt.
+Zed allows you to customize the default prompt used when interacting with LLMs. Or to be more precise, it uses a series of prompts that are combined to form the default prompt.
 
 To edit prompts, select "Prompt Library" from the menu icon (three horizontal lines) in the upper right hand corner or using the `cmd-k l` keyboard shortcut.
 
@@ -69,7 +69,7 @@ You can add prompts to the default prompt by clicking the icon in the top right 
 
 _Changes to the default prompt will not affect existing contexts. You can remove the default prompt and manually re-add it with `/default` to update an existing context._
 
-Default prompts will show at the top of the prompt list, and will be included with every new context.
+Default prompts will show at the top of the prompt list, and will be included with every new chat.
 
 You can manually add the default prompt using the `/default` command.
 

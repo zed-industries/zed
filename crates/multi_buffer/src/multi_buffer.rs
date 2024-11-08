@@ -6482,11 +6482,21 @@ mod tests {
     fn test_history(cx: &mut AppContext) {
         let test_settings = SettingsStore::test(cx);
         cx.set_global(test_settings);
-
-        let buffer_1 = cx.new_model(|cx| Buffer::local("1234", cx));
-        let buffer_2 = cx.new_model(|cx| Buffer::local("5678", cx));
+        let group_interval: Duration = Duration::from_millis(1);
+        let buffer_1 = cx.new_model(|cx| {
+            let mut buf = Buffer::local("1234", cx);
+            buf.set_group_interval(group_interval);
+            buf
+        });
+        let buffer_2 = cx.new_model(|cx| {
+            let mut buf = Buffer::local("5678", cx);
+            buf.set_group_interval(group_interval);
+            buf
+        });
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
-        let group_interval = multibuffer.read(cx).history.group_interval;
+        multibuffer.update(cx, |this, _| {
+            this.history.group_interval = group_interval;
+        });
         multibuffer.update(cx, |multibuffer, cx| {
             multibuffer.push_excerpts(
                 buffer_1.clone(),
