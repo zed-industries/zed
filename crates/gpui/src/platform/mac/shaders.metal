@@ -526,6 +526,12 @@ fragment float4 surface_fragment(SurfaceFragmentInput input [[stage_in]],
   return ycbcrToRGBTransform * ycbcr;
 }
 
+float3 srgb_to_linear(float3 c) {
+    float3 low = c / 12.92;
+    float3 high = pow((c + 0.055) / 1.055, float3(2.4));
+    return mix(low, high, step(0.04045, c));
+}
+
 float4 hsla_to_rgba(Hsla hsla) {
   float h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
   float s = hsla.s;
@@ -566,12 +572,7 @@ float4 hsla_to_rgba(Hsla hsla) {
     b = x;
   }
 
-  float4 rgba;
-  rgba.x = (r + m);
-  rgba.y = (g + m);
-  rgba.z = (b + m);
-  rgba.w = a;
-  return rgba;
+  return float4(srgb_to_linear(float3(r, g, b) + m), a);
 }
 
 float4 to_device_position(float2 unit_vertex, Bounds_ScaledPixels bounds,

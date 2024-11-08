@@ -13,6 +13,7 @@ use cocoa::{
 };
 use collections::HashMap;
 use core_foundation::base::TCFType;
+use core_graphics::{color_space::kCGColorSpaceSRGB, color_space::CGColorSpace};
 use foreign_types::ForeignType;
 use media::core_video::CVMetalTextureCache;
 use metal::{CAMetalLayer, CommandQueue, MTLPixelFormat, MTLResourceOptions, NSRange};
@@ -121,10 +122,12 @@ impl MetalRenderer {
 
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);
-        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm);
+        layer.set_pixel_format(MTLPixelFormat::BGRA8Unorm_sRGB);
         layer.set_opaque(false);
         layer.set_maximum_drawable_count(3);
         unsafe {
+            let color_space = CGColorSpace::create_with_name(kCGColorSpaceSRGB);
+            let _: () = msg_send![&*layer, setColorspace: color_space];
             let _: () = msg_send![&*layer, setAllowsNextDrawableTimeout: NO];
             let _: () = msg_send![&*layer, setNeedsDisplayOnBoundsChange: YES];
             let _: () = msg_send![
@@ -177,7 +180,7 @@ impl MetalRenderer {
             "path_sprites",
             "path_sprite_vertex",
             "path_sprite_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::BGRA8Unorm_sRGB,
         );
         let shadows_pipeline_state = build_pipeline_state(
             &device,
@@ -185,7 +188,7 @@ impl MetalRenderer {
             "shadows",
             "shadow_vertex",
             "shadow_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::BGRA8Unorm_sRGB,
         );
         let quads_pipeline_state = build_pipeline_state(
             &device,
@@ -193,7 +196,7 @@ impl MetalRenderer {
             "quads",
             "quad_vertex",
             "quad_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::BGRA8Unorm_sRGB,
         );
         let underlines_pipeline_state = build_pipeline_state(
             &device,
@@ -201,7 +204,7 @@ impl MetalRenderer {
             "underlines",
             "underline_vertex",
             "underline_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::BGRA8Unorm_sRGB,
         );
         let monochrome_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -209,7 +212,7 @@ impl MetalRenderer {
             "monochrome_sprites",
             "monochrome_sprite_vertex",
             "monochrome_sprite_fragment",
-            MTLPixelFormat::BGRA8Unorm,
+            MTLPixelFormat::BGRA8Unorm_sRGB,
         );
         let polychrome_sprites_pipeline_state = build_pipeline_state(
             &device,
