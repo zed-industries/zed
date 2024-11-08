@@ -3970,6 +3970,21 @@ impl Project {
         self.worktree_store.read(cx).worktree_metadata_protos(cx)
     }
 
+    /// Iterator of all open buffers that have unsaved changes
+    pub fn dirty_buffers<'a>(
+        &'a self,
+        cx: &'a AppContext,
+    ) -> impl Iterator<Item = ProjectPath> + 'a {
+        self.buffer_store.read(cx).buffers().filter_map(|buf| {
+            let buf = buf.read(cx);
+            if buf.is_dirty() {
+                buf.project_path(cx)
+            } else {
+                None
+            }
+        })
+    }
+
     fn set_worktrees_from_proto(
         &mut self,
         worktrees: Vec<proto::WorktreeMetadata>,

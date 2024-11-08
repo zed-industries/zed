@@ -20,9 +20,9 @@ use gpui::{
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
     Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
-    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, Stateful,
-    Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext, VisualContext as _,
-    WeakView, WindowContext,
+    MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
+    Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
+    VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -101,6 +101,7 @@ struct EditState {
     is_dir: bool,
     depth: usize,
     processing_filename: Option<String>,
+    previously_focused: Option<SelectedEntry>,
 }
 
 impl EditState {
@@ -162,6 +163,7 @@ actions!(
         CopyRelativePath,
         Duplicate,
         RevealInFileManager,
+        RemoveFromProject,
         OpenWithSystem,
         Cut,
         Paste,
@@ -491,7 +493,6 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         cx: &mut ViewContext<Self>,
     ) {
-        let this = cx.view().clone();
         let project = self.project.read(cx);
 
         let worktree_id = if let Some(id) = project.worktree_id_for_entry(entry_id, cx) {
@@ -512,12 +513,11 @@ impl ProjectPanel {
             let is_dir = entry.is_dir();
             let is_foldable = auto_fold_dirs && self.is_foldable(entry, worktree);
             let is_unfoldable = auto_fold_dirs && self.is_unfoldable(entry, worktree);
-            let worktree_id = worktree.id();
             let is_read_only = project.is_read_only(cx);
             let is_remote = project.is_via_collab();
             let is_local = project.is_local();
 
-            let context_menu = ContextMenu::build(cx, |menu, cx| {
+            let context_menu = ContextMenu::build(cx, |menu, _| {
                 menu.context(self.focus_handle.clone()).map(|menu| {
                     if is_read_only {
                         menu.when(is_dir, |menu| {
@@ -574,15 +574,7 @@ impl ProjectPanel {
                                         "Add Folder to Project…",
                                         Box::new(workspace::AddFolderToProject),
                                     )
-                                    .entry(
-                                        "Remove from Project",
-                                        None,
-                                        cx.handler_for(&this, move |this, cx| {
-                                            this.project.update(cx, |project, cx| {
-                                                project.remove_worktree(worktree_id, cx)
-                                            });
-                                        }),
-                                    )
+                                    .action("Remove from Project", Box::new(RemoveFromProject))
                             })
                             .when(is_root, |menu| {
                                 menu.separator()
@@ -945,9 +937,17 @@ impl ProjectPanel {
     }
 
     fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
-        self.edit_state = None;
+        let previous_edit_state = self.edit_state.take();
         self.update_visible_entries(None, cx);
         self.marked_entries.clear();
+
+        if let Some(previously_focused) =
+            previous_edit_state.and_then(|edit_state| edit_state.previously_focused)
+        {
+            self.selection = Some(previously_focused);
+            self.autoscroll(cx);
+        }
+
         cx.focus(&self.focus_handle);
         cx.notify();
     }
@@ -1026,6 +1026,7 @@ impl ProjectPanel {
                 leaf_entry_id: None,
                 is_dir,
                 processing_filename: None,
+                previously_focused: self.selection,
                 depth: 0,
             });
             self.filename_editor.update(cx, |editor, cx| {
@@ -1065,6 +1066,7 @@ impl ProjectPanel {
                         leaf_entry_id: Some(entry_id),
                         is_dir: entry.is_dir(),
                         processing_filename: None,
+                        previously_focused: None,
                         depth: 0,
                     });
                     let file_name = entry
@@ -1106,13 +1108,17 @@ impl ProjectPanel {
             }
             let project = self.project.read(cx);
             let items_to_delete = self.marked_entries();
+
+            let mut dirty_buffers = 0;
             let file_paths = items_to_delete
                 .into_iter()
                 .filter_map(|selection| {
+                    let project_path = project.path_for_entry(selection.entry_id, cx)?;
+                    dirty_buffers +=
+                        project.dirty_buffers(cx).any(|path| path == project_path) as usize;
                     Some((
                         selection.entry_id,
-                        project
-                            .path_for_entry(selection.entry_id, cx)?
+                        project_path
                             .path
                             .file_name()?
                             .to_string_lossy()
@@ -1125,11 +1131,17 @@ impl ProjectPanel {
             }
             let answer = if !skip_prompt {
                 let operation = if trash { "Trash" } else { "Delete" };
+                let prompt = match file_paths.first() {
+                    Some((_, path)) if file_paths.len() == 1 => {
+                        let unsaved_warning = if dirty_buffers > 0 {
+                            "\n\nIt has unsaved changes, which will be lost."
+                        } else {
+                            ""
+                        };
 
-                let prompt =
-                    if let Some((_, path)) = file_paths.first().filter(|_| file_paths.len() == 1) {
-                        format!("{operation} {path}?")
-                    } else {
+                        format!("{operation} {path}?{unsaved_warning}")
+                    }
+                    _ => {
                         const CUTOFF_POINT: usize = 10;
                         let names = if file_paths.len() > CUTOFF_POINT {
                             let truncated_path_counts = file_paths.len() - CUTOFF_POINT;
@@ -1148,14 +1160,22 @@ impl ProjectPanel {
                         } else {
                             file_paths.iter().map(|(_, path)| path.clone()).collect()
                         };
+                        let unsaved_warning = if dirty_buffers == 0 {
+                            String::new()
+                        } else if dirty_buffers == 1 {
+                            "\n\n1 of these has unsaved changes, which will be lost.".to_string()
+                        } else {
+                            format!("\n\n{dirty_buffers} of these have unsaved changes, which will be lost.")
+                        };
 
                         format!(
-                            "Do you want to {} the following {} files?\n{}",
+                            "Do you want to {} the following {} files?\n{}{unsaved_warning}",
                             operation.to_lowercase(),
                             file_paths.len(),
                             names.join("\n")
                         )
-                    };
+                    }
+                };
                 Some(cx.prompt(PromptLevel::Info, &prompt, None, &[operation, "Cancel"]))
             } else {
                 None
@@ -1345,7 +1365,8 @@ impl ProjectPanel {
 
     fn autoscroll(&mut self, cx: &mut ViewContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
-            self.scroll_handle.scroll_to_item(index);
+            self.scroll_handle
+                .scroll_to_item(index, ScrollStrategy::Center);
             cx.notify();
         }
     }
@@ -1574,6 +1595,14 @@ impl ProjectPanel {
         }
     }
 
+    fn remove_from_project(&mut self, _: &RemoveFromProject, cx: &mut ViewContext<Self>) {
+        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
+            let worktree_id = worktree.read(cx).id();
+            self.project
+                .update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
+        }
+    }
+
     fn open_system(&mut self, _: &OpenWithSystem, cx: &mut ViewContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let abs_path = worktree.abs_path().join(&entry.path);
@@ -1674,6 +1703,10 @@ impl ProjectPanel {
         destination_is_file: bool,
         cx: &mut ViewContext<Self>,
     ) {
+        if entry_to_move == destination {
+            return;
+        }
+
         let destination_worktree = self.project.update(cx, |project, cx| {
             let entry_path = project.path_for_entry(entry_to_move, cx)?;
             let destination_entry_path = project.path_for_entry(destination, cx)?.path.clone();
@@ -3151,6 +3184,7 @@ impl Render for ProjectPanel {
                 .on_action(cx.listener(Self::new_search_in_directory))
                 .on_action(cx.listener(Self::unfold_directory))
                 .on_action(cx.listener(Self::fold_directory))
+                .on_action(cx.listener(Self::remove_from_project))
                 .when(!project.is_read_only(cx), |el| {
                     el.on_action(cx.listener(Self::new_file))
                         .on_action(cx.listener(Self::new_directory))
@@ -6012,6 +6046,70 @@ mod tests {
         assert!(
             fs.is_dir(Path::new("/root1/excluded_dir")).await,
             "Should have created the excluded directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selection_restored_when_creation_cancelled(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace
+            .update(cx, |workspace, cx| {
+                let panel = ProjectPanel::new(workspace, cx);
+                workspace.add_panel(panel.clone(), cx);
+                panel
+            })
+            .unwrap();
+
+        select_path(&panel, "src/", cx);
+        panel.update(cx, |panel, cx| panel.confirm(&Confirm, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                //
+                "v src  <== selected",
+                "    > test"
+            ]
+        );
+        panel.update(cx, |panel, cx| panel.new_directory(&NewDirectory, cx));
+        panel.update(cx, |panel, cx| {
+            assert!(panel.filename_editor.read(cx).is_focused(cx));
+        });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                //
+                "v src",
+                "    > [EDITOR: '']  <== selected",
+                "    > test"
+            ]
+        );
+
+        panel.update(cx, |panel, cx| panel.cancel(&menu::Cancel, cx));
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                //
+                "v src  <== selected",
+                "    > test"
+            ]
         );
     }
 

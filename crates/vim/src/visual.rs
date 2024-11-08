@@ -530,9 +530,7 @@ impl Vim {
                     }
                 }
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
                 editor.change_selections(None, cx, |s| s.select_ranges(stable_anchors));
             });
         });
@@ -576,14 +574,9 @@ impl Vim {
 
     pub fn select_match(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let count = self.take_count(cx).unwrap_or(1);
-        let Some(workspace) = self
-            .editor
-            .upgrade()
-            .and_then(|editor| editor.read(cx).workspace())
-        else {
+        let Some(pane) = self.pane(cx) else {
             return;
         };
-        let pane = workspace.read(cx).active_pane().clone();
         let vim_is_normal = self.mode == Mode::Normal;
         let mut start_selection = 0usize;
         let mut end_selection = 0usize;
@@ -757,7 +750,7 @@ mod test {
             },
             Mode::Visual,
         );
-        cx.simulate_keystrokes("g I");
+        cx.simulate_keystrokes("g shift-i");
         cx.assert_state(
             indoc! {
                 "ˇThe quick brown
@@ -780,7 +773,7 @@ mod test {
             },
             Mode::Visual,
         );
-        cx.simulate_keystrokes("g A");
+        cx.simulate_keystrokes("g shift-a");
         cx.assert_state(
             indoc! {
                 "The quick brownˇ

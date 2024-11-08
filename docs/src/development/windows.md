@@ -120,3 +120,32 @@ In order to fix this issue, you can manually set the `ZED_RC_TOOLKIT_PATH` envir
 `C:\Program Files (x86)\Windows Kits\10\bin\<SDK_version>\x64`.
 
 See this [issue](https://github.com/zed-industries/zed/issues/18393) for more information.
+
+### Build fails: Path too long
+
+You may receive an error like the following when building
+
+```
+error: failed to get `pet` as a dependency of package `languages v0.1.0 (D:\a\zed-windows-builds\zed-windows-builds\crates\languages)`
+
+Caused by:
+  failed to load source for dependency `pet`
+
+Caused by:
+  Unable to update https://github.com/microsoft/python-environment-tools.git?rev=ffcbf3f28c46633abd5448a52b1f396c322e0d6c#ffcbf3f2
+
+Caused by:
+  path too long: 'C:/Users/runneradmin/.cargo/git/checkouts/python-environment-tools-903993894b37a7d2/ffcbf3f/crates/pet-conda/tests/unix/conda_env_without_manager_but_found_in_history/some_other_location/conda_install/conda-meta/python-fastjsonschema-2.16.2-py310hca03da5_0.json'; class=Filesystem (30)
+```
+
+In order to solve this, you can enable longpath support for git and Windows.
+
+For git: `git config --system core.longpaths true`
+
+And for Windows with this PS command:
+
+```powershell
+New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem" -Name "LongPathsEnabled" -Value 1 -PropertyType DWORD -Force
+```
+
+For more information on this, please see [win32 docs](https://learn.microsoft.com/en-us/windows/win32/fileio/maximum-file-path-limitation?tabs=powershell)

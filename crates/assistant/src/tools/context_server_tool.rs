@@ -2,16 +2,22 @@ use anyhow::{anyhow, bail};
 use assistant_tool::Tool;
 use context_servers::manager::ContextServerManager;
 use context_servers::types;
-use gpui::Task;
+use gpui::{Model, Task};
 
 pub struct ContextServerTool {
+    server_manager: Model<ContextServerManager>,
     server_id: String,
     tool: types::Tool,
 }
 
 impl ContextServerTool {
-    pub fn new(server_id: impl Into<String>, tool: types::Tool) -> Self {
+    pub fn new(
+        server_manager: Model<ContextServerManager>,
+        server_id: impl Into<String>,
+        tool: types::Tool,
+    ) -> Self {
         Self {
+            server_manager,
             server_id: server_id.into(),
             tool,
         }
@@ -45,9 +51,7 @@ impl Tool for ContextServerTool {
         _workspace: gpui::WeakView<workspace::Workspace>,
         cx: &mut ui::WindowContext,
     ) -> gpui::Task<gpui::Result<String>> {
-        let manager = ContextServerManager::global(cx);
-        let manager = manager.read(cx);
-        if let Some(server) = manager.get_server(&self.server_id) {
+        if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             cx.foreground_executor().spawn({
                 let tool_name = self.tool.name.clone();
                 async move {

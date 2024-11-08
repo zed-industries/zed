@@ -7,5 +7,7 @@ first_line_pattern = '^#!.*\b(?:ash|bash|dash|sh|zsh)\b'
 brackets = [
     { start = "[", end = "]", close = true, newline = false },
     { start = "(", end = ")", close = true, newline = false },
+    { start = "{", end = "}", close = true, newline = false },
     { start = "\"", end = "\"", close = true, newline = false, not_in = ["comment", "string"] },
+    { start = "'", end = "'", close = true, newline = false, not_in = ["string", "comment"] },
 ]

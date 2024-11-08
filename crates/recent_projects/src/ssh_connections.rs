@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{anyhow, Result};
@@ -75,7 +76,7 @@ pub struct SshConnection {
     #[serde(default)]
     pub args: Vec<String>,
     #[serde(default)]
-    pub projects: Vec<SshProject>,
+    pub projects: BTreeSet<SshProject>,
     /// Name to use for this server in UI.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub nickname: Option<String>,
@@ -101,7 +102,7 @@ impl From<SshConnection> for SshConnectionOptions {
     }
 }
 
-#[derive(Clone, Default, Serialize, PartialEq, Deserialize, JsonSchema)]
+#[derive(Clone, Default, Serialize, PartialEq, Eq, PartialOrd, Ord, Deserialize, JsonSchema)]
 pub struct SshProject {
     pub paths: Vec<String>,
 }
@@ -478,43 +479,17 @@ impl remote::SshClientDelegate for SshClientDelegate {
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Task<Result<(String, String)>> {
+    ) -> Task<Result<Option<(String, String)>>> {
         cx.spawn(|mut cx| async move {
-                let (release, request_body) = AutoUpdater::get_remote_server_release_url(
-                            platform.os,
-                            platform.arch,
-                            release_channel,
-                            version,
-                            &mut cx,
-                        )
-                        .await
-                        .map_err(|e| {
-                            anyhow!(
-                                "Failed to get remote server binary download url (version: {}, os: {}, arch: {}): {}",
-                                version.map(|v| format!("{}", v)).unwrap_or("unknown".to_string()),
-                                platform.os,
-                                platform.arch,
-                                e
-                            )
-                        })?;
-
-                Ok((release.url, request_body))
-            }
-        )
-    }
-
-    fn remote_server_binary_path(
-        &self,
-        platform: SshPlatform,
-        cx: &mut AsyncAppContext,
-    ) -> Result<PathBuf> {
-        let release_channel = cx.update(|cx| ReleaseChannel::global(cx))?;
-        Ok(paths::remote_server_dir_relative().join(format!(
-            "zed-remote-server-{}-{}-{}",
-            release_channel.dev_name(),
-            platform.os,
-            platform.arch
-        )))
+            AutoUpdater::get_remote_server_release_url(
+                platform.os,
+                platform.arch,
+                release_channel,
+                version,
+                &mut cx,
+            )
+            .await
+        })
     }
 }
 

@@ -1,9 +1,9 @@
 use aho_corasick::{AhoCorasick, AhoCorasickBuilder};
 use anyhow::Result;
 use client::proto;
+use fancy_regex::{Captures, Regex, RegexBuilder};
 use gpui::Model;
 use language::{Buffer, BufferSnapshot};
-use regex::{Captures, Regex, RegexBuilder};
 use smol::future::yield_now;
 use std::{
     borrow::Cow,
@@ -128,7 +128,6 @@ impl SearchQuery {
         let multiline = query.contains('\n') || query.contains("\\n") || query.contains("\\s");
         let regex = RegexBuilder::new(&query)
             .case_insensitive(!case_sensitive)
-            .multi_line(multiline)
             .build()?;
         let inner = SearchInputs {
             query: initial_query,
@@ -222,12 +221,12 @@ impl SearchQuery {
                     if let Err(err) = reader.read_to_string(&mut text) {
                         Err(err.into())
                     } else {
-                        Ok(regex.find(&text).is_some())
+                        Ok(regex.find(&text)?.is_some())
                     }
                 } else {
                     for line in reader.lines() {
                         let line = line?;
-                        if regex.find(&line).is_some() {
+                        if regex.find(&line)?.is_some() {
                             return Ok(true);
                         }
                     }
@@ -332,7 +331,9 @@ impl SearchQuery {
                             yield_now().await;
                         }
 
-                        matches.push(mat.start()..mat.end());
+                        if let Ok(mat) = mat {
+                            matches.push(mat.start()..mat.end());
+                        }
                     }
                 } else {
                     let mut line = String::new();
@@ -344,7 +345,7 @@ impl SearchQuery {
 
                         for (newline_ix, text) in chunk.split('\n').enumerate() {
                             if newline_ix > 0 {
-                                for mat in regex.find_iter(&line) {
+                                for mat in regex.find_iter(&line).flatten() {
                                     let start = line_offset + mat.start();
                                     let end = line_offset + mat.end();
                                     matches.push(start..end);

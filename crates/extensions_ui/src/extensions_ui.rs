@@ -1,6 +1,14 @@
 mod components;
+mod extension_indexed_docs_provider;
+mod extension_registration_hooks;
+mod extension_slash_command;
 mod extension_suggest;
 mod extension_version_selector;
+
+#[cfg(test)]
+mod extension_store_test;
+
+pub use extension_registration_hooks::ConcreteExtensionRegistrationHooks;
 
 use std::ops::DerefMut;
 use std::sync::OnceLock;

@@ -4,7 +4,7 @@ The Assistant is a powerful tool that integrates large language models into your
 
 This section covers various aspects of the Assistant:
 
-- [Assistant Panel](./assistant-panel.md): Create and collaboratively edit new contexts, and manage interactions with language models.
+- [Assistant Panel](./assistant-panel.md): Create and collaboratively edit new chats, and manage interactions with language models.
 
 - [Inline Assistant](./inline-assistant.md): Discover how to use the Assistant to power inline transformations directly within your code editor and terminal.
 

@@ -4,8 +4,8 @@ use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
     prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, ElevationIndex, Facepile,
-    TintColor, Tooltip,
+    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, Checkbox, ElevationIndex,
+    Facepile, Indicator, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -26,6 +26,7 @@ pub fn init(cx: &mut AppContext) {
 enum ThemePreviewPage {
     Overview,
     Typography,
+    Components,
 }
 
 impl ThemePreviewPage {
@@ -33,6 +34,7 @@ impl ThemePreviewPage {
         match self {
             Self::Overview => "Overview",
             Self::Typography => "Typography",
+            Self::Components => "Components",
         }
     }
 }
@@ -58,6 +60,7 @@ impl ThemePreview {
         match page {
             ThemePreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
             ThemePreviewPage::Typography => self.render_typography_page(cx).into_any_element(),
+            ThemePreviewPage::Components => self.render_components_page(cx).into_any_element(),
         }
     }
 }
@@ -456,8 +459,6 @@ impl ThemePreview {
             .text_color(cx.theme().colors().text)
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
             .child(self.render_text(layer, cx))
             .child(self.render_colors(layer, cx))
     }
@@ -499,39 +500,56 @@ impl ThemePreview {
                 .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."))
             )
     }
+
+    fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let layer = ElevationIndex::Surface;
+
+        v_flex()
+            .id("theme-preview-components")
+            .overflow_scroll()
+            .size_full()
+            .gap_2()
+            .child(Checkbox::render_component_previews(cx))
+            .child(Facepile::render_component_previews(cx))
+            .child(Button::render_component_previews(cx))
+            .child(Indicator::render_component_previews(cx))
+            .child(Icon::render_component_previews(cx))
+            .child(self.render_avatars(cx))
+            .child(self.render_buttons(layer, cx))
+    }
+
+    fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .id("theme-preview-nav")
+            .items_center()
+            .gap_4()
+            .py_2()
+            .bg(Self::preview_bg(cx))
+            .children(ThemePreviewPage::iter().map(|p| {
+                Button::new(ElementId::Name(p.name().into()), p.name())
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.current_page = p;
+                        cx.notify();
+                    }))
+                    .selected(p == self.current_page)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            }))
+    }
 }
 
 impl Render for ThemePreview {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
-        h_flex()
+        v_flex()
             .id("theme-preview")
             .key_context("ThemePreview")
             .items_start()
             .overflow_hidden()
             .size_full()
             .max_h_full()
-            .p_4()
             .track_focus(&self.focus_handle)
+            .px_2()
             .bg(Self::preview_bg(cx))
-            .gap_4()
-            .child(
-                v_flex()
-                    .items_start()
-                    .gap_1()
-                    .w(px(240.))
-                    .child(
-                        v_flex()
-                            .gap_px()
-                            .children(ThemePreviewPage::iter().map(|p| {
-                                Button::new(ElementId::Name(p.name().into()), p.name())
-                                    .on_click(cx.listener(move |this, _, cx| {
-                                        this.current_page = p;
-                                        cx.notify();
-                                    }))
-                                    .selected(p == self.current_page)
-                            })),
-                    ),
-            )
+            .child(self.render_page_nav(cx))
             .child(self.view(self.current_page, cx))
     }
 }

@@ -7,7 +7,8 @@ use std::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     uniform_list, AnyElement, BackgroundExecutor, FontWeight, ListSizingBehavior, Model,
-    MouseButton, StrikethroughStyle, StyledText, Task, UniformListScrollHandle, WeakView,
+    MouseButton, ScrollStrategy, StrikethroughStyle, StyledText, Task, UniformListScrollHandle,
+    WeakView,
 };
 use language::{Buffer, Documentation};
 use multi_buffer::{Anchor, ExcerptId};
@@ -50,9 +51,10 @@ impl RenderedContextMenu {
             .is_inverted
             .fetch_or(true, std::sync::atomic::Ordering::Release);
         if !was_inverted {
-            self.scroll_handle.scroll_to_item(dbg!(
-                self.count - self.scroll_handle.logical_scroll_top_index() - 1
-            ));
+            self.scroll_handle.scroll_to_item(
+                self.count - self.scroll_handle.0.borrow().base_handle.top_item() - 1,
+                ScrollStrategy::Top,
+            );
         }
     }
 }
@@ -173,7 +175,8 @@ impl CompletionsMenu {
         cx: &mut ViewContext<Editor>,
     ) {
         self.selected_item = 0;
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
@@ -188,7 +191,8 @@ impl CompletionsMenu {
         } else {
             self.selected_item = self.matches.len() - 1;
         }
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
@@ -203,7 +207,8 @@ impl CompletionsMenu {
         } else {
             self.selected_item = 0;
         }
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
@@ -214,7 +219,8 @@ impl CompletionsMenu {
         cx: &mut ViewContext<Editor>,
     ) {
         self.selected_item = self.matches.len() - 1;
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         self.attempt_resolve_selected_completion_documentation(provider, cx);
         cx.notify();
     }
@@ -700,7 +706,8 @@ pub(crate) struct CodeActionsMenu {
 impl CodeActionsMenu {
     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = 0;
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 
@@ -710,7 +717,8 @@ impl CodeActionsMenu {
         } else {
             self.selected_item = self.actions.len() - 1;
         }
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
@@ -720,13 +728,15 @@ impl CodeActionsMenu {
         } else {
             self.selected_item = 0;
         }
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
     fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
         self.selected_item = self.actions.len() - 1;
-        self.scroll_handle.scroll_to_item(self.selected_item);
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 

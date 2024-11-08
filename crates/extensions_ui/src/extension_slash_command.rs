@@ -5,20 +5,20 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use futures::FutureExt;
+use futures::FutureExt as _;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use wasmtime_wasi::WasiView;
 use workspace::Workspace;
 
-use crate::wasm_host::{WasmExtension, WasmHost};
+use extension_host::wasm_host::{WasmExtension, WasmHost};
 
 pub struct ExtensionSlashCommand {
     pub(crate) extension: WasmExtension,
     #[allow(unused)]
     pub(crate) host: Arc<WasmHost>,
-    pub(crate) command: crate::wit::SlashCommand,
+    pub(crate) command: extension_host::wasm_host::SlashCommand,
 }
 
 impl SlashCommand for ExtensionSlashCommand {
