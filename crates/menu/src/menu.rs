@@ -19,5 +19,6 @@ actions!(
         SelectNext,
         SelectFirst,
         SelectLast,
+        Restart
     ]
 );
