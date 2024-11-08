@@ -146,7 +146,7 @@ At this point it is unknown if we will expand templates further to be user-creat
 
 > **Note:** It is not recommended to override templates unless you know what you are doing. Editing templates will break your assistant if done incorrectly.
 
-Zed allows you to override the default prompts used for various assistant features by placing custom Handlebars (.hbs) templates in your `~/.config/zed/prompts/templates` directory.
+Zed allows you to override the default prompts used for various assistant features by placing custom Handlebars (.hbs) templates in your `~/.config/zed/prompt_overrides` directory.
 
 The following templates can be overridden:
 
