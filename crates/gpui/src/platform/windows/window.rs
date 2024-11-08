@@ -21,7 +21,13 @@ use windows::{
     core::*,
     Win32::{
         Foundation::*,
-        Graphics::Gdi::*,
+        Graphics::{
+            Dwm::{
+                DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE,
+                DWMWINDOWATTRIBUTE,
+            },
+            Gdi::*,
+        },
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
         UI::{Controls::*, HiDpi::*, Input::KeyboardAndMouse::*, Shell::*, WindowsAndMessaging::*},
     },
@@ -647,11 +653,57 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        self.0
-            .state
-            .borrow_mut()
+        let mut window_state = self.0.state.borrow_mut();
+        window_state
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+
+        const DWMWA_MICA_EFFECT: DWMWINDOWATTRIBUTE = DWMWINDOWATTRIBUTE(1029);
+        if background_appearance == WindowBackgroundAppearance::Blurred {
+            unsafe {
+                DwmExtendFrameIntoClientArea(
+                    window_state.hwnd,
+                    &MARGINS {
+                        cxLeftWidth: -1,
+                        cxRightWidth: -1,
+                        cyTopHeight: -1,
+                        cyBottomHeight: -1,
+                    },
+                )
+                .inspect_err(|e| log::error!("{e}"))
+                .ok();
+                DwmSetWindowAttribute(
+                    window_state.hwnd,
+                    DWMWA_SYSTEMBACKDROP_TYPE as _,
+                    &DwmSystembackdropType::DwmsbtTransientwindow as *const _ as _,
+                    std::mem::size_of::<DwmSystembackdropType>() as _,
+                )
+                .inspect_err(|e| log::error!("{e}"))
+                .ok();
+            }
+        } else {
+            unsafe {
+                DwmExtendFrameIntoClientArea(
+                    window_state.hwnd,
+                    &MARGINS {
+                        cxLeftWidth: 1,
+                        cxRightWidth: 1,
+                        cyTopHeight: 1,
+                        cyBottomHeight: 1,
+                    },
+                )
+                .inspect_err(|e| log::error!("{e}"))
+                .ok();
+                DwmSetWindowAttribute(
+                    window_state.hwnd,
+                    DWMWA_SYSTEMBACKDROP_TYPE as _,
+                    &DwmSystembackdropType::DwmsbtDisable as *const _ as _,
+                    std::mem::size_of::<DwmSystembackdropType>() as _,
+                )
+                .inspect_err(|e| log::error!("{e}"))
+                .ok();
+            }
+        }
     }
 
     fn minimize(&self) {
@@ -930,6 +982,14 @@ struct StyleAndBounds {
     y: i32,
     cx: i32,
     cy: i32,
+}
+
+#[repr(C)]
+enum DwmSystembackdropType {
+    DwmsbtDisable = 1,         // None
+    DwmsbtMainwindow = 2,      // Mica
+    DwmsbtTransientwindow = 3, // Acrylic
+    DwmsbtTabbedwindow = 4,    // Tabbed
 }
 
 #[derive(Debug, Default, Clone, Copy)]
