@@ -145,6 +145,14 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     ) {
     }
 
+    fn register_context_server(
+        &self,
+        _id: Arc<str>,
+        _extension: WasmExtension,
+        _host: Arc<WasmHost>,
+    ) {
+    }
+
     fn register_docs_provider(
         &self,
         _extension: WasmExtension,
@@ -1262,6 +1270,14 @@ impl ExtensionStore {
                                 tooltip_text: String::new(),
                                 requires_argument: slash_command.requires_argument,
                             },
+                            wasm_extension.clone(),
+                            this.wasm_host.clone(),
+                        );
+                    }
+
+                    for (id, _context_server_entry) in &manifest.context_servers {
+                        this.registration_hooks.register_context_server(
+                            id.clone(),
                             wasm_extension.clone(),
                             this.wasm_host.clone(),
                         );
