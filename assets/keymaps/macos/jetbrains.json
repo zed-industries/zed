@@ -1,6 +1,7 @@
 [
   {
     "bindings": {
+      "cmd-,": "zed::OpenSettings",
       "cmd-shift-[": "pane::ActivatePrevItem",
       "cmd-shift-]": "pane::ActivateNextItem"
     }
