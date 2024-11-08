@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
-use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
+use workspace::{ItemHandle as _, WorkspaceId};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
@@ -63,16 +63,29 @@ pub fn init(cx: &mut AppContext) {
 
         cx.defer(|editor, cx| {
             let workspace = Workspace::for_window(cx);
+            let project = workspace.map(|workspace| workspace.read(cx).project().clone());
 
-            let is_local_project = workspace
-                .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            let is_local_project = project
+                .as_ref()
+                .map(|project| project.read(cx).is_local())
                 .unwrap_or(false);
 
             if !is_local_project {
                 return;
             }
 
-            let editor_handle = cx.view().downgrade();
+            let editor_view = cx.view();
+            let project_path = editor_view.project_path(cx);
+            let editor_handle = editor_view.downgrade();
+
+            if let (Some(project_path), Some(project)) = (project_path, project) {
+                let store = ReplStore::global(cx);
+                store.update(cx, |store, cx| {
+                    store
+                        .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
+                        .detach_and_log_err(cx);
+                });
+            }
 
             editor
                 .register_action({

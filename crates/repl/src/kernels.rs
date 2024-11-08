@@ -467,6 +467,7 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<LocalKernelS
     Ok(valid_kernelspecs)
 }
 
+#[allow(dead_code)]
 pub fn python_env_kernel_specifications(
     project: &Model<Project>,
     worktree_id: WorktreeId,
@@ -656,10 +657,5 @@ mod test {
             kernels.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
             vec!["deno", "python"]
         );
-    }
-
-    #[gpui::test]
-    async fn test_get_python_kernelspecs(cx: &mut TestAppContext) {
-        //
     }
 }
