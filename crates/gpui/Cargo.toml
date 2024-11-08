@@ -119,7 +119,7 @@ http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 
 [build-dependencies]
-embed-resource = "2.4"
+embed-resource = "3.0"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.70.0"
