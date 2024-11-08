@@ -51,8 +51,8 @@ pub struct ContextStore {
     contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
     context_server_manager: Model<ContextServerManager>,
-    context_server_slash_command_ids: HashMap<String, Vec<SlashCommandId>>,
-    context_server_tool_ids: HashMap<String, Vec<ToolId>>,
+    context_server_slash_command_ids: HashMap<Arc<str>, Vec<SlashCommandId>>,
+    context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     host_contexts: Vec<RemoteContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
@@ -162,7 +162,7 @@ impl ContextStore {
                         context_store.update(&mut cx, |this, cx| {
                             this.context_server_manager.update(cx, |this, cx| {
                                 for server in servers_to_register {
-                                    this.add_server(server.config(), cx).detach_and_log_err(cx);
+                                    this.add_server(server, cx).detach_and_log_err(cx);
                                 }
                             })
                         })
