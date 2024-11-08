@@ -19,5 +19,9 @@ async-io = "1.13"
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
 
+[dev-dependencies]
+# futures-lite = "*"
+tempfile.workspace = true
+
 [package.metadata.docs.rs]
 targets = ["x86_64-pc-windows-msvc"]

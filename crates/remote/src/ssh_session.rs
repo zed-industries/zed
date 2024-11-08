@@ -1363,7 +1363,6 @@ impl SshRemoteConnection {
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
-        #[cfg(unix)]
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
         #[cfg(unix)]
@@ -1386,6 +1385,7 @@ impl SshRemoteConnection {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+        println!("Listening on {:?}", listener.local_addr()?);
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -1395,6 +1395,11 @@ impl SshRemoteConnection {
             |mut cx| async move {
                 let mut askpass_opened_tx = Some(askpass_opened_tx);
 
+                let x = listener.accept().await;
+                println!("--> opening prompt, {:?}", x);
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                let x = listener.accept().await;
+                println!("--> opening prompt, {:?}", x);
                 while let Ok((mut stream, _)) = listener.accept().await {
                     if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
                         askpass_opened_tx.send(()).ok();
@@ -1405,6 +1410,7 @@ impl SshRemoteConnection {
                         buffer.clear();
                     }
                     let password_prompt = String::from_utf8_lossy(&buffer);
+                    println!("--> password prompt: {}", password_prompt);
                     if let Some(password) = delegate
                         .ask_password(password_prompt.to_string(), &mut cx)
                         .await
@@ -1431,34 +1437,38 @@ impl SshRemoteConnection {
             shebang = "#!/bin/sh",
         );
         let askpass_script_path = temp_dir.path().join("askpass.sh");
+        println!("--> script: {}", askpass_script);
+        println!("--> script path: {}", askpass_script_path.display());
         fs::write(&askpass_script_path, askpass_script).await?;
-        fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
+        // fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
         // via a control socket.
         let socket_path = temp_dir.path().join("ssh.sock");
 
+        println!("--> 1");
         let mut master_process = process::Command::new("ssh")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .env("SSH_ASKPASS_REQUIRE", "force")
-            .env("SSH_ASKPASS", &askpass_script_path)
+            // .env("SSH_ASKPASS", &askpass_script_path)
             .args(connection_options.additional_args().unwrap_or(&Vec::new()))
-            .args([
-                "-N",
-                "-o",
-                "ControlPersist=no",
-                "-o",
-                "ControlMaster=yes",
-                "-o",
-            ])
-            .arg(format!("ControlPath={}", socket_path.display()))
+            // .args([
+            //     "-N",
+            //     "-o",
+            //     "ControlPersist=no",
+            //     "-o",
+            //     "ControlMaster=yes",
+            //     "-o",
+            // ])
+            // .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .kill_on_drop(true)
             .spawn()?;
 
+        println!("--> 2");
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
@@ -1467,8 +1477,10 @@ impl SshRemoteConnection {
 
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {
+                println!("--> askpass opened");
                 select_biased! {
                     stream = askpass_kill_master_rx.fuse() => {
+                        println!("--> askpass kill master");
                         master_process.kill().ok();
                         drop(stream);
                         Err(anyhow!("SSH connection canceled"))
@@ -1477,6 +1489,7 @@ impl SshRemoteConnection {
                     // their password, in which case we don't want to timeout anymore,
                     // since we know a connection has been established.
                     result = stdout.read_to_end(&mut output).fuse() => {
+                        println!("--> askpass read to end, {:?}", result);
                         result?;
                         Ok(())
                     }
@@ -1489,6 +1502,7 @@ impl SshRemoteConnection {
                 Err(anyhow!("Exceeded {:?} timeout trying to connect to host", connection_timeout))
             }
         };
+        println!("--> 3");
 
         if let Err(e) = result {
             return Err(e.context("Failed to connect to host"));

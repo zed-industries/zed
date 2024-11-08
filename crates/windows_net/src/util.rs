@@ -1,7 +1,7 @@
 use smol::Async;
 
-use crate::{socket::UnixSocketAddr, stream::RawUnixStream};
+use crate::{socket::UnixSocketAddr, stream::WindowsStream};
 
 pub(crate) trait AsyncExt {
-    async fn accept(&self) -> std::io::Result<(Async<RawUnixStream>, UnixSocketAddr)>;
+    async fn accept(&self) -> std::io::Result<(Async<WindowsStream>, UnixSocketAddr)>;
 }

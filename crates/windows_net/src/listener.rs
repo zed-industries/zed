@@ -1,24 +1,24 @@
-use std::{net::SocketAddr, os::windows::io::AsRawSocket, path::Path, sync::Arc};
+use std::{os::windows::io::AsRawSocket, path::Path, sync::Arc};
 
 use smol::Async;
-use windows::Win32::Networking::WinSock::{bind, listen, SOCKADDR_UN, SOMAXCONN};
+use windows::Win32::Networking::WinSock::{bind, getsockname, listen, SOCKADDR_UN, SOMAXCONN};
 
 use crate::{
     init, map_ret, sockaddr_un,
-    socket::{RawSocket, UnixSocketAddr},
-    stream::{RawUnixStream, UnixStream},
+    socket::{UnixSocketAddr, WindowsSocket},
+    stream::{UnixStream, WindowsStream},
     util::AsyncExt,
 };
 
-pub struct UnixListener(Arc<Async<RawListener>>);
+pub struct UnixListener(Arc<Async<WindowsListener>>);
 
 impl UnixListener {
-    fn new(raw: Arc<Async<RawListener>>) -> Self {
+    fn new(raw: Arc<Async<WindowsListener>>) -> Self {
         Self(raw)
     }
 
     pub fn bind<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-        let raw = RawListener::bind(path)?;
+        let raw = WindowsListener::bind(path)?;
         Ok(Self::new(Arc::new(Async::new(raw)?)))
     }
 
@@ -26,14 +26,21 @@ impl UnixListener {
         let (socket, addr) = self.0.accept().await?;
         Ok((UnixStream::new(Arc::new(socket)), addr))
     }
+
+    pub fn local_addr(&self) -> std::io::Result<UnixSocketAddr> {
+        UnixSocketAddr::new(|addr, len| unsafe {
+            let x = self.0.get_ref().0.as_raw();
+            getsockname(*x, addr, len)
+        })
+    }
 }
 
-struct RawListener(RawSocket);
+struct WindowsListener(WindowsSocket);
 
-impl RawListener {
+impl WindowsListener {
     fn bind<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
         init();
-        let socket = RawSocket::new()?;
+        let socket = WindowsSocket::new()?;
         let (addr, len) = sockaddr_un(path.as_ref())?;
         unsafe {
             map_ret(bind(
@@ -46,23 +53,23 @@ impl RawListener {
         Ok(Self(socket))
     }
 
-    fn accept(&self) -> std::io::Result<(RawUnixStream, UnixSocketAddr)> {
+    fn accept(&self) -> std::io::Result<(WindowsStream, UnixSocketAddr)> {
         let mut storage = SOCKADDR_UN::default();
         let mut len = std::mem::size_of_val(&storage) as i32;
         let raw = self.0.accept(&mut storage as *mut _ as *mut _, &mut len)?;
         let addr = UnixSocketAddr::from_parts(storage, len)?;
-        Ok((RawUnixStream::new(raw), addr))
+        Ok((WindowsStream::new(raw), addr))
     }
 }
 
-impl AsRawSocket for RawListener {
+impl AsRawSocket for WindowsListener {
     fn as_raw_socket(&self) -> std::os::windows::io::RawSocket {
         self.0.as_raw().0 as _
     }
 }
 
-impl AsyncExt for Async<RawListener> {
-    async fn accept(&self) -> std::io::Result<(Async<RawUnixStream>, UnixSocketAddr)> {
+impl AsyncExt for Async<WindowsListener> {
+    async fn accept(&self) -> std::io::Result<(Async<WindowsStream>, UnixSocketAddr)> {
         let (stream, addr) = self.read_with(|io| io.accept()).await?;
         Ok((Async::new(stream)?, addr))
     }

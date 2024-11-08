@@ -14524,6 +14524,7 @@ version = "0.1.0"
 dependencies = [
  "async-io 1.13.0",
  "smol",
+ "tempfile",
  "windows 0.58.0",
 ]
 

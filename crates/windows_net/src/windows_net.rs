@@ -3,7 +3,7 @@
 use std::{path::Path, sync::Once};
 
 use windows::Win32::Networking::WinSock::{
-    WSAStartup, ADDRESS_FAMILY, AF_UNIX, SOCKADDR_UN, SOCKET_ERROR,
+    WSAGetLastError, WSAStartup, ADDRESS_FAMILY, AF_UNIX, SOCKADDR_UN, SOCKET_ERROR,
 };
 
 pub mod listener;
@@ -71,8 +71,66 @@ fn sun_path_offset(addr: &SOCKADDR_UN) -> usize {
 
 fn map_ret(ret: i32) -> std::io::Result<()> {
     if ret == SOCKET_ERROR {
-        Err(std::io::Error::last_os_error())
+        Err(std::io::Error::from_raw_os_error(unsafe {
+            WSAGetLastError().0
+        }))
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::{path::PathBuf, sync::Arc};
+
+    // use futures_lite::{future, io::AsyncWriteExt};
+    use smol::{future, io::AsyncWriteExt, Async, Unblock};
+    use tempfile::tempdir;
+
+    use crate::{
+        listener::UnixListener,
+        stream::{UnixStream, WindowsStream},
+    };
+
+    #[test]
+    fn test_listener() -> std::io::Result<()> {
+        async fn client(addr: PathBuf) -> std::io::Result<()> {
+            // Connect to the address.
+            let stream = UnixStream::new(Arc::new(Async::new(WindowsStream::connect(addr)?)?));
+            println!("Connected to {:?}", stream.peer_addr()?);
+
+            // Pipe the stream to stdout.
+            let mut stdout = Unblock::new(std::io::stdout());
+            smol::io::copy(stream, &mut stdout).await?;
+            Ok(())
+        }
+
+        let dir = tempdir()?;
+        let path = dir.path().join("socket");
+
+        future::block_on(async {
+            // Create a listener.
+            let listener = UnixListener::bind(&path)?;
+            println!("Listening on {:?}", listener.local_addr()?);
+
+            future::try_zip(
+                async {
+                    // Accept the client.
+                    let (mut stream, _) = listener.accept().await?;
+                    println!("Accepted a client");
+
+                    // Send a message, drop the stream, and wait for the client.
+                    stream.write_all(b"Hello!\n").await?;
+                    // Async::new(UnixStream::from(stream))?
+                    //     .write_all(b"Hello!\n")
+                    //     .await?;
+                    Ok(())
+                },
+                client(path),
+            )
+            .await?;
+
+            Ok(())
+        })
     }
 }
