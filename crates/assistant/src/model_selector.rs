@@ -85,14 +85,36 @@ impl PickerDelegate for ModelPickerDelegate {
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let all_models = self.all_models.clone();
+
+        let llm_registry = LanguageModelRegistry::global(cx);
+
+        let configured_models: Vec<_> = llm_registry
+            .read(cx)
+            .providers()
+            .iter()
+            .filter(|provider| provider.is_authenticated(cx))
+            .map(|provider| provider.id())
+            .collect();
+
         cx.spawn(|this, mut cx| async move {
             let filtered_models = cx
                 .background_executor()
                 .spawn(async move {
-                    if query.is_empty() {
+                    let displayed_models = if configured_models.is_empty() {
                         all_models
                     } else {
                         all_models
+                            .into_iter()
+                            .filter(|model_info| {
+                                configured_models.contains(&model_info.model.provider_id())
+                            })
+                            .collect::<Vec<_>>()
+                    };
+
+                    if query.is_empty() {
+                        displayed_models
+                    } else {
+                        displayed_models
                             .into_iter()
                             .filter(|model_info| {
                                 model_info
@@ -148,9 +170,10 @@ impl PickerDelegate for ModelPickerDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
-        let model_info = self.filtered_models.get(ix)?;
         let show_badges = cx.has_flag::<ZedPro>();
-        let provider_name: String = model_info.model.provider_name().0.into();
+
+        let model_info = self.filtered_models.get(ix)?;
+        let provider_name: String = model_info.model.provider_name().0.clone().into();
 
         Some(
             ListItem::new(ix)
