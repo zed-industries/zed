@@ -1,4 +1,4 @@
-use crate::prelude::*;
+use crate::{prelude::*, Indicator};
 use gpui::{div, AnyElement, FontWeight, IntoElement};
 
 /// A table component
@@ -140,5 +140,60 @@ where
 {
     fn from(e: E) -> Self {
         TableCell::String(e.into())
+    }
+}
+
+impl ComponentPreview for Table {
+    fn description() -> impl Into<Option<&'static str>> {
+        "Used for showing tabular data. Tables may show both text and elements in their cells."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group(
+                "Basic Table",
+                vec![single_example(
+                    "Simple Table",
+                    Table::new(vec!["Name", "Age", "City"])
+                        .row(vec!["Alice", "28", "New York"])
+                        .row(vec!["Bob", "32", "San Francisco"])
+                        .row(vec!["Charlie", "25", "London"]),
+                )],
+            ),
+            example_group(
+                "Striped Table",
+                vec![single_example(
+                    "Striped Table",
+                    Table::new(vec!["Product", "Price", "Stock"])
+                        .striped()
+                        .row(vec!["Laptop", "$999", "In Stock"])
+                        .row(vec!["Phone", "$599", "Low Stock"])
+                        .row(vec!["Tablet", "$399", "Out of Stock"])
+                        .row(vec!["Headphones", "$199", "In Stock"]),
+                )],
+            ),
+            example_group(
+                "Mixed Content Table",
+                vec![single_example(
+                    "Table with Elements",
+                    Table::new(vec!["Status", "Name", "Action"])
+                        .row(vec![
+                            element_cell(Indicator::dot().color(Color::Success).into_any_element()),
+                            string_cell("Project A"),
+                            element_cell(Button::new("view_a", "View").into_any_element()),
+                        ])
+                        .row(vec![
+                            element_cell(Indicator::dot().color(Color::Warning).into_any_element()),
+                            string_cell("Project B"),
+                            element_cell(Button::new("view_b", "View").into_any_element()),
+                        ])
+                        .row(vec![
+                            element_cell(Indicator::dot().color(Color::Error).into_any_element()),
+                            string_cell("Project C"),
+                            element_cell(Button::new("view_c", "View").into_any_element()),
+                        ]),
+                )],
+            ),
+        ]
     }
 }
