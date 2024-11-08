@@ -158,6 +158,8 @@ The following templates can be overridden:
 
 4. [`step_resolution.hbs`](../../../assets/prompts/step_resolution.hbs): Used for generating the step resolution prompt.
 
+5. [`project_slash_command.hbs`](../../../assets/prompts/project_slash_command.hbs)
+
 > **Note:** Be sure you want to override these, as you'll miss out on iteration on our built-in features. This should be primarily used when developing Zed.
 
 You can customize these templates to better suit your needs while maintaining the core structure and variables used by Zed. Zed will automatically reload your prompt overrides when they change on disk.
