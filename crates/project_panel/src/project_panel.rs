@@ -91,6 +91,9 @@ pub struct ProjectPanel {
     horizontal_scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
+    // We keep track of the mouse down state on entries so we don't flash the UI
+    // in case a user clicks to open a file.
+    mouse_down: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -338,6 +341,7 @@ impl ProjectPanel {
                     .parent_view(cx.view()),
                 max_width_item_index: None,
                 scroll_handle,
+                mouse_down: false,
             };
             this.update_visible_entries(None, cx);
 
@@ -2582,12 +2586,21 @@ impl ProjectPanel {
                 this.hover_scroll_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, cx| {
+                    this.mouse_down = true;
+                    cx.propagate();
+                }),
+            )
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
                 if event.down.button == MouseButton::Right || event.down.first_mouse || show_editor
                 {
                     return;
                 }
-
+                if event.down.button == MouseButton::Left {
+                    this.mouse_down = false;
+                }
                 cx.stop_propagation();
 
                 if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
@@ -2767,7 +2780,7 @@ impl ProjectPanel {
                     .border_color(colors.ghost_element_selected)
             })
             .when(
-                is_active && self.focus_handle.contains_focused(cx),
+                !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
                 |this| this.border_color(Color::Selected.color(cx)),
             )
     }
