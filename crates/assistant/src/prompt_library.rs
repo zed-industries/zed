@@ -1,3 +1,4 @@
+use crate::SlashCommandWorkingSet;
 use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -522,7 +523,11 @@ impl PromptLibrary {
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Some(Box::new(
-                                SlashCommandCompletionProvider::new(None, None),
+                                SlashCommandCompletionProvider::new(
+                                    Arc::new(SlashCommandWorkingSet::default()),
+                                    None,
+                                    None,
+                                ),
                             )));
                             if focus {
                                 editor.focus(cx);

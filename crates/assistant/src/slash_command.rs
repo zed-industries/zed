@@ -1,4 +1,5 @@
 use crate::assistant_panel::ContextEditor;
+use crate::SlashCommandWorkingSet;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};
@@ -39,6 +40,7 @@ pub mod terminal_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
+    slash_commands: Arc<SlashCommandWorkingSet>,
     editor: Option<WeakView<ContextEditor>>,
     workspace: Option<WeakView<Workspace>>,
 }
@@ -52,11 +54,13 @@ pub(crate) struct SlashCommandLine {
 
 impl SlashCommandCompletionProvider {
     pub fn new(
+        slash_commands: Arc<SlashCommandWorkingSet>,
         editor: Option<WeakView<ContextEditor>>,
         workspace: Option<WeakView<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
+            slash_commands,
             editor,
             workspace,
         }
@@ -69,9 +73,9 @@ impl SlashCommandCompletionProvider {
         name_range: Range<Anchor>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<project::Completion>>> {
-        let commands = SlashCommandRegistry::global(cx);
-        let candidates = commands
-            .command_names()
+        let slash_commands = self.slash_commands.clone();
+        let candidates = slash_commands
+            .command_names(cx)
             .into_iter()
             .enumerate()
             .map(|(ix, def)| StringMatchCandidate {
@@ -98,7 +102,7 @@ impl SlashCommandCompletionProvider {
                 matches
                     .into_iter()
                     .filter_map(|mat| {
-                        let command = commands.command(&mat.string)?;
+                        let command = slash_commands.command(&mat.string, cx)?;
                         let mut new_text = mat.string.clone();
                         let requires_argument = command.requires_argument();
                         let accepts_arguments = command.accepts_arguments();
