@@ -79,7 +79,7 @@ pub struct NativeContextServer {
 }
 
 impl NativeContextServer {
-    fn new(config: Arc<ServerConfig>) -> Self {
+    pub fn new(config: Arc<ServerConfig>) -> Self {
         Self {
             id: config.id.clone().into(),
             config,
@@ -151,13 +151,13 @@ impl ContextServer for NativeContextServer {
 /// must go through the `GlobalContextServerManager` which holds
 /// a model to the ContextServerManager.
 pub struct ContextServerManager {
-    servers: HashMap<String, Arc<dyn ContextServer>>,
-    pending_servers: HashSet<String>,
+    servers: HashMap<Arc<str>, Arc<dyn ContextServer>>,
+    pending_servers: HashSet<Arc<str>>,
 }
 
 pub enum Event {
-    ServerStarted { server_id: String },
-    ServerStopped { server_id: String },
+    ServerStarted { server_id: Arc<str> },
+    ServerStopped { server_id: Arc<str> },
 }
 
 impl EventEmitter<Event> for ContextServerManager {}
@@ -178,10 +178,10 @@ impl ContextServerManager {
 
     pub fn add_server(
         &mut self,
-        config: Arc<ServerConfig>,
+        server: Arc<dyn ContextServer>,
         cx: &ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let server_id = config.id.clone();
+        let server_id = server.id();
 
         if self.servers.contains_key(&server_id) || self.pending_servers.contains(&server_id) {
             return Task::ready(Ok(()));
@@ -190,7 +190,6 @@ impl ContextServerManager {
         let task = {
             let server_id = server_id.clone();
             cx.spawn(|this, mut cx| async move {
-                let server = Arc::new(NativeContextServer::new(config));
                 server.clone().start(&cx).await?;
                 this.update(&mut cx, |this, cx| {
                     this.servers.insert(server_id.clone(), server);
@@ -211,14 +210,20 @@ impl ContextServerManager {
         self.servers.get(id).cloned()
     }
 
-    pub fn remove_server(&mut self, id: &str, cx: &ModelContext<Self>) -> Task<anyhow::Result<()>> {
-        let id = id.to_string();
+    pub fn remove_server(
+        &mut self,
+        id: &Arc<str>,
+        cx: &ModelContext<Self>,
+    ) -> Task<anyhow::Result<()>> {
+        let id = id.clone();
         cx.spawn(|this, mut cx| async move {
-            if let Some(server) = this.update(&mut cx, |this, _cx| this.servers.remove(&id))? {
+            if let Some(server) =
+                this.update(&mut cx, |this, _cx| this.servers.remove(id.as_ref()))?
+            {
                 server.stop()?;
             }
             this.update(&mut cx, |this, cx| {
-                this.pending_servers.remove(&id);
+                this.pending_servers.remove(id.as_ref());
                 cx.emit(Event::ServerStopped {
                     server_id: id.clone(),
                 })
@@ -232,7 +237,7 @@ impl ContextServerManager {
         id: &Arc<str>,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<()>> {
-        let id = id.to_string();
+        let id = id.clone();
         cx.spawn(|this, mut cx| async move {
             if let Some(server) = this.update(&mut cx, |this, _cx| this.servers.remove(&id))? {
                 server.stop()?;
@@ -284,7 +289,8 @@ impl ContextServerManager {
 
         log::trace!("servers_to_add={:?}", servers_to_add);
         for config in servers_to_add {
-            self.add_server(Arc::new(config), cx).detach_and_log_err(cx);
+            let server = Arc::new(NativeContextServer::new(Arc::new(config)));
+            self.add_server(server, cx).detach_and_log_err(cx);
         }
 
         for id in servers_to_remove {

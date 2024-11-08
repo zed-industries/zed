@@ -1,4 +1,5 @@
 mod components;
+mod extension_context_server;
 mod extension_indexed_docs_provider;
 mod extension_registration_hooks;
 mod extension_slash_command;

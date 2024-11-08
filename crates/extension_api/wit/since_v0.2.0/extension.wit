@@ -135,6 +135,9 @@ world extension {
     /// Returns the output from running the provided slash command.
     export run-slash-command: func(command: slash-command, args: list<string>, worktree: option<borrow<worktree>>) -> result<slash-command-output, string>;
 
+    /// Returns the command used to start up a context server.
+    export context-server-command: func(context-server-id: string) -> result<command, string>;
+
     /// Returns a list of packages as suggestions to be included in the `/docs`
     /// search results.
     ///
