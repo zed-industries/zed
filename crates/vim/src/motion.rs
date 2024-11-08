@@ -443,7 +443,7 @@ impl Vim {
                     }
                 }
 
-                Mode::HelixNormal  => {}
+                Mode::HelixNormal => {}
             }
         }
 
@@ -474,9 +474,7 @@ impl Vim {
                 self.visual_motion(motion.clone(), count, cx)
             }
 
-            Mode::HelixNormal => {
-                self.helix_normal_motion(motion.clone(), count, cx)
-            }
+            Mode::HelixNormal => self.helix_normal_motion(motion.clone(), count, cx),
         }
         self.clear_operator(cx);
         if let Some(operator) = waiting_operator {

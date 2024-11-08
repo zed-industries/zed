@@ -490,7 +490,6 @@ pub fn find_boundary_point(
     map.clip_point(offset.to_display_point(map), Bias::Right)
 }
 
-
 pub fn find_preceding_boundary_trail(
     map: &DisplaySnapshot,
     head: DisplayPoint,
@@ -529,14 +528,18 @@ pub fn find_preceding_boundary_trail(
         offset -= ch.len_utf8();
         prev_ch = Some(ch);
     }
-    
+
     let trail = trail_offset.map_or(trail, |trail_offset: usize| {
         map.clip_point(trail_offset.to_display_point(map), Bias::Left)
     });
-    
-    (trail, map.clip_point(offset.to_display_point(map), Bias::Left))
+
+    (
+        trail,
+        map.clip_point(offset.to_display_point(map), Bias::Left),
+    )
 }
-/// Finds the location of a bonudary 
+
+/// Finds the location of a boundary
 pub fn find_boundary_trail(
     map: &DisplaySnapshot,
     head: DisplayPoint,
@@ -579,8 +582,11 @@ pub fn find_boundary_trail(
     let trail = trail_offset.map_or(trail, |trail_offset: usize| {
         map.clip_point(trail_offset.to_display_point(map), Bias::Right)
     });
-    
-    (trail, map.clip_point(offset.to_display_point(map), Bias::Right))
+
+    (
+        trail,
+        map.clip_point(offset.to_display_point(map), Bias::Right),
+    )
 }
 
 pub fn find_boundary(
