@@ -1358,26 +1358,21 @@ impl RemoteConnection for SshRemoteConnection {
 }
 
 impl SshRemoteConnection {
-    #[cfg(not(unix))]
-    async fn new(
-        _connection_options: SshConnectionOptions,
-        _delegate: Arc<dyn SshClientDelegate>,
-        _cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
-        Err(anyhow!("ssh is not supported on this platform"))
-    }
-
-    #[cfg(unix)]
     async fn new(
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
+        #[cfg(unix)]
         use futures::AsyncWriteExt as _;
         use futures::{io::BufReader, AsyncBufReadExt as _};
+        #[cfg(unix)]
         use smol::net::unix::UnixStream;
+        #[cfg(unix)]
         use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
+        #[cfg(not(unix))]
+        use windows_net::{listener::UnixListener, stream::UnixStream};
 
         delegate.set_status(Some("Connecting"), cx);
 

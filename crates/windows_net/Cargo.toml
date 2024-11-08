@@ -14,6 +14,7 @@ doctest = false
 
 [dependencies]
 smol.workspace = true
+async-io = "1.13"
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

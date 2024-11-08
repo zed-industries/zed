@@ -8,6 +8,8 @@ use windows::Win32::Networking::WinSock::{
 
 pub mod listener;
 pub mod socket;
+pub mod stream;
+pub mod util;
 
 pub fn init() {
     static ONCE: Once = Once::new();
