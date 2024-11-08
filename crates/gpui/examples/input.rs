@@ -643,7 +643,6 @@ fn main() {
         })
         .detach();
         cx.on_keyboard_layout_change({
-            let window = window.clone();
             move |cx| {
                 window.update(cx, |_, cx| cx.notify()).ok();
             }
