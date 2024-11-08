@@ -583,7 +583,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     );
 
     command_output_tx
-        .unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))
+        .unbounded_send(Ok(SlashCommandEvent::EndSection))
         .unwrap();
     cx.run_until_parked();
     assert_text_and_context_ranges(
@@ -1310,7 +1310,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                             text: output_text[section_start..section_end].to_string(),
                             run_commands_in_text: false,
                         })));
-                        events.push(Ok(SlashCommandEvent::EndSection { metadata: None }));
+                        events.push(Ok(SlashCommandEvent::EndSection));
                         section_start = section_end;
                     }
 

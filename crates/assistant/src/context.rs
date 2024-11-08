@@ -1983,7 +1983,7 @@ impl Context {
                                     run_commands_in_ranges.push(start..end);
                                 }
                             }
-                            SlashCommandEvent::EndSection { metadata } => {
+                            SlashCommandEvent::EndSection => {
                                 if let Some(pending_section) = pending_section_stack.pop() {
                                     let offset_range = (pending_section.start..insert_position)
                                         .to_offset(this.buffer.read(cx));
@@ -1997,7 +1997,7 @@ impl Context {
                                                 range: range.clone(),
                                                 icon: pending_section.icon,
                                                 label: pending_section.label,
-                                                metadata: metadata.or(pending_section.metadata),
+                                                metadata: pending_section.metadata,
                                             },
                                             cx,
                                         );

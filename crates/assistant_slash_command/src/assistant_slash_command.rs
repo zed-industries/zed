@@ -133,9 +133,7 @@ pub enum SlashCommandEvent {
         metadata: Option<serde_json::Value>,
     },
     Content(SlashCommandContent),
-    EndSection {
-        metadata: Option<serde_json::Value>,
-    },
+    EndSection,
 }
 
 #[derive(Debug, Default, PartialEq, Clone)]
@@ -164,43 +162,37 @@ impl SlashCommandOutput {
         self.ensure_valid_section_ranges();
 
         let mut events = Vec::new();
-        let mut last_section_end = 0;
 
+        let mut section_endpoints = Vec::new();
         for section in self.sections {
-            if last_section_end < section.range.start {
+            section_endpoints.push((
+                section.range.start,
+                SlashCommandEvent::StartSection {
+                    icon: section.icon,
+                    label: section.label,
+                    metadata: section.metadata,
+                },
+            ));
+            section_endpoints.push((section.range.end, SlashCommandEvent::EndSection));
+        }
+        section_endpoints.sort_by_key(|(offset, _)| *offset);
+
+        let mut content_offset = 0;
+        for (endpoint_offset, endpoint) in section_endpoints {
+            if content_offset < endpoint_offset {
                 events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
-                    text: self
-                        .text
-                        .get(last_section_end..section.range.start)
-                        .unwrap_or_default()
-                        .to_string(),
+                    text: self.text[content_offset..endpoint_offset].to_string(),
                     run_commands_in_text: self.run_commands_in_text,
                 })));
+                content_offset = endpoint_offset;
             }
 
-            events.push(Ok(SlashCommandEvent::StartSection {
-                icon: section.icon,
-                label: section.label,
-                metadata: section.metadata.clone(),
-            }));
-            events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
-                text: self
-                    .text
-                    .get(section.range.start..section.range.end)
-                    .unwrap_or_default()
-                    .to_string(),
-                run_commands_in_text: self.run_commands_in_text,
-            })));
-            events.push(Ok(SlashCommandEvent::EndSection {
-                metadata: section.metadata,
-            }));
-
-            last_section_end = section.range.end;
+            events.push(Ok(endpoint));
         }
 
-        if last_section_end < self.text.len() {
+        if content_offset < self.text.len() {
             events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
-                text: self.text[last_section_end..].to_string(),
+                text: self.text[content_offset..].to_string(),
                 run_commands_in_text: self.run_commands_in_text,
             })));
         }
@@ -240,9 +232,8 @@ impl SlashCommandOutput {
                         section.range.end = output.text.len();
                     }
                 }
-                SlashCommandEvent::EndSection { metadata } => {
-                    if let Some(mut section) = section_stack.pop() {
-                        section.metadata = metadata;
+                SlashCommandEvent::EndSection => {
+                    if let Some(section) = section_stack.pop() {
                         output.sections.push(section);
                     }
                 }
@@ -314,7 +305,7 @@ mod tests {
                         text: "Hello, world!".into(),
                         run_commands_in_text: false
                     }),
-                    SlashCommandEvent::EndSection { metadata: None }
+                    SlashCommandEvent::EndSection
                 ]
             );
 
@@ -366,7 +357,7 @@ mod tests {
                         text: "Apple\n".into(),
                         run_commands_in_text: false
                     }),
-                    SlashCommandEvent::EndSection { metadata: None },
+                    SlashCommandEvent::EndSection,
                     SlashCommandEvent::Content(SlashCommandContent::Text {
                         text: "Cucumber\n".into(),
                         run_commands_in_text: false
@@ -380,7 +371,7 @@ mod tests {
                         text: "Banana\n".into(),
                         run_commands_in_text: false
                     }),
-                    SlashCommandEvent::EndSection { metadata: None }
+                    SlashCommandEvent::EndSection
                 ]
             );
 
@@ -444,9 +435,7 @@ mod tests {
                         text: "Line 1".into(),
                         run_commands_in_text: false
                     }),
-                    SlashCommandEvent::EndSection {
-                        metadata: Some(json!({ "a": true }))
-                    },
+                    SlashCommandEvent::EndSection,
                     SlashCommandEvent::Content(SlashCommandContent::Text {
                         text: "\n".into(),
                         run_commands_in_text: false
@@ -460,9 +449,7 @@ mod tests {
                         text: "Line 2".into(),
                         run_commands_in_text: false
                     }),
-                    SlashCommandEvent::EndSection {
-                        metadata: Some(json!({ "b": true }))
-                    },
+                    SlashCommandEvent::EndSection,
                     SlashCommandEvent::Content(SlashCommandContent::Text {
                         text: "\n".into(),
                         run_commands_in_text: false
@@ -476,9 +463,7 @@ mod tests {
                         text: "Line 3".into(),
                         run_commands_in_text: false
                     }),
-                    SlashCommandEvent::EndSection {
-                        metadata: Some(json!({ "c": true }))
-                    },
+                    SlashCommandEvent::EndSection,
                     SlashCommandEvent::Content(SlashCommandContent::Text {
                         text: "\n".into(),
                         run_commands_in_text: false
@@ -492,9 +477,7 @@ mod tests {
                         text: "Line 4".into(),
                         run_commands_in_text: false
                     }),
-                    SlashCommandEvent::EndSection {
-                        metadata: Some(json!({ "d": true }))
-                    },
+                    SlashCommandEvent::EndSection,
                     SlashCommandEvent::Content(SlashCommandContent::Text {
                         text: "\n".into(),
                         run_commands_in_text: false
