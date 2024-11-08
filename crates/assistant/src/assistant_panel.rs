@@ -1547,6 +1547,7 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
+            context.read(cx).slash_commands.clone(),
             Some(cx.view().downgrade()),
             Some(workspace.clone()),
         );
