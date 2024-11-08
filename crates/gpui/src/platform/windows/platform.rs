@@ -198,7 +198,7 @@ impl Platform for WindowsPlatform {
     }
 
     fn keyboard_layout(&self) -> String {
-        "unknown"
+        "unknown".into()
     }
 
     fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
