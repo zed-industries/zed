@@ -174,7 +174,7 @@ struct ImgState {
     started_loading: Option<Instant>,
 }
 
-/// TODO
+/// The image layout state between frames
 pub struct ImgLayoutState {
     frame_index: usize,
     replacement: Option<AnyElement>,
@@ -410,7 +410,7 @@ impl Asset for ImageDecoder {
     }
 }
 
-/// TODO
+/// An image asset.
 #[derive(Clone)]
 pub enum ImageAsset {}
 
