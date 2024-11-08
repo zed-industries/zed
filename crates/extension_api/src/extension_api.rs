@@ -130,11 +130,7 @@ pub trait Extension: Send + Sync {
     }
 
     /// Returns the command used to start a context server.
-    fn context_server_command(
-        &mut self,
-        _context_server_id: &ContextServerId,
-        _worktree: &Worktree,
-    ) -> Result<Command> {
+    fn context_server_command(&mut self, _context_server_id: &ContextServerId) -> Result<Command> {
         Err("`context_server_command` not implemented".to_string())
     }
 
@@ -279,12 +275,9 @@ impl wit::Guest for Component {
         extension().run_slash_command(command, args, worktree)
     }
 
-    fn context_server_command(
-        context_server_id: String,
-        worktree: &wit::Worktree,
-    ) -> Result<wit::Command> {
+    fn context_server_command(context_server_id: String) -> Result<wit::Command> {
         let context_server_id = ContextServerId(context_server_id);
-        extension().context_server_command(&context_server_id, worktree)
+        extension().context_server_command(&context_server_id)
     }
 
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {

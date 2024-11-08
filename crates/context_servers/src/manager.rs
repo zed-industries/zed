@@ -79,7 +79,7 @@ pub struct NativeContextServer {
 }
 
 impl NativeContextServer {
-    fn new(config: Arc<ServerConfig>) -> Self {
+    pub fn new(config: Arc<ServerConfig>) -> Self {
         Self {
             id: config.id.clone().into(),
             config,

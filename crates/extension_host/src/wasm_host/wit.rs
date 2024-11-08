@@ -388,11 +388,10 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         context_server_id: Arc<str>,
-        resource: Resource<Arc<dyn LspAdapterDelegate>>,
     ) -> Result<Result<Command, String>> {
         match self {
             Extension::V020(ext) => {
-                ext.call_context_server_command(store, &context_server_id, resource)
+                ext.call_context_server_command(store, &context_server_id)
                     .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) | Extension::V010(_) => {

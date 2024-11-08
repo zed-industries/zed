@@ -35,6 +35,7 @@ collab_ui.workspace = true
 collections.workspace = true
 command_palette.workspace = true
 command_palette_hooks.workspace = true
+context_servers.workspace = true
 copilot.workspace = true
 db.workspace = true
 diagnostics.workspace = true
