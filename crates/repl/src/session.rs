@@ -1,4 +1,5 @@
 use crate::components::KernelListItem;
+use crate::setup_editor_session_actions;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
@@ -206,6 +207,14 @@ impl Session {
             }
             None => Subscription::new(|| {}),
         };
+
+        let editor_handle = editor.clone();
+
+        editor
+            .update(cx, |editor, _cx| {
+                setup_editor_session_actions(editor, editor_handle);
+            })
+            .ok();
 
         let mut session = Self {
             fs,

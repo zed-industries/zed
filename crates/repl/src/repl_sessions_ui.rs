@@ -97,58 +97,6 @@ pub fn init(cx: &mut AppContext) {
                 }
             })
             .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &ClearOutputs, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::clear_outputs(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Interrupt, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::interrupt(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Shutdown, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::shutdown(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Restart, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::restart(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
     })
     .detach();
 }
