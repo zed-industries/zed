@@ -311,7 +311,6 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         Some(NSF18FunctionKey) => "f18".to_string(),
         Some(NSF19FunctionKey) => "f19".to_string(),
         _ => {
-
             // Cases to test when modifying this:
             //
             //          qwerty key | none | cmd   | cmd-shift
