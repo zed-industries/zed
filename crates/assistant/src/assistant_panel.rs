@@ -4507,7 +4507,6 @@ impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
             .group("chat-title-group")
-            .pl_0p5()
             .gap_1()
             .items_center()
             .flex_grow()
@@ -4598,6 +4597,7 @@ impl Render for ContextEditorToolbarItem {
             .children(self.render_remaining_tokens(cx));
 
         h_flex()
+            .px_0p5()
             .size_full()
             .gap_2()
             .justify_between()
