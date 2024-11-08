@@ -1230,8 +1230,7 @@ impl Image {
     pub fn use_render_image(self: Arc<Self>, cx: &mut WindowContext) -> Option<Arc<RenderImage>> {
         ImageSource::Image(self)
             .use_data(cx)
-            .map(|result| result.ok())
-            .flatten()
+            .and_then(|result| result.ok())
     }
 
     /// Convert the clipboard image to an `ImageData` object.
