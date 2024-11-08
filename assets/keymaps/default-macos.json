@@ -51,14 +51,13 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       "ctrl-t": "editor::Transpose",
-      "alt-q": "editor::Rewrap",
+      "cmd-k q": "editor::Rewrap",
+      "cmd-k cmd-q": "editor::Rewrap",
       "cmd-backspace": "editor::DeleteToBeginningOfLine",
       "cmd-delete": "editor::DeleteToEndOfLine",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-w": "editor::DeleteToPreviousWordStart",
       "alt-delete": "editor::DeleteToNextWordEnd",
-      "alt-h": "editor::DeleteToPreviousWordStart",
-      "alt-d": "editor::DeleteToNextWordEnd",
       "cmd-x": "editor::Cut",
       "cmd-c": "editor::Copy",
       "cmd-v": "editor::Paste",
@@ -86,9 +85,7 @@
       "ctrl-f": "editor::MoveRight",
       "ctrl-l": "editor::ScrollCursorCenter",
       "alt-left": "editor::MoveToPreviousWordStart",
-      "alt-b": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
-      "alt-f": "editor::MoveToNextWordEnd",
       "cmd-left": "editor::MoveToBeginningOfLine",
       "ctrl-a": "editor::MoveToBeginningOfLine",
       "cmd-right": "editor::MoveToEndOfLine",
@@ -104,9 +101,7 @@
       "shift-right": "editor::SelectRight",
       "ctrl-shift-f": "editor::SelectRight",
       "alt-shift-left": "editor::SelectToPreviousWordStart", // cursorWordLeftSelect
-      "alt-shift-b": "editor::SelectToPreviousWordStart",
       "alt-shift-right": "editor::SelectToNextWordEnd", // cursorWordRightSelect
-      "alt-shift-f": "editor::SelectToNextWordEnd",
       "ctrl-shift-up": "editor::SelectToStartOfParagraph",
       "ctrl-shift-down": "editor::SelectToEndOfParagraph",
       "cmd-shift-up": "editor::SelectToBeginning",
@@ -121,7 +116,7 @@
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       "ctrl-v": ["editor::MovePageDown", { "center_cursor": true }],
-      "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
+      "ctrl-shift-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-cmd-space": "editor::ShowCharacterPalette",
       "cmd-;": "editor::ToggleLineNumbers",
       "cmd-alt-z": "editor::RevertSelectedHunks",
@@ -140,7 +135,7 @@
       "shift-enter": "editor::Newline",
       "cmd-enter": "editor::NewlineBelow",
       "cmd-shift-enter": "editor::NewlineAbove",
-      "alt-z": "editor::ToggleSoftWrap",
+      "cmd-k z": "editor::ToggleSoftWrap",
       "cmd-f": "buffer_search::Deploy",
       "cmd-alt-f": ["buffer_search::Deploy", { "replace_enabled": true }],
       "cmd-alt-l": ["buffer_search::Deploy", { "selection_search_enabled": true }],
@@ -191,7 +186,7 @@
       "cmd-k c": "assistant::CopyCode",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector",
+      "cmd-shift-m": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
       "cmd-n": "assistant::NewContext"
@@ -364,7 +359,6 @@
       "cmd-k cmd-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
-      "alt-cmd-r": "editor::RevealInFileManager",
       "cmd-k r": "editor::RevealInFileManager",
       "cmd-k p": "editor::CopyPath",
       "cmd-\\": "pane::SplitRight",
@@ -457,7 +451,9 @@
   {
     "context": "Workspace && !Terminal",
     "bindings": {
-      "alt-t": "task::Rerun",
+      "cmd-shift-r": "task::Spawn",
+      "cmd-alt-r": "task::Rerun",
+      "alt-t": "task::Spawn",
       "alt-shift-t": "task::Spawn"
     }
   },
@@ -577,9 +573,11 @@
       "cmd-alt-c": "outline_panel::CopyPath",
       "alt-cmd-shift-c": "outline_panel::CopyRelativePath",
       "alt-cmd-r": "outline_panel::RevealInFileManager",
-      "space": ["outline_panel::Open", { "change_selection": false }],
+      "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
-      "shift-up": "menu::SelectPrev"
+      "shift-up": "menu::SelectPrev",
+      "alt-enter": "editor::OpenExcerpts",
+      "cmd-k enter": "editor::OpenExcerptsSplit"
     }
   },
   {
@@ -604,7 +602,7 @@
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
-      "alt-shift-f": "project_panel::NewSearchInDirectory",
+      "cmd-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
       "escape": "menu::Cancel"

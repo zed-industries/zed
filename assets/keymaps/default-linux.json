@@ -56,7 +56,8 @@
       "shift-tab": "editor::TabPrev",
       "ctrl-k": "editor::CutToEndOfLine",
       // "ctrl-t": "editor::Transpose",
-      "alt-q": "editor::Rewrap",
+      "ctrl-k ctrl-q": "editor::Rewrap",
+      "ctrl-k q": "editor::Rewrap",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
       "shift-delete": "editor::Cut",
@@ -126,7 +127,8 @@
       "shift-enter": "editor::Newline",
       "ctrl-enter": "editor::NewlineAbove",
       "ctrl-shift-enter": "editor::NewlineBelow",
-      "alt-z": "editor::ToggleSoftWrap",
+      "ctrl-k ctrl-z": "editor::ToggleSoftWrap",
+      "ctrl-k z": "editor::ToggleSoftWrap",
       "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
       // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
@@ -169,7 +171,7 @@
       "ctrl-k c": "assistant::CopyCode",
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
-      "alt-m": "assistant::ToggleModelSelector",
+      "ctrl-shift-m": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
       "ctrl-k l": "assistant::DeployPromptLibrary",
       "ctrl-n": "assistant::NewContext"
@@ -326,7 +328,6 @@
       "ctrl-k ctrl-j": "editor::UnfoldAll",
       "ctrl-space": "editor::ShowCompletions",
       "ctrl-.": "editor::ToggleCodeActions",
-      "alt-ctrl-r": "editor::RevealInFileManager",
       "ctrl-k r": "editor::RevealInFileManager",
       "ctrl-k p": "editor::CopyPath",
       "ctrl-\\": "pane::SplitRight",
@@ -417,6 +418,8 @@
       "ctrl-k shift-up": ["workspace::SwapPaneInDirection", "Up"],
       "ctrl-k shift-down": ["workspace::SwapPaneInDirection", "Down"],
       "ctrl-shift-x": "zed::Extensions",
+      "ctrl-shift-r": "task::Rerun",
+      "ctrl-alt-r": "task::Rerun",
       "alt-t": "task::Rerun",
       "alt-shift-t": "task::Spawn"
     }
@@ -564,9 +567,11 @@
       "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFileManager",
-      "space": ["outline_panel::Open", { "change_selection": false }],
+      "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
-      "shift-up": "menu::SelectPrev"
+      "shift-up": "menu::SelectPrev",
+      "alt-enter": "editor::OpenExcerpts",
+      "ctrl-k enter": "editor::OpenExcerptsSplit"
     }
   },
   {
@@ -587,7 +592,7 @@
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
-      "alt-shift-f": "project_panel::NewSearchInDirectory",
+      "ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
       "escape": "menu::Cancel"

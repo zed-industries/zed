@@ -80,13 +80,20 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<Self> {
-        // Note: The release channel can be used to stage a new version of the extension API.
-        let allow_latest_version = match release_channel {
-            ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
-            ReleaseChannel::Stable | ReleaseChannel::Preview => false,
-        };
-
-        if allow_latest_version && version >= latest::MIN_VERSION {
+        if version >= latest::MIN_VERSION {
+            // Note: The release channel can be used to stage a new version of the extension API.
+            // We always allow the latest in tests so that the extension tests pass on release branches.
+            let allow_latest_version = match release_channel {
+                ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
+                ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                    cfg!(any(test, feature = "test-support"))
+                }
+            };
+            if !allow_latest_version {
+                Err(anyhow!(
+                    "unreleased versions of the extension API can only be used on development builds of Zed"
+                ))?;
+            }
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await

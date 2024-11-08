@@ -8,7 +8,7 @@ use context_servers::{
     manager::{ContextServer, ContextServerManager},
     types::Prompt,
 };
-use gpui::{AppContext, Task, WeakView, WindowContext};
+use gpui::{AppContext, Model, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -19,15 +19,21 @@ use workspace::Workspace;
 use crate::slash_command::create_label_for_command;
 
 pub struct ContextServerSlashCommand {
+    server_manager: Model<ContextServerManager>,
     server_id: String,
     prompt: Prompt,
 }
 
 impl ContextServerSlashCommand {
-    pub fn new(server: &Arc<ContextServer>, prompt: Prompt) -> Self {
+    pub fn new(
+        server_manager: Model<ContextServerManager>,
+        server: &Arc<ContextServer>,
+        prompt: Prompt,
+    ) -> Self {
         Self {
             server_id: server.id.clone(),
             prompt,
+            server_manager,
         }
     }
 }
@@ -74,18 +80,14 @@ impl SlashCommand for ContextServerSlashCommand {
         _workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
+        let Ok((arg_name, arg_value)) = completion_argument(&self.prompt, arguments) else {
+            return Task::ready(Err(anyhow!("Failed to complete argument")));
+        };
+
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
-        let manager = ContextServerManager::global(cx);
-        let manager = manager.read(cx);
 
-        let (arg_name, arg_val) = match completion_argument(&self.prompt, arguments) {
-            Ok(tp) => tp,
-            Err(e) => {
-                return Task::ready(Err(e));
-            }
-        };
-        if let Some(server) = manager.get_server(&server_id) {
+        if let Some(server) = self.server_manager.read(cx).get_server(&server_id) {
             cx.foreground_executor().spawn(async move {
                 let Some(protocol) = server.client.read().clone() else {
                     return Err(anyhow!("Context server not initialized"));
@@ -100,7 +102,7 @@ impl SlashCommand for ContextServerSlashCommand {
                             },
                         ),
                         arg_name,
-                        arg_val,
+                        arg_value,
                     )
                     .await?;
 
@@ -138,8 +140,7 @@ impl SlashCommand for ContextServerSlashCommand {
             Err(e) => return Task::ready(Err(e)),
         };
 
-        let manager = ContextServerManager::global(cx);
-        let manager = manager.read(cx);
+        let manager = self.server_manager.read(cx);
         if let Some(server) = manager.get_server(&server_id) {
             cx.foreground_executor().spawn(async move {
                 let Some(protocol) = server.client.read().clone() else {

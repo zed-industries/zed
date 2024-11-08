@@ -74,7 +74,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
                         run_commands_in_text: false,
                     },
                 )))?;
-                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
 
                 Timer::after(Duration::from_secs(1)).await;
 
@@ -89,7 +89,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
                         run_commands_in_text: false,
                     },
                 )))?;
-                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
 
                 for n in 1..=10 {
                     Timer::after(Duration::from_secs(1)).await;
@@ -105,8 +105,7 @@ impl SlashCommand for StreamingExampleSlashCommand {
                             run_commands_in_text: false,
                         },
                     )))?;
-                    events_tx
-                        .unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                    events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
                 }
 
                 anyhow::Ok(())

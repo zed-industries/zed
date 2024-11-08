@@ -139,7 +139,7 @@ impl Keymap {
     pub fn bindings_for_input(
         &self,
         input: &[Keystroke],
-        context_path: &[KeyContext],
+        context_stack: &[KeyContext],
     ) -> (SmallVec<[KeyBinding; 1]>, bool) {
         let possibilities = self.bindings().rev().filter_map(|binding| {
             binding
@@ -151,8 +151,8 @@ impl Keymap {
         let mut is_pending = None;
 
         'outer: for (binding, pending) in possibilities {
-            for depth in (0..=context_path.len()).rev() {
-                if self.binding_enabled(binding, &context_path[0..depth]) {
+            for depth in (0..=context_stack.len()).rev() {
+                if self.binding_enabled(binding, &context_stack[0..depth]) {
                     if is_pending.is_none() {
                         is_pending = Some(pending);
                     }

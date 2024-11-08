@@ -113,7 +113,10 @@ impl InitializedContextServerProtocol {
 
         let response: types::PromptsListResponse = self
             .inner
-            .request(types::RequestType::PromptsList.as_str(), ())
+            .request(
+                types::RequestType::PromptsList.as_str(),
+                serde_json::json!({}),
+            )
             .await?;
 
         Ok(response.prompts)
@@ -125,7 +128,10 @@ impl InitializedContextServerProtocol {
 
         let response: types::ResourcesListResponse = self
             .inner
-            .request(types::RequestType::ResourcesList.as_str(), ())
+            .request(
+                types::RequestType::ResourcesList.as_str(),
+                serde_json::json!({}),
+            )
             .await?;
 
         Ok(response)

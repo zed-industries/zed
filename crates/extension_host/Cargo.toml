@@ -12,6 +12,9 @@ workspace = true
 path = "src/extension_host.rs"
 doctest = false
 
+[features]
+test-support = []
+
 [dependencies]
 anyhow.workspace = true
 async-compression.workspace = true

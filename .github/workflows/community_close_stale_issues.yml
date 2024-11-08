@@ -6,6 +6,7 @@ on:
 
 jobs:
   stale:
+    if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/stale@28ca1036281a5e5922ead5184a1bbf96e5fc984e # v9

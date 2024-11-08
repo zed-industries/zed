@@ -924,18 +924,22 @@ impl Terminal {
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
-                    let (sanitized_match, sanitized_word) =
-                        if file_path.starts_with('[') && file_path.ends_with(']') {
-                            (
-                                Match::new(
-                                    word_match.start().add(term, Boundary::Cursor, 1),
-                                    word_match.end().sub(term, Boundary::Cursor, 1),
-                                ),
-                                file_path[1..file_path.len() - 1].to_owned(),
-                            )
-                        } else {
-                            (word_match, file_path)
-                        };
+                    let (sanitized_match, sanitized_word) = if file_path.starts_with('[')
+                        && file_path.ends_with(']')
+                        // this is to avoid sanitizing the match '[]' to an empty string,
+                        // which would be considered a valid navigation target
+                        && file_path.len() > 2
+                    {
+                        (
+                            Match::new(
+                                word_match.start().add(term, Boundary::Cursor, 1),
+                                word_match.end().sub(term, Boundary::Cursor, 1),
+                            ),
+                            file_path[1..file_path.len() - 1].to_owned(),
+                        )
+                    } else {
+                        (word_match, file_path)
+                    };
 
                     Some((sanitized_word, false, sanitized_match))
                 } else {
