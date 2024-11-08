@@ -2643,7 +2643,7 @@ impl ProjectPanel {
                             entry_id,
                             cx.modifiers().secondary(),
                             !preview_tabs_enabled || click_count > 1,
-                            !preview_tabs_enabled && click_count == 1,
+                            preview_tabs_enabled && click_count == 1,
                             cx,
                         );
                     }
