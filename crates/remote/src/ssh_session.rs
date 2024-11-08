@@ -1395,11 +1395,11 @@ impl SshRemoteConnection {
             |mut cx| async move {
                 let mut askpass_opened_tx = Some(askpass_opened_tx);
 
-                let x = listener.accept().await;
-                println!("--> opening prompt, {:?}", x);
-                std::thread::sleep(std::time::Duration::from_secs(10));
-                let x = listener.accept().await;
-                println!("--> opening prompt, {:?}", x);
+                // let x = listener.accept().await;
+                // println!("--> opening prompt, {:?}", x);
+                // std::thread::sleep(std::time::Duration::from_secs(10));
+                // let x = listener.accept().await;
+                // println!("--> opening prompt, {:?}", x);
                 while let Ok((mut stream, _)) = listener.accept().await {
                     if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
                         askpass_opened_tx.send(()).ok();
@@ -1452,17 +1452,17 @@ impl SshRemoteConnection {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .env("SSH_ASKPASS_REQUIRE", "force")
+            // .env("SSH_ASKPASS_REQUIRE", "force")
             // .env("SSH_ASKPASS", &askpass_script_path)
             .args(connection_options.additional_args().unwrap_or(&Vec::new()))
-            // .args([
-            //     "-N",
-            //     "-o",
-            //     "ControlPersist=no",
-            //     "-o",
-            //     "ControlMaster=yes",
-            //     "-o",
-            // ])
+            .args([
+                "-N",
+                // "-o",
+                // "ControlPersist=no",
+                // "-o",
+                // "ControlMaster=yes",
+                // "-o",
+            ])
             // .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .kill_on_drop(true)

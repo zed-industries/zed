@@ -17,7 +17,8 @@ smol.workspace = true
 async-io = "1.13"
 
 [target.'cfg(windows)'.dependencies]
-windows.workspace = true
+# windows.workspace = true
+uds_windows = "*"
 
 [dev-dependencies]
 # futures-lite = "*"
