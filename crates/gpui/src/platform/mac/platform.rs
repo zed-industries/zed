@@ -136,6 +136,11 @@ unsafe fn build_classes() {
             open_urls as extern "C" fn(&mut Object, Sel, id, id),
         );
 
+        decl.add_method(
+            sel!(onKeyboardLayoutChange:),
+            on_keyboard_layout_change as extern "C" fn(&mut Object, Sel, id),
+        );
+
         decl.register()
     }
 }
@@ -152,6 +157,7 @@ pub(crate) struct MacPlatformState {
     text_hash_pasteboard_type: id,
     metadata_pasteboard_type: id,
     reopen: Option<Box<dyn FnMut()>>,
+    on_keyboard_layout_change: Option<Box<dyn FnMut()>>,
     quit: Option<Box<dyn FnMut()>>,
     menu_command: Option<Box<dyn FnMut(&dyn Action)>>,
     validate_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
@@ -196,6 +202,7 @@ impl MacPlatform {
             open_urls: None,
             finish_launching: None,
             dock_menu: None,
+            on_keyboard_layout_change: None,
         }))
     }
 
@@ -785,6 +792,10 @@ impl Platform for MacPlatform {
         self.0.lock().reopen = Some(callback);
     }
 
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().on_keyboard_layout_change = Some(callback);
+    }
+
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.0.lock().menu_command = Some(callback);
     }
@@ -795,6 +806,22 @@ impl Platform for MacPlatform {
 
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>) {
         self.0.lock().validate_menu_command = Some(callback);
+    }
+
+    fn keyboard_layout(&self) -> String {
+        unsafe {
+            let current_keyboard = TISCopyCurrentKeyboardLayoutInputSource();
+
+            let input_source_id: *mut Object = TISGetInputSourceProperty(
+                current_keyboard,
+                kTISPropertyInputSourceID as *const c_void,
+            );
+            let input_source_id: *const std::os::raw::c_char =
+                msg_send![input_source_id, UTF8String];
+            let input_source_id = CStr::from_ptr(input_source_id).to_str().unwrap();
+
+            input_source_id.to_string()
+        }
     }
 
     fn app_path(&self) -> Result<PathBuf> {
@@ -1259,6 +1286,16 @@ extern "C" fn did_finish_launching(this: &mut Object, _: Sel, _: id) {
     unsafe {
         let app: id = msg_send![APP_CLASS, sharedApplication];
         app.setActivationPolicy_(NSApplicationActivationPolicyRegular);
+
+        let notification_center: *mut Object =
+            msg_send![class!(NSNotificationCenter), defaultCenter];
+        let name = ns_string("NSTextInputContextKeyboardSelectionDidChangeNotification");
+        let _: () = msg_send![notification_center, addObserver: this as id
+            selector: sel!(onKeyboardLayoutChange:)
+            name: name
+            object: nil
+        ];
+
         let platform = get_mac_platform(this);
         let callback = platform.0.lock().finish_launching.take();
         if let Some(callback) = callback {
@@ -1286,6 +1323,20 @@ extern "C" fn will_terminate(this: &mut Object, _: Sel, _: id) {
         drop(lock);
         callback();
         platform.0.lock().quit.get_or_insert(callback);
+    }
+}
+
+extern "C" fn on_keyboard_layout_change(this: &mut Object, _: Sel, _: id) {
+    let platform = unsafe { get_mac_platform(this) };
+    let mut lock = platform.0.lock();
+    if let Some(mut callback) = lock.on_keyboard_layout_change.take() {
+        drop(lock);
+        callback();
+        platform
+            .0
+            .lock()
+            .on_keyboard_layout_change
+            .get_or_insert(callback);
     }
 }
 
@@ -1393,6 +1444,17 @@ unsafe fn ns_url_to_path(url: id) -> Result<PathBuf> {
             CStr::from_ptr(path).to_bytes(),
         )))
     }
+}
+
+#[link(name = "Carbon", kind = "framework")]
+extern "C" {
+    fn TISCopyCurrentKeyboardLayoutInputSource() -> *mut Object;
+    fn TISGetInputSourceProperty(
+        inputSource: *mut Object,
+        propertyKey: *const c_void,
+    ) -> *mut Object;
+
+    pub static kTISPropertyInputSourceID: CFStringRef;
 }
 
 mod security {
