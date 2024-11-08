@@ -7035,103 +7035,14 @@ impl Editor {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let row_ranges = self.selections.all_row_ranges(cx);
         let mut edits = Vec::new();
-        let mut last_wrapped_row = None;
 
-        for row_range in row_ranges.iter() {
-            let mut start_row = row_range.start().0;
-            let mut end_row = row_range.end().0;
-
-            let mut should_rewrap = is_vim_mode == IsVimMode::Yes;
-
-            let start_point = Point::new(start_row, 0);
-            let scope = buffer.language_scope_at(start_point);
-            if let Some(language_scope) = &scope {
-                match language_scope.language_name().0.as_ref() {
-                    "Markdown" | "Plain Text" => {
-                        should_rewrap = true;
-                    }
-                    _ => {}
-                }
-            }
-
-            let tab_size = buffer.settings_at(start_point, cx).tab_size;
-
-            // Since not all lines in the selection may be at the same indent level, choose the indent size that is the most common between all of the lines.
-            //
-            // If there is a tie, we use the deepest indent.
-            let (indent_size, indent_end) = {
-                let mut indent_size_occurrences = HashMap::default();
-                let mut rows_by_indent_size = HashMap::<IndentSize, Vec<u32>>::default();
-
-                for row in start_row..=end_row {
-                    let indent = buffer.indent_size_for_line(MultiBufferRow(row));
-                    rows_by_indent_size.entry(indent).or_default().push(row);
-                    *indent_size_occurrences.entry(indent).or_insert(0) += 1;
-                }
-
-                let indent_size = indent_size_occurrences
-                    .into_iter()
-                    .max_by_key(|(indent, count)| (*count, indent.len_with_expanded_tabs(tab_size)))
-                    .map(|(indent, _)| indent)
-                    .unwrap_or_default();
-                let row = rows_by_indent_size[&indent_size][0];
-                let indent_end = Point::new(row, indent_size.len);
-
-                (indent_size, indent_end)
-            };
-
-            let mut line_prefix = indent_size.chars().collect::<String>();
-
-            if let Some(comment_prefix) = scope.and_then(|language| {
-                language
-                    .line_comment_prefixes()
-                    .iter()
-                    .find(|prefix| buffer.contains_str_at(indent_end, prefix.trim_end()))
-                    .cloned()
-            }) {
-                line_prefix.push_str(&comment_prefix);
-                should_rewrap = true;
-            }
-
-            if !should_rewrap {
-                continue;
-            }
-
-            'expand_upwards: while start_row > last_wrapped_row.unwrap_or(0) {
-                let prev_row = start_row - 1;
-                if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
-                    && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
-                {
-                    start_row = prev_row;
-                } else {
-                    break 'expand_upwards;
-                }
-            }
-
-            'expand_downwards: while end_row < buffer.max_point().row {
-                let next_row = end_row + 1;
-                if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
-                    && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
-                {
-                    end_row = next_row;
-                } else {
-                    break 'expand_downwards;
-                }
-            }
-
-            // Avoid rewrapping due
-            if let Some(last_wrapped_row) = last_wrapped_row {
-                start_row = start_row.max(last_wrapped_row + 1);
-            }
-            last_wrapped_row = Some(end_row);
-            if start_row > end_row {
-                continue;
-            }
-
-            let start = Point::new(start_row, 0);
-            let end = Point::new(end_row, buffer.line_len(MultiBufferRow(end_row)));
+        for wrap_range in find_wrap_ranges_in_row_ranges(row_ranges, only_wrap_comments_or_plaintext, cx) {
+            let start = Point::new(wrap_range.row_range.start.0, 0);
+            let end_row = wrap_range.row_range.end;
+            let end = Point::new(end_row.0, buffer.line_len(end_row));
+            let line_prefix = wrap_range.line_prefix;
             let selection_text = buffer.text_for_range(start..end).collect::<String>();
-            let Some(lines_without_prefixes) = selection_text
+            let lines_without_prefixes = selection_text
                 .lines()
                 .map(|line| {
                     line.strip_prefix(&line_prefix)
@@ -7141,19 +7052,13 @@ impl Editor {
                         })
                 })
                 .collect::<Result<Vec<_>, _>>()
-                .log_err()
-            else {
-                continue;
-            };
+                .log_err();
 
-            let wrap_column = buffer
-                .settings_at(Point::new(start_row, 0), cx)
-                .preferred_line_length as usize;
             let wrapped_text = wrap_with_prefix(
                 line_prefix,
                 lines_without_prefixes.join(" "),
-                wrap_column,
-                tab_size,
+                wrap_range.wrap_column,
+                wrap_range.tab_size,
             );
 
             // TODO: should always use char-based diff while still supporting cursor behavior that
@@ -7162,41 +7067,7 @@ impl Editor {
                 IsVimMode::Yes => TextDiff::from_lines(&selection_text, &wrapped_text),
                 IsVimMode::No => TextDiff::from_chars(&selection_text, &wrapped_text),
             };
-            let mut offset = start.to_offset(&buffer);
-            let mut moved_since_edit = true;
-
-            for change in diff.iter_all_changes() {
-                let value = change.value();
-                match change.tag() {
-                    ChangeTag::Equal => {
-                        offset += value.len();
-                        moved_since_edit = true;
-                    }
-                    ChangeTag::Delete => {
-                        let start = buffer.anchor_after(offset);
-                        let end = buffer.anchor_before(offset + value.len());
-
-                        if moved_since_edit {
-                            edits.push((start..end, String::new()));
-                        } else {
-                            edits.last_mut().unwrap().0.end = end;
-                        }
-
-                        offset += value.len();
-                        moved_since_edit = false;
-                    }
-                    ChangeTag::Insert => {
-                        if moved_since_edit {
-                            let anchor = buffer.anchor_after(offset);
-                            edits.push((anchor..anchor, value.to_string()));
-                        } else {
-                            edits.last_mut().unwrap().1.push_str(value);
-                        }
-
-                        moved_since_edit = false;
-                    }
-                }
-            }
+            add_diff_to_edits(&buffer, start, &diff, &edits);
         }
 
         self.buffer
@@ -14967,3 +14838,173 @@ fn check_multiline_range(buffer: &Buffer, range: Range<usize>) -> Range<usize> {
 }
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
+struct WrapRange {
+    row_range: Range<MultiBufferRow>,
+    line_prefix: String,
+    wrap_column: usize,
+    tab_size: NonZeroU32,
+}
+
+fn row_range_to_anchor_range(buffer: &MultiBufferSnapshot, row_range: RangeInclusive<MultiBufferRow>) -> Range<Anchor> {
+    let start_anchor = buffer.anchor_after(Point::new(row_range.start().0, 0));
+    // FIXME: does this need to use the line length instead?
+    let end_anchor = buffer.anchor_before(Point::new(row_range.end().0 + 1, 0));
+    start_anchor..end_anchor
+}
+
+fn find_wrap_ranges_in_row_ranges(
+    snapshot: &MultiBufferSnapshot,
+    row_ranges: Vec<RangeInclusive<MultiBufferRow>>,
+    only_wrap_comments_or_plaintext: bool,
+    cx: &mut AppContext,
+) -> Vec<WrapRange> {
+    let mut results = Vec::new();
+    let mut last_wrapped_row = None;
+
+    let anchor_ranges = row_ranges.iter().map(|row_range| row_range_to_anchor_range(&snapshot, row_range)).collect();
+
+    for (excerpt_id, excerpt_buffer, range) in snapshot.excerpts_in_ranges(anchor_ranges) {
+    }
+
+    for row_range in row_ranges.iter() {
+        for row in row_range.iter_rows() {
+            let beginning_point = Point::new(row, 0);
+            let scope = buffer.language_scope_at(beginning_point);
+            let always_wrap = !only_wrap_comments_or_plaintext || (let Some(language_scope) = &scope) {
+                match language_scope.language_name().0.as_ref() {
+                    "Markdown" | "Plain Text" => true,
+                    _ => false,
+                }
+            });
+        }
+
+        /*
+
+        'expand_upwards: while start_row > last_wrapped_row.unwrap_or(0) {
+            let prev_row = start_row - 1;
+            if buffer.contains_str_at(Point::new(prev_row, 0), &line_prefix)
+                && buffer.line_len(MultiBufferRow(prev_row)) as usize > line_prefix.len()
+            {
+                start_row = prev_row;
+            } else {
+                break 'expand_upwards;
+            }
+        }
+
+        'expand_downwards: while end_row < buffer.max_point().row {
+            let next_row = end_row + 1;
+            if buffer.contains_str_at(Point::new(next_row, 0), &line_prefix)
+                && buffer.line_len(MultiBufferRow(next_row)) as usize > line_prefix.len()
+            {
+                end_row = next_row;
+            } else {
+                break 'expand_downwards;
+            }
+        }
+
+        let settings = buffer.settings_at(start_point, cx)
+        let wrap_column = settings.preferred_line_length as usize;;
+        let tab_size = settings.tab_size();
+
+        // Since not all lines in the selection may be at the same indent level, choose the indent size that is the most common between all of the lines.
+        //
+        // If there is a tie, we use the deepest indent.
+        let (indent_size, indent_end) = {
+            let mut indent_size_occurrences = HashMap::default();
+            let mut rows_by_indent_size = HashMap::<IndentSize, Vec<u32>>::default();
+
+            for row in start_row..=end_row {
+                let indent = buffer.indent_size_for_line(MultiBufferRow(row));
+                rows_by_indent_size.entry(indent).or_default().push(row);
+                *indent_size_occurrences.entry(indent).or_insert(0) += 1;
+            }
+
+            let indent_size = indent_size_occurrences
+                .into_iter()
+                .max_by_key(|(indent, count)| (*count, indent.len_with_expanded_tabs(tab_size)))
+                .map(|(indent, _)| indent)
+                .unwrap_or_default();
+            let row = rows_by_indent_size[&indent_size][0];
+            let indent_end = Point::new(row, indent_size.len);
+
+            (indent_size, indent_end)
+        };
+
+        let mut line_prefix = indent_size.chars().collect::<String>();
+
+        if let Some(comment_prefix) = scope.and_then(|language| {
+            language
+                .line_comment_prefixes()
+                .iter()
+                .find(|prefix| buffer.contains_str_at(indent_end, prefix.trim_end()))
+                .cloned()
+        }) {
+            line_prefix.push_str(&comment_prefix);
+            should_rewrap = true;
+        }
+
+        if !should_rewrap {
+            continue;
+        }
+
+
+        // Avoid rewrapping due
+        if let Some(last_wrapped_row) = last_wrapped_row {
+            start_row = start_row.max(last_wrapped_row + 1);
+        }
+        last_wrapped_row = Some(end_row);
+        if start_row > end_row {
+            continue;
+        }
+
+;
+        */
+
+        results.push(WrapRange {
+            row_range: start_row..=end_row,
+            line_prefix,
+            wrap_column,
+            tab_size
+        })
+    }
+    results
+}
+
+pub fn add_diff_to_edits(buffer: &MultiBufferSnapshot, start: Point, diff: &TextDiff<String>, edits: &mut Vec<(Range<Point>, String)>) {
+    let mut offset = start.to_offset(&buffer);
+    let mut moved_since_edit = true;
+
+    for change in diff.iter_all_changes() {
+        let value = change.value();
+        match change.tag() {
+            ChangeTag::Equal => {
+                offset += value.len();
+                moved_since_edit = true;
+            }
+            ChangeTag::Delete => {
+                let start = buffer.anchor_after(offset);
+                let end = buffer.anchor_before(offset + value.len());
+
+                if moved_since_edit {
+                    edits.push((start..end, String::new()));
+                } else {
+                    edits.last_mut().unwrap().0.end = end;
+                }
+
+                offset += value.len();
+                moved_since_edit = false;
+            }
+            ChangeTag::Insert => {
+                if moved_since_edit {
+                    let anchor = buffer.anchor_after(offset);
+                    edits.push((anchor..anchor, value.to_string()));
+                } else {
+                    edits.last_mut().unwrap().1.push_str(value);
+                }
+
+                moved_since_edit = false;
+            }
+        }
+    }
+}
