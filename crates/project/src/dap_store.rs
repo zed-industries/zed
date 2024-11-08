@@ -83,6 +83,8 @@ pub struct DapStore {
 impl EventEmitter<DapStoreEvent> for DapStore {}
 
 impl DapStore {
+    const INDEX_STARTS_AT_ONE: bool = true;
+
     pub fn new(
         http_client: Option<Arc<dyn HttpClient>>,
         node_runtime: Option<NodeRuntime>,
@@ -396,8 +398,8 @@ impl DapStore {
                     supports_memory_references: Some(true),
                     supports_progress_reporting: Some(false),
                     supports_invalidated_event: Some(false),
-                    lines_start_at1: Some(false),
-                    columns_start_at1: Some(false),
+                    lines_start_at1: Some(Self::INDEX_STARTS_AT_ONE),
+                    columns_start_at1: Some(Self::INDEX_STARTS_AT_ONE),
                     supports_memory_event: Some(false),
                     supports_args_can_be_interpreted_by_shell: Some(false),
                     supports_start_debugging_request: Some(true),
@@ -1082,12 +1084,16 @@ impl DapStore {
         &self,
         client_id: &DebugAdapterClientId,
         absolute_file_path: Arc<Path>,
-        breakpoints: Vec<SourceBreakpoint>,
+        mut breakpoints: Vec<SourceBreakpoint>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
             return Task::ready(Err(anyhow!("Could not found client")));
         };
+
+        if Self::INDEX_STARTS_AT_ONE {
+            breakpoints.iter_mut().for_each(|bp| bp.line += 1u64)
+        }
 
         cx.background_executor().spawn(async move {
             client
@@ -1235,11 +1241,16 @@ impl Breakpoint {
             .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
             .unwrap_or(self.cache_position) as u64;
 
+        let log_message = match &self.kind {
+            BreakpointKind::Standard => None,
+            BreakpointKind::Log(message) => Some(message.clone().to_string()),
+        };
+
         SourceBreakpoint {
             line,
             condition: None,
             hit_condition: None,
-            log_message: None,
+            log_message,
             column: None,
             mode: None,
         }
@@ -1290,7 +1301,7 @@ impl Breakpoint {
             Some(buffer) => SerializedBreakpoint {
                 position: self
                     .active_position
-                    .map(|position| buffer.summary_for_anchor::<Point>(&position).row + 1u32)
+                    .map(|position| buffer.summary_for_anchor::<Point>(&position).row)
                     .unwrap_or(self.cache_position),
                 path,
                 kind: self.kind.clone(),

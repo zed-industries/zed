@@ -69,6 +69,8 @@ pub enum DebugAdapterKind {
     Php(TCPHost),
     /// Use vscode-js-debug
     Javascript(TCPHost),
+    /// Use delve
+    Go(TCPHost),
     /// Use lldb
     Lldb,
 }
@@ -82,6 +84,7 @@ impl DebugAdapterKind {
             Self::Php(_) => "PHP",
             Self::Javascript(_) => "JavaScript",
             Self::Lldb => "LLDB",
+            Self::Go(_) => "Go",
         }
     }
 }

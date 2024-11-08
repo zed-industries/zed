@@ -1,4 +1,5 @@
 mod custom;
+mod go;
 mod javascript;
 mod lldb;
 mod php;
@@ -11,6 +12,7 @@ use dap::adapters::{
     self, AdapterVersion, DapDelegate, DebugAdapter, DebugAdapterBinary, DebugAdapterName,
     GithubRepo,
 };
+use go::GoDebugAdapter;
 use javascript::JsDebugAdapter;
 use lldb::LldbDebugAdapter;
 use php::PhpDebugAdapter;
@@ -30,5 +32,6 @@ pub async fn build_adapter(kind: &DebugAdapterKind) -> Result<Box<dyn DebugAdapt
             Ok(Box::new(JsDebugAdapter::new(host.clone()).await?))
         }
         DebugAdapterKind::Lldb => Ok(Box::new(LldbDebugAdapter::new())),
+        DebugAdapterKind::Go(host) => Ok(Box::new(GoDebugAdapter::new(host).await?)),
     }
 }
