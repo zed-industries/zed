@@ -8,7 +8,7 @@ use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
 use regex::Regex;
-use smol::fs::{self, File};
+use smol::fs::{self};
 use std::{
     any::Any,
     borrow::Cow,
@@ -79,14 +79,19 @@ impl LspAdapter for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let os_file = match consts::OS {
-            "macos" => "apple-darwin.gz",
-            "linux" => "unknown-linux-gnu.gz",
-            "windows" => "pc-windows-msvc.zip",
+        let os = match consts::OS {
+            "macos" => "apple-darwin",
+            "linux" => "unknown-linux-gnu",
+            "windows" => "pc-windows-msvc",
             other => bail!("Running on unsupported os: {other}"),
         };
         let arch = consts::ARCH;
-        let asset_name = format!("rust-analyzer-{arch}-{os_file}");
+        let suffix = if consts::OS == "windows" {
+            ".zip"
+        } else {
+            ".tar.gz"
+        };
+        let asset_name = format!("rust-analyzer-{arch}-{os}{suffix}");
         let asset = release
             .assets
             .iter()
@@ -105,32 +110,46 @@ impl LspAdapter for RustLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-        let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
 
-        if fs::metadata(&destination_path).await.is_err() {
+        let extract_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        let bin_path = match consts::OS {
+            "macos" | "linux" => extract_path.clone(),
+            "windows" => extract_path.clone().join("rust-analyzer.exe"),
+            other => bail!("Running on unsupported os: {other}"),
+        };
+
+        if fs::metadata(&bin_path).await.is_err() {
             let mut response = delegate
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-            let mut file = File::create(&destination_path).await?;
-            futures::io::copy(decompressed_bytes, &mut file).await?;
+            if version.url.ends_with(".zip") {
+                node_runtime::extract_zip(
+                    &extract_path,
+                    BufReader::new(response.body_mut()),
+                )
+                .await?;
+            } else if version.url.ends_with(".tar.gz") {
+                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                let archive = async_tar::Archive::new(decompressed_bytes);
+                archive.unpack(&extract_path).await?;
+            }
             // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
-                    &destination_path,
+                    &extract_path,
                     <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
                 )
                 .await?;
             }
 
-            remove_matching(&container_dir, |entry| entry != destination_path).await;
+            remove_matching(&container_dir, |entry| entry != extract_path).await;
         }
 
         Ok(LanguageServerBinary {
-            path: destination_path,
+            path: bin_path,
             env: None,
             arguments: Default::default(),
         })
