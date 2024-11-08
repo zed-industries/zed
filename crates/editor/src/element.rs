@@ -1968,10 +1968,10 @@ impl EditorElement {
 
     fn layout_lines(
         rows: Range<DisplayRow>,
-        line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         editor_width: Pixels,
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
@@ -2020,9 +2020,9 @@ impl EditorElement {
                 &style.text,
                 MAX_LINE_LEN,
                 rows.len(),
-                line_number_layouts,
                 snapshot.mode,
                 editor_width,
+                is_row_soft_wrapped,
                 cx,
             )
         }
@@ -2071,6 +2071,7 @@ impl EditorElement {
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         selections: &[Selection<Point>],
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
@@ -2083,8 +2084,15 @@ impl EditorElement {
                         line_layouts[align_to.row().minus(rows.start) as usize]
                             .x_for_index(align_to.column() as usize)
                     } else {
-                        layout_line(align_to.row(), snapshot, &self.style, editor_width, cx)
-                            .x_for_index(align_to.column() as usize)
+                        layout_line(
+                            align_to.row(),
+                            snapshot,
+                            &self.style,
+                            editor_width,
+                            is_row_soft_wrapped,
+                            cx,
+                        )
+                        .x_for_index(align_to.column() as usize)
                     };
 
                 let selected = selections
@@ -2447,6 +2455,7 @@ impl EditorElement {
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
         selections: &[Selection<Point>],
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2484,6 +2493,7 @@ impl EditorElement {
                 scroll_width,
                 &mut resized_blocks,
                 selections,
+                is_row_soft_wrapped,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2529,6 +2539,7 @@ impl EditorElement {
                 scroll_width,
                 &mut resized_blocks,
                 selections,
+                is_row_soft_wrapped,
                 cx,
             );
 
@@ -2575,6 +2586,7 @@ impl EditorElement {
                             scroll_width,
                             &mut resized_blocks,
                             selections,
+                            is_row_soft_wrapped,
                             cx,
                         );
 
@@ -4359,9 +4371,9 @@ impl LineWithInvisibles {
         text_style: &TextStyle,
         max_line_len: usize,
         max_line_count: usize,
-        line_number_layouts: &[Option<ShapedLine>],
         editor_mode: EditorMode,
         text_width: Pixels,
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
@@ -4489,12 +4501,9 @@ impl LineWithInvisibles {
                         if editor_mode == EditorMode::Full {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
-                            let inside_wrapped_string = line_number_layouts
-                                .get(row)
-                                .and_then(|layout| layout.as_ref())
-                                .is_none();
+                            let is_soft_wrapped = is_row_soft_wrapped(row);
                             if highlighted_chunk.is_tab {
-                                if non_whitespace_added || !inside_wrapped_string {
+                                if non_whitespace_added || !is_soft_wrapped {
                                     invisibles.push(Invisible::Tab {
                                         line_start_offset: line.len(),
                                         line_end_offset: line.len() + line_chunk.len(),
@@ -4510,7 +4519,7 @@ impl LineWithInvisibles {
                                                 (*line_byte as char).is_whitespace();
                                             non_whitespace_added |= !is_whitespace;
                                             is_whitespace
-                                                && (non_whitespace_added || !inside_wrapped_string)
+                                                && (non_whitespace_added || !is_soft_wrapped)
                                         })
                                         .map(|(whitespace_index, _)| Invisible::Whitespace {
                                             line_offset: line.len() + whitespace_index,
@@ -4873,10 +4882,10 @@ impl Element for EditorElement {
                                     editor_handle.update(cx, |editor, cx| editor.snapshot(cx));
                                 let line = Self::layout_lines(
                                     DisplayRow(0)..DisplayRow(1),
-                                    &[],
                                     &editor_snapshot,
                                     &style,
                                     px(f32::MAX),
+                                    |_| false, // Single lines never soft wrap
                                     cx,
                                 )
                                 .pop()
@@ -5085,6 +5094,8 @@ impl Element for EditorElement {
                         .buffer_rows(start_row)
                         .take((start_row..end_row).len())
                         .collect::<Vec<_>>();
+                    let is_row_soft_wrapped =
+                        |row| buffer_rows.get(row).copied().flatten().is_none();
 
                     let start_anchor = if start_row == Default::default() {
                         Anchor::min()
@@ -5176,10 +5187,10 @@ impl Element for EditorElement {
                     let mut max_visible_line_width = Pixels::ZERO;
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
-                        &line_numbers,
                         &snapshot,
                         &self.style,
                         editor_width,
+                        is_row_soft_wrapped,
                         cx,
                     );
                     for line_with_invisibles in &line_layouts {
@@ -5188,9 +5199,15 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let longest_line_width =
-                        layout_line(snapshot.longest_row(), &snapshot, &style, editor_width, cx)
-                            .width;
+                    let longest_line_width = layout_line(
+                        snapshot.longest_row(),
+                        &snapshot,
+                        &style,
+                        editor_width,
+                        is_row_soft_wrapped,
+                        cx,
+                    )
+                    .width;
                     let mut scroll_width =
                         longest_line_width.max(max_visible_line_width) + overscroll.width;
 
@@ -5208,6 +5225,7 @@ impl Element for EditorElement {
                             line_height,
                             &line_layouts,
                             &local_selections,
+                            is_row_soft_wrapped,
                             cx,
                         )
                     });
@@ -5966,6 +5984,7 @@ fn layout_line(
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
     text_width: Pixels,
+    is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
     cx: &mut WindowContext,
 ) -> LineWithInvisibles {
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
@@ -5974,9 +5993,9 @@ fn layout_line(
         &style.text,
         MAX_LINE_LEN,
         1,
-        &[],
         snapshot.mode,
         text_width,
+        is_row_soft_wrapped,
         cx,
     )
     .pop()
