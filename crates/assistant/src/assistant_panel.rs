@@ -1084,7 +1084,21 @@ impl AssistantPanel {
                 self.show_updated_summary(&context_editor, cx);
                 cx.notify()
             }
-            EditorEvent::Edited { .. } => cx.emit(AssistantPanelEvent::ContextEdited),
+            EditorEvent::Edited { .. } => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        let is_via_ssh = workspace
+                            .project()
+                            .update(cx, |project, _| project.is_via_ssh());
+
+                        workspace
+                            .client()
+                            .telemetry()
+                            .log_edit_event("assistant panel", is_via_ssh);
+                    })
+                    .log_err();
+                cx.emit(AssistantPanelEvent::ContextEdited)
+            }
             _ => {}
         }
     }
@@ -1533,6 +1547,7 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
+            context.read(cx).slash_commands.clone(),
             Some(cx.view().downgrade()),
             Some(workspace.clone()),
         );
