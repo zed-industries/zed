@@ -13,7 +13,7 @@ use collections::HashMap;
 // as cmd-> on a QWERTY layout.
 //
 // Another example is cmd-[ and cmd-], as they cannot be typed without option, those keys are remapped to cmd-ö
-// and cmd-ä. These shortcuts are not in the same position as a QWERTY keyboard, beause on a QWERTZ keyboard
+// and cmd-ä. These shortcuts are not in the same position as a QWERTY keyboard, because on a QWERTZ keyboard
 // the + key is in the way; and shortcuts bound to cmd-+ are still typed as cmd-+ on either keyboard (though the
 // specific key moves)
 //

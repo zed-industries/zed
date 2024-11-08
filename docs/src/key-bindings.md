@@ -134,7 +134,7 @@ When this happens, and both bindings are active in the current context, Zed will
 
 ### Non-QWERTY keyboards
 
-As of Zed 0.162.0, Zed has some suppoort for non-QWERTY keyboards on macOS. Better support for non-QWERTY keyboards on Linux is planned.
+As of Zed 0.162.0, Zed has some support for non-QWERTY keyboards on macOS. Better support for non-QWERTY keyboards on Linux is planned.
 
 There are roughly three categories of keyboard to consider:
 
