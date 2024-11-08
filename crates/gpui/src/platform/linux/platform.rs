@@ -142,7 +142,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         "unknown".into()
     }
 
-    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
         // todo(linux)
     }
 
