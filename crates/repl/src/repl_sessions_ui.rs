@@ -61,6 +61,15 @@ pub fn init(cx: &mut AppContext) {
             return;
         }
 
+        let is_local_project = editor
+            .workspace()
+            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .unwrap_or(false);
+
+        if !is_local_project {
+            return;
+        }
+
         let editor_handle = cx.view().downgrade();
 
         editor
