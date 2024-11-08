@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::{anyhow, bail};
 use assistant_tool::Tool;
 use context_servers::manager::ContextServerManager;
@@ -6,14 +8,14 @@ use gpui::{Model, Task};
 
 pub struct ContextServerTool {
     server_manager: Model<ContextServerManager>,
-    server_id: String,
+    server_id: Arc<str>,
     tool: types::Tool,
 }
 
 impl ContextServerTool {
     pub fn new(
         server_manager: Model<ContextServerManager>,
-        server_id: impl Into<String>,
+        server_id: impl Into<Arc<str>>,
         tool: types::Tool,
     ) -> Self {
         Self {
@@ -55,7 +57,7 @@ impl Tool for ContextServerTool {
             cx.foreground_executor().spawn({
                 let tool_name = self.tool.name.clone();
                 async move {
-                    let Some(protocol) = server.client.read().clone() else {
+                    let Some(protocol) = server.client() else {
                         bail!("Context server not initialized");
                     };
 
