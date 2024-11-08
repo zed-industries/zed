@@ -43,6 +43,16 @@ impl QuickActionBar {
 
         let editor = self.active_editor()?;
 
+        let is_local_project = editor
+            .read(cx)
+            .workspace()
+            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+            .unwrap_or(false);
+
+        if !is_local_project {
+            return None;
+        }
+
         let has_nonempty_selection = {
             editor.update(cx, |this, cx| {
                 this.selections
