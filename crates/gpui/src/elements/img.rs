@@ -23,7 +23,8 @@ use util::ResultExt;
 
 use super::Stateful;
 
-pub const LOADING_DELAY: Duration = Duration::from_millis(300);
+/// The delay before showing the loading state.
+pub const LOADING_DELAY: Duration = Duration::from_millis(200);
 
 /// A source of image content.
 #[derive(Clone)]

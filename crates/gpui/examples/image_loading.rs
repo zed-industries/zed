@@ -41,7 +41,7 @@ struct LoadImageWithParameters {}
 impl Asset for LoadImageWithParameters {
     type Source = LoadImageParameters;
 
-    type Output = anyhow::Result<Arc<RenderImage>>;
+    type Output = Result<Arc<RenderImage>, ImageCacheError>;
 
     fn load(
         parameters: Self::Source,
@@ -57,7 +57,7 @@ impl Asset for LoadImageWithParameters {
             if parameters.fail {
                 Err(ImageCacheError::Asset("Failed to load image".into()))
             } else {
-                data.await.map_err(|e| anyhow!(e))
+                data.await
             }
         }
     }
@@ -70,7 +70,7 @@ impl ImageLoadingExample {
         div()
             .border_1()
             .border_color(gpui::yellow())
-            .size_5()
+            .size_full()
             .flex_none()
             .bg(gpui::blue())
             .with_animation(
@@ -86,7 +86,7 @@ impl ImageLoadingExample {
         div()
             .border_1()
             .border_color(gpui::red())
-            .size_5()
+            .size_full()
             .flex_none()
             .bg(gpui::red())
     }
@@ -106,11 +106,12 @@ impl Render for ImageLoadingExample {
                         // Load within the 'loading delay', should not show loading fallback
                         img(|cx: &mut WindowContext| {
                             cx.use_asset::<LoadImageWithParameters>(&LoadImageParameters {
-                                timeout: Duration::from_millis(LOADING_DELAY.saturating_sub(25)),
+                                timeout: LOADING_DELAY.saturating_sub(Duration::from_millis(25)),
                                 fail: false,
                             })
+                            .map(|result| result.map_err(|e| e.into()))
                         })
-                        .size_5()
+                        .size_12()
                         .with_fallback(|| Self::fallback_element().into_any_element())
                         .id("image-1")
                         .border_1()
@@ -124,11 +125,12 @@ impl Render for ImageLoadingExample {
                                 timeout: Duration::from_secs(5),
                                 fail: false,
                             })
+                            .map(|result| result.map_err(|e| e.into()))
                         })
                         .with_fallback(|| Self::fallback_element().into_any_element())
                         .id("image-2")
                         .with_loading(|| Self::loading_element().into_any_element())
-                        .size_5()
+                        .size_12()
                         .border_1()
                         .border_color(red()),
                     )
@@ -139,11 +141,12 @@ impl Render for ImageLoadingExample {
                                 timeout: Duration::from_secs(5),
                                 fail: true,
                             })
+                            .map(|result| result.map_err(|e| e.into()))
                         })
                         .with_fallback(|| Self::fallback_element().into_any_element())
                         .id("image-3")
                         .with_loading(|| Self::loading_element().into_any_element())
-                        .size_5()
+                        .size_12()
                         .border_1()
                         .border_color(red()),
                     ),
