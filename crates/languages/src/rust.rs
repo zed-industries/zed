@@ -79,13 +79,14 @@ impl LspAdapter for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let os = match consts::OS {
-            "macos" => "apple-darwin",
-            "linux" => "unknown-linux-gnu",
-            "windows" => "pc-windows-msvc",
+        let os_file = match consts::OS {
+            "macos" => "apple-darwin.gz",
+            "linux" => "unknown-linux-gnu.gz",
+            "windows" => "pc-windows-msvc.zip",
             other => bail!("Running on unsupported os: {other}"),
         };
-        let asset_name = format!("rust-analyzer-{}-{os}.gz", consts::ARCH);
+        let arch = consts::ARCH;
+        let asset_name = format!("rust-analyzer-{arch}-{os_file}");
         let asset = release
             .assets
             .iter()
