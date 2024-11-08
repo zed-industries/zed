@@ -1,8 +1,8 @@
 use crate::{
     px, AbsoluteLength, AnyElement, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
-    GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
-    Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri, StyleRefinement, Styled,
-    SvgSize, UriOrPath, WindowContext,
+    Focusable, FocusableElement, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity,
+    IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri,
+    StatefulInteractiveElement, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
 };
 use anyhow::{anyhow, Result};
 
@@ -14,6 +14,7 @@ use smallvec::SmallVec;
 use std::{
     fs,
     io::Cursor,
+    ops::{Deref, DerefMut},
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -164,6 +165,20 @@ impl Stateful<Img> {
     pub fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
         self.element.loading = Some(Box::new(loading));
         self
+    }
+}
+
+impl Deref for Stateful<Img> {
+    type Target = Img;
+
+    fn deref(&self) -> &Self::Target {
+        &self.element
+    }
+}
+
+impl DerefMut for Stateful<Img> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.element
     }
 }
 
@@ -351,14 +366,6 @@ impl Element for Img {
     }
 }
 
-impl IntoElement for Img {
-    type Element = Self;
-
-    fn into_element(self) -> Self::Element {
-        self
-    }
-}
-
 impl Styled for Img {
     fn style(&mut self) -> &mut StyleRefinement {
         &mut self.interactivity.base_style
@@ -370,6 +377,18 @@ impl InteractiveElement for Img {
         &mut self.interactivity
     }
 }
+
+impl IntoElement for Img {
+    type Element = Self;
+
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl FocusableElement for Img {}
+
+impl StatefulInteractiveElement for Img {}
 
 impl ImageSource {
     pub(crate) fn use_data(&self, cx: &mut WindowContext) -> Option<Result<Arc<RenderImage>>> {

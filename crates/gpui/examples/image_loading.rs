@@ -111,12 +111,12 @@ impl Render for ImageLoadingExample {
                             })
                             .map(|result| result.map_err(|e| e.into()))
                         })
-                        .size_12()
-                        .with_fallback(|| Self::fallback_element().into_any_element())
                         .id("image-1")
+                        .size_12()
                         .border_1()
                         .border_color(red())
-                        .with_loading(|| Self::loading_element().into_any_element()),
+                        .with_loading(|| Self::loading_element().into_any_element())
+                        .with_fallback(|| Self::fallback_element().into_any_element()),
                     )
                     .child(
                         // Load after a long delay
