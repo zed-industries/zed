@@ -166,9 +166,7 @@ impl Platform for TestPlatform {
         "zed.keyboard.example".to_string()
     }
 
-    fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {
-        unimplemented!()
-    }
+    fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
         unimplemented!()
