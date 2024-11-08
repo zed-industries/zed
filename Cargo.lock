@@ -2815,6 +2815,7 @@ name = "context_servers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "collections",
  "command_palette_hooks",
  "futures 0.3.30",

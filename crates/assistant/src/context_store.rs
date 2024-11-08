@@ -819,7 +819,7 @@ impl ContextStore {
             |context_server_manager, cx| {
                 for server in context_server_manager.servers() {
                     context_server_manager
-                        .restart_server(&server.id, cx)
+                        .restart_server(&server.id(), cx)
                         .detach_and_log_err(cx);
                 }
             },
@@ -850,7 +850,7 @@ impl ContextStore {
                         let server = server.clone();
                         let server_id = server_id.clone();
                         |this, mut cx| async move {
-                            let Some(protocol) = server.client.read().clone() else {
+                            let Some(protocol) = server.client() else {
                                 return;
                             };
 
@@ -889,7 +889,7 @@ impl ContextStore {
                                         tool_working_set.insert(
                                             Arc::new(tools::context_server_tool::ContextServerTool::new(
                                                 context_server_manager.clone(),
-                                                server.id.clone(),
+                                                server.id(),
                                                 tool,
                                             )),
                                         )
