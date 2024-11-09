@@ -812,6 +812,7 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentDiagnostics>);
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -3241,23 +3242,25 @@ impl LspStore {
 
                 Ok(diagnostics
                     .into_iter()
-                    .collect::<Result<Vec<Vec<_>>>>()?
+                    .collect::<Result<Vec<_>>>()?
                     .into_iter()
-                    .flatten()
+                    .flat_map(|diagnostics| diagnostics.into_iter().flatten())
                     .collect())
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
                 buffer_handle,
                 Some(position),
-                GetDocumentDiagnostics {
-                    position: position.clone(),
-                },
+                GetDocumentDiagnostics { position },
                 cx,
             );
-            cx.spawn(
-                |_, _| async move { Ok(all_actions_task.await.into_iter().flatten().collect()) },
-            )
+            cx.spawn(|_, _| async move {
+                Ok(all_actions_task
+                    .await
+                    .into_iter()
+                    .flat_map(|diagnostics| diagnostics.into_iter().flatten())
+                    .collect())
+            })
         }
     }
 
