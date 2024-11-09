@@ -656,13 +656,14 @@ impl PlatformWindow for WindowsWindow {
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
         let mut version = unsafe { std::mem::zeroed() };
         let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
-        let width = get_max_screen_width();
+        let (right, left) = get_max_screen_width();
         if status.is_ok() {
             if background_appearance == WindowBackgroundAppearance::Blurred {
                 if version.dwBuildNumber >= 22523 {
                     set_background_appearance(
                         window_state.hwnd,
-                        width,
+                        left,
+                        right,
                         DwmSystembackdropType::DwmsbtTransientwindow,
                     )
                 }
@@ -670,6 +671,7 @@ impl PlatformWindow for WindowsWindow {
                 if version.dwBuildNumber >= 22523 {
                     set_background_appearance(
                         window_state.hwnd,
+                        0,
                         0,
                         DwmSystembackdropType::DwmsbtDisable,
                     )
@@ -1168,7 +1170,7 @@ fn retrieve_window_placement(
     Ok(placement)
 }
 
-fn get_max_screen_width() -> i32 {
+fn get_max_screen_width() -> (i32, i32) {
     let (rect, status) = unsafe {
         let _ = SetProcessDPIAware();
         let h_desktop = GetDesktopWindow();
@@ -1178,19 +1180,23 @@ fn get_max_screen_width() -> i32 {
     };
 
     if status {
-        rect.right - rect.left
+        (rect.right, rect.left)
     } else {
-        0
+        (0, 0)
     }
 }
 
-fn set_background_appearance(hwnd: HWND, width: i32, background_type: DwmSystembackdropType) {
+fn set_background_appearance(hwnd: HWND, left: i32, right: i32, background_type: DwmSystembackdropType) {
+    // NOTE
+    // `DwmExtendFrameIntoClientArea` is used to create glass sheet effect
+    // setting any of the margins to -1 causes a weird overlap of glass sheet over the zed window or when is near to title
+    // for now setting it to display size 
     unsafe {
         DwmExtendFrameIntoClientArea(
             hwnd,
             &MARGINS {
-                cxLeftWidth: width,
-                cxRightWidth: width,
+                cxLeftWidth: left,
+                cxRightWidth: right,
                 cyTopHeight: 0,
                 cyBottomHeight: 0,
             },
