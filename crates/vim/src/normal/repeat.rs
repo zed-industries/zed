@@ -19,9 +19,6 @@ fn should_replay(action: &dyn Action) -> bool {
     if editor::actions::ShowCharacterPalette.partial_eq(action) {
         return false;
     }
-    if Repeat.partial_eq(action) {
-        return false;
-    }
     true
 }
 
