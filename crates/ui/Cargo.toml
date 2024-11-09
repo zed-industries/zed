@@ -14,9 +14,12 @@ path = "src/ui.rs"
 
 [dependencies]
 chrono.workspace = true
+collections.workspace = true
 gpui.workspace = true
 itertools = { workspace = true, optional = true }
+linkme.workspace = true
 menu.workspace = true
+once_cell.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
