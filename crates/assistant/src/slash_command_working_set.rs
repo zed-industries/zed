@@ -4,7 +4,7 @@ use gpui::AppContext;
 use parking_lot::Mutex;
 use std::sync::Arc;
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct SlashCommandId(usize);
 
 /// A working set of slash commands for use in one instance of the Assistant Panel.
@@ -16,7 +16,7 @@ pub struct SlashCommandWorkingSet {
 #[derive(Default)]
 struct WorkingSetState {
     context_server_commands_by_id: HashMap<SlashCommandId, Arc<dyn SlashCommand>>,
-    context_server_commands_by_name: HashMap<String, Arc<dyn SlashCommand>>,
+    context_server_commands_by_name: HashMap<Arc<str>, Arc<dyn SlashCommand>>,
     next_command_id: SlashCommandId,
 }
 
@@ -28,6 +28,19 @@ impl SlashCommandWorkingSet {
             .get(name)
             .cloned()
             .or_else(|| SlashCommandRegistry::global(cx).command(name))
+    }
+
+    pub fn command_names(&self, cx: &AppContext) -> Vec<Arc<str>> {
+        let mut command_names = SlashCommandRegistry::global(cx).command_names();
+        command_names.extend(
+            self.state
+                .lock()
+                .context_server_commands_by_name
+                .keys()
+                .cloned(),
+        );
+
+        command_names
     }
 
     pub fn featured_command_names(&self, cx: &AppContext) -> Vec<Arc<str>> {
@@ -60,7 +73,7 @@ impl WorkingSetState {
         self.context_server_commands_by_name.extend(
             self.context_server_commands_by_id
                 .values()
-                .map(|command| (command.name(), command.clone())),
+                .map(|command| (command.name().into(), command.clone())),
         );
     }
 }

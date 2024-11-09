@@ -1084,7 +1084,21 @@ impl AssistantPanel {
                 self.show_updated_summary(&context_editor, cx);
                 cx.notify()
             }
-            EditorEvent::Edited { .. } => cx.emit(AssistantPanelEvent::ContextEdited),
+            EditorEvent::Edited { .. } => {
+                self.workspace
+                    .update(cx, |workspace, cx| {
+                        let is_via_ssh = workspace
+                            .project()
+                            .update(cx, |project, _| project.is_via_ssh());
+
+                        workspace
+                            .client()
+                            .telemetry()
+                            .log_edit_event("assistant panel", is_via_ssh);
+                    })
+                    .log_err();
+                cx.emit(AssistantPanelEvent::ContextEdited)
+            }
             _ => {}
         }
     }
@@ -1533,6 +1547,7 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
+            context.read(cx).slash_commands.clone(),
             Some(cx.view().downgrade()),
             Some(workspace.clone()),
         );
@@ -2760,7 +2775,7 @@ impl ContextEditor {
                             .h_11()
                             .w_full()
                             .relative()
-                            .gap_1()
+                            .gap_1p5()
                             .child(sender)
                             .children(match &message.cache {
                                 Some(cache) if cache.is_final_anchor => match cache.status {
@@ -2774,7 +2789,7 @@ impl ContextEditor {
                                             )
                                             .tooltip(|cx| {
                                                 Tooltip::with_meta(
-                                                    "Context cached",
+                                                    "Context Cached",
                                                     None,
                                                     "Large messages cached to optimize performance",
                                                     cx,
@@ -2802,16 +2817,9 @@ impl ContextEditor {
                                         .selected_icon_color(Color::Error)
                                         .icon(IconName::XCircle)
                                         .icon_color(Color::Error)
-                                        .icon_size(IconSize::Small)
+                                        .icon_size(IconSize::XSmall)
                                         .icon_position(IconPosition::Start)
-                                        .tooltip(move |cx| {
-                                            Tooltip::with_meta(
-                                                "Error interacting with language model",
-                                                None,
-                                                "Click for more details",
-                                                cx,
-                                            )
-                                        })
+                                        .tooltip(move |cx| Tooltip::text("View Details", cx))
                                         .on_click({
                                             let context = context.clone();
                                             let error = error.clone();
@@ -2826,21 +2834,19 @@ impl ContextEditor {
                                         .into_any_element(),
                                 ),
                                 MessageStatus::Canceled => Some(
-                                    ButtonLike::new("canceled")
-                                        .child(Icon::new(IconName::XCircle).color(Color::Disabled))
+                                    h_flex()
+                                        .gap_1()
+                                        .items_center()
+                                        .child(
+                                            Icon::new(IconName::XCircle)
+                                                .color(Color::Disabled)
+                                                .size(IconSize::XSmall),
+                                        )
                                         .child(
                                             Label::new("Canceled")
                                                 .size(LabelSize::Small)
                                                 .color(Color::Disabled),
                                         )
-                                        .tooltip(move |cx| {
-                                            Tooltip::with_meta(
-                                                "Canceled",
-                                                None,
-                                                "Interaction with the assistant was canceled",
-                                                cx,
-                                            )
-                                        })
                                         .into_any_element(),
                                 ),
                                 _ => None,
@@ -4516,7 +4522,6 @@ impl Render for ContextEditorToolbarItem {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
             .group("chat-title-group")
-            .pl_0p5()
             .gap_1()
             .items_center()
             .flex_grow()
@@ -4607,6 +4612,7 @@ impl Render for ContextEditorToolbarItem {
             .children(self.render_remaining_tokens(cx));
 
         h_flex()
+            .px_0p5()
             .size_full()
             .gap_2()
             .justify_between()

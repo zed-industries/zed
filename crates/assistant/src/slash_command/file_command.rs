@@ -256,8 +256,7 @@ fn collect_files(
                         break;
                     }
                     directory_stack.pop().unwrap();
-                    events_tx
-                        .unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                    events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
                     events_tx.unbounded_send(Ok(SlashCommandEvent::Content(
                         SlashCommandContent::Text {
                             text: "\n".into(),
@@ -362,7 +361,7 @@ fn collect_files(
             }
 
             while let Some(_) = directory_stack.pop() {
-                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection { metadata: None }))?;
+                events_tx.unbounded_send(Ok(SlashCommandEvent::EndSection))?;
             }
         }
 

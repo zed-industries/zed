@@ -546,7 +546,6 @@ impl InputExample {
 
 impl Render for InputExample {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let num_keystrokes = self.recent_keystrokes.len();
         div()
             .bg(rgb(0xaaaaaa))
             .track_focus(&self.focus_handle(cx))
@@ -561,7 +560,7 @@ impl Render for InputExample {
                     .flex()
                     .flex_row()
                     .justify_between()
-                    .child(format!("Keystrokes: {}", num_keystrokes))
+                    .child(format!("Keyboard {}", cx.keyboard_layout()))
                     .child(
                         div()
                             .border_1()
@@ -607,6 +606,7 @@ fn main() {
             KeyBinding::new("end", End, None),
             KeyBinding::new("ctrl-cmd-space", ShowCharacterPalette, None),
         ]);
+
         let window = cx
             .open_window(
                 WindowOptions {
@@ -642,6 +642,13 @@ fn main() {
                 .unwrap();
         })
         .detach();
+        cx.on_keyboard_layout_change({
+            move |cx| {
+                window.update(cx, |_, cx| cx.notify()).ok();
+            }
+        })
+        .detach();
+
         window
             .update(cx, |view, cx| {
                 cx.focus_view(&view.text_input);

@@ -91,6 +91,9 @@ pub struct ProjectPanel {
     horizontal_scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
+    // We keep track of the mouse down state on entries so we don't flash the UI
+    // in case a user clicks to open a file.
+    mouse_down: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -212,7 +215,6 @@ pub enum Event {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
         allow_preview: bool,
-        mark_selected: bool,
     },
     SplitEntry {
         entry_id: ProjectEntryId,
@@ -339,6 +341,7 @@ impl ProjectPanel {
                     .parent_view(cx.view()),
                 max_width_item_index: None,
                 scroll_handle,
+                mouse_down: false,
             };
             this.update_visible_entries(None, cx);
 
@@ -352,24 +355,12 @@ impl ProjectPanel {
                     entry_id,
                     focus_opened_item,
                     allow_preview,
-                    mark_selected
                 } => {
                     if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
                         if let Some(entry) = worktree.read(cx).entry_for_id(entry_id) {
                             let file_path = entry.path.clone();
                             let worktree_id = worktree.read(cx).id();
                             let entry_id = entry.id;
-
-                            project_panel.update(cx, |this, _| {
-                                if !mark_selected {
-                                    this.marked_entries.clear();
-                                }
-                                this.marked_entries.insert(SelectedEntry {
-                                    worktree_id,
-                                    entry_id
-                                });
-                            }).ok();
-
                             let is_via_ssh = project.read(cx).is_via_ssh();
 
                             workspace
@@ -399,12 +390,12 @@ impl ProjectPanel {
                                 });
 
                             if let Some(project_panel) = project_panel.upgrade() {
-                                // Always select the entry, regardless of whether it is opened or not.
+                                // Always select and mark the entry, regardless of whether it is opened or not.
                                 project_panel.update(cx, |project_panel, _| {
-                                    project_panel.selection = Some(SelectedEntry {
-                                        worktree_id,
-                                        entry_id
-                                    });
+                                    let entry = SelectedEntry { worktree_id, entry_id };
+                                    project_panel.marked_entries.clear();
+                                    project_panel.marked_entries.insert(entry);
+                                    project_panel.selection = Some(entry);
                                 });
                                 if !focus_opened_item {
                                     let focus_handle = project_panel.read(cx).focus_handle.clone();
@@ -793,29 +784,22 @@ impl ProjectPanel {
 
     fn open(&mut self, _: &Open, cx: &mut ViewContext<Self>) {
         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-        self.open_internal(false, true, !preview_tabs_enabled, cx);
+        self.open_internal(true, !preview_tabs_enabled, cx);
     }
 
     fn open_permanent(&mut self, _: &OpenPermanent, cx: &mut ViewContext<Self>) {
-        self.open_internal(true, false, true, cx);
+        self.open_internal(false, true, cx);
     }
 
     fn open_internal(
         &mut self,
-        mark_selected: bool,
         allow_preview: bool,
         focus_opened_item: bool,
         cx: &mut ViewContext<Self>,
     ) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
-                self.open_entry(
-                    entry.id,
-                    mark_selected,
-                    focus_opened_item,
-                    allow_preview,
-                    cx,
-                );
+                self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
             } else {
                 self.toggle_expanded(entry.id, cx);
             }
@@ -897,7 +881,7 @@ impl ProjectPanel {
                         }
                         project_panel.update_visible_entries(None, cx);
                         if is_new_entry && !is_dir {
-                            project_panel.open_entry(new_entry.id, false, true, false, cx);
+                            project_panel.open_entry(new_entry.id, true, false, cx);
                         }
                         cx.notify();
                     })?;
@@ -955,7 +939,6 @@ impl ProjectPanel {
     fn open_entry(
         &mut self,
         entry_id: ProjectEntryId,
-        mark_selected: bool,
         focus_opened_item: bool,
         allow_preview: bool,
         cx: &mut ViewContext<Self>,
@@ -964,7 +947,6 @@ impl ProjectPanel {
             entry_id,
             focus_opened_item,
             allow_preview,
-            mark_selected,
         });
     }
 
@@ -2172,7 +2154,7 @@ impl ProjectPanel {
                 let opened_entries = task.await?;
                 this.update(&mut cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
-                        this.open_entry(opened_entries[0], true, true, false, cx);
+                        this.open_entry(opened_entries[0], true, false, cx);
                     }
                 })
             }
@@ -2604,71 +2586,70 @@ impl ProjectPanel {
                 this.hover_scroll_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, cx| {
+                    this.mouse_down = true;
+                    cx.propagate();
+                }),
+            )
             .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                if event.down.button == MouseButton::Right || event.down.first_mouse {
+                if event.down.button == MouseButton::Right || event.down.first_mouse || show_editor
+                {
                     return;
                 }
-                if !show_editor {
-                    cx.stop_propagation();
+                if event.down.button == MouseButton::Left {
+                    this.mouse_down = false;
+                }
+                cx.stop_propagation();
 
-                    if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
-                        let current_selection = this.index_for_selection(selection);
-                        let target_selection = this.index_for_selection(SelectedEntry {
-                            entry_id,
-                            worktree_id,
-                        });
-                        if let Some(((_, _, source_index), (_, _, target_index))) =
-                            current_selection.zip(target_selection)
-                        {
-                            let range_start = source_index.min(target_index);
-                            let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
-                            let mut new_selections = BTreeSet::new();
-                            this.for_each_visible_entry(
-                                range_start..range_end,
-                                cx,
-                                |entry_id, details, _| {
-                                    new_selections.insert(SelectedEntry {
-                                        entry_id,
-                                        worktree_id: details.worktree_id,
-                                    });
-                                },
-                            );
-
-                            this.marked_entries = this
-                                .marked_entries
-                                .union(&new_selections)
-                                .cloned()
-                                .collect();
-
-                            this.selection = Some(SelectedEntry {
-                                entry_id,
-                                worktree_id,
-                            });
-                            // Ensure that the current entry is selected.
-                            this.marked_entries.insert(SelectedEntry {
-                                entry_id,
-                                worktree_id,
-                            });
-                        }
-                    } else if event.down.modifiers.secondary() {
-                        if event.down.click_count > 1 {
-                            this.split_entry(entry_id, cx);
-                        } else if !this.marked_entries.insert(selection) {
-                            this.marked_entries.remove(&selection);
-                        }
-                    } else if kind.is_dir() {
-                        this.toggle_expanded(entry_id, cx);
-                    } else {
-                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                        let click_count = event.up.click_count;
-                        this.open_entry(
-                            entry_id,
-                            cx.modifiers().secondary(),
-                            !preview_tabs_enabled || click_count > 1,
-                            !preview_tabs_enabled && click_count == 1,
+                if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
+                    let current_selection = this.index_for_selection(selection);
+                    let clicked_entry = SelectedEntry {
+                        entry_id,
+                        worktree_id,
+                    };
+                    let target_selection = this.index_for_selection(clicked_entry);
+                    if let Some(((_, _, source_index), (_, _, target_index))) =
+                        current_selection.zip(target_selection)
+                    {
+                        let range_start = source_index.min(target_index);
+                        let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
+                        let mut new_selections = BTreeSet::new();
+                        this.for_each_visible_entry(
+                            range_start..range_end,
                             cx,
+                            |entry_id, details, _| {
+                                new_selections.insert(SelectedEntry {
+                                    entry_id,
+                                    worktree_id: details.worktree_id,
+                                });
+                            },
                         );
+
+                        this.marked_entries = this
+                            .marked_entries
+                            .union(&new_selections)
+                            .cloned()
+                            .collect();
+
+                        this.selection = Some(clicked_entry);
+                        this.marked_entries.insert(clicked_entry);
                     }
+                } else if event.down.modifiers.secondary() {
+                    if event.down.click_count > 1 {
+                        this.split_entry(entry_id, cx);
+                    } else if !this.marked_entries.insert(selection) {
+                        this.marked_entries.remove(&selection);
+                    }
+                } else if kind.is_dir() {
+                    this.toggle_expanded(entry_id, cx);
+                } else {
+                    let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                    let click_count = event.up.click_count;
+                    let focus_opened_item = !preview_tabs_enabled || click_count > 1;
+                    let allow_preview = preview_tabs_enabled && click_count == 1;
+                    this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                 }
             }))
             .cursor_pointer()
@@ -2799,7 +2780,7 @@ impl ProjectPanel {
                     .border_color(colors.ghost_element_selected)
             })
             .when(
-                is_active && self.focus_handle.contains_focused(cx),
+                !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
                 |this| this.border_color(Color::Selected.color(cx)),
             )
     }
@@ -2996,9 +2977,18 @@ impl ProjectPanel {
             }
 
             let worktree_id = worktree.id();
-            self.marked_entries.clear();
             self.expand_entry(worktree_id, entry_id, cx);
             self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+
+            if self.marked_entries.len() == 1
+                && self
+                    .marked_entries
+                    .first()
+                    .filter(|entry| entry.entry_id == entry_id)
+                    .is_none()
+            {
+                self.marked_entries.clear();
+            }
             self.autoscroll(cx);
             cx.notify();
         }
@@ -3627,6 +3617,60 @@ mod tests {
                 "v root2",
             ]
         );
+    }
+
+    #[gpui::test]
+    async fn test_opening_file(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First Rust file",
+                    "second.rs": "// Second Rust file",
+                    "third.rs": "// Third Rust file",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/first.rs", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs  <== selected  <== marked",
+                "          second.rs",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(&workspace, "test/first.rs", cx);
+
+        select_path(&panel, "src/test/second.rs", cx);
+        panel.update(cx, |panel, cx| panel.open(&Open, cx));
+        cx.executor().run_until_parked();
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs",
+                "          second.rs  <== selected  <== marked",
+                "          third.rs"
+            ]
+        );
+        ensure_single_file_is_opened(&workspace, "test/second.rs", cx);
     }
 
     #[gpui::test]
@@ -4853,7 +4897,7 @@ mod tests {
             &[
                 "v src",
                 "    v test",
-                "          first.rs  <== selected",
+                "          first.rs  <== selected  <== marked",
                 "          second.rs",
                 "          third.rs"
             ]
@@ -4881,7 +4925,7 @@ mod tests {
             &[
                 "v src",
                 "    v test",
-                "          second.rs  <== selected",
+                "          second.rs  <== selected  <== marked",
                 "          third.rs"
             ]
         );

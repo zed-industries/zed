@@ -86,7 +86,7 @@ pub struct InlineAssistant {
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
 }
 
@@ -107,7 +107,7 @@ impl InlineAssistant {
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
-            telemetry: Some(telemetry),
+            telemetry,
             fs,
         }
     }
@@ -243,19 +243,17 @@ impl InlineAssistant {
             codegen_ranges.push(start..end);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                if let Some(telemetry) = self.telemetry.as_ref() {
-                    telemetry.report_assistant_event(AssistantEvent {
-                        conversation_id: None,
-                        kind: AssistantKind::Inline,
-                        phase: AssistantPhase::Invoked,
-                        message_id: None,
-                        model: model.telemetry_id(),
-                        model_provider: model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
-                        language_name: buffer.language().map(|language| language.name().to_proto()),
-                    });
-                }
+                self.telemetry.report_assistant_event(AssistantEvent {
+                    conversation_id: None,
+                    kind: AssistantKind::Inline,
+                    phase: AssistantPhase::Invoked,
+                    message_id: None,
+                    model: model.telemetry_id(),
+                    model_provider: model.provider_id().to_string(),
+                    response_latency: None,
+                    error_message: None,
+                    language_name: buffer.language().map(|language| language.name().to_proto()),
+                });
             }
         }
 
@@ -818,7 +816,7 @@ impl InlineAssistant {
                         error_message: None,
                         language_name: language_name.map(|name| name.to_proto()),
                     },
-                    self.telemetry.clone(),
+                    Some(self.telemetry.clone()),
                     cx.http_client(),
                     model.api_key(cx),
                     cx.background_executor(),
@@ -1759,6 +1757,20 @@ impl PromptEditor {
     ) {
         match event {
             EditorEvent::Edited { .. } => {
+                if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            let is_via_ssh = workspace
+                                .project()
+                                .update(cx, |project, _| project.is_via_ssh());
+
+                            workspace
+                                .client()
+                                .telemetry()
+                                .log_edit_event("inline assist", is_via_ssh);
+                        })
+                        .log_err();
+                }
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
@@ -2337,7 +2349,7 @@ pub struct Codegen {
     buffer: Model<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
     is_insertion: bool,
 }
@@ -2347,7 +2359,7 @@ impl Codegen {
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        telemetry: Option<Arc<Telemetry>>,
+        telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -2356,7 +2368,7 @@ impl Codegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                telemetry.clone(),
+                Some(telemetry.clone()),
                 builder.clone(),
                 cx,
             )
@@ -2447,7 +2459,7 @@ impl Codegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    self.telemetry.clone(),
+                    Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
                 )

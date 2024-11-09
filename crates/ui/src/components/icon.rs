@@ -6,7 +6,7 @@ use ui_macros::DerivePathStr;
 
 use crate::{
     prelude::*,
-    traits::component_preview::{example_group, ComponentExample, ComponentPreview},
+    traits::component_preview::{ComponentExample, ComponentPreview},
     Indicator,
 };
 
@@ -510,7 +510,7 @@ impl ComponentPreview for Icon {
             IconName::ArrowCircle,
         ];
 
-        vec![example_group(
+        vec![example_group_with_title(
             "Arrow Icons",
             arrow_icons
                 .into_iter()

@@ -80,13 +80,20 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<Self> {
-        // Note: The release channel can be used to stage a new version of the extension API.
-        let allow_latest_version = match release_channel {
-            ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
-            ReleaseChannel::Stable | ReleaseChannel::Preview => false,
-        };
-
-        if allow_latest_version && version >= latest::MIN_VERSION {
+        if version >= latest::MIN_VERSION {
+            // Note: The release channel can be used to stage a new version of the extension API.
+            // We always allow the latest in tests so that the extension tests pass on release branches.
+            let allow_latest_version = match release_channel {
+                ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
+                ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                    cfg!(any(test, feature = "test-support"))
+                }
+            };
+            if !allow_latest_version {
+                Err(anyhow!(
+                    "unreleased versions of the extension API can only be used on development builds of Zed"
+                ))?;
+            }
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
@@ -373,6 +380,24 @@ impl Extension {
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
                 Err(anyhow!("`run_slash_command` not available prior to v0.1.0"))
+            }
+        }
+    }
+
+    pub async fn call_context_server_command(
+        &self,
+        store: &mut Store<WasmState>,
+        context_server_id: Arc<str>,
+    ) -> Result<Result<Command, String>> {
+        match self {
+            Extension::V020(ext) => {
+                ext.call_context_server_command(store, &context_server_id)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) | Extension::V010(_) => {
+                Err(anyhow!(
+                    "`context_server_command` not available prior to v0.2.0"
+                ))
             }
         }
     }
