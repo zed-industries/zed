@@ -445,7 +445,7 @@ impl ComponentPreview for Button {
 
     fn examples() -> Vec<ComponentExampleGroup<Self>> {
         vec![
-            example_group(
+            example_group_with_title(
                 "Styles",
                 vec![
                     single_example("Default", Button::new("default", "Default")),
@@ -463,7 +463,7 @@ impl ComponentPreview for Button {
                     ),
                 ],
             ),
-            example_group(
+            example_group_with_title(
                 "Tinted",
                 vec![
                     single_example(
@@ -488,7 +488,7 @@ impl ComponentPreview for Button {
                     ),
                 ],
             ),
-            example_group(
+            example_group_with_title(
                 "States",
                 vec![
                     single_example("Default", Button::new("default_state", "Default")),
@@ -502,7 +502,7 @@ impl ComponentPreview for Button {
                     ),
                 ],
             ),
-            example_group(
+            example_group_with_title(
                 "With Icons",
                 vec![
                     single_example(

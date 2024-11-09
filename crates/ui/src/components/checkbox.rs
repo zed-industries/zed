@@ -123,7 +123,7 @@ impl ComponentPreview for Checkbox {
 
     fn examples() -> Vec<ComponentExampleGroup<Self>> {
         vec![
-            example_group(
+            example_group_with_title(
                 "Default",
                 vec![
                     single_example(
@@ -140,7 +140,7 @@ impl ComponentPreview for Checkbox {
                     ),
                 ],
             ),
-            example_group(
+            example_group_with_title(
                 "Disabled",
                 vec![
                     single_example(

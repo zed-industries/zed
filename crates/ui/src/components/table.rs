@@ -1,5 +1,5 @@
 use crate::{prelude::*, Indicator};
-use gpui::{div, AnyElement, FontWeight, IntoElement};
+use gpui::{div, AnyElement, FontWeight, IntoElement, Length};
 
 /// A table component
 #[derive(IntoElement)]
@@ -8,6 +8,7 @@ pub struct Table {
     rows: Vec<Vec<TableCell>>,
     column_count: usize,
     striped: bool,
+    width: Length,
 }
 
 impl Table {
@@ -21,6 +22,7 @@ impl Table {
             column_count,
             rows: Vec::new(),
             striped: false,
+            width: Length::Auto,
         }
     }
 
@@ -61,6 +63,12 @@ impl Table {
     /// Enables row striping.
     pub fn striped(mut self) -> Self {
         self.striped = true;
+        self
+    }
+
+    /// Sets the width of the table.
+    pub fn width(mut self, width: impl Into<Length>) -> Self {
+        self.width = width.into();
         self
     }
 }
@@ -109,7 +117,7 @@ impl RenderOnce for Table {
         });
 
         div()
-            .w_full()
+            .w(self.width)
             .overflow_hidden()
             .child(header)
             .children(rows)
@@ -148,49 +156,81 @@ impl ComponentPreview for Table {
         "Used for showing tabular data. Tables may show both text and elements in their cells."
     }
 
+    fn example_label_side() -> ExampleLabelSide {
+        ExampleLabelSide::Top
+    }
+
     fn examples() -> Vec<ComponentExampleGroup<Self>> {
         vec![
-            example_group(
-                "Basic Table",
-                vec![single_example(
+            example_group(vec![
+                single_example(
                     "Simple Table",
                     Table::new(vec!["Name", "Age", "City"])
+                        .width(px(400.))
                         .row(vec!["Alice", "28", "New York"])
                         .row(vec!["Bob", "32", "San Francisco"])
                         .row(vec!["Charlie", "25", "London"]),
-                )],
-            ),
-            example_group(
+                ),
+                single_example(
+                    "Two Column Table",
+                    Table::new(vec!["Category", "Value"])
+                        .width(px(300.))
+                        .row(vec!["Revenue", "$100,000"])
+                        .row(vec!["Expenses", "$75,000"])
+                        .row(vec!["Profit", "$25,000"]),
+                ),
+            ]),
+            example_group(vec![single_example(
                 "Striped Table",
-                vec![single_example(
-                    "Striped Table",
-                    Table::new(vec!["Product", "Price", "Stock"])
-                        .striped()
-                        .row(vec!["Laptop", "$999", "In Stock"])
-                        .row(vec!["Phone", "$599", "Low Stock"])
-                        .row(vec!["Tablet", "$399", "Out of Stock"])
-                        .row(vec!["Headphones", "$199", "In Stock"]),
-                )],
-            ),
-            example_group(
+                Table::new(vec!["Product", "Price", "Stock"])
+                    .width(px(600.))
+                    .striped()
+                    .row(vec!["Laptop", "$999", "In Stock"])
+                    .row(vec!["Phone", "$599", "Low Stock"])
+                    .row(vec!["Tablet", "$399", "Out of Stock"])
+                    .row(vec!["Headphones", "$199", "In Stock"]),
+            )]),
+            example_group_with_title(
                 "Mixed Content Table",
                 vec![single_example(
                     "Table with Elements",
-                    Table::new(vec!["Status", "Name", "Action"])
+                    Table::new(vec!["Status", "Name", "Priority", "Deadline", "Action"])
+                        .width(px(840.))
                         .row(vec![
                             element_cell(Indicator::dot().color(Color::Success).into_any_element()),
                             string_cell("Project A"),
-                            element_cell(Button::new("view_a", "View").into_any_element()),
+                            string_cell("High"),
+                            string_cell("2023-12-31"),
+                            element_cell(
+                                Button::new("view_a", "View")
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .into_any_element(),
+                            ),
                         ])
                         .row(vec![
                             element_cell(Indicator::dot().color(Color::Warning).into_any_element()),
                             string_cell("Project B"),
-                            element_cell(Button::new("view_b", "View").into_any_element()),
+                            string_cell("Medium"),
+                            string_cell("2024-03-15"),
+                            element_cell(
+                                Button::new("view_b", "View")
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .into_any_element(),
+                            ),
                         ])
                         .row(vec![
                             element_cell(Indicator::dot().color(Color::Error).into_any_element()),
                             string_cell("Project C"),
-                            element_cell(Button::new("view_c", "View").into_any_element()),
+                            string_cell("Low"),
+                            string_cell("2024-06-30"),
+                            element_cell(
+                                Button::new("view_c", "View")
+                                    .style(ButtonStyle::Filled)
+                                    .full_width()
+                                    .into_any_element(),
+                            ),
                         ]),
                 )],
             ),
