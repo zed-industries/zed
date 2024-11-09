@@ -83,7 +83,7 @@ impl ComponentPreview for Facepile {
             "https://avatars.githubusercontent.com/u/1714999?s=60&v=4",
         ];
 
-        vec![example_group(
+        vec![example_group_with_title(
             "Examples",
             vec![
                 single_example(
