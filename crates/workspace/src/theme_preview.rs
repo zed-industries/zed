@@ -502,22 +502,24 @@ impl ThemePreview {
     }
 
     fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
-        let layer = ElevationIndex::Surface;
+        let all_previews = ui::get_all_component_previews();
 
         v_flex()
             .id("theme-preview-components")
             .overflow_scroll()
             .size_full()
-            .gap_2()
-            .child(Checkbox::render_component_previews(cx))
-            .child(CheckboxWithLabel::render_component_previews(cx))
-            .child(Facepile::render_component_previews(cx))
-            .child(Button::render_component_previews(cx))
-            .child(Indicator::render_component_previews(cx))
-            .child(Icon::render_component_previews(cx))
-            .child(Table::render_component_previews(cx))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
+            .gap_4()
+            .children(all_previews.iter().map(|(scope, components)| {
+                v_flex()
+                    .gap_2()
+                    .child(Headline::new(*scope).size(HeadlineSize::Small))
+                    .children(components.iter().map(|(name, preview_fn)| {
+                        v_flex()
+                            .gap_1()
+                            .child(Label::new(*name).size(LabelSize::Small).color(Color::Muted))
+                            .child(preview_fn(cx))
+                    }))
+            }))
     }
 
     fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {

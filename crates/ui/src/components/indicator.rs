@@ -1,5 +1,8 @@
 #![allow(missing_docs)]
-use crate::{prelude::*, AnyIcon};
+use crate::internal::prelude::*;
+use crate::AnyIcon;
+
+register_components!(indivator, [Indicator]);
 
 #[derive(Default)]
 enum IndicatorKind {

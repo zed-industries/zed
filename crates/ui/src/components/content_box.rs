@@ -1,6 +1,8 @@
-use crate::prelude::*;
+use crate::internal::prelude::*;
 use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
 use smallvec::SmallVec;
+
+register_components!(layout, [ContentBox]);
 
 /// A flexible container component that can hold other elements.
 #[derive(IntoElement)]

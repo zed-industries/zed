@@ -1,9 +1,10 @@
 #![allow(missing_docs)]
 
+use crate::internal::prelude::*;
+use crate::{Color, Icon, IconName, Selection};
 use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
 
-use crate::prelude::*;
-use crate::{Color, Icon, IconName, Selection};
+register_components!(checkbox, [Checkbox, CheckboxWithLabel]);
 
 /// # Checkbox
 ///

@@ -9,6 +9,8 @@ static COMPONENTS: Lazy<Mutex<HashMap<&'static str, Vec<(&'static str, Component
     Lazy::new(|| Mutex::new(HashMap::default()));
 
 pub fn register_component(scope: &'static str, name: &'static str, preview: ComponentPreviewFn) {
+    println!("Registering component: scope={}, name={}", scope, name);
+
     let mut components = COMPONENTS.lock().unwrap();
     components
         .entry(scope)
@@ -16,6 +18,15 @@ pub fn register_component(scope: &'static str, name: &'static str, preview: Comp
         .push((name, preview));
 }
 
+/// Initializes all components that have been registered
+/// in the UI component registry.
+pub fn init_component_registry() {
+    for register in __COMPONENT_REGISTRATIONS {
+        register();
+    }
+}
+
+/// Returns a map of all registered components and their previews.
 pub fn get_all_component_previews() -> HashMap<&'static str, Vec<(&'static str, ComponentPreviewFn)>>
 {
     COMPONENTS.lock().unwrap().clone()
@@ -30,7 +41,7 @@ pub static __COMPONENT_REGISTRATIONS: [fn()];
 /// This allows components to be previewed, and eventually tracked for documentation
 /// purposes and to help the systems team to understand component usage across the codebase.
 #[macro_export]
-macro_rules! components {
+macro_rules! register_components {
     ($scope:ident, [ $($component:ty),+ $(,)? ]) => {
         const _: () = {
             #[linkme::distributed_slice($crate::component_registry::__COMPONENT_REGISTRATIONS)]

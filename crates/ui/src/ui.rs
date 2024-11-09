@@ -18,6 +18,17 @@ mod tests;
 mod traits;
 pub mod utils;
 
+pub use component_registry::{get_all_component_previews, init_component_registry};
 pub use components::*;
 pub use prelude::*;
 pub use styles::*;
+
+pub(crate) mod internal {
+    /// A crate-internal extension of the prelude, used to expose the crate-specific
+    /// needs like the component registry or component-preview types
+    pub mod prelude {
+        pub use crate::prelude::*;
+        pub use crate::register_components;
+        pub use crate::traits::component_preview::*;
+    }
+}

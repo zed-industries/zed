@@ -1,4 +1,5 @@
-use crate::{prelude::*, Avatar};
+use crate::internal::prelude::*;
+use crate::Avatar;
 use gpui::{AnyElement, StyleRefinement};
 use smallvec::SmallVec;
 

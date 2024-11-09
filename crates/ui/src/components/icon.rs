@@ -1,4 +1,6 @@
 #![allow(missing_docs)]
+use crate::internal::prelude::*;
+
 use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};

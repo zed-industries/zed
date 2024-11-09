@@ -1,12 +1,16 @@
 #![allow(missing_docs)]
+use crate::internal::prelude::*;
+
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, ElevationIndex, IconPosition, KeyBinding, Spacing, TintColor};
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
 };
+use crate::{ElevationIndex, IconPosition, KeyBinding, Spacing, TintColor};
 
 use super::button_icon::ButtonIcon;
+
+register_components!(button, [Button]);
 
 /// An element that creates a button with a label and an optional icon.
 ///
