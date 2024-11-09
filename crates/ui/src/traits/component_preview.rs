@@ -9,9 +9,9 @@ pub enum ExampleLabelSide {
     Left,
     /// Right side
     Right,
+    #[default]
     /// Top side
     Top,
-    #[default]
     /// Bottom side
     Bottom,
 }
@@ -81,7 +81,7 @@ pub trait ComponentPreview: IntoElement {
         v_flex()
             .gap_2()
             .when_some(group.title, |this, title| {
-                this.child(Headline::new(title).size(HeadlineSize::Small))
+                this.child(Label::new(title).size(LabelSize::Small))
             })
             .child(
                 h_flex()
