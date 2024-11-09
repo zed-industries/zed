@@ -126,7 +126,7 @@ use project::{
     lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    LspDiagnostics, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -663,7 +663,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
-    _pull_document_diagnostics_task: Task<()>,
+    _pull_document_diagnostics_task: Task<Result<(), anyhow::Error>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -2161,7 +2161,7 @@ impl Editor {
             addons: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
             text_style_refinement: None,
-            _pull_document_diagnostics_task: Task::ready(()),
+            _pull_document_diagnostics_task: Task::ready(Ok(())),
         };
         this.tasks_update_task = Some(this.refresh_runnables(cx));
         this._subscriptions.extend(project_subscriptions);
@@ -10911,16 +10911,24 @@ impl Editor {
             return None;
         }
 
-        self._pull_document_diagnostics_task = cx.spawn(|editor, mut cx| async move {
+        self._pull_document_diagnostics_task = cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            editor
-                .update(&mut cx, |_, cx| {
-                    project.diagnostics(&start_buffer, start, cx);
-                })
-                .ok();
+            let pull_diagnostics_task = this.update(&mut cx, |_, cx| {
+                project.pull_diagnostics(&start_buffer, start, cx)
+            })?;
+
+            if let Some(pull_diagnostics_task) = pull_diagnostics_task {
+                let diagnostics = pull_diagnostics_task
+                    .await
+                    .context("Pull diagnostics task")?;
+
+                let _ = this.update(&mut cx, |_, cx| project.update_diagnostics(diagnostics, cx));
+            }
+
+            anyhow::Ok(())
         });
         None
     }
@@ -13886,12 +13894,18 @@ pub trait CodeActionProvider {
 }
 
 pub trait DiagnosticsProvider {
-    fn diagnostics(
+    fn pull_diagnostics(
         &self,
         buffer: &Model<Buffer>,
         position: text::Anchor,
-        cx: &mut WindowContext,
-    ) -> Option<Task<Result<Vec<lsp::Diagnostic>>>>;
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<LspDiagnostics>>>>;
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<LspDiagnostics>,
+        cx: &mut AppContext,
+    ) -> Result<()>;
 }
 
 impl CodeActionProvider for Model<Project> {
@@ -14232,15 +14246,39 @@ impl SemanticsProvider for Model<Project> {
 }
 
 impl DiagnosticsProvider for Model<Project> {
-    fn diagnostics(
+    fn pull_diagnostics(
         &self,
         buffer: &Model<Buffer>,
         position: text::Anchor,
-        cx: &mut WindowContext,
-    ) -> Option<Task<Result<Vec<lsp::Diagnostic>>>> {
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<LspDiagnostics>>>> {
         Some(self.update(cx, |project, cx| {
             project.document_diagnostics(buffer, position, cx)
         }))
+    }
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<LspDiagnostics>,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        self.update(cx, |project, cx| {
+            diagnostics
+                .into_iter()
+                .map(|diagnostic_set| {
+                    project.update_diagnostics(
+                        diagnostic_set.server_id,
+                        lsp::PublishDiagnosticsParams {
+                            uri: diagnostic_set.uri.unwrap(),
+                            diagnostics: diagnostic_set.diagnostics.unwrap_or_else(|| vec![]),
+                            version: None,
+                        },
+                        &[],
+                        cx,
+                    )
+                })
+                .collect()
+        })
     }
 }
 
