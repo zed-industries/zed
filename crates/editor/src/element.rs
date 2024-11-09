@@ -27,7 +27,6 @@ use crate::{
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
-use gpui::Subscription;
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
@@ -38,6 +37,7 @@ use gpui::{
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
     ViewContext, WeakView, WindowContext,
 };
+use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -2058,7 +2058,6 @@ impl EditorElement {
         block: &Block,
         available_width: AvailableSpace,
         block_id: BlockId,
-        block_row_start: DisplayRow,
         snapshot: &EditorSnapshot,
         text_x: Pixels,
         rows: &Range<DisplayRow>,
@@ -2130,15 +2129,12 @@ impl EditorElement {
                 next_excerpt,
                 show_excerpt_controls,
                 starts_new_buffer,
-                height,
                 ..
             } => {
                 #[derive(Clone)]
                 struct JumpData {
                     position: Point,
-                    anchor: text::Anchor,
-                    path: ProjectPath,
-                    line_offset_from_top: u32,
+                    path: Option<ProjectPath>,
                 }
 
                 let icon_offset = gutter_dimensions.width
@@ -2169,40 +2165,21 @@ impl EditorElement {
                 if let Some(next_excerpt) = next_excerpt {
                     let buffer = &next_excerpt.buffer;
                     let range = &next_excerpt.range;
-                    let jump_data = project::File::from_dyn(buffer.file()).map(|file| {
-                        let jump_path = ProjectPath {
-                            worktree_id: file.worktree_id(cx),
-                            path: file.path.clone(),
-                        };
+                    let jump_data = {
+                        let jump_path =
+                            project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path.clone(),
+                            });
                         let jump_anchor = range
                             .primary
                             .as_ref()
                             .map_or(range.context.start, |primary| primary.start);
-
-                        let excerpt_start = range.context.start;
-                        let jump_position = language::ToPoint::to_point(&jump_anchor, buffer);
-                        let offset_from_excerpt_start = if jump_anchor == excerpt_start {
-                            0
-                        } else {
-                            let excerpt_start_row =
-                                language::ToPoint::to_point(&jump_anchor, buffer).row;
-                            jump_position.row - excerpt_start_row
-                        };
-
-                        let line_offset_from_top =
-                            block_row_start.0 + *height + offset_from_excerpt_start
-                                - snapshot
-                                    .scroll_anchor
-                                    .scroll_position(&snapshot.display_snapshot)
-                                    .y as u32;
-
                         JumpData {
-                            position: jump_position,
-                            anchor: jump_anchor,
+                            position: language::ToPoint::to_point(&jump_anchor, buffer),
                             path: jump_path,
-                            line_offset_from_top,
                         }
-                    });
+                    };
 
                     if *starts_new_buffer {
                         let include_root = self
@@ -2257,31 +2234,22 @@ impl EditorElement {
                                                     }),
                                             ),
                                         )
-                                        .when_some(jump_data, |el, jump_data| {
-                                            el.child(Icon::new(IconName::ArrowUpRight))
-                                                .cursor_pointer()
-                                                .tooltip(|cx| {
-                                                    Tooltip::for_action(
-                                                        "Jump to File",
-                                                        &OpenExcerpts,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_mouse_down(MouseButton::Left, |_, cx| {
-                                                    cx.stop_propagation()
-                                                })
-                                                .on_click(cx.listener_for(&self.editor, {
-                                                    move |editor, _, cx| {
-                                                        editor.jump(
-                                                            jump_data.path.clone(),
-                                                            jump_data.position,
-                                                            jump_data.anchor,
-                                                            jump_data.line_offset_from_top,
-                                                            cx,
-                                                        );
-                                                    }
-                                                }))
-                                        }),
+                                        .child(Icon::new(IconName::ArrowUpRight))
+                                        .cursor_pointer()
+                                        .tooltip(|cx| {
+                                            Tooltip::for_action("Jump to File", &OpenExcerpts, cx)
+                                        })
+                                        .on_mouse_down(MouseButton::Left, |_, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(cx.listener_for(&self.editor, {
+                                            move |editor, e: &ClickEvent, cx| {
+                                                editor.open_excerpts_common(
+                                                    e.down.modifiers.secondary(),
+                                                    cx,
+                                                );
+                                            }
+                                        })),
                                 ),
                         );
                         if *show_excerpt_controls {
@@ -2300,6 +2268,7 @@ impl EditorElement {
                             );
                         }
                     } else {
+                        let editor = self.editor.clone();
                         result = result.child(
                             h_flex()
                                 .id("excerpt header block")
@@ -2320,32 +2289,39 @@ impl EditorElement {
                                         }),
                                 )
                                 .cursor_pointer()
-                                .when_some(jump_data.clone(), |this, jump_data| {
-                                    this.on_click(cx.listener_for(&self.editor, {
-                                        let path = jump_data.path.clone();
-                                        move |editor, _, cx| {
-                                            cx.stop_propagation();
-
-                                            editor.jump(
-                                                path.clone(),
-                                                jump_data.position,
-                                                jump_data.anchor,
-                                                jump_data.line_offset_from_top,
-                                                cx,
-                                            );
-                                        }
-                                    }))
-                                    .tooltip(move |cx| {
-                                        Tooltip::for_action(
-                                            format!(
-                                                "Jump to {}:L{}",
-                                                jump_data.path.path.display(),
-                                                jump_data.position.row + 1
-                                            ),
-                                            &OpenExcerpts,
-                                            cx,
-                                        )
-                                    })
+                                .on_click(cx.listener_for(&self.editor, {
+                                    move |editor, e: &ClickEvent, cx| {
+                                        cx.stop_propagation();
+                                        editor
+                                            .open_excerpts_common(e.down.modifiers.secondary(), cx);
+                                    }
+                                }))
+                                .tooltip(move |cx| {
+                                    let jump_message = format!(
+                                        "Jump to {}:L{}",
+                                        match &jump_data.path {
+                                            Some(project_path) =>
+                                                project_path.path.display().to_string(),
+                                            None => {
+                                                let editor = editor.read(cx);
+                                                editor
+                                                    .file_at(jump_data.position, cx)
+                                                    .map(|file| {
+                                                        file.full_path(cx).display().to_string()
+                                                    })
+                                                    .or_else(|| {
+                                                        Some(
+                                                            editor
+                                                                .tab_description(0, cx)?
+                                                                .to_string(),
+                                                        )
+                                                    })
+                                                    .unwrap_or_else(|| "Unknown buffer".to_string())
+                                            }
+                                        },
+                                        jump_data.position.row + 1
+                                    );
+                                    Tooltip::for_action(jump_message, &OpenExcerpts, cx)
                                 })
                                 .child(
                                     h_flex()
@@ -2480,7 +2456,6 @@ impl EditorElement {
                 block,
                 AvailableSpace::MinContent,
                 block_id,
-                row,
                 snapshot,
                 text_x,
                 &rows,
@@ -2526,7 +2501,6 @@ impl EditorElement {
                 block,
                 width.into(),
                 block_id,
-                row,
                 snapshot,
                 text_x,
                 &rows,
@@ -2573,7 +2547,6 @@ impl EditorElement {
                             &block,
                             width,
                             focused_block.id,
-                            rows.end,
                             snapshot,
                             text_x,
                             &rows,
