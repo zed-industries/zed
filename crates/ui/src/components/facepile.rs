@@ -3,6 +3,8 @@ use crate::Avatar;
 use gpui::{AnyElement, StyleRefinement};
 use smallvec::SmallVec;
 
+register_components!(facepile, [Facepile]);
+
 /// A facepile is a collection of faces stacked horizontally–
 /// always with the leftmost face on top and descending in z-index
 ///
