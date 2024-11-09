@@ -18,8 +18,8 @@ impl ContentBox {
     pub fn new() -> Self {
         Self {
             base: div(),
-            border: false,
-            fill: false,
+            border: true,
+            fill: true,
             children: SmallVec::new(),
         }
     }
