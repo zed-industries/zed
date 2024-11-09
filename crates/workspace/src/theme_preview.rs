@@ -5,7 +5,7 @@ use theme::all_theme_colors;
 use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
     Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
-    Checkbox, ElevationIndex, Facepile, Indicator, Table, TintColor, Tooltip,
+    Checkbox, CheckboxWithLabel, ElevationIndex, Facepile, Indicator, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -510,6 +510,7 @@ impl ThemePreview {
             .size_full()
             .gap_2()
             .child(Checkbox::render_component_previews(cx))
+            .child(CheckboxWithLabel::render_component_previews(cx))
             .child(Facepile::render_component_previews(cx))
             .child(Button::render_component_previews(cx))
             .child(Indicator::render_component_previews(cx))
