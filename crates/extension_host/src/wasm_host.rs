@@ -37,6 +37,7 @@ pub struct WasmHost {
     pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
     pub work_dir: PathBuf,
+    installed_dir: PathBuf,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
@@ -82,6 +83,7 @@ impl WasmHost {
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
         registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
+        installed_dir: PathBuf,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -95,6 +97,7 @@ impl WasmHost {
             engine: wasm_engine(),
             fs,
             work_dir,
+            installed_dir,
             http_client,
             node_runtime,
             registration_hooks,
@@ -160,6 +163,7 @@ impl WasmHost {
 
     async fn build_wasi_ctx(&self, manifest: &Arc<ExtensionManifest>) -> Result<wasi::WasiCtx> {
         let extension_work_dir = self.work_dir.join(manifest.id.as_ref());
+        let extension_src_dir = self.installed_dir.join(manifest.id.as_ref());
         self.fs
             .create_dir(&extension_work_dir)
             .await
@@ -177,8 +181,15 @@ impl WasmHost {
                 dir_perms,
                 file_perms,
             )?
+            .preopened_dir(
+                &extension_src_dir,
+                extension_src_dir.to_string_lossy(),
+                dir_perms,
+                file_perms,
+            )?
             .env("PWD", extension_work_dir.to_string_lossy())
             .env("RUST_BACKTRACE", "full")
+            .env("ZED_EXTENSION_SRC_DIR", extension_src_dir.to_string_lossy())
             .build())
     }
 

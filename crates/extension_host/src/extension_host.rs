@@ -303,7 +303,7 @@ impl ExtensionStore {
         let mut this = Self {
             registration_hooks: extension_api.clone(),
             extension_index: Default::default(),
-            installed_dir,
+            installed_dir: installed_dir.clone(),
             index_path,
             builder: Arc::new(ExtensionBuilder::new(builder_client, build_dir)),
             outstanding_operations: Default::default(),
@@ -314,6 +314,7 @@ impl ExtensionStore {
                 http_client.clone(),
                 node_runtime,
                 extension_api,
+                installed_dir,
                 work_dir,
                 cx,
             ),
