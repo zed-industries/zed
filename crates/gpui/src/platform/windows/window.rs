@@ -22,10 +22,7 @@ use windows::{
     Win32::{
         Foundation::*,
         Graphics::{
-            Dwm::{
-                DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE,
-                DWMWINDOWATTRIBUTE,
-            },
+            Dwm::{DwmExtendFrameIntoClientArea, DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE},
             Gdi::*,
         },
         System::{Com::*, LibraryLoader::*, Ole::*, SystemServices::*},
@@ -657,51 +654,26 @@ impl PlatformWindow for WindowsWindow {
         window_state
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
-
-        const DWMWA_MICA_EFFECT: DWMWINDOWATTRIBUTE = DWMWINDOWATTRIBUTE(1029);
-        if background_appearance == WindowBackgroundAppearance::Blurred {
-            unsafe {
-                DwmExtendFrameIntoClientArea(
-                    window_state.hwnd,
-                    &MARGINS {
-                        cxLeftWidth: -1,
-                        cxRightWidth: -1,
-                        cyTopHeight: -1,
-                        cyBottomHeight: -1,
-                    },
-                )
-                .inspect_err(|e| log::error!("{e}"))
-                .ok();
-                DwmSetWindowAttribute(
-                    window_state.hwnd,
-                    DWMWA_SYSTEMBACKDROP_TYPE as _,
-                    &DwmSystembackdropType::DwmsbtTransientwindow as *const _ as _,
-                    std::mem::size_of::<DwmSystembackdropType>() as _,
-                )
-                .inspect_err(|e| log::error!("{e}"))
-                .ok();
-            }
-        } else {
-            unsafe {
-                DwmExtendFrameIntoClientArea(
-                    window_state.hwnd,
-                    &MARGINS {
-                        cxLeftWidth: 1,
-                        cxRightWidth: 1,
-                        cyTopHeight: 1,
-                        cyBottomHeight: 1,
-                    },
-                )
-                .inspect_err(|e| log::error!("{e}"))
-                .ok();
-                DwmSetWindowAttribute(
-                    window_state.hwnd,
-                    DWMWA_SYSTEMBACKDROP_TYPE as _,
-                    &DwmSystembackdropType::DwmsbtDisable as *const _ as _,
-                    std::mem::size_of::<DwmSystembackdropType>() as _,
-                )
-                .inspect_err(|e| log::error!("{e}"))
-                .ok();
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+        let width = get_max_screen_width();
+        if status.is_ok() {
+            if background_appearance == WindowBackgroundAppearance::Blurred {
+                if version.dwBuildNumber >= 22523 {
+                    set_background_appearance(
+                        window_state.hwnd,
+                        width,
+                        DwmSystembackdropType::DwmsbtTransientwindow,
+                    )
+                }
+            } else {
+                if version.dwBuildNumber >= 22523 {
+                    set_background_appearance(
+                        window_state.hwnd,
+                        0,
+                        DwmSystembackdropType::DwmsbtDisable,
+                    )
+                }
             }
         }
     }
@@ -1194,6 +1166,46 @@ fn retrieve_window_placement(
     let bounds = bounds.to_device_pixels(scale_factor);
     placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
     Ok(placement)
+}
+
+fn get_max_screen_width() -> i32 {
+    let (rect, status) = unsafe {
+        let _ = SetProcessDPIAware();
+        let h_desktop = GetDesktopWindow();
+        let mut rect = std::mem::zeroed();
+        let status = GetWindowRect(h_desktop, &mut rect).is_ok();
+        (rect, status)
+    };
+
+    if status {
+        rect.right - rect.left
+    } else {
+        0
+    }
+}
+
+fn set_background_appearance(hwnd: HWND, width: i32, background_type: DwmSystembackdropType) {
+    unsafe {
+        DwmExtendFrameIntoClientArea(
+            hwnd,
+            &MARGINS {
+                cxLeftWidth: width,
+                cxRightWidth: width,
+                cyTopHeight: 0,
+                cyBottomHeight: 0,
+            },
+        )
+        .inspect_err(|e| log::error!("{e}"))
+        .ok();
+        DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_SYSTEMBACKDROP_TYPE as _,
+            &background_type as *const _ as _,
+            std::mem::size_of::<DwmSystembackdropType>() as _,
+        )
+        .inspect_err(|e| log::error!("{e}"))
+        .ok();
+    }
 }
 
 mod windows_renderer {
