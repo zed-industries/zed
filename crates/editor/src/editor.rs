@@ -160,7 +160,7 @@ use multi_buffer::{
 use parking_lot::Mutex;
 use project::{
     CodeAction, Completion, CompletionIntent, CompletionSource, DocumentHighlight, InlayHint,
-    Location, LocationLink, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
+    Location, LocationLink, LspDiagnostics, LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction,
     TaskSourceKind,
     debugger::breakpoint_store::Breakpoint,
     lsp_store::{CompletionDocumentation, FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
@@ -1046,7 +1046,7 @@ pub struct Editor {
     hide_mouse_mode: HideMouseMode,
     pub change_list: ChangeList,
     inline_value_cache: InlineValueCache,
-    _pull_document_diagnostics_task: Task<()>,
+    _pull_document_diagnostics_task: Task<Result<(), anyhow::Error>>,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Default)]
@@ -1906,7 +1906,7 @@ impl Editor {
                 .unwrap_or_default(),
             change_list: ChangeList::new(),
             mode,
-            _pull_document_diagnostics_task: Task::ready(()),
+            _pull_document_diagnostics_task: Task::ready(Ok(())),
         };
         if let Some(breakpoints) = this.breakpoint_store.as_ref() {
             this._subscriptions
@@ -15475,16 +15475,24 @@ impl Editor {
             return None;
         }
 
-        self._pull_document_diagnostics_task = cx.spawn(|editor, mut cx| async move {
+        self._pull_document_diagnostics_task = cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
 
-            editor
-                .update(&mut cx, |_, cx| {
-                    project.diagnostics(&start_buffer, start, cx);
-                })
-                .ok();
+            let pull_diagnostics_task = this.update(&mut cx, |_, cx| {
+                project.pull_diagnostics(&start_buffer, start, cx)
+            })?;
+
+            if let Some(pull_diagnostics_task) = pull_diagnostics_task {
+                let diagnostics = pull_diagnostics_task
+                    .await
+                    .context("Pull diagnostics task")?;
+
+                let _ = this.update(&mut cx, |_, cx| project.update_diagnostics(diagnostics, cx));
+            }
+
+            anyhow::Ok(())
         });
         None
     }
@@ -19875,12 +19883,18 @@ pub trait CodeActionProvider {
 }
 
 pub trait DiagnosticsProvider {
-    fn diagnostics(
+    fn pull_diagnostics(
         &self,
         buffer: &Model<Buffer>,
         position: text::Anchor,
-        cx: &mut WindowContext,
-    ) -> Option<Task<Result<Vec<lsp::Diagnostic>>>>;
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<LspDiagnostics>>>>;
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<LspDiagnostics>,
+        cx: &mut AppContext,
+    ) -> Result<()>;
 }
 
 impl CodeActionProvider for Entity<Project> {
@@ -20324,15 +20338,39 @@ impl SemanticsProvider for Entity<Project> {
 }
 
 impl DiagnosticsProvider for Model<Project> {
-    fn diagnostics(
+    fn pull_diagnostics(
         &self,
         buffer: &Model<Buffer>,
         position: text::Anchor,
-        cx: &mut WindowContext,
-    ) -> Option<Task<Result<Vec<lsp::Diagnostic>>>> {
+        cx: &mut AppContext,
+    ) -> Option<Task<Result<Vec<LspDiagnostics>>>> {
         Some(self.update(cx, |project, cx| {
             project.document_diagnostics(buffer, position, cx)
         }))
+    }
+
+    fn update_diagnostics(
+        &self,
+        diagnostics: Vec<LspDiagnostics>,
+        cx: &mut AppContext,
+    ) -> Result<()> {
+        self.update(cx, |project, cx| {
+            diagnostics
+                .into_iter()
+                .map(|diagnostic_set| {
+                    project.update_diagnostics(
+                        diagnostic_set.server_id,
+                        lsp::PublishDiagnosticsParams {
+                            uri: diagnostic_set.uri.unwrap(),
+                            diagnostics: diagnostic_set.diagnostics.unwrap_or_else(|| vec![]),
+                            version: None,
+                        },
+                        &[],
+                        cx,
+                    )
+                })
+                .collect()
+        })
     }
 }
 

@@ -813,6 +813,27 @@ pub const DEFAULT_COMPLETION_CONTEXT: CompletionContext = CompletionContext {
     trigger_character: None,
 };
 
+/// An LSP diagnostics associated with a certain language server.
+#[derive(Clone, Debug)]
+pub struct LspDiagnostics {
+    /// The id of the language server that produced diagnostics.
+    pub server_id: LanguageServerId,
+    /// URI of the resource,
+    pub uri: Option<lsp::Url>,
+    /// The diagnostics produced by this language server.
+    pub diagnostics: Option<Vec<lsp::Diagnostic>>,
+}
+
+impl std::default::Default for LspDiagnostics {
+    fn default() -> Self {
+        Self {
+            server_id: LanguageServerId(0),
+            uri: None,
+            diagnostics: None,
+        }
+    }
+}
+
 impl Project {
     pub fn init_settings(cx: &mut App) {
         WorktreeSettings::register(cx);
@@ -3644,7 +3665,7 @@ impl Project {
         buffer_handle: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Task<anyhow::Result<Vec<lsp::Diagnostic>>> {
+    ) -> Task<Result<Vec<LspDiagnostics>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store.document_diagnostic(buffer_handle, position, cx)
         })

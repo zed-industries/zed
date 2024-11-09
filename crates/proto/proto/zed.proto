@@ -786,6 +786,37 @@ message GitInit {
     string fallback_branch_name = 3;
 }
 
+message LspDiagnosticRelatedInformation {
+    string location = 1;
+    string message = 2;
+}
+
+message LspDiagnosticTag {
+    string name = 1;
+    optional string value = 2;
+}
+
+message LspDiagnostic {
+    PointUtf16 start = 1;
+    PointUtf16 end = 2;
+    Severity severity = 3;
+    optional string code = 4;
+    // optional string code_description = 5;
+    optional string source = 6;
+    string message = 7;
+    // repeated LspDiagnosticRelatedInformation related_information = 8;
+    // repeated LspDiagnosticTag tags = 9;
+    optional string data = 10;
+
+    enum Severity {
+        None = 0;
+        Error = 1;
+        Warning = 2;
+        Information = 3;
+        Hint = 4;
+    }
+}
+
 message GetDocumentDiagnostics {
     uint64 project_id = 1;
     uint64 buffer_id = 2;
@@ -794,5 +825,7 @@ message GetDocumentDiagnostics {
 }
 
 message GetDocumentDiagnosticsResponse {
-    repeated Diagnostic diagnostics = 1;
+    uint64 server_id = 1;
+    string uri = 2;
+    repeated LspDiagnostic diagnostics = 3;
 }
