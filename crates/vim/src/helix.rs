@@ -62,15 +62,15 @@ impl Vim {
 
                     let mut last_selection = selection.clone();
                     for _ in 0..times {
-                        let (new_tail, new_head) = movement::find_boundary_trail(
-                            map,
-                            selection.head(),
-                            selection.tail(),
-                            |left, right| is_boundary(left, right, &classifier),
-                        );
+                        let (new_tail, new_head) =
+                            movement::find_boundary_trail(map, selection.head(), |left, right| {
+                                is_boundary(left, right, &classifier)
+                            });
 
                         selection.set_head(new_head, selection.goal);
-                        selection.set_tail(new_tail, selection.goal);
+                        if let Some(new_tail) = new_tail {
+                            selection.set_tail(new_tail, selection.goal);
+                        }
 
                         if selection.head() == last_selection.head()
                             && selection.tail() == last_selection.tail()
@@ -120,12 +120,13 @@ impl Vim {
                         let (new_tail, new_head) = movement::find_preceding_boundary_trail(
                             map,
                             selection.head(),
-                            selection.tail(),
                             |left, right| is_boundary(left, right, &classifier),
                         );
 
                         selection.set_head(new_head, selection.goal);
-                        selection.set_tail(new_tail, selection.goal);
+                        if let Some(new_tail) = new_tail {
+                            selection.set_tail(new_tail, selection.goal);
+                        }
 
                         if selection.head() == last_selection.head()
                             && selection.tail() == last_selection.tail()

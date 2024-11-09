@@ -493,9 +493,8 @@ pub fn find_boundary_point(
 pub fn find_preceding_boundary_trail(
     map: &DisplaySnapshot,
     head: DisplayPoint,
-    trail: DisplayPoint,
     mut is_boundary: impl FnMut(char, char) -> bool,
-) -> (DisplayPoint, DisplayPoint) {
+) -> (Option<DisplayPoint>, DisplayPoint) {
     let mut offset = head.to_offset(map, Bias::Left);
     let mut trail_offset = None;
 
@@ -529,9 +528,8 @@ pub fn find_preceding_boundary_trail(
         prev_ch = Some(ch);
     }
 
-    let trail = trail_offset.map_or(trail, |trail_offset: usize| {
-        map.clip_point(trail_offset.to_display_point(map), Bias::Left)
-    });
+    let trail = trail_offset
+        .map(|trail_offset: usize| map.clip_point(trail_offset.to_display_point(map), Bias::Left));
 
     (
         trail,
@@ -543,9 +541,8 @@ pub fn find_preceding_boundary_trail(
 pub fn find_boundary_trail(
     map: &DisplaySnapshot,
     head: DisplayPoint,
-    trail: DisplayPoint,
     mut is_boundary: impl FnMut(char, char) -> bool,
-) -> (DisplayPoint, DisplayPoint) {
+) -> (Option<DisplayPoint>, DisplayPoint) {
     let mut offset = head.to_offset(map, Bias::Right);
     let mut trail_offset = None;
 
@@ -579,9 +576,8 @@ pub fn find_boundary_trail(
         prev_ch = Some(ch);
     }
 
-    let trail = trail_offset.map_or(trail, |trail_offset: usize| {
-        map.clip_point(trail_offset.to_display_point(map), Bias::Right)
-    });
+    let trail = trail_offset
+        .map(|trail_offset: usize| map.clip_point(trail_offset.to_display_point(map), Bias::Right));
 
     (
         trail,
