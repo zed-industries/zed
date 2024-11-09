@@ -3653,7 +3653,7 @@ impl LspCommand for LinkedEditingRange {
 
 #[async_trait(?Send)]
 impl LspCommand for GetDocumentDiagnostics {
-    type Response = Vec<Diagnostic>;
+    type Response = Option<Vec<Diagnostic>>;
     type LspRequest = lsp::request::DocumentDiagnosticRequest;
     type ProtoRequest = proto::GetDocumentDiagnostics;
 
@@ -3697,15 +3697,15 @@ impl LspCommand for GetDocumentDiagnostics {
         _: Model<Buffer>,
         _: LanguageServerId,
         _: AsyncAppContext,
-    ) -> Result<Vec<Diagnostic>> {
+    ) -> Result<Self::Response> {
         match message {
             lsp::DocumentDiagnosticReportResult::Report(report) => match report {
                 lsp::DocumentDiagnosticReport::Full(report) => {
-                    Ok(report.full_document_diagnostic_report.items.clone())
+                    Ok(Some(report.full_document_diagnostic_report.items.clone()))
                 }
-                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(vec![]),
+                lsp::DocumentDiagnosticReport::Unchanged(_) => Ok(None),
             },
-            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(vec![]),
+            lsp::DocumentDiagnosticReportResult::Partial(_) => Ok(None),
         }
     }
 
