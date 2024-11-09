@@ -215,28 +215,34 @@ impl ComponentPreview for CheckboxWithLabel {
     }
 
     fn examples() -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(
-            "Default",
-            vec![
-                single_example(
-                    "Unselected",
-                    CheckboxWithLabel::new(
-                        "checkbox_with_label_unselected",
-                        Label::new("Unselected Option"),
-                        Selection::Unselected,
-                        |_, _| {},
-                    ),
+        vec![example_group(vec![
+            single_example(
+                "Unselected",
+                CheckboxWithLabel::new(
+                    "checkbox_with_label_unselected",
+                    Label::new("Always save on quit"),
+                    Selection::Unselected,
+                    |_, _| {},
                 ),
-                single_example(
-                    "Selected",
-                    CheckboxWithLabel::new(
-                        "checkbox_with_label_selected",
-                        Label::new("Selected Option"),
-                        Selection::Selected,
-                        |_, _| {},
-                    ),
+            ),
+            single_example(
+                "Indeterminate",
+                CheckboxWithLabel::new(
+                    "checkbox_with_label_indeterminate",
+                    Label::new("Always save on quit"),
+                    Selection::Indeterminate,
+                    |_, _| {},
                 ),
-            ],
-        )]
+            ),
+            single_example(
+                "Selected",
+                CheckboxWithLabel::new(
+                    "checkbox_with_label_selected",
+                    Label::new("Always save on quit"),
+                    Selection::Selected,
+                    |_, _| {},
+                ),
+            ),
+        ])]
     }
 }
