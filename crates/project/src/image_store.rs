@@ -85,7 +85,7 @@ impl ImageItem {
             if let Some(image) = content
                 .await
                 .context("Failed to load image content")
-                .and_then(|content| create_gpui_image(content))
+                .and_then(create_gpui_image)
                 .log_err()
             {
                 this.update(&mut cx, |this, cx| {
@@ -552,10 +552,7 @@ fn create_gpui_image(content: Vec<u8>) -> anyhow::Result<Arc<gpui::Image>> {
             image::ImageFormat::Gif => gpui::ImageFormat::Gif,
             image::ImageFormat::Bmp => gpui::ImageFormat::Bmp,
             image::ImageFormat::Tiff => gpui::ImageFormat::Tiff,
-            _ => {
-                log::error!("Image format not supported");
-                Err(anyhow::anyhow!("Image format not supported"))?
-            }
+            _ => Err(anyhow::anyhow!("Image format not supported"))?,
         },
         bytes: content,
     }))
