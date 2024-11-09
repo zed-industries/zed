@@ -10,8 +10,9 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _, ProjectPath,
-    ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _,
+    LspDiagnostics, ProjectPath, ProjectTransaction, ResolveState, Symbol,
+    ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -4571,7 +4572,7 @@ impl LspStore {
         buffer_handle: &Model<Buffer>,
         position: Anchor,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Vec<lsp::Diagnostic>>> {
+    ) -> Task<Result<Vec<LspDiagnostics>>> {
         let buffer = buffer_handle.read(cx);
         let buffer_id = buffer.remote_id();
 
@@ -4621,7 +4622,6 @@ impl LspStore {
                     .into_iter()
                     .collect::<Result<Vec<_>>>()?
                     .into_iter()
-                    .flat_map(|diagnostics| diagnostics.into_iter().flatten())
                     .collect())
             })
         } else {
@@ -4631,13 +4631,7 @@ impl LspStore {
                 GetDocumentDiagnostics { position },
                 cx,
             );
-            cx.spawn(|_, _| async move {
-                Ok(all_actions_task
-                    .await
-                    .into_iter()
-                    .flat_map(|diagnostics| diagnostics.into_iter().flatten())
-                    .collect())
-            })
+            cx.spawn(|_, _| async move { Ok(all_actions_task.await.into_iter().collect()) })
         }
     }
 
