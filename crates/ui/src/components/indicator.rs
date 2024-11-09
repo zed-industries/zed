@@ -2,7 +2,7 @@
 use crate::internal::prelude::*;
 use crate::AnyIcon;
 
-register_components!(indivator, [Indicator]);
+register_components!(indicator, [Indicator]);
 
 #[derive(Default)]
 enum IndicatorKind {
