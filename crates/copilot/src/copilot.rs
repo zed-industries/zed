@@ -1273,7 +1273,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>> {
+        fn load_bytes(&self, _cx: &AppContext) -> Task<Result<Vec<u8>>> {
             unimplemented!()
         }
     }
