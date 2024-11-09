@@ -37,6 +37,7 @@ use futures::{
     StreamExt,
 };
 pub use image_store::{ImageItem, ImageStore};
+use image_store::{ImageItemEvent, ImageStoreEvent};
 
 use git::{blame::Blame, repository::GitRepository};
 use gpui::{
@@ -607,9 +608,11 @@ impl Project {
                 .detach();
 
             let buffer_store = cx.new_model(|cx| BufferStore::local(worktree_store.clone(), cx));
-            let image_store =
-                cx.new_model(|cx| ImageStore::local(worktree_store.clone(), fs.clone(), cx));
             cx.subscribe(&buffer_store, Self::on_buffer_store_event)
+                .detach();
+
+            let image_store = cx.new_model(|cx| ImageStore::local(worktree_store.clone(), cx));
+            cx.subscribe(&image_store, Self::on_image_store_event)
                 .detach();
 
             let prettier_store = cx.new_model(|cx| {
@@ -2047,6 +2050,22 @@ impl Project {
         }
     }
 
+    fn on_image_store_event(
+        &mut self,
+        _: Model<ImageStore>,
+        event: &ImageStoreEvent,
+        cx: &mut ModelContext<Self>,
+    ) {
+        match event {
+            ImageStoreEvent::ImageAdded(image) => {
+                cx.subscribe(image, |this, image, event, cx| {
+                    this.on_image_event(image, event, cx);
+                })
+                .detach();
+            }
+        }
+    }
+
     fn on_lsp_store_event(
         &mut self,
         _: Model<LspStore>,
@@ -2287,6 +2306,25 @@ impl Project {
         None
     }
 
+    fn on_image_event(
+        &mut self,
+        image: Model<ImageItem>,
+        event: &ImageItemEvent,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
+        match event {
+            ImageItemEvent::ReloadNeeded => {
+                if !self.is_via_collab() {
+                    self.reload_images([image.clone()].into_iter().collect(), cx)
+                        .detach_and_log_err(cx);
+                }
+            }
+            _ => {}
+        }
+
+        None
+    }
+
     fn request_buffer_diff_recalculation(
         &mut self,
         buffer: &Model<Buffer>,
@@ -2498,6 +2536,15 @@ impl Project {
         self.buffer_store.update(cx, |buffer_store, cx| {
             buffer_store.reload_buffers(buffers, push_to_history, cx)
         })
+    }
+
+    pub fn reload_images(
+        &self,
+        images: HashSet<Model<ImageItem>>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        self.image_store
+            .update(cx, |image_store, cx| image_store.reload_images(images, cx))
     }
 
     pub fn format(

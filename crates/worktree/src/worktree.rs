@@ -3213,6 +3213,14 @@ impl language::LocalFile for File {
         cx.background_executor()
             .spawn(async move { fs.load(&abs_path?).await })
     }
+
+    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>> {
+        let worktree = self.worktree.read(cx).as_local().unwrap();
+        let abs_path = worktree.absolutize(&self.path);
+        let fs = worktree.fs.clone();
+        cx.background_executor()
+            .spawn(async move { fs.load_bytes(&abs_path?).await })
+    }
 }
 
 impl File {

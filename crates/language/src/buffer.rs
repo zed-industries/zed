@@ -413,6 +413,9 @@ pub trait LocalFile: File {
     /// Loads the file's contents from disk.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
 
+    /// Loads the file's contents from disk as bytes.
+    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
+
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
         false

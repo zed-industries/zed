@@ -1,9 +1,10 @@
+use std::path::PathBuf;
+
 use anyhow::Context as _;
 use gpui::{
-    canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, Context,
-    EventEmitter, FocusHandle, FocusableView, Img, InteractiveElement, IntoElement, Model,
-    ObjectFit, ParentElement, Render, Styled, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
+    FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ObjectFit, ParentElement,
+    Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use persistence::IMAGE_VIEWER;
 use theme::Theme;
@@ -12,6 +13,7 @@ use ui::prelude::*;
 use file_icons::FileIcons;
 use project::{ImageItem, Project, ProjectPath};
 use settings::Settings;
+use util::paths::PathExt;
 use workspace::{
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
     ItemId, ItemSettings, Pane, ToolbarItemLocation, Workspace, WorkspaceId,
@@ -21,6 +23,7 @@ const IMAGE_VIEWER_KIND: &str = "ImageView";
 
 pub struct ImageView {
     image_item: Model<ImageItem>,
+    project: Model<Project>,
     focus_handle: FocusHandle,
 }
 
@@ -39,8 +42,14 @@ impl Item for ImageView {
         true
     }
 
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+        let abs_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
+        let file_path = abs_path.compact().to_string_lossy().to_string();
+        Some(file_path.into())
+    }
+
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
-        let path = &self.image_item.read(cx).abs_path;
+        let path = self.image_item.read(cx).file.path();
         let title = path
             .file_name()
             .unwrap_or_else(|| path.as_os_str())
@@ -54,10 +63,10 @@ impl Item for ImageView {
     }
 
     fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
-        let path = &self.image_item.read(cx).abs_path;
+        let path = self.image_item.read(cx).project_path.path.as_ref();
         ItemSettings::get_global(cx)
             .file_icons
-            .then(|| FileIcons::get_icon(path.as_path(), cx))
+            .then(|| FileIcons::get_icon(path, cx))
             .flatten()
             .map(Icon::from_path)
     }
@@ -67,7 +76,7 @@ impl Item for ImageView {
     }
 
     fn breadcrumbs(&self, _theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
-        let text = breadcrumbs_text_for_image(self.image_item.read(cx), cx);
+        let text = breadcrumbs_text_for_image(self.project.read(cx), self.image_item.read(cx), cx);
         Some(vec![BreadcrumbText {
             text,
             highlights: None,
@@ -85,30 +94,27 @@ impl Item for ImageView {
     {
         Some(cx.new_view(|cx| Self {
             image_item: self.image_item.clone(),
+            project: self.project.clone(),
             focus_handle: cx.focus_handle(),
         }))
     }
 }
 
-fn breadcrumbs_text_for_image(image: &ImageItem, cx: &AppContext) -> String {
-    "".to_string()
-    //TODO
-    // let path = &image.project_path.path;
-    // // let project = image.project.read(cx);
+fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &AppContext) -> String {
+    let path = &image.project_path.path;
+    if project.visible_worktrees(cx).count() <= 1 {
+        return path.to_string_lossy().to_string();
+    }
 
-    // if project.visible_worktrees(cx).count() <= 1 {
-    //     return path.to_string_lossy().to_string();
-    // }
-
-    // project
-    //     .worktree_for_entry(image.entry_id, cx)
-    //     .map(|worktree| {
-    //         PathBuf::from(worktree.read(cx).root_name())
-    //             .join(path)
-    //             .to_string_lossy()
-    //             .to_string()
-    //     })
-    //     .unwrap_or_else(|| path.to_string_lossy().to_string())
+    project
+        .worktree_for_id(image.project_path.worktree_id, cx)
+        .map(|worktree| {
+            PathBuf::from(worktree.read(cx).root_name())
+                .join(path)
+                .to_string_lossy()
+                .to_string()
+        })
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
 }
 
 impl SerializableItem for ImageView {
@@ -148,6 +154,7 @@ impl SerializableItem for ImageView {
             cx.update(|cx| {
                 Ok(cx.new_view(|cx| ImageView {
                     image_item,
+                    project,
                     focus_handle: cx.focus_handle(),
                 }))
             })?
@@ -170,9 +177,9 @@ impl SerializableItem for ImageView {
         cx: &mut ViewContext<Self>,
     ) -> Option<Task<gpui::Result<()>>> {
         let workspace_id = workspace.database_id()?;
+        let image_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
 
         Some(cx.background_executor().spawn({
-            let image_path = self.image_item.read(cx).abs_path.clone();
             async move {
                 IMAGE_VIEWER
                     .save_image_path(item_id, workspace_id, image_path)
@@ -265,7 +272,7 @@ impl ProjectItem for ImageView {
     type Item = ImageItem;
 
     fn for_project_item(
-        _project: Model<Project>,
+        project: Model<Project>,
         item: Model<Self::Item>,
         cx: &mut ViewContext<Self>,
     ) -> Self
@@ -274,6 +281,7 @@ impl ProjectItem for ImageView {
     {
         Self {
             image_item: item,
+            project,
             focus_handle: cx.focus_handle(),
         }
     }
