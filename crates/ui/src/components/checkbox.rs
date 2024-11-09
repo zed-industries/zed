@@ -208,3 +208,35 @@ impl RenderOnce for CheckboxWithLabel {
             )
     }
 }
+
+impl ComponentPreview for CheckboxWithLabel {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![example_group(
+            "Default",
+            vec![
+                single_example(
+                    "Unselected",
+                    CheckboxWithLabel::new(
+                        "checkbox_with_label_unselected",
+                        Label::new("Unselected Option"),
+                        Selection::Unselected,
+                        |_, _| {},
+                    ),
+                ),
+                single_example(
+                    "Selected",
+                    CheckboxWithLabel::new(
+                        "checkbox_with_label_selected",
+                        Label::new("Selected Option"),
+                        Selection::Selected,
+                        |_, _| {},
+                    ),
+                ),
+            ],
+        )]
+    }
+}
