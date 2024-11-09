@@ -3,6 +3,7 @@ use gpui::{AnyElement, ScrollHandle};
 use smallvec::SmallVec;
 
 use crate::prelude::*;
+use crate::Tab;
 
 #[derive(IntoElement)]
 pub struct TabBar {
@@ -97,7 +98,7 @@ impl RenderOnce for TabBar {
             .flex()
             .flex_none()
             .w_full()
-            .h(crate::Tab::container_height(cx))
+            .h(Tab::container_height(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .when(!self.start_children.is_empty(), |this| {
                 this.child(
