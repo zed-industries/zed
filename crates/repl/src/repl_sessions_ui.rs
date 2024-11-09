@@ -61,42 +61,45 @@ pub fn init(cx: &mut AppContext) {
             return;
         }
 
-        let is_local_project = editor
-            .workspace()
-            .map(|workspace| workspace.read(cx).project().read(cx).is_local())
-            .unwrap_or(false);
+        cx.defer(|editor, cx| {
+            let workspace = Workspace::for_window(cx);
 
-        if !is_local_project {
-            return;
-        }
+            let is_local_project = workspace
+                .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+                .unwrap_or(false);
 
-        let editor_handle = cx.view().downgrade();
+            if !is_local_project {
+                return;
+            }
 
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Run, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
+            let editor_handle = cx.view().downgrade();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &Run, cx| {
+                        if !JupyterSettings::enabled(cx) {
+                            return;
+                        }
+
+                        crate::run(editor_handle.clone(), true, cx).log_err();
                     }
+                })
+                .detach();
 
-                    crate::run(editor_handle.clone(), true, cx).log_err();
-                }
-            })
-            .detach();
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &RunInPlace, cx| {
+                        if !JupyterSettings::enabled(cx) {
+                            return;
+                        }
 
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &RunInPlace, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
+                        crate::run(editor_handle.clone(), false, cx).log_err();
                     }
-
-                    crate::run(editor_handle.clone(), false, cx).log_err();
-                }
-            })
-            .detach();
+                })
+                .detach();
+        });
     })
     .detach();
 }

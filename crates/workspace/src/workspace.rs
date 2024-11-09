@@ -4547,6 +4547,11 @@ impl Workspace {
                 .children(leader_border),
         )
     }
+
+    pub fn for_window(cx: &mut WindowContext) -> Option<View<Workspace>> {
+        let window = cx.window_handle().downcast::<Workspace>()?;
+        cx.read_window(&window, |workspace, _| workspace).ok()
+    }
 }
 
 fn leader_border_for_pane(
