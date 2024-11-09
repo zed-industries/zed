@@ -28,7 +28,7 @@ use gpui::{
     actions, impl_actions, Action, AppContext, Entity, EventEmitter, KeyContext, KeystrokeEvent,
     Render, Subscription, View, ViewContext, WeakView,
 };
-use insert::NormalBefore;
+use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
@@ -356,7 +356,13 @@ impl Vim {
     fn observe_keystrokes(&mut self, keystroke_event: &KeystrokeEvent, cx: &mut ViewContext<Self>) {
         if self.exit_temporary_mode {
             self.exit_temporary_mode = false;
-            self.switch_mode(Mode::Insert, false, cx);
+            // Don't switch to insert mode if the next action is temporary_normal.
+            if let Some(action) = keystroke_event.action.as_ref() {
+                if action.as_any().downcast_ref::<TemporaryNormal>().is_some() {
+                    return;
+                }
+            }
+            self.switch_mode(Mode::Insert, false, cx)
         }
         if let Some(action) = keystroke_event.action.as_ref() {
             // Keystroke is handled by the vim system, so continue forward
