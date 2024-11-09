@@ -77,29 +77,23 @@ impl ImageItem {
     }
 
     fn reload(&mut self, cx: &mut ModelContext<Self>) -> Option<oneshot::Receiver<()>> {
-        let Some(local_file) = self.file.as_local() else {
-            return None;
-        };
+        let local_file = self.file.as_local()?;
         let (tx, rx) = futures::channel::oneshot::channel();
 
         let content = local_file.load_bytes(cx);
-        //TODO clean this up
         self.reload_task = Some(cx.spawn(|this, mut cx| async move {
-            let Some(content) = content
+            if let Some(image) = content
                 .await
                 .context("Failed to load image content")
+                .and_then(|content| create_gpui_image(content))
                 .log_err()
-            else {
-                return;
-            };
-            let Some(image) = create_gpui_image(content).log_err() else {
-                return;
-            };
-            this.update(&mut cx, |this, cx| {
-                this.image = image;
-                cx.notify();
-            })
-            .log_err();
+            {
+                this.update(&mut cx, |this, cx| {
+                    this.image = image;
+                    cx.notify();
+                })
+                .log_err();
+            }
             _ = tx.send(());
         }));
         Some(rx)
