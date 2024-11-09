@@ -1186,11 +1186,16 @@ fn get_max_screen_width() -> (i32, i32) {
     }
 }
 
-fn set_background_appearance(hwnd: HWND, left: i32, right: i32, background_type: DwmSystembackdropType) {
+fn set_background_appearance(
+    hwnd: HWND,
+    left: i32,
+    right: i32,
+    background_type: DwmSystembackdropType,
+) {
     // NOTE
     // `DwmExtendFrameIntoClientArea` is used to create glass sheet effect
-    // setting any of the margins to -1 causes a weird overlap of glass sheet over the zed window or when is near to title
-    // for now setting it to display size 
+    // setting any of the margins to -1 causes a weird overlap of glass sheet over the zed window or when is near to title.
+    // As of now setting it to monitor width looks fine
     unsafe {
         DwmExtendFrameIntoClientArea(
             hwnd,
