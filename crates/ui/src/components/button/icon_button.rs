@@ -1,11 +1,13 @@
 #![allow(missing_docs)]
+use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
+use crate::internal::prelude::*;
+use crate::{ElevationIndex, SelectableButton, Tooltip};
+use crate::{IconName, IconSize};
 use gpui::{AnyView, DefiniteLength};
 
-use super::button_like::{ButtonCommon, ButtonLike, ButtonSize, ButtonStyle};
-use crate::{prelude::*, ElevationIndex, SelectableButton};
-use crate::{IconName, IconSize};
-
 use super::button_icon::ButtonIcon;
+
+register_components!(button, [IconButton]);
 
 /// The shape of an [`IconButton`].
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
@@ -163,5 +165,78 @@ impl RenderOnce for IconButton {
                     .size(self.icon_size)
                     .color(self.icon_color),
             )
+    }
+}
+
+impl ComponentPreview for IconButton {
+    fn description() -> impl Into<Option<&'static str>> {
+        "An IconButton is a button that displays only an icon. It's used for actions that can be represented by a single icon."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group_with_title(
+                "Basic",
+                vec![
+                    single_example("Default", IconButton::new("default", IconName::Check)),
+                    single_example(
+                        "Selected",
+                        IconButton::new("selected", IconName::Check).selected(true),
+                    ),
+                    single_example(
+                        "Disabled",
+                        IconButton::new("disabled", IconName::Check).disabled(true),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Shapes",
+                vec![
+                    single_example(
+                        "Square",
+                        IconButton::new("square", IconName::Check).shape(IconButtonShape::Square),
+                    ),
+                    single_example(
+                        "Wide",
+                        IconButton::new("wide", IconName::Check).shape(IconButtonShape::Wide),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Sizes",
+                vec![
+                    single_example(
+                        "XSmall",
+                        IconButton::new("xsmall", IconName::Check).icon_size(IconSize::XSmall),
+                    ),
+                    single_example(
+                        "Small",
+                        IconButton::new("small", IconName::Check).icon_size(IconSize::Small),
+                    ),
+                    single_example(
+                        "Medium",
+                        IconButton::new("medium", IconName::Check).icon_size(IconSize::Medium),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Icon Color",
+                vec![
+                    single_example("Default", IconButton::new("default_color", IconName::Check)),
+                    single_example(
+                        "Custom",
+                        IconButton::new("custom_color", IconName::Check).icon_color(Color::Success),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "With Tooltip",
+                vec![single_example(
+                    "Tooltip",
+                    IconButton::new("tooltip", IconName::Check)
+                        .tooltip(|cx| Tooltip::text("This is a tooltip", cx)),
+                )],
+            ),
+        ]
     }
 }
