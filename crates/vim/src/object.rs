@@ -204,7 +204,11 @@ impl Object {
             Object::Parentheses => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '(', ')')
             }
-            Object::Tag => surrounding_html_tag(map, selection, around),
+            Object::Tag => {
+                let head = selection.head();
+                let range = selection.range();
+                surrounding_html_tag(map, head, range, around)
+            }
             Object::SquareBrackets => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '[', ']')
             }
@@ -262,9 +266,10 @@ fn in_word(
     Some(start..end)
 }
 
-fn surrounding_html_tag(
+pub fn surrounding_html_tag(
     map: &DisplaySnapshot,
-    selection: Selection<DisplayPoint>,
+    head: DisplayPoint,
+    range: Range<DisplayPoint>,
     around: bool,
 ) -> Option<Range<DisplayPoint>> {
     fn read_tag(chars: impl Iterator<Item = char>) -> String {
@@ -286,7 +291,7 @@ fn surrounding_html_tag(
     }
 
     let snapshot = &map.buffer_snapshot;
-    let offset = selection.head().to_offset(map, Bias::Left);
+    let offset = head.to_offset(map, Bias::Left);
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
     let offset = excerpt.map_offset_to_buffer(offset);
@@ -307,14 +312,14 @@ fn surrounding_html_tag(
                 let open_tag = open_tag(buffer.chars_for_range(first_child.byte_range()));
                 let close_tag = close_tag(buffer.chars_for_range(last_child.byte_range()));
                 // It needs to be handled differently according to the selection length
-                let is_valid = if selection.end.to_offset(map, Bias::Left)
-                    - selection.start.to_offset(map, Bias::Left)
+                let is_valid = if range.end.to_offset(map, Bias::Left)
+                    - range.start.to_offset(map, Bias::Left)
                     <= 1
                 {
                     offset <= last_child.end_byte()
                 } else {
-                    selection.start.to_offset(map, Bias::Left) >= first_child.start_byte()
-                        && selection.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
+                    range.start.to_offset(map, Bias::Left) >= first_child.start_byte()
+                        && range.end.to_offset(map, Bias::Left) <= last_child.start_byte() + 1
                 };
                 if open_tag.is_some() && open_tag == close_tag && is_valid {
                     let range = if around {

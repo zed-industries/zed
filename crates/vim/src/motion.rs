@@ -1697,6 +1697,38 @@ fn end_of_document(
     map.clip_point(new_point.to_display_point(map), Bias::Left)
 }
 
+fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoint> {
+    let Some(outer) = crate::object::surrounding_html_tag(map, head, head..head, true) else {
+        return None;
+    };
+
+    let Some(inner) = crate::object::surrounding_html_tag(map, head, head..head, false) else {
+        return None;
+    };
+
+    if head > outer.start && head < inner.start {
+        let mut offset = inner.end.to_offset(map, Bias::Left);
+        for c in map.buffer_snapshot.chars_at(offset) {
+            if c == '/' || c == '\n' || c == '>' {
+                dbg!("Jumping forward");
+                return Some(offset.to_display_point(map));
+            }
+            offset += c.len_utf8();
+        }
+    } else {
+        let mut offset = outer.start.to_offset(map, Bias::Left);
+        for c in map.buffer_snapshot.chars_at(offset) {
+            offset += c.len_utf8();
+            if c == '<' || c == '\n' {
+                dbg!("Jumping back");
+                return Some(offset.to_display_point(map));
+            }
+        }
+    }
+
+    return None;
+}
+
 fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint {
     // https://github.com/vim/vim/blob/1d87e11a1ef201b26ed87585fba70182ad0c468a/runtime/doc/motion.txt#L1200
     let display_point = map.clip_at_line_end(display_point);
@@ -1722,6 +1754,15 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         let mut closest_distance = usize::MAX;
 
         for (open_range, close_range) in ranges {
+            if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
+                if offset >= open_range.start + 1 && offset < close_range.start {
+                    dbg!("Trying to match tag");
+                    if let Some(tag) = matching_tag(map, display_point) {
+                        return tag;
+                    }
+                }
+            }
+
             if open_range.start >= offset && line_range.contains(&open_range.start) {
                 let distance = open_range.start - offset;
                 if distance < closest_distance {
@@ -2075,6 +2116,28 @@ mod test {
         cx.set_shared_state("func ˇboop() {\n}").await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq("func boop(ˇ) {\n}");
+    }
+
+    // cargo test -p vim --features neovim test_matching_tags
+    #[gpui::test]
+    async fn test_matching_tags(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_typescript(cx).await;
+
+        cx.neovim.exec("set filetype=html").await;
+
+        cx.set_shared_state(indoc! {r"<bˇody></body>"}).await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<body><ˇ/body>"});
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<ˇbody></body>"});
+
+        cx.set_shared_state(indoc! {r"<a><bˇr/></a>"}).await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"<a><br/></aˇ>"});
     }
 
     #[gpui::test]
