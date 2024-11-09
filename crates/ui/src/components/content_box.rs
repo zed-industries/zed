@@ -1,0 +1,95 @@
+use crate::prelude::*;
+use gpui::{AnyElement, IntoElement, ParentElement, StyleRefinement, Styled};
+use smallvec::SmallVec;
+
+/// A flexible container component that can hold other elements.
+#[derive(IntoElement)]
+pub struct ContentBox {
+    base: Div,
+    border: bool,
+    fill: bool,
+    children: SmallVec<[AnyElement; 2]>,
+}
+
+impl ContentBox {
+    /// Creates a new [ContentBox].
+    pub fn new() -> Self {
+        Self {
+            base: div(),
+            border: false,
+            fill: false,
+            children: SmallVec::new(),
+        }
+    }
+
+    /// Removes the border from the [ContentBox].
+    pub fn borderless(mut self) -> Self {
+        self.border = false;
+        self
+    }
+
+    /// Removes the background fill from the [ContentBox].
+    pub fn unfilled(mut self) -> Self {
+        self.fill = false;
+        self
+    }
+}
+
+impl ParentElement for ContentBox {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        self.children.extend(elements)
+    }
+}
+
+impl Styled for ContentBox {
+    fn style(&mut self) -> &mut StyleRefinement {
+        self.base.style()
+    }
+}
+
+impl RenderOnce for ContentBox {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        // TODO:
+        // Baked in padding will make scrollable views inside of content boxes awkward.
+        //
+        // Do we make the padding optional, or do we push to use a different component?
+
+        self.base
+            .when(self.fill, |this| {
+                this.bg(cx.theme().colors().text.opacity(0.05))
+            })
+            .when(self.border, |this| {
+                this.border_1().border_color(cx.theme().colors().border)
+            })
+            .rounded_md()
+            .p_2()
+            .children(self.children)
+    }
+}
+
+impl ComponentPreview for ContentBox {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![example_group(vec![
+            single_example(
+                "Default",
+                ContentBox::new().child(Label::new("Default ContentBox")),
+            ),
+            single_example(
+                "Without Border",
+                ContentBox::new()
+                    .borderless()
+                    .child(Label::new("ContentBox with border")),
+            ),
+            single_example(
+                "Without Fill",
+                ContentBox::new()
+                    .unfilled()
+                    .child(Label::new("ContentBox with fill")),
+            ),
+        ])]
+    }
+}
