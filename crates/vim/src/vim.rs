@@ -356,7 +356,7 @@ impl Vim {
     fn observe_keystrokes(&mut self, keystroke_event: &KeystrokeEvent, cx: &mut ViewContext<Self>) {
         if self.exit_temporary_mode {
             self.exit_temporary_mode = false;
-            // Don't switch to insert mode if the next action is temporary_normal.
+            // Don't switch to insert mode if the action is temporary_normal.
             if let Some(action) = keystroke_event.action.as_ref() {
                 if action.as_any().downcast_ref::<TemporaryNormal>().is_some() {
                     return;
@@ -827,7 +827,6 @@ impl Vim {
             globals.dot_recording = false;
             globals.stop_recording_after_next_action = false;
         }
-        // ???
         self.exit_temporary_mode = self.temp_mode;
     }
 
