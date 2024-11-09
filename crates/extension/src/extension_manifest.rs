@@ -82,6 +82,9 @@ pub struct ExtensionManifest {
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
     #[serde(default)]
     pub snippets: Option<PathBuf>,
+
+    #[serde(default)]
+    pub include: Vec<String>,
 }
 
 #[derive(Clone, Default, PartialEq, Eq, Debug, Deserialize, Serialize)]
@@ -214,5 +217,6 @@ fn manifest_from_old_manifest(
         slash_commands: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,
+        include: Vec::new(),
     }
 }

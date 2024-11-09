@@ -191,6 +191,22 @@ async fn copy_extension_resources(
         }
     }
 
+    if !manifest.include.is_empty() {
+        for include_path in &manifest.include {
+            copy_recursive(
+                fs.as_ref(),
+                &extension_path.join(&include_path),
+                &output_dir.join(&include_path),
+                CopyOptions {
+                    overwrite: true,
+                    ignore_if_exists: false,
+                },
+            )
+            .await
+            .with_context(|| format!("failed to copy included path '{}'", include_path))?;
+        }
+    }
+
     Ok(())
 }
 
