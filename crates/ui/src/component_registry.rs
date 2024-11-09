@@ -9,8 +9,6 @@ static COMPONENTS: Lazy<Mutex<HashMap<&'static str, Vec<(&'static str, Component
     Lazy::new(|| Mutex::new(HashMap::default()));
 
 pub fn register_component(scope: &'static str, name: &'static str, preview: ComponentPreviewFn) {
-    println!("Registering component: scope={}, name={}", scope, name);
-
     let mut components = COMPONENTS.lock().unwrap();
     components
         .entry(scope)
