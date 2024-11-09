@@ -22,6 +22,7 @@ pub struct ReplStore {
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
+    selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
@@ -57,6 +58,7 @@ impl ReplStore {
             kernel_specifications: Vec::new(),
             _subscriptions: subscriptions,
             kernel_specifications_for_worktree: HashMap::default(),
+            selected_kernel_for_worktree: HashMap::default(),
         };
         this.on_enabled_changed(cx);
         this
@@ -74,7 +76,18 @@ impl ReplStore {
         self.enabled
     }
 
-    pub fn kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
+    pub fn kernel_specifications_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> impl Iterator<Item = &KernelSpecification> {
+        self.kernel_specifications_for_worktree
+            .get(&worktree_id)
+            .into_iter()
+            .flat_map(|specs| specs.iter())
+            .chain(self.kernel_specifications.iter())
+    }
+
+    pub fn pure_jupyter_kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
         self.kernel_specifications.iter()
     }
 
@@ -145,9 +158,33 @@ impl ReplStore {
         })
     }
 
-    pub fn kernelspec(&self, language_name: &str, cx: &AppContext) -> Option<KernelSpecification> {
+    pub fn set_active_kernelspec(
+        &mut self,
+        worktree_id: WorktreeId,
+        kernelspec: KernelSpecification,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        self.selected_kernel_for_worktree
+            .insert(worktree_id, kernelspec);
+    }
+
+    pub fn active_kernelspec(
+        &self,
+        worktree_id: WorktreeId,
+        language_at_cursor: &str,
+        cx: &AppContext,
+    ) -> Option<KernelSpecification> {
+        let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
+        selected_kernelspec.or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
+    }
+
+    fn kernelspec_legacy_by_lang_only(
+        &self,
+        language_at_cursor: &str,
+        cx: &AppContext,
+    ) -> Option<KernelSpecification> {
         let settings = JupyterSettings::get_global(cx);
-        let selected_kernel = settings.kernel_selections.get(language_name);
+        let selected_kernel = settings.kernel_selections.get(language_at_cursor);
 
         let found_by_name = self
             .kernel_specifications
@@ -172,7 +209,7 @@ impl ReplStore {
             .find(|kernel_option| match kernel_option {
                 KernelSpecification::Jupyter(runtime_specification) => {
                     runtime_specification.kernelspec.language.to_lowercase()
-                        == language_name.to_lowercase()
+                        == language_at_cursor.to_lowercase()
                 }
                 // todo!()
                 _ => false,

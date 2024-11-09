@@ -4,8 +4,8 @@ use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View
 use picker::Picker;
 use repl::{
     components::{KernelPickerDelegate, KernelSelector},
-    ExecutionState, JupyterSettings, Kernel, KernelSpecification, KernelStatus, Session,
-    SessionSupport,
+    worktree_id_for_editor, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
+    KernelStatus, Session, SessionSupport,
 };
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
@@ -294,6 +294,11 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
+        let Some(worktree_id) = worktree_id_for_editor(editor.downgrade(), cx) else {
+            // todo!()
+            return div().into_any_element();
+        };
+
         let session = repl::session(editor.downgrade(), cx);
 
         let current_kernelspec = match session {
@@ -313,7 +318,7 @@ impl QuickActionBar {
                     repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
                 })
             },
-            current_kernelspec.clone(),
+            worktree_id,
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
                 .child(

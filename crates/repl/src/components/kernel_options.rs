@@ -6,6 +6,7 @@ use gpui::DismissEvent;
 
 use picker::Picker;
 use picker::PickerDelegate;
+use project::WorktreeId;
 
 use std::sync::Arc;
 use ui::ListItemSpacing;
@@ -22,7 +23,7 @@ pub struct KernelSelector<T: PopoverTrigger> {
     on_select: OnSelect,
     trigger: T,
     info_text: Option<SharedString>,
-    current_kernelspec: Option<KernelSpecification>,
+    worktree_id: WorktreeId,
 }
 
 pub struct KernelPickerDelegate {
@@ -33,17 +34,13 @@ pub struct KernelPickerDelegate {
 }
 
 impl<T: PopoverTrigger> KernelSelector<T> {
-    pub fn new(
-        on_select: OnSelect,
-        current_kernelspec: Option<KernelSpecification>,
-        trigger: T,
-    ) -> Self {
+    pub fn new(on_select: OnSelect, worktree_id: WorktreeId, trigger: T) -> Self {
         KernelSelector {
             on_select,
             handle: None,
             trigger,
             info_text: None,
-            current_kernelspec,
+            worktree_id,
         }
     }
 
@@ -175,10 +172,13 @@ impl PickerDelegate for KernelPickerDelegate {
 impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let store = ReplStore::global(cx).read(cx);
-        let all_kernels: Vec<KernelSpecification> =
-            store.kernel_specifications().cloned().collect();
 
-        let selected_kernelspec = self.current_kernelspec;
+        let all_kernels: Vec<KernelSpecification> = store
+            .kernel_specifications_for_worktree(self.worktree_id)
+            .cloned()
+            .collect();
+
+        let selected_kernelspec = store.active_kernelspec(self.worktree_id, "todo", cx);
 
         let delegate = KernelPickerDelegate {
             on_select: self.on_select,

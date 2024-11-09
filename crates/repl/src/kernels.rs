@@ -486,14 +486,46 @@ pub fn python_env_kernel_specifications(
         let toolchains = if let Some(toolchains) = toolchains {
             toolchains
         } else {
-            dbg!("No toolchains found");
             return Ok(Vec::new());
         };
 
         let mut kernel_specs = Vec::new();
 
         for toolchain in toolchains.toolchains {
-            dbg!(&toolchain);
+            let python_path = toolchain.path.to_string();
+
+            // Check if ipykernel is installed
+            let ipykernel_check = Command::new(&python_path)
+                .args(&["-c", "import ipykernel"])
+                .output()
+                .await;
+
+            if ipykernel_check.is_ok() && ipykernel_check.unwrap().status.success() {
+                // Create a default kernelspec for this environment
+                let default_kernelspec = JupyterKernelspec {
+                    argv: vec![
+                        python_path.clone(),
+                        "-m".to_string(),
+                        "ipykernel_launcher".to_string(),
+                        "-f".to_string(),
+                        "{connection_file}".to_string(),
+                    ],
+                    display_name: toolchain.name.to_string(),
+                    language: "python".to_string(),
+                    interrupt_mode: None,
+                    metadata: None,
+                    env: None,
+                };
+
+                kernel_specs.push(KernelSpecification::PythonEnv(LocalKernelSpecification {
+                    name: toolchain.name.to_string(),
+                    path: PathBuf::from(&python_path),
+                    kernelspec: default_kernelspec,
+                }));
+            } else {
+                continue;
+            }
+
             let prefix = PathBuf::from(toolchain.path.to_string());
             let kernel_dir = prefix.join("share").join("jupyter").join("kernels");
 
