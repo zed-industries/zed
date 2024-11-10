@@ -14,7 +14,7 @@ use std::num::NonZeroU64;
 use std::path::Path;
 use std::sync::Arc;
 use util::ResultExt;
-use worktree::{PathChange, Worktree};
+use worktree::{LoadedBinaryFile, PathChange, Worktree};
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, PartialOrd, Ord, Eq)]
 pub struct ImageId(NonZeroU64);
@@ -313,20 +313,12 @@ impl ImageStoreImpl for Model<LocalImageStore> {
         cx: &mut ModelContext<ImageStore>,
     ) -> Task<Result<Model<ImageItem>>> {
         let this = self.clone();
-        let file = Arc::new(worktree::File {
-            worktree,
-            path,
-            mtime: None,
-            entry_id: None,
-            is_local: true,
-            is_deleted: false,
-            is_private: false,
-        });
 
-        let entry_id = file.entry_id;
-        let load_content = file.as_local().unwrap().load_bytes(cx);
+        let load_file = worktree.update(cx, |worktree, cx| {
+            worktree.load_binary_file(path.as_ref(), cx)
+        });
         cx.spawn(move |image_store, mut cx| async move {
-            let content = load_content.await?;
+            let LoadedBinaryFile { file, content } = load_file.await?;
             let image = create_gpui_image(content)?;
 
             let model = cx.new_model(|cx| ImageItem {
@@ -350,7 +342,7 @@ impl ImageStoreImpl for Model<LocalImageStore> {
                     image_id,
                 );
 
-                if let Some(entry_id) = entry_id {
+                if let Some(entry_id) = file.entry_id {
                     this.local_image_ids_by_entry_id.insert(entry_id, image_id);
                 }
 
