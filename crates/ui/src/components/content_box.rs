@@ -74,24 +74,44 @@ impl ComponentPreview for ContentBox {
         "A flexible container component that can hold other elements. It can be customized with or without a border and background fill."
     }
 
+    fn example_label_side() -> ExampleLabelSide {
+        ExampleLabelSide::Bottom
+    }
+
     fn examples() -> Vec<ComponentExampleGroup<Self>> {
         vec![example_group(vec![
             single_example(
                 "Default",
-                ContentBox::new().child(Label::new("Default ContentBox")),
-            ),
+                ContentBox::new()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .h_48()
+                    .child(Label::new("Default ContentBox")),
+            )
+            .grow(),
             single_example(
                 "Without Border",
                 ContentBox::new()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .h_48()
                     .borderless()
-                    .child(Label::new("ContentBox with border")),
-            ),
+                    .child(Label::new("Borderless ContentBox")),
+            )
+            .grow(),
             single_example(
                 "Without Fill",
                 ContentBox::new()
+                    .flex_1()
+                    .items_center()
+                    .justify_center()
+                    .h_48()
                     .unfilled()
-                    .child(Label::new("ContentBox with fill")),
-            ),
+                    .child(Label::new("Unfilled ContentBox")),
+            )
+            .grow(),
         ])]
     }
 }

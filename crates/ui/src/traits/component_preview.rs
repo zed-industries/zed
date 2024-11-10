@@ -3,6 +3,7 @@ use crate::prelude::*;
 use gpui::{AnyElement, SharedString};
 
 /// Which side of the preview to show labels on
+#[allow(unused)]
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExampleLabelSide {
     /// Left side
@@ -32,6 +33,10 @@ pub trait ComponentPreview: IntoElement {
 
     fn examples() -> Vec<ComponentExampleGroup<Self>>;
 
+    fn custom_example(_cx: &WindowContext) -> impl Into<Option<AnyElement>> {
+        None::<AnyElement>
+    }
+
     fn component_previews() -> Vec<AnyElement> {
         Self::examples()
             .into_iter()
@@ -47,6 +52,7 @@ pub trait ComponentPreview: IntoElement {
         let description = Self::description().into();
 
         v_flex()
+            .w_full()
             .gap_3()
             .p_4()
             .border_1()
@@ -73,18 +79,23 @@ pub trait ComponentPreview: IntoElement {
                         )
                     }),
             )
+            .when_some(Self::custom_example(cx).into(), |this, custom_example| {
+                this.child(custom_example)
+            })
             .children(Self::component_previews())
             .into_any_element()
     }
 
     fn render_example_group(group: ComponentExampleGroup<Self>) -> AnyElement {
         v_flex()
+            .w_full()
             .gap_2()
             .when_some(group.title, |this, title| {
                 this.child(Label::new(title).size(LabelSize::Small))
             })
             .child(
                 h_flex()
+                    .w_full()
                     .gap_6()
                     .children(group.examples.into_iter().map(Self::render_example))
                     .into_any_element(),
@@ -103,6 +114,7 @@ pub trait ComponentPreview: IntoElement {
         };
 
         base.gap_1()
+            .flex_1()
             .child(example.element)
             .child(
                 Label::new(example.variant_name)
@@ -117,6 +129,7 @@ pub trait ComponentPreview: IntoElement {
 pub struct ComponentExample<T> {
     variant_name: SharedString,
     element: T,
+    grow: bool,
 }
 
 impl<T> ComponentExample<T> {
@@ -125,7 +138,14 @@ impl<T> ComponentExample<T> {
         Self {
             variant_name: variant_name.into(),
             element: example,
+            grow: false,
         }
+    }
+
+    /// Set the example to grow to fill the available horizontal space.
+    pub fn grow(mut self) -> Self {
+        self.grow = true;
+        self
     }
 }
 
