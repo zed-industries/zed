@@ -1058,6 +1058,14 @@ impl DapStore {
                         restart: Some(false),
                     })
                     .await;
+            } else {
+                let _ = client
+                    .request::<Disconnect>(DisconnectArguments {
+                        restart: Some(false),
+                        terminate_debuggee: Some(true),
+                        suspend_debuggee: Some(false),
+                    })
+                    .await;
             }
 
             client.shutdown().await
