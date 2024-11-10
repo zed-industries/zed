@@ -7,16 +7,20 @@ use dap_types::{
     messages::{Message, Response},
     requests::Request,
 };
-use gpui::{AppContext, AsyncAppContext};
-use smol::channel::{bounded, Receiver, Sender};
+use futures::{channel::oneshot, select, FutureExt as _};
+use gpui::{AppContext, AsyncAppContext, BackgroundExecutor};
+use smol::channel::{Receiver, Sender};
 use std::{
     hash::Hash,
     sync::{
         atomic::{AtomicU64, Ordering},
         Arc, Mutex,
     },
+    time::Duration,
 };
 use task::{DebugAdapterConfig, DebugRequestType};
+
+const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Copy, Clone, Default, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ThreadStatus {
@@ -34,6 +38,7 @@ pub struct DebugAdapterClientId(pub usize);
 pub struct DebugAdapterClient {
     id: DebugAdapterClientId,
     sequence_count: AtomicU64,
+    executor: BackgroundExecutor,
     adapter: Arc<Box<dyn DebugAdapter>>,
     transport_delegate: TransportDelegate,
     config: Arc<Mutex<DebugAdapterConfig>>,
@@ -44,6 +49,7 @@ impl DebugAdapterClient {
         id: DebugAdapterClientId,
         config: DebugAdapterConfig,
         adapter: Arc<Box<dyn DebugAdapter>>,
+        cx: &AsyncAppContext,
     ) -> Self {
         let transport_delegate = TransportDelegate::new(adapter.transport());
 
@@ -53,6 +59,7 @@ impl DebugAdapterClient {
             transport_delegate,
             sequence_count: AtomicU64::new(1),
             config: Arc::new(Mutex::new(config)),
+            executor: cx.background_executor().clone(),
         }
     }
 
@@ -68,12 +75,16 @@ impl DebugAdapterClient {
         let (server_rx, server_tx) = self.transport_delegate.start(binary, cx).await?;
 
         // start handling events/reverse requests
-        cx.spawn(|mut cx| async move {
-            Self::handle_receive_messages(server_rx, server_tx, message_handler, &mut cx).await
+        cx.update(|cx| {
+            cx.spawn({
+                let server_tx = server_tx.clone();
+                |mut cx| async move {
+                    Self::handle_receive_messages(server_rx, server_tx, message_handler, &mut cx)
+                        .await
+                }
+            })
+            .detach_and_log_err(cx);
         })
-        .detach();
-
-        Ok(())
     }
 
     async fn handle_receive_messages<F>(
@@ -85,19 +96,26 @@ impl DebugAdapterClient {
     where
         F: FnMut(Message, &mut AppContext) + 'static + Send + Sync + Clone,
     {
-        while let Ok(payload) = server_rx.recv().await {
-            match payload {
-                Message::Event(ev) => cx.update(|cx| event_handler(Message::Event(ev), cx))?,
-                Message::Response(_) => unreachable!(),
-                Message::Request(req) => {
-                    cx.update(|cx| event_handler(Message::Request(req), cx))?
-                }
+        let result = loop {
+            let message = match server_rx.recv().await {
+                Ok(message) => message,
+                Err(e) => break Err(e.into()),
             };
-        }
+
+            if let Err(e) = match message {
+                Message::Event(ev) => cx.update(|cx| event_handler(Message::Event(ev), cx)),
+                Message::Request(req) => cx.update(|cx| event_handler(Message::Request(req), cx)),
+                Message::Response(_) => unreachable!(),
+            } {
+                break Err(e);
+            }
+        };
 
         drop(client_tx);
 
-        anyhow::Ok(())
+        log::debug!("Handle receive messages dropped");
+
+        result
     }
 
     /// Send a request to an adapter and get a response back
@@ -105,7 +123,7 @@ impl DebugAdapterClient {
     pub async fn request<R: Request>(&self, arguments: R::Arguments) -> Result<R::Response> {
         let serialized_arguments = serde_json::to_value(arguments)?;
 
-        let (callback_tx, callback_rx) = bounded::<Result<Response>>(1);
+        let (callback_tx, callback_rx) = oneshot::channel::<Result<Response>>();
 
         let sequence_id = self.next_sequence_id();
 
@@ -119,13 +137,43 @@ impl DebugAdapterClient {
             .add_pending_request(sequence_id, callback_tx)
             .await;
 
+        log::debug!(
+            "Send `{}` request with sequence_id: {}",
+            R::COMMAND.to_string(),
+            sequence_id
+        );
+
         self.send_message(Message::Request(request)).await?;
 
-        let response = callback_rx.recv().await??;
+        log::debug!(
+            "Start receiving response for: `{}` sequence_id: {}",
+            R::COMMAND.to_string(),
+            sequence_id
+        );
 
-        match response.success {
-            true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
-            false => Err(anyhow!("Request failed")),
+        let mut timeout = self.executor.timer(DAP_REQUEST_TIMEOUT).fuse();
+        let command = R::COMMAND.to_string();
+
+        select! {
+            response = callback_rx.fuse() => {
+                log::debug!(
+                    "Received response for: `{}` sequence_id: {}",
+                    command,
+                    sequence_id
+                );
+
+                let response = response??;
+                match response.success {
+                    true => Ok(serde_json::from_value(response.body.unwrap_or_default())?),
+                    false => Err(anyhow!("Request failed")),
+                }
+            }
+
+            _ = timeout => {
+                self.transport_delegate.cancel_pending_request(&sequence_id).await;
+                log::error!("Cancelled DAP request for {command:?} id {sequence_id} which took over {DAP_REQUEST_TIMEOUT:?}");
+                anyhow::bail!("DAP request timeout");
+            }
         }
     }
 

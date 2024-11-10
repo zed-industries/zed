@@ -4,7 +4,9 @@ use dap_types::{
     messages::{Message, Response},
     ErrorResponse,
 };
-use futures::{select, AsyncBufRead, AsyncReadExt as _, AsyncWrite, FutureExt as _};
+use futures::{
+    channel::oneshot, select, AsyncBufRead, AsyncReadExt as _, AsyncWrite, FutureExt as _,
+};
 use gpui::AsyncAppContext;
 use settings::Settings as _;
 use smallvec::SmallVec;
@@ -23,6 +25,7 @@ use std::{
     time::Duration,
 };
 use task::TCPHost;
+use util::ResultExt as _;
 
 use crate::{adapters::DebugAdapterBinary, debugger_settings::DebuggerSettings};
 
@@ -60,7 +63,7 @@ impl TransportParams {
     }
 }
 
-type Requests = Arc<Mutex<HashMap<u64, Sender<Result<Response>>>>>;
+type Requests = Arc<Mutex<HashMap<u64, oneshot::Sender<Result<Response>>>>>;
 type LogHandlers = Arc<parking_lot::Mutex<SmallVec<[(LogKind, IoHandler); 2]>>>;
 
 pub(crate) struct TransportDelegate {
@@ -69,15 +72,15 @@ pub(crate) struct TransportDelegate {
     pending_requests: Requests,
     transport: Box<dyn Transport>,
     process: Arc<Mutex<Option<Child>>>,
-    server_tx: Option<Sender<Message>>,
+    server_tx: Arc<Mutex<Option<Sender<Message>>>>,
 }
 
 impl TransportDelegate {
     pub fn new(transport: Box<dyn Transport>) -> Self {
         Self {
             transport,
-            server_tx: None,
             process: Default::default(),
+            server_tx: Default::default(),
             log_handlers: Default::default(),
             current_requests: Default::default(),
             pending_requests: Default::default(),
@@ -94,39 +97,46 @@ impl TransportDelegate {
         let (client_tx, server_rx) = unbounded::<Message>();
         let (server_tx, client_rx) = unbounded::<Message>();
 
-        if let Some(stdout) = params.process.stdout.take() {
+        cx.update(|cx| {
+            if let Some(stdout) = params.process.stdout.take() {
+                cx.background_executor()
+                    .spawn(Self::handle_adapter_log(stdout, self.log_handlers.clone()))
+                    .detach_and_log_err(cx);
+            }
+
             cx.background_executor()
-                .spawn(Self::handle_adapter_log(stdout, self.log_handlers.clone()))
-                .detach();
-        }
+                .spawn(Self::handle_output(
+                    params.output,
+                    client_tx,
+                    self.pending_requests.clone(),
+                    self.log_handlers.clone(),
+                ))
+                .detach_and_log_err(cx);
 
-        cx.background_executor()
-            .spawn(Self::handle_output(
-                params.output,
-                client_tx,
-                self.pending_requests.clone(),
-                self.log_handlers.clone(),
-            ))
-            .detach();
+            if let Some(stderr) = params.process.stderr.take() {
+                cx.background_executor()
+                    .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
+                    .detach_and_log_err(cx);
+            }
 
-        if let Some(stderr) = params.process.stderr.take() {
             cx.background_executor()
-                .spawn(Self::handle_error(stderr, self.log_handlers.clone()))
-                .detach();
+                .spawn(Self::handle_input(
+                    params.input,
+                    client_rx,
+                    self.current_requests.clone(),
+                    self.pending_requests.clone(),
+                    self.log_handlers.clone(),
+                ))
+                .detach_and_log_err(cx);
+        })?;
+
+        {
+            let mut lock = self.process.lock().await;
+            *lock = Some(params.process);
+
+            let mut lock = self.server_tx.lock().await;
+            *lock = Some(server_tx.clone());
         }
-
-        cx.background_executor()
-            .spawn(Self::handle_input(
-                params.input,
-                client_rx,
-                self.current_requests.clone(),
-                self.pending_requests.clone(),
-                self.log_handlers.clone(),
-            ))
-            .detach();
-
-        self.process = Arc::new(Mutex::new(Some(params.process)));
-        self.server_tx = Some(server_tx.clone());
 
         Ok((server_rx, server_tx))
     }
@@ -134,18 +144,23 @@ impl TransportDelegate {
     pub(crate) async fn add_pending_request(
         &self,
         sequence_id: u64,
-        request: Sender<Result<Response>>,
+        request: oneshot::Sender<Result<Response>>,
     ) {
         let mut pending_requests = self.pending_requests.lock().await;
         pending_requests.insert(sequence_id, request);
     }
 
+    pub(crate) async fn cancel_pending_request(&self, sequence_id: &u64) {
+        let mut pending_requests = self.pending_requests.lock().await;
+        pending_requests.remove(sequence_id);
+    }
+
     pub(crate) async fn send_message(&self, message: Message) -> Result<()> {
-        if let Some(server_tx) = self.server_tx.as_ref() {
+        if let Some(server_tx) = self.server_tx.lock().await.as_ref() {
             server_tx
                 .send(message)
                 .await
-                .map_err(|e| anyhow!("Failed to send response back: {}", e))
+                .map_err(|e| anyhow!("Failed to send message: {}", e))
         } else {
             Err(anyhow!("Server tx already dropped"))
         }
@@ -154,16 +169,29 @@ impl TransportDelegate {
     async fn handle_adapter_log(stdout: ChildStdout, log_handlers: LogHandlers) -> Result<()> {
         let mut reader = BufReader::new(stdout);
         let mut line = String::new();
-        while reader.read_line(&mut line).await? > 0 {
+
+        let result = loop {
+            line.truncate(0);
+
+            let bytes_read = match reader.read_line(&mut line).await {
+                Ok(bytes_read) => bytes_read,
+                Err(e) => break Err(e.into()),
+            };
+
+            if bytes_read == 0 {
+                break Err(anyhow!("Debugger log stream closed"));
+            }
+
             for (kind, handler) in log_handlers.lock().iter_mut() {
                 if matches!(kind, LogKind::Adapter) {
                     handler(IoKind::StdOut, line.as_str());
                 }
             }
-            line.truncate(0);
-        }
+        };
 
-        Ok(())
+        log::debug!("Handle adapter log dropped");
+
+        result
     }
 
     async fn handle_input(
@@ -173,31 +201,47 @@ impl TransportDelegate {
         pending_requests: Requests,
         log_handlers: LogHandlers,
     ) -> Result<()> {
-        while let Ok(payload) = client_rx.recv().await {
-            if let Message::Request(request) = &payload {
-                if let Some(sender) = current_requests.lock().await.remove(&request.seq) {
-                    pending_requests.lock().await.insert(request.seq, sender);
+        let result = loop {
+            match client_rx.recv().await {
+                Ok(message) => {
+                    if let Message::Request(request) = &message {
+                        if let Some(sender) = current_requests.lock().await.remove(&request.seq) {
+                            pending_requests.lock().await.insert(request.seq, sender);
+                        }
+                    }
+
+                    let message = match serde_json::to_string(&message) {
+                        Ok(message) => message,
+                        Err(e) => break Err(e.into()),
+                    };
+
+                    for (kind, log_handler) in log_handlers.lock().iter_mut() {
+                        if matches!(kind, LogKind::Rpc) {
+                            log_handler(IoKind::StdIn, &message);
+                        }
+                    }
+
+                    if let Err(e) = server_stdin
+                        .write_all(
+                            format!("Content-Length: {}\r\n\r\n{}", message.len(), message)
+                                .as_bytes(),
+                        )
+                        .await
+                    {
+                        break Err(e.into());
+                    }
+
+                    if let Err(e) = server_stdin.flush().await {
+                        break Err(e.into());
+                    }
                 }
+                Err(error) => break Err(error.into()),
             }
+        };
 
-            let message = serde_json::to_string(&payload)?;
+        log::debug!("Handle adapter input dropped");
 
-            for (kind, log_handler) in log_handlers.lock().iter_mut() {
-                if matches!(kind, LogKind::Rpc) {
-                    log_handler(IoKind::StdIn, &message);
-                }
-            }
-
-            server_stdin
-                .write_all(
-                    format!("Content-Length: {}\r\n\r\n{}", message.len(), message).as_bytes(),
-                )
-                .await?;
-
-            server_stdin.flush().await?;
-        }
-
-        Ok(())
+        result
     }
 
     async fn handle_output(
@@ -208,27 +252,33 @@ impl TransportDelegate {
     ) -> Result<()> {
         let mut recv_buffer = String::new();
 
-        while let Ok(message) =
-            Self::receive_server_message(&mut server_stdout, &mut recv_buffer, &log_handlers).await
-        {
+        let result = loop {
+            let message =
+                Self::receive_server_message(&mut server_stdout, &mut recv_buffer, &log_handlers)
+                    .await;
+
             match message {
-                Message::Response(res) => {
+                Ok(Message::Response(res)) => {
                     if let Some(tx) = pending_requests.lock().await.remove(&res.request_seq) {
-                        tx.send(Self::process_response(res)).await?;
+                        if let Err(e) = tx.send(Self::process_response(res)) {
+                            break Err(anyhow!("Failed to send response: {:?}", e));
+                        }
                     } else {
                         client_tx.send(Message::Response(res)).await?;
                     };
                 }
-                Message::Request(_) => {
+                Ok(message) => {
                     client_tx.send(message).await?;
                 }
-                Message::Event(_) => {
-                    client_tx.send(message).await?;
-                }
+                Err(e) => break Err(e),
             }
-        }
+        };
 
-        Ok(())
+        drop(client_tx);
+
+        log::debug!("Handle adapter output dropped");
+
+        result
     }
 
     async fn handle_error(stderr: ChildStderr, log_handlers: LogHandlers) -> Result<()> {
@@ -236,18 +286,25 @@ impl TransportDelegate {
 
         let mut reader = BufReader::new(stderr);
 
-        loop {
-            buffer.truncate(0);
-            if reader.read_line(&mut buffer).await? == 0 {
-                return Err(anyhow!("debugger error stream closed"));
-            }
+        let result = loop {
+            match reader.read_line(&mut buffer).await {
+                Ok(0) => break Err(anyhow!("debugger error stream closed")),
+                Ok(_) => {
+                    for (kind, log_handler) in log_handlers.lock().iter_mut() {
+                        if matches!(kind, LogKind::Adapter) {
+                            log_handler(IoKind::StdErr, buffer.as_str());
+                        }
+                    }
 
-            for (kind, log_handler) in log_handlers.lock().iter_mut() {
-                if matches!(kind, LogKind::Adapter) {
-                    log_handler(IoKind::StdErr, buffer.as_str());
+                    buffer.truncate(0);
                 }
+                Err(error) => break Err(error.into()),
             }
-        }
+        };
+
+        log::debug!("Handle adapter error dropped");
+
+        result
     }
 
     fn process_response(response: Response) -> Result<Response> {
@@ -318,7 +375,9 @@ impl TransportDelegate {
     }
 
     pub async fn shutdown(&self) -> Result<()> {
-        if let Some(server_tx) = self.server_tx.as_ref() {
+        log::debug!("Start shutdown client");
+
+        if let Some(server_tx) = self.server_tx.lock().await.take().as_ref() {
             server_tx.close();
         }
 
@@ -330,12 +389,14 @@ impl TransportDelegate {
         pending_requests.clear();
 
         if let Some(mut adapter) = adapter.take() {
-            adapter.kill()?;
+            let _ = adapter.kill().log_err();
         }
 
         drop(current_requests);
         drop(pending_requests);
         drop(adapter);
+
+        log::debug!("Shutdown client completed");
 
         anyhow::Ok(())
     }
