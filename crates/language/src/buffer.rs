@@ -41,14 +41,13 @@ use std::{
     cell::Cell,
     cmp::{self, Ordering, Reverse},
     collections::{BTreeMap, BTreeSet},
-    convert::identity,
     ffi::OsStr,
     fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
     num::NonZeroU32,
-    ops::{Deref, DerefMut, Index, Range},
+    ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
     sync::{Arc, LazyLock},
@@ -2250,7 +2249,7 @@ impl Buffer {
                 } else {
                     self.completion_triggers_per_language_server
                         .insert(server_id, triggers.iter().cloned().collect());
-                    self.completion_triggers.extend(triggers.into_iter());
+                    self.completion_triggers.extend(triggers);
                 }
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
