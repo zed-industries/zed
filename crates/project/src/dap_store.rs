@@ -73,6 +73,7 @@ pub struct DebugPosition {
 pub struct DapStore {
     next_client_id: AtomicUsize,
     delegate: DapAdapterDelegate,
+    ignore_breakpoints: HashSet<DebugAdapterClientId>,
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
     active_debug_line: Option<(ProjectPath, DebugPosition)>,
     capabilities: HashMap<DebugAdapterClientId, Capabilities>,
@@ -103,6 +104,7 @@ impl DapStore {
             breakpoints: Default::default(),
             capabilities: HashMap::default(),
             next_client_id: Default::default(),
+            ignore_breakpoints: Default::default(),
             delegate: DapAdapterDelegate::new(
                 http_client.clone(),
                 node_runtime.clone(),
@@ -190,6 +192,16 @@ impl DapStore {
 
     pub fn breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
         &self.breakpoints
+    }
+
+    pub fn ignore_breakpoints(&self, client_id: &DebugAdapterClientId) -> bool {
+        self.ignore_breakpoints.contains(client_id)
+    }
+
+    pub fn toggle_ignore_breakpoints(&mut self, client_id: &DebugAdapterClientId) {
+        if !self.ignore_breakpoints.remove(client_id) {
+            self.ignore_breakpoints.insert(*client_id);
+        }
     }
 
     pub fn breakpoint_at_row(
@@ -1024,6 +1036,7 @@ impl DapStore {
 
         cx.emit(DapStoreEvent::DebugClientStopped(*client_id));
 
+        self.ignore_breakpoints.remove(client_id);
         let capabilities = self.capabilities.remove(client_id);
 
         cx.background_executor().spawn(async move {
@@ -1059,7 +1072,7 @@ impl DapStore {
         buffer_snapshot: BufferSnapshot,
         edit_action: BreakpointEditAction,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> Task<Result<()>> {
         let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
 
         match edit_action {
@@ -1077,7 +1090,6 @@ impl DapStore {
         cx.notify();
 
         self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
-            .detach();
     }
 
     pub fn send_breakpoints(
@@ -1085,6 +1097,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         absolute_file_path: Arc<Path>,
         mut breakpoints: Vec<SourceBreakpoint>,
+        ignore: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
@@ -1100,7 +1113,9 @@ impl DapStore {
                 .request::<SetBreakpoints>(SetBreakpointsArguments {
                     source: Source {
                         path: Some(String::from(absolute_file_path.to_string_lossy())),
-                        name: None,
+                        name: absolute_file_path
+                            .file_name()
+                            .map(|name| name.to_string_lossy().to_string()),
                         source_reference: None,
                         presentation_hint: None,
                         origin: None,
@@ -1108,8 +1123,8 @@ impl DapStore {
                         adapter_data: None,
                         checksums: None,
                     },
-                    breakpoints: Some(breakpoints),
-                    source_modified: None,
+                    breakpoints: Some(if ignore { Vec::default() } else { breakpoints }),
+                    source_modified: Some(false),
                     lines: None,
                 })
                 .await?;
@@ -1124,15 +1139,15 @@ impl DapStore {
         buffer_path: PathBuf,
         buffer_snapshot: BufferSnapshot,
         cx: &mut ModelContext<Self>,
-    ) -> Task<()> {
+    ) -> Task<Result<()>> {
         let clients = self.running_clients().collect::<Vec<_>>();
 
         if clients.is_empty() {
-            return Task::ready(());
+            return Task::ready(Ok(()));
         }
 
         let Some(breakpoints) = self.breakpoints.get(project_path) else {
-            return Task::ready(());
+            return Task::ready(Ok(()));
         };
 
         let source_breakpoints = breakpoints
@@ -1146,12 +1161,15 @@ impl DapStore {
                 &client.id(),
                 Arc::from(buffer_path.clone()),
                 source_breakpoints.clone(),
+                self.ignore_breakpoints(&client.id()),
                 cx,
             ))
         }
 
         cx.background_executor().spawn(async move {
-            futures::future::join_all(tasks).await;
+            futures::future::try_join_all(tasks).await?;
+
+            Ok(())
         })
     }
 }

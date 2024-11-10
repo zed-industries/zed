@@ -1243,7 +1243,13 @@ impl Project {
                 .collect::<Vec<_>>();
 
             tasks.push(self.dap_store.update(cx, |store, cx| {
-                store.send_breakpoints(client_id, abs_path, source_breakpoints, cx)
+                store.send_breakpoints(
+                    client_id,
+                    abs_path,
+                    source_breakpoints,
+                    store.ignore_breakpoints(client_id),
+                    cx,
+                )
             }));
         }
 
@@ -1337,6 +1343,57 @@ impl Project {
         result
     }
 
+    pub fn toggle_ignore_breakpoints(
+        &self,
+        client_id: &DebugAdapterClientId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let tasks = self.dap_store.update(cx, |store, cx| {
+            store.toggle_ignore_breakpoints(client_id);
+
+            let mut tasks = Vec::new();
+
+            for (project_path, breakpoints) in store.breakpoints() {
+                let Some((buffer, buffer_path)) = maybe!({
+                    let buffer = self
+                        .buffer_store
+                        .read_with(cx, |store, cx| store.get_by_path(project_path, cx))?;
+
+                    let buffer = buffer.read(cx);
+                    let project_path = buffer.project_path(cx)?;
+                    let worktree = self.worktree_for_id(project_path.clone().worktree_id, cx)?;
+                    Some((
+                        buffer,
+                        worktree.read(cx).absolutize(&project_path.path).ok()?,
+                    ))
+                }) else {
+                    continue;
+                };
+
+                tasks.push(
+                    store.send_breakpoints(
+                        client_id,
+                        Arc::from(buffer_path),
+                        breakpoints
+                            .into_iter()
+                            .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
+                            .collect::<Vec<_>>(),
+                        store.ignore_breakpoints(client_id),
+                        cx,
+                    ),
+                );
+            }
+
+            tasks
+        });
+
+        cx.background_executor().spawn(async move {
+            try_join_all(tasks).await?;
+
+            Ok(())
+        })
+    }
+
     /// Sends updated breakpoint information of one file to all active debug adapters
     ///
     /// This function is called whenever a breakpoint is toggled, and it doesn't need
@@ -1365,14 +1422,16 @@ impl Project {
         };
 
         self.dap_store.update(cx, |store, cx| {
-            store.toggle_breakpoint_for_buffer(
-                &project_path,
-                breakpoint,
-                buffer_path,
-                buffer.read(cx).snapshot(),
-                edit_action,
-                cx,
-            );
+            store
+                .toggle_breakpoint_for_buffer(
+                    &project_path,
+                    breakpoint,
+                    buffer_path,
+                    buffer.read(cx).snapshot(),
+                    edit_action,
+                    cx,
+                )
+                .detach_and_log_err(cx);
         });
     }
 

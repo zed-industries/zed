@@ -130,7 +130,18 @@ actions!(assistant, [ShowConfiguration]);
 
 actions!(
     debugger,
-    [Start, Continue, Disconnect, Pause, Restart, StepInto, StepOver, StepOut, Stop]
+    [
+        Start,
+        Continue,
+        Disconnect,
+        Pause,
+        Restart,
+        StepInto,
+        StepOver,
+        StepOut,
+        Stop,
+        ToggleIgnoreBreakpoints
+    ]
 );
 
 actions!(

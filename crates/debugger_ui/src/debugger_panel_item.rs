@@ -477,6 +477,18 @@ impl DebugPanelItem {
                 .detach_and_log_err(cx);
         });
     }
+
+    pub fn toggle_ignore_breakpoints(&mut self, cx: &mut ViewContext<Self>) {
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.project().update(cx, |project, cx| {
+                    project
+                        .toggle_ignore_breakpoints(&self.client_id, cx)
+                        .detach_and_log_err(cx);
+                })
+            })
+            .ok();
+    }
 }
 
 impl EventEmitter<DebugPanelItemEvent> for DebugPanelItem {}
@@ -633,6 +645,25 @@ impl Render for DebugPanelItem {
                                             || thread_status == ThreadStatus::Ended,
                                     )
                                     .tooltip(move |cx| Tooltip::text("Disconnect", cx)),
+                            )
+                            .child(
+                                IconButton::new(
+                                    "debug-ignore-breakpoints",
+                                    if self.dap_store.read(cx).ignore_breakpoints(&self.client_id) {
+                                        IconName::DebugIgnoreBreakpoints
+                                    } else {
+                                        IconName::DebugBreakpoint
+                                    },
+                                )
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.toggle_ignore_breakpoints(cx);
+                                }))
+                                .disabled(
+                                    thread_status == ThreadStatus::Exited
+                                        || thread_status == ThreadStatus::Ended,
+                                )
+                                .tooltip(move |cx| Tooltip::text("Ignore breakpoints", cx)),
                             ),
                     )
                     .child(

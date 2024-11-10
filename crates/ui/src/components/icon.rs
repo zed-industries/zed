@@ -173,6 +173,7 @@ pub enum IconName {
     TextSnippet,
     Dash,
     DebugBreakpoint,
+    DebugIgnoreBreakpoints,
     DebugPause,
     DebugContinue,
     DebugStepOver,

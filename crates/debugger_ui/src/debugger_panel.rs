@@ -32,6 +32,7 @@ use workspace::{
 };
 use workspace::{
     pane, Continue, Disconnect, Pane, Pause, Restart, Start, StepInto, StepOut, StepOver, Stop,
+    ToggleIgnoreBreakpoints,
 };
 
 pub enum DebugPanelEvent {
@@ -174,6 +175,7 @@ impl DebugPanel {
                         TypeId::of::<Disconnect>(),
                         TypeId::of::<Pause>(),
                         TypeId::of::<Restart>(),
+                        TypeId::of::<ToggleIgnoreBreakpoints>(),
                     ];
 
                     if has_active_session {
