@@ -3351,11 +3351,17 @@ impl LspStore {
 
                     buffer_handle.update(cx, |buffer, cx| {
                         buffer.set_completion_triggers(
+                            server.server_id(),
                             server
                                 .capabilities()
                                 .completion_provider
                                 .as_ref()
-                                .and_then(|provider| provider.trigger_characters.clone())
+                                .and_then(|provider| {
+                                    provider
+                                        .trigger_characters
+                                        .as_ref()
+                                        .map(|characters| characters.iter().cloned().collect())
+                                })
                                 .unwrap_or_default(),
                             cx,
                         );
@@ -6685,11 +6691,17 @@ impl LspStore {
 
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
+                        server_id,
                         language_server
                             .capabilities()
                             .completion_provider
                             .as_ref()
-                            .and_then(|provider| provider.trigger_characters.clone())
+                            .and_then(|provider| {
+                                provider
+                                    .trigger_characters
+                                    .as_ref()
+                                    .map(|characters| characters.iter().cloned().collect())
+                            })
                             .unwrap_or_default(),
                         cx,
                     )
