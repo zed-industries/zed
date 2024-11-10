@@ -10,7 +10,7 @@ use gpui::{
 use project::Fs;
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::kernel_specifications;
+use crate::kernels::local_kernel_specifications;
 use crate::{JupyterSettings, KernelSpecification, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
@@ -106,12 +106,17 @@ impl ReplStore {
     }
 
     pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
-        let kernel_specifications = kernel_specifications(self.fs.clone());
+        let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
         cx.spawn(|this, mut cx| async move {
-            let kernel_specifications = kernel_specifications.await?;
+            let local_kernel_specifications = local_kernel_specifications.await?;
+
+            let mut kernel_options = Vec::new();
+            for kernel_specification in local_kernel_specifications {
+                kernel_options.push(KernelSpecification::Jupyter(kernel_specification));
+            }
 
             this.update(&mut cx, |this, cx| {
-                this.kernel_specifications = kernel_specifications;
+                this.kernel_specifications = kernel_options;
                 cx.notify();
             })
         })
@@ -125,7 +130,9 @@ impl ReplStore {
             .kernel_specifications
             .iter()
             .find(|runtime_specification| {
-                if let Some(selected) = selected_kernel {
+                if let (Some(selected), KernelSpecification::Jupyter(runtime_specification)) =
+                    (selected_kernel, runtime_specification)
+                {
                     // Top priority is the selected kernel
                     return runtime_specification.name.to_lowercase() == selected.to_lowercase();
                 }
@@ -139,9 +146,13 @@ impl ReplStore {
 
         self.kernel_specifications
             .iter()
-            .find(|runtime_specification| {
-                runtime_specification.kernelspec.language.to_lowercase()
-                    == language_name.to_lowercase()
+            .find(|kernel_option| match kernel_option {
+                KernelSpecification::Jupyter(runtime_specification) => {
+                    runtime_specification.kernelspec.language.to_lowercase()
+                        == language_name.to_lowercase()
+                }
+                // todo!()
+                _ => false,
             })
             .cloned()
     }

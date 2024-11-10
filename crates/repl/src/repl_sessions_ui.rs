@@ -1,9 +1,9 @@
-use collections::HashMap;
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     FontWeight, Subscription, View,
 };
+use std::collections::HashMap;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
@@ -12,7 +12,7 @@ use workspace::{item::Item, Workspace};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
-use crate::KernelSpecification;
+use crate::{KernelSpecification, KERNEL_DOCS_URL};
 
 actions!(
     repl,
@@ -61,85 +61,45 @@ pub fn init(cx: &mut AppContext) {
             return;
         }
 
-        let editor_handle = cx.view().downgrade();
+        cx.defer(|editor, cx| {
+            let workspace = Workspace::for_window(cx);
 
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Run, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
+            let is_local_project = workspace
+                .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+                .unwrap_or(false);
+
+            if !is_local_project {
+                return;
+            }
+
+            let editor_handle = cx.view().downgrade();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &Run, cx| {
+                        if !JupyterSettings::enabled(cx) {
+                            return;
+                        }
+
+                        crate::run(editor_handle.clone(), true, cx).log_err();
                     }
+                })
+                .detach();
 
-                    crate::run(editor_handle.clone(), true, cx).log_err();
-                }
-            })
-            .detach();
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &RunInPlace, cx| {
+                        if !JupyterSettings::enabled(cx) {
+                            return;
+                        }
 
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &RunInPlace, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
+                        crate::run(editor_handle.clone(), false, cx).log_err();
                     }
-
-                    crate::run(editor_handle.clone(), false, cx).log_err();
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &ClearOutputs, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::clear_outputs(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Interrupt, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::interrupt(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Shutdown, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::shutdown(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Restart, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::restart(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
+                })
+                .detach();
+        });
     })
     .detach();
 }
@@ -238,13 +198,23 @@ impl Render for ReplSessionsPage {
                 );
         }
 
-        let mut kernels_by_language: HashMap<String, Vec<KernelSpecification>> = HashMap::default();
-        for spec in kernel_specifications {
-            kernels_by_language
-                .entry(spec.kernelspec.language.clone())
-                .or_default()
-                .push(spec);
+        let mut kernels_by_language: HashMap<SharedString, Vec<&KernelSpecification>> =
+            kernel_specifications
+                .iter()
+                .map(|spec| (spec.language(), spec))
+                .fold(HashMap::new(), |mut acc, (language, spec)| {
+                    acc.entry(language).or_default().push(spec);
+                    acc
+                });
+
+        for kernels in kernels_by_language.values_mut() {
+            kernels.sort_by_key(|a| a.name())
         }
+
+        // Convert to a sorted Vec of tuples
+        let mut sorted_kernels: Vec<(SharedString, Vec<&KernelSpecification>)> =
+            kernels_by_language.into_iter().collect();
+        sorted_kernels.sort_by(|a, b| a.0.cmp(&b.0));
 
         let kernels_available = v_flex()
             .child(Label::new("Kernels available").size(LabelSize::Large))
@@ -262,11 +232,11 @@ impl Render for ReplSessionsPage {
                             .child(Label::new("REPL documentation"))
                             .child(Icon::new(IconName::Link))
                             .on_click(move |_, cx| {
-                                cx.open_url("https://zed.dev/docs/repl#changing-kernels")
+                                cx.open_url(KERNEL_DOCS_URL)
                             }),
                     ),
             )
-            .children(kernels_by_language.into_iter().map(|(language, specs)| {
+            .children(sorted_kernels.into_iter().map(|(language, specs)| {
                 let chosen_kernel = store.read(cx).kernelspec(&language, cx);
 
                 v_flex()
@@ -274,13 +244,12 @@ impl Render for ReplSessionsPage {
                     .child(Label::new(language.clone()).weight(FontWeight::BOLD))
                     .children(specs.into_iter().map(|spec| {
                         let is_choice = if let Some(chosen_kernel) = &chosen_kernel {
-                            chosen_kernel.name.to_lowercase() == spec.name.to_lowercase()
-                                && chosen_kernel.path == spec.path
+                            chosen_kernel == spec
                         } else {
                             false
                         };
 
-                        let path = SharedString::from(spec.path.to_string_lossy().to_string());
+                        let path = spec.path();
 
                         ListItem::new(path.clone())
                             .selectable(false)
@@ -290,7 +259,7 @@ impl Render for ReplSessionsPage {
                             .child(
                                 h_flex()
                                     .gap_1()
-                                    .child(div().id(path.clone()).child(Label::new(spec.name.clone())))
+                                    .child(div().id(path.clone()).child(Label::new(spec.name())))
                                     .when(is_choice, |el| {
 
                                         let language = language.clone();

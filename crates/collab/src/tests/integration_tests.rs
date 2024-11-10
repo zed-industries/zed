@@ -6,7 +6,7 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
-use assistant::{ContextStore, PromptBuilder};
+use assistant::{ContextStore, PromptBuilder, SlashCommandWorkingSet, ToolWorkingSet};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -6489,15 +6489,31 @@ async fn test_context_collaboration_with_reconnect(
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
     let context_store_a = cx_a
-        .update(|cx| ContextStore::new(project_a.clone(), prompt_builder.clone(), cx))
+        .update(|cx| {
+            ContextStore::new(
+                project_a.clone(),
+                prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                Arc::new(ToolWorkingSet::default()),
+                cx,
+            )
+        })
         .await
         .unwrap();
     let context_store_b = cx_b
-        .update(|cx| ContextStore::new(project_b.clone(), prompt_builder.clone(), cx))
+        .update(|cx| {
+            ContextStore::new(
+                project_b.clone(),
+                prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                Arc::new(ToolWorkingSet::default()),
+                cx,
+            )
+        })
         .await
         .unwrap();
 
-    // Client A creates a new context.
+    // Client A creates a new chats.
     let context_a = context_store_a.update(cx_a, |store, cx| store.create(cx));
     executor.run_until_parked();
 

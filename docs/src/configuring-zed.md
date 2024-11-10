@@ -29,10 +29,26 @@ Extensions that provide language servers may also provide default settings for t
 
 # Settings
 
-## Active Pane Magnification
+## Active Pane Modifiers
+
+Styling settings applied to the active pane.
+
+### Magnification
 
 - Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `active_pane_magnification`
+- Setting: `magnification`
+- Default: `1.0`
+
+### Border size
+
+- Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
+- Setting: `border_size`
+- Default: `0.0`
+
+### Inactive Opacity
+
+- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+- Setting: `inactive_opacity`
 - Default: `1.0`
 
 **Options**
@@ -1038,6 +1054,32 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true,
       "delay_ms": 500
+    }
+  }
+}
+```
+
+3. Show a commit summary next to the commit date and author:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "show_commit_summary": true
+    }
+  }
+}
+```
+
+4. Use this as the minimum column at which to display inline blame information:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "min_column": 80
     }
   }
 }

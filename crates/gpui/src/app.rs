@@ -243,6 +243,7 @@ pub struct AppContext {
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
+    pub(crate) keyboard_layout: SharedString,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -252,6 +253,7 @@ pub struct AppContext {
     // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
+    pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
@@ -279,6 +281,7 @@ impl AppContext {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
+        let keyboard_layout = SharedString::from(platform.keyboard_layout());
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
@@ -302,6 +305,7 @@ impl AppContext {
                 window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
+                keyboard_layout,
                 global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: FxHashSet::default(),
@@ -310,6 +314,7 @@ impl AppContext {
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
+                keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
@@ -322,6 +327,19 @@ impl AppContext {
         });
 
         init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+
+        platform.on_keyboard_layout_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    cx.keyboard_layout_observers
+                        .clone()
+                        .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
 
         platform.on_quit(Box::new({
             let cx = app.clone();
@@ -354,6 +372,27 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+    }
+
+    /// Get the id of the current keyboard layout
+    pub fn keyboard_layout(&self) -> &SharedString {
+        &self.keyboard_layout
+    }
+
+    /// Invokes a handler when the current keyboard layout changes
+    pub fn on_keyboard_layout_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut AppContext),
+    {
+        let (subscription, activate) = self.keyboard_layout_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Gracefully quit the application via the platform's standard routine.

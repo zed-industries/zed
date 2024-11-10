@@ -4,9 +4,7 @@ use futures::{future, StreamExt};
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
-    language_settings::{
-        language_settings, AllLanguageSettings, LanguageSettingsContent, SoftWrap,
-    },
+    language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
     tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
     LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
 };
@@ -106,7 +104,6 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             end_of_line = lf
             insert_final_newline = true
             trim_trailing_whitespace = true
-            max_line_length = 80
         [*.js]
             tab_width = 10
         "#,
@@ -116,7 +113,6 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
                 "hard_tabs": false,
                 "ensure_final_newline_on_save": false,
                 "remove_trailing_whitespace_on_save": false,
-                "preferred_line_length": 64,
                 "soft_wrap": "editor_width"
             }"#,
         },
@@ -125,7 +121,6 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
             ".editorconfig": r#"
             [*.rs]
                 indent_size = 2
-                max_line_length = off
             "#,
             "b.rs": "fn b() {\n    B\n}",
         },
@@ -174,20 +169,12 @@ async fn test_editorconfig_support(cx: &mut gpui::TestAppContext) {
         assert_eq!(settings_a.hard_tabs, true);
         assert_eq!(settings_a.ensure_final_newline_on_save, true);
         assert_eq!(settings_a.remove_trailing_whitespace_on_save, true);
-        assert_eq!(settings_a.preferred_line_length, 80);
-
-        // "max_line_length" also sets "soft_wrap"
-        assert_eq!(settings_a.soft_wrap, SoftWrap::PreferredLineLength);
 
         // .editorconfig in b/ overrides .editorconfig in root
         assert_eq!(Some(settings_b.tab_size), NonZeroU32::new(2));
 
         // "indent_size" is not set, so "tab_width" is used
         assert_eq!(Some(settings_c.tab_size), NonZeroU32::new(10));
-
-        // When max_line_length is "off", default to .zed/settings.json
-        assert_eq!(settings_b.preferred_line_length, 64);
-        assert_eq!(settings_b.soft_wrap, SoftWrap::EditorWidth);
 
         // README.md should not be affected by .editorconfig's globe "*.rs"
         assert_eq!(Some(settings_readme.tab_size), NonZeroU32::new(8));
@@ -494,7 +481,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // The buffer is configured based on the language server's capabilities.
     rust_buffer.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -541,7 +532,14 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // This buffer is configured based on the second language server's
     // capabilities.
     json_buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[":".to_string()]
+        );
     });
 
     // When opening another buffer whose language server is already running,
@@ -554,7 +552,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         .unwrap();
     rust_buffer2.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });

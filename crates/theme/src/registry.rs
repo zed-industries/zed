@@ -10,7 +10,9 @@ use gpui::{AppContext, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
 use util::ResultExt;
 
-use crate::{refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent};
+use crate::{
+    read_user_theme, refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent,
+};
 
 /// The metadata for a theme.
 #[derive(Debug, Clone)]
@@ -112,14 +114,14 @@ impl ThemeRegistry {
     }
 
     /// Returns the names of all themes in the registry.
-    pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+    pub fn list_names(&self) -> Vec<SharedString> {
         let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
         names.sort();
         names
     }
 
     /// Returns the metadata of all themes in the registry.
-    pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+    pub fn list(&self) -> Vec<ThemeMeta> {
         self.state
             .read()
             .themes
@@ -186,31 +188,9 @@ impl ThemeRegistry {
         Ok(())
     }
 
-    /// Asynchronously reads the user theme from the specified path.
-    pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
-        let reader = fs.open_sync(theme_path).await?;
-        let theme_family: ThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
-
-        for theme in &theme_family.themes {
-            if theme
-                .style
-                .colors
-                .deprecated_scrollbar_thumb_background
-                .is_some()
-            {
-                log::warn!(
-                    r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
-                    theme_name = theme.name
-                )
-            }
-        }
-
-        Ok(theme_family)
-    }
-
     /// Loads the user theme from the specified path and adds it to the registry.
     pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
-        let theme = Self::read_user_theme(theme_path, fs).await?;
+        let theme = read_user_theme(theme_path, fs).await?;
 
         self.insert_user_theme_families([theme]);
 

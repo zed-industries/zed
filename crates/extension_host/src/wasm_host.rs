@@ -1,6 +1,6 @@
-pub(crate) mod wit;
+pub mod wit;
 
-use crate::ExtensionManifest;
+use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
@@ -14,7 +14,6 @@ use futures::{
 };
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, Task};
 use http_client::HttpClient;
-use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -28,15 +27,16 @@ use wasmtime::{
 };
 use wasmtime_wasi as wasi;
 use wit::Extension;
+pub use wit::SlashCommand;
 
-pub(crate) struct WasmHost {
+pub struct WasmHost {
     engine: Engine,
     release_channel: ReleaseChannel,
     http_client: Arc<dyn HttpClient>,
     node_runtime: NodeRuntime,
-    pub(crate) language_registry: Arc<LanguageRegistry>,
+    pub registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
     fs: Arc<dyn Fs>,
-    pub(crate) work_dir: PathBuf,
+    pub work_dir: PathBuf,
     _main_thread_message_task: Task<()>,
     main_thread_message_tx: mpsc::UnboundedSender<MainThreadCall>,
 }
@@ -44,16 +44,16 @@ pub(crate) struct WasmHost {
 #[derive(Clone)]
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
-    pub(crate) manifest: Arc<ExtensionManifest>,
+    pub manifest: Arc<ExtensionManifest>,
     #[allow(unused)]
     pub zed_api_version: SemanticVersion,
 }
 
-pub(crate) struct WasmState {
+pub struct WasmState {
     manifest: Arc<ExtensionManifest>,
-    pub(crate) table: ResourceTable,
+    pub table: ResourceTable,
     ctx: wasi::WasiCtx,
-    pub(crate) host: Arc<WasmHost>,
+    pub host: Arc<WasmHost>,
 }
 
 type MainThreadCall =
@@ -81,7 +81,7 @@ impl WasmHost {
         fs: Arc<dyn Fs>,
         http_client: Arc<dyn HttpClient>,
         node_runtime: NodeRuntime,
-        language_registry: Arc<LanguageRegistry>,
+        registration_hooks: Arc<dyn ExtensionRegistrationHooks>,
         work_dir: PathBuf,
         cx: &mut AppContext,
     ) -> Arc<Self> {
@@ -97,7 +97,7 @@ impl WasmHost {
             work_dir,
             http_client,
             node_runtime,
-            language_registry,
+            registration_hooks,
             release_channel: ReleaseChannel::global(cx),
             _main_thread_message_task: task,
             main_thread_message_tx: tx,
@@ -107,10 +107,11 @@ impl WasmHost {
     pub fn load_extension(
         self: &Arc<Self>,
         wasm_bytes: Vec<u8>,
-        manifest: Arc<ExtensionManifest>,
+        manifest: &Arc<ExtensionManifest>,
         executor: BackgroundExecutor,
     ) -> Task<Result<WasmExtension>> {
         let this = self.clone();
+        let manifest = manifest.clone();
         executor.clone().spawn(async move {
             let zed_api_version = parse_wasm_extension_version(&manifest.id, &wasm_bytes)?;
 
@@ -150,7 +151,7 @@ impl WasmHost {
                 .detach();
 
             Ok(WasmExtension {
-                manifest,
+                manifest: manifest.clone(),
                 tx,
                 zed_api_version,
             })
@@ -241,6 +242,31 @@ fn parse_wasm_extension_version_custom_section(data: &[u8]) -> Option<SemanticVe
 }
 
 impl WasmExtension {
+    pub async fn load(
+        extension_dir: PathBuf,
+        manifest: &Arc<ExtensionManifest>,
+        wasm_host: Arc<WasmHost>,
+        cx: &AsyncAppContext,
+    ) -> Result<Self> {
+        let path = extension_dir.join("extension.wasm");
+
+        let mut wasm_file = wasm_host
+            .fs
+            .open_sync(&path)
+            .await
+            .context("failed to open wasm file")?;
+
+        let mut wasm_bytes = Vec::new();
+        wasm_file
+            .read_to_end(&mut wasm_bytes)
+            .context("failed to read wasm")?;
+
+        wasm_host
+            .load_extension(wasm_bytes, manifest, cx.background_executor().clone())
+            .await
+            .with_context(|| format!("failed to load wasm extension {}", manifest.id))
+    }
+
     pub async fn call<T, Fn>(&self, f: Fn) -> T
     where
         T: 'static + Send,

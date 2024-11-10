@@ -432,6 +432,9 @@ impl AutoUpdater {
         cx.notify();
     }
 
+    // If you are packaging Zed and need to override the place it downloads SSH remotes from,
+    // you can override this function. You should also update get_remote_server_release_url to return
+    // Ok(None).
     pub async fn download_remote_server_release(
         os: &str,
         arch: &str,
@@ -482,7 +485,7 @@ impl AutoUpdater {
         release_channel: ReleaseChannel,
         version: Option<SemanticVersion>,
         cx: &mut AsyncAppContext,
-    ) -> Result<(JsonRelease, String)> {
+    ) -> Result<Option<(String, String)>> {
         let this = cx.update(|cx| {
             cx.default_global::<GlobalAutoUpdate>()
                 .0
@@ -504,7 +507,7 @@ impl AutoUpdater {
         let update_request_body = build_remote_server_update_request_body(cx)?;
         let body = serde_json::to_string(&update_request_body)?;
 
-        Ok((release, body))
+        Ok(Some((release.url, body)))
     }
 
     async fn get_release(

@@ -14,10 +14,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use futures::{
-    channel::mpsc::{self, UnboundedSender},
-    StreamExt as _,
-};
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
@@ -62,11 +58,10 @@ struct ProjectDiagnosticsEditor {
     summary: DiagnosticSummary,
     excerpts: Model<MultiBuffer>,
     path_states: Vec<PathState>,
-    paths_to_update: BTreeSet<(ProjectPath, LanguageServerId)>,
+    paths_to_update: BTreeSet<(ProjectPath, Option<LanguageServerId>)>,
     include_warnings: bool,
     context: u32,
-    update_paths_tx: UnboundedSender<(ProjectPath, Option<LanguageServerId>)>,
-    _update_excerpts_task: Task<Result<()>>,
+    update_excerpts_task: Option<Task<Result<()>>>,
     _subscription: Subscription,
 }
 
@@ -129,14 +124,14 @@ impl ProjectDiagnosticsEditor {
                 }
                 project::Event::DiskBasedDiagnosticsFinished { language_server_id } => {
                     log::debug!("disk based diagnostics finished for server {language_server_id}");
-                    this.enqueue_update_stale_excerpts(Some(*language_server_id));
+                    this.update_stale_excerpts(cx);
                 }
                 project::Event::DiagnosticsUpdated {
                     language_server_id,
                     path,
                 } => {
                     this.paths_to_update
-                        .insert((path.clone(), *language_server_id));
+                        .insert((path.clone(), Some(*language_server_id)));
                     this.summary = project.read(cx).diagnostic_summary(false, cx);
                     cx.emit(EditorEvent::TitleChanged);
 
@@ -144,7 +139,7 @@ impl ProjectDiagnosticsEditor {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
                     } else {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
-                        this.enqueue_update_stale_excerpts(Some(*language_server_id));
+                        this.update_stale_excerpts(cx);
                     }
                 }
                 _ => {}
@@ -171,13 +166,11 @@ impl ProjectDiagnosticsEditor {
                         cx.focus(&this.focus_handle);
                     }
                 }
-                EditorEvent::Blurred => this.enqueue_update_stale_excerpts(None),
+                EditorEvent::Blurred => this.update_stale_excerpts(cx),
                 _ => {}
             }
         })
         .detach();
-
-        let (update_excerpts_tx, mut update_excerpts_rx) = mpsc::unbounded();
 
         let project = project_handle.read(cx);
         let mut this = Self {
@@ -191,25 +184,43 @@ impl ProjectDiagnosticsEditor {
             path_states: Default::default(),
             paths_to_update: Default::default(),
             include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
-            update_paths_tx: update_excerpts_tx,
-            _update_excerpts_task: cx.spawn(move |this, mut cx| async move {
-                while let Some((path, language_server_id)) = update_excerpts_rx.next().await {
-                    if let Some(buffer) = project_handle
-                        .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
-                        .await
-                        .log_err()
-                    {
-                        this.update(&mut cx, |this, cx| {
-                            this.update_excerpts(path, language_server_id, buffer, cx);
-                        })?;
-                    }
-                }
-                anyhow::Ok(())
-            }),
+            update_excerpts_task: None,
             _subscription: project_event_subscription,
         };
-        this.enqueue_update_all_excerpts(cx);
+        this.update_all_excerpts(cx);
         this
+    }
+
+    fn update_stale_excerpts(&mut self, cx: &mut ViewContext<Self>) {
+        if self.update_excerpts_task.is_some() {
+            return;
+        }
+        let project_handle = self.project.clone();
+        self.update_excerpts_task = Some(cx.spawn(|this, mut cx| async move {
+            loop {
+                let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
+                    let Some((path, language_server_id)) = this.paths_to_update.pop_first() else {
+                        this.update_excerpts_task.take();
+                        return None;
+                    };
+                    Some((path, language_server_id))
+                })?
+                else {
+                    break;
+                };
+
+                if let Some(buffer) = project_handle
+                    .update(&mut cx, |project, cx| project.open_buffer(path.clone(), cx))?
+                    .await
+                    .log_err()
+                {
+                    this.update(&mut cx, |this, cx| {
+                        this.update_excerpts(path, language_server_id, buffer, cx);
+                    })?;
+                }
+            }
+            Ok(())
+        }));
     }
 
     fn new(
@@ -239,7 +250,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
-        self.enqueue_update_all_excerpts(cx);
+        self.update_all_excerpts(cx);
         cx.notify();
     }
 
@@ -251,37 +262,28 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_out(&mut self, cx: &mut ViewContext<Self>) {
         if !self.focus_handle.is_focused(cx) && !self.editor.focus_handle(cx).is_focused(cx) {
-            self.enqueue_update_stale_excerpts(None);
+            self.update_stale_excerpts(cx);
         }
     }
 
     /// Enqueue an update of all excerpts. Updates all paths that either
     /// currently have diagnostics or are currently present in this view.
-    fn enqueue_update_all_excerpts(&mut self, cx: &mut ViewContext<Self>) {
+    fn update_all_excerpts(&mut self, cx: &mut ViewContext<Self>) {
         self.project.update(cx, |project, cx| {
             let mut paths = project
                 .diagnostic_summaries(false, cx)
-                .map(|(path, _, _)| path)
+                .map(|(path, _, _)| (path, None))
                 .collect::<BTreeSet<_>>();
-            paths.extend(self.path_states.iter().map(|state| state.path.clone()));
-            for path in paths {
-                self.update_paths_tx.unbounded_send((path, None)).unwrap();
-            }
+            paths.extend(
+                self.path_states
+                    .iter()
+                    .map(|state| (state.path.clone(), None)),
+            );
+            let paths_to_update = std::mem::take(&mut self.paths_to_update);
+            paths.extend(paths_to_update.into_iter().map(|(path, _)| (path, None)));
+            self.paths_to_update = paths;
         });
-    }
-
-    /// Enqueue an update of the excerpts for any path whose diagnostics are known
-    /// to have changed. If a language server id is passed, then only the excerpts for
-    /// that language server's diagnostics will be updated. Otherwise, all stale excerpts
-    /// will be refreshed.
-    fn enqueue_update_stale_excerpts(&mut self, language_server_id: Option<LanguageServerId>) {
-        for (path, server_id) in &self.paths_to_update {
-            if language_server_id.map_or(true, |id| id == *server_id) {
-                self.update_paths_tx
-                    .unbounded_send((path.clone(), Some(*server_id)))
-                    .unwrap();
-            }
-        }
+        self.update_stale_excerpts(cx);
     }
 
     fn update_excerpts(
@@ -291,11 +293,6 @@ impl ProjectDiagnosticsEditor {
         buffer: Model<Buffer>,
         cx: &mut ViewContext<Self>,
     ) {
-        self.paths_to_update.retain(|(path, server_id)| {
-            *path != path_to_update
-                || server_to_update.map_or(false, |to_update| *server_id != to_update)
-        });
-
         let was_empty = self.path_states.is_empty();
         let snapshot = buffer.read(cx).snapshot();
         let path_ix = match self

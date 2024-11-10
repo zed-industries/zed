@@ -61,14 +61,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: None,
                         toolchain_provider: None,
                     })
-                },
+                }),
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -82,14 +82,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: None,
                         toolchain_provider: None,
                     })
-                },
+                }),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
@@ -103,14 +103,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: Some(Arc::new($context_provider)),
                         toolchain_provider: None,
                     })
-                },
+                }),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr, $toolchain_provider:expr) => {
@@ -124,14 +124,14 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
+                Arc::new(move || {
                     Ok(LoadedLanguage {
                         config: config.clone(),
                         queries: load_queries($name),
                         context_provider: Some(Arc::new($context_provider)),
                         toolchain_provider: Some($toolchain_provider),
                     })
-                },
+                }),
             );
         };
     }

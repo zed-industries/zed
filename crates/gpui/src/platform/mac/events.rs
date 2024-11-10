@@ -259,10 +259,7 @@ impl PlatformInput {
 unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
-    let mut chars_ignoring_modifiers = native_event
-        .charactersIgnoringModifiers()
-        .to_str()
-        .to_string();
+    let mut chars_ignoring_modifiers = chars_for_modified_key(native_event.keyCode(), false, false);
     let first_char = chars_ignoring_modifiers.chars().next().map(|ch| ch as u16);
     let modifiers = native_event.modifierFlags();
 
@@ -314,28 +311,41 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         Some(NSF18FunctionKey) => "f18".to_string(),
         Some(NSF19FunctionKey) => "f19".to_string(),
         _ => {
-            let mut chars_ignoring_modifiers_and_shift =
-                chars_for_modified_key(native_event.keyCode(), false, false);
+            // Cases to test when modifying this:
+            //
+            //          qwerty key | none | cmd   | cmd-shift
+            // * Armenian         s | ս    | cmd-s | cmd-shift-s  (layout is non-ASCII, so we use cmd layout)
+            // * Dvorak+QWERTY    s | o    | cmd-s | cmd-shift-s  (layout switches on cmd)
+            // * Ukrainian+QWERTY s | с    | cmd-s | cmd-shift-s  (macOS reports cmd-s instead of cmd-S)
+            // * Czech            7 | ý    | cmd-ý | cmd-7        (layout has shifted numbers)
+            // * Norwegian        7 | 7    | cmd-7 | cmd-/        (macOS reports cmd-shift-7 instead of cmd-/)
+            // * Russian          7 | 7    | cmd-7 | cmd-&        (shift-7 is . but when cmd is down, should use cmd layout)
+            // * German QWERTZ    ; | ö    | cmd-ö | cmd-Ö        (Zed's shift special case only applies to a-z)
+            let mut chars_with_shift = chars_for_modified_key(native_event.keyCode(), false, true);
 
-            // Honor ⌘ when Dvorak-QWERTY is used.
-            let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
-            if command && chars_ignoring_modifiers_and_shift != chars_with_cmd {
-                chars_ignoring_modifiers =
-                    chars_for_modified_key(native_event.keyCode(), true, shift);
-                chars_ignoring_modifiers_and_shift = chars_with_cmd;
+            // Handle Dvorak+QWERTY / Russian / Armeniam
+            if command || always_use_command_layout() {
+                let chars_with_cmd = chars_for_modified_key(native_event.keyCode(), true, false);
+                let chars_with_both = chars_for_modified_key(native_event.keyCode(), true, true);
+
+                // We don't do this in the case that the shifted command key generates
+                // the same character as the unshifted command key (Norwegian, e.g.)
+                if chars_with_both != chars_with_cmd {
+                    chars_with_shift = chars_with_both;
+
+                // Handle edge-case where cmd-shift-s reports cmd-s instead of
+                // cmd-shift-s (Ukrainian, etc.)
+                } else if chars_with_cmd.to_ascii_uppercase() != chars_with_cmd {
+                    chars_with_shift = chars_with_cmd.to_ascii_uppercase();
+                }
+                chars_ignoring_modifiers = chars_with_cmd;
             }
 
-            if shift {
-                if chars_ignoring_modifiers_and_shift
-                    == chars_ignoring_modifiers.to_ascii_lowercase()
-                {
-                    chars_ignoring_modifiers_and_shift
-                } else if chars_ignoring_modifiers_and_shift != chars_ignoring_modifiers {
-                    shift = false;
-                    chars_ignoring_modifiers
-                } else {
-                    chars_ignoring_modifiers
-                }
+            if shift && chars_ignoring_modifiers == chars_with_shift.to_ascii_lowercase() {
+                chars_ignoring_modifiers
+            } else if shift {
+                shift = false;
+                chars_with_shift
             } else {
                 chars_ignoring_modifiers
             }
@@ -353,6 +363,28 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         key,
         ime_key: None,
     }
+}
+
+fn always_use_command_layout() -> bool {
+    // look at the key to the right of "tab" ('a' in QWERTY)
+    // if it produces a non-ASCII character, but with command held produces ASCII,
+    // we default to the command layout for our keyboard system.
+    let event = synthesize_keyboard_event(0);
+    let without_cmd = unsafe {
+        let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
+        event.characters().to_str().to_string()
+    };
+    if without_cmd.is_ascii() {
+        return false;
+    }
+
+    event.set_flags(CGEventFlags::CGEventFlagCommand);
+    let with_cmd = unsafe {
+        let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
+        event.characters().to_str().to_string()
+    };
+
+    with_cmd.is_ascii()
 }
 
 fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {

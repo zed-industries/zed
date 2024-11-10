@@ -17,23 +17,26 @@ mod schema;
 mod settings;
 mod styles;
 
+use std::path::Path;
 use std::sync::Arc;
 
 use ::settings::{Settings, SettingsStore};
-pub use default_colors::*;
-pub use font_family_cache::*;
-pub use registry::*;
-pub use scale::*;
-pub use schema::*;
-pub use settings::*;
-pub use styles::*;
-
+use anyhow::Result;
+use fs::Fs;
 use gpui::{
     px, AppContext, AssetSource, HighlightStyle, Hsla, Pixels, Refineable, SharedString,
     WindowAppearance, WindowBackgroundAppearance,
 };
 use serde::Deserialize;
 use uuid::Uuid;
+
+pub use crate::default_colors::*;
+pub use crate::font_family_cache::*;
+pub use crate::registry::*;
+pub use crate::scale::*;
+pub use crate::schema::*;
+pub use crate::settings::*;
+pub use crate::styles::*;
 
 /// Defines window border radius for platforms that use client side decorations.
 pub const CLIENT_SIDE_DECORATION_ROUNDING: Pixels = px(10.0);
@@ -320,4 +323,26 @@ pub fn color_alpha(color: Hsla, alpha: f32) -> Hsla {
     let mut color = color;
     color.a = alpha;
     color
+}
+
+/// Asynchronously reads the user theme from the specified path.
+pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
+    let reader = fs.open_sync(theme_path).await?;
+    let theme_family: ThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
+
+    for theme in &theme_family.themes {
+        if theme
+            .style
+            .colors
+            .deprecated_scrollbar_thumb_background
+            .is_some()
+        {
+            log::warn!(
+                r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
+                theme_name = theme.name
+            )
+        }
+    }
+
+    Ok(theme_family)
 }
