@@ -48,12 +48,22 @@ impl EventEmitter<ImageStoreEvent> for ImageStore {}
 pub struct ImageItem {
     pub id: ImageId,
     pub file: Arc<dyn File>,
-    pub project_path: ProjectPath,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
 }
 
 impl ImageItem {
+    pub fn project_path(&self, cx: &AppContext) -> ProjectPath {
+        ProjectPath {
+            worktree_id: self.file.worktree_id(cx),
+            path: self.file.path().clone(),
+        }
+    }
+
+    pub fn path(&self) -> &Arc<Path> {
+        self.file.path()
+    }
+
     fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
         let mut file_changed = false;
 
@@ -135,8 +145,8 @@ impl crate::Item for ImageItem {
         worktree::File::from_dyn(Some(&self.file))?.entry_id
     }
 
-    fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
-        Some(self.project_path.clone())
+    fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
+        Some(self.project_path(cx).clone())
     }
 }
 
@@ -225,7 +235,7 @@ impl ImageStore {
 
     pub fn get_by_path(&self, path: &ProjectPath, cx: &AppContext) -> Option<Model<ImageItem>> {
         self.images()
-            .find(|image| &image.read(cx).project_path == path)
+            .find(|image| &image.read(cx).project_path(cx) == path)
     }
 
     pub fn open_image(
@@ -312,10 +322,6 @@ impl ImageStoreImpl for Model<LocalImageStore> {
             is_deleted: false,
             is_private: false,
         });
-        let project_path = ProjectPath {
-            worktree_id: file.worktree_id(cx),
-            path: file.path.clone(),
-        };
 
         let entry_id = file.entry_id;
         let load_content = file.as_local().unwrap().load_bytes(cx);
@@ -326,7 +332,6 @@ impl ImageStoreImpl for Model<LocalImageStore> {
             let model = cx.new_model(|cx| ImageItem {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
-                project_path: project_path.clone(),
                 image,
                 reload_task: None,
             })?;

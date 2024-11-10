@@ -48,14 +48,32 @@ impl ImageView {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ImageItemEvent::FileHandleChanged | ImageItemEvent::Reloaded => cx.notify(),
+            ImageItemEvent::FileHandleChanged | ImageItemEvent::Reloaded => {
+                cx.emit(ImageViewEvent::TitleChanged);
+                cx.notify();
+            }
             ImageItemEvent::ReloadNeeded => {}
         }
     }
 }
 
+pub enum ImageViewEvent {
+    TitleChanged,
+}
+
+impl EventEmitter<ImageViewEvent> for ImageView {}
+
 impl Item for ImageView {
-    type Event = ();
+    type Event = ImageViewEvent;
+
+    fn to_item_events(event: &Self::Event, mut f: impl FnMut(workspace::item::ItemEvent)) {
+        match event {
+            ImageViewEvent::TitleChanged => {
+                f(workspace::item::ItemEvent::UpdateTab);
+                f(workspace::item::ItemEvent::UpdateBreadcrumbs);
+            }
+        }
+    }
 
     fn for_each_project_item(
         &self,
@@ -90,7 +108,7 @@ impl Item for ImageView {
     }
 
     fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
-        let path = self.image_item.read(cx).project_path.path.as_ref();
+        let path = self.image_item.read(cx).path();
         ItemSettings::get_global(cx)
             .file_icons
             .then(|| FileIcons::get_icon(path, cx))
@@ -128,13 +146,13 @@ impl Item for ImageView {
 }
 
 fn breadcrumbs_text_for_image(project: &Project, image: &ImageItem, cx: &AppContext) -> String {
-    let path = &image.project_path.path;
+    let path = image.path();
     if project.visible_worktrees(cx).count() <= 1 {
         return path.to_string_lossy().to_string();
     }
 
     project
-        .worktree_for_id(image.project_path.worktree_id, cx)
+        .worktree_for_id(image.project_path(cx).worktree_id, cx)
         .map(|worktree| {
             PathBuf::from(worktree.read(cx).root_name())
                 .join(path)
