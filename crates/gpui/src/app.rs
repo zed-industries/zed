@@ -344,7 +344,7 @@ impl AppContext {
         platform.on_quit(Box::new({
             let cx = app.clone();
             move || {
-                cx.borrow_mut().shutdown();
+                Self::shutdown(&cx);
             }
         }));
 
@@ -353,21 +353,23 @@ impl AppContext {
 
     /// Quit the application gracefully. Handlers registered with [`ModelContext::on_app_quit`]
     /// will be given 100ms to complete before exiting.
-    pub fn shutdown(&mut self) {
+    pub fn shutdown(this: &Rc<AppCell>) {
         let mut futures = Vec::new();
+        let background_executor = {
+            let mut this = this.borrow_mut();
 
-        for observer in self.quit_observers.remove(&()) {
-            futures.push(observer(self));
-        }
+            for observer in this.quit_observers.remove(&()) {
+                futures.push(observer(&mut this));
+            }
 
-        self.windows.clear();
-        self.window_handles.clear();
-        self.flush_effects();
+            this.windows.clear();
+            this.window_handles.clear();
+            this.background_executor.clone()
+        };
 
         let futures = futures::future::join_all(futures);
-        if self
-            .background_executor
-            .block_with_timeout(SHUTDOWN_TIMEOUT, futures)
+        if background_executor
+            .block_with_timeout_background_and_foreground(SHUTDOWN_TIMEOUT, futures)
             .is_err()
         {
             log::error!("timed out waiting on app_will_quit");

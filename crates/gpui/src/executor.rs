@@ -299,6 +299,16 @@ impl BackgroundExecutor {
         self.block_internal(true, future, Some(duration))
     }
 
+    /// Block the current thread until the given future resolves
+    /// or `duration` has elapsed.
+    pub fn block_with_timeout_background_and_foreground<R>(
+        &self,
+        duration: Duration,
+        future: impl Future<Output = R>,
+    ) -> Result<R, impl Future<Output = R>> {
+        self.block_internal(false, future, Some(duration))
+    }
+
     /// Scoped lets you start a number of tasks and waits
     /// for all of them to complete before returning.
     pub async fn scoped<'scope, F>(&self, scheduler: F)

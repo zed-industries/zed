@@ -106,6 +106,17 @@ impl Context for AsyncAppContext {
 }
 
 impl AsyncAppContext {
+    /// Quit the application gracefully. Handlers registered with [`ModelContext::on_app_quit`]
+    /// will be given 100ms to complete before exiting.
+    pub fn shutdown(&self) -> Result<()> {
+        let app = self
+            .app
+            .upgrade()
+            .ok_or_else(|| anyhow!("app was released"))?;
+        AppContext::shutdown(&app);
+        Ok(())
+    }
+
     /// Schedules all windows in the application to be redrawn.
     pub fn refresh(&self) -> Result<()> {
         let app = self

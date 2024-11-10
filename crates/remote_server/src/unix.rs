@@ -284,12 +284,10 @@ fn start_server(
                 }
                 _ = futures::FutureExt::fuse(smol::Timer::after(IDLE_TIMEOUT)) => {
                     log::warn!("timed out waiting for new connections after {:?}. exiting.", IDLE_TIMEOUT);
-                    cx.update(|cx| {
-                        // TODO: This is a hack, because in a headless project, shutdown isn't executed
-                        // when calling quit, but it should be.
-                        cx.shutdown();
-                        cx.quit();
-                    })?;
+                    // TODO: This is a hack, because in a headless project, shutdown isn't executed
+                    // when calling quit, but it should be.
+                    cx.shutdown()?;
+                    cx.update(|cx| cx.quit())?;
                     break;
                 }
                 _ = app_quit_rx.next().fuse() => {

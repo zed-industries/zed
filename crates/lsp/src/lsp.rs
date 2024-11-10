@@ -749,6 +749,7 @@ impl LanguageServer {
                 &executor,
                 (),
             );
+            println!("--------------------------------------");
 
             let server = self.server.clone();
             let name = self.name.clone();
@@ -1236,6 +1237,8 @@ impl FakeLanguageServer {
                 }
             }
         });
+
+        fake.handle_request::<request::Shutdown, _, _>(|_, _| async move { Ok(()) });
 
         (server, fake)
     }
