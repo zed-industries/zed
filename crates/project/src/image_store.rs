@@ -702,6 +702,6 @@ mod tests {
         let image1 = task1.await.unwrap();
         let image2 = task2.await.unwrap();
 
-        assert_eq!(image1.entity_id(), image2.entity_id());
+        assert_eq!(image1, image2);
     }
 }
