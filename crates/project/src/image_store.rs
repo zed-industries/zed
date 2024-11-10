@@ -582,3 +582,68 @@ impl ImageStoreImpl for Model<RemoteImageStore> {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::PathBuf;
+
+    pub fn init_test(cx: &mut TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_image_not_loaded_twice(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree("/root", json!({})).await;
+        // Create a png file that with a single white pixel
+        fs.insert_file(
+            "/root/image_1.png",
+            vec![
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+                0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+                0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+                0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+            ],
+        )
+        .await;
+
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let worktree_id =
+            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+
+        let project_path = ProjectPath {
+            worktree_id,
+            path: PathBuf::from("image_1.png").into(),
+        };
+
+        let (task1, task2) = project.update(cx, |project, cx| {
+            (
+                project.open_image(project_path.clone(), cx),
+                project.open_image(project_path.clone(), cx),
+            )
+        });
+
+        let image1 = task1.await.unwrap();
+        let image2 = task2.await.unwrap();
+
+        assert_eq!(image1.entity_id(), image2.entity_id());
+    }
+}
