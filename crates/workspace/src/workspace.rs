@@ -679,6 +679,7 @@ impl DelayedDebouncedEditAction {
 pub enum Event {
     PaneAdded(View<Pane>),
     PaneRemoved,
+    PaneResized(ResizeAmount),
     ItemAdded {
         item: Box<dyn ItemHandle>,
     },
@@ -2979,6 +2980,12 @@ impl Workspace {
             self.center.swap(&self.active_pane.clone(), &to);
             cx.notify();
         }
+    }
+
+    pub fn resize_pane(&mut self, intent: &ResizeAmount, cx: &mut ViewContext<Self>) {
+        self.center
+            .resize(&self.active_pane.clone(), intent, &self.bounds);
+        cx.notify();
     }
 
     fn handle_pane_focused(&mut self, pane: View<Pane>, cx: &mut ViewContext<Self>) {
