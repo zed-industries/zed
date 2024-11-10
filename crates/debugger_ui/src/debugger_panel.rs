@@ -541,12 +541,12 @@ impl DebugPanel {
                         .or_insert(cx.new_model(|_| ThreadState::default()))
                         .clone();
 
-                    thread_state.update(cx, |thread_state, cx| {
+                    thread_state.update(cx, |thread_state, _| {
                         thread_state.stopped = true;
                         thread_state.status = ThreadStatus::Stopped;
-
-                        cx.notify();
                     });
+
+                    cx.notify();
 
                     let existing_item = this
                         .pane
@@ -593,8 +593,6 @@ impl DebugPanel {
                         event,
                         go_to_stack_frame,
                     });
-
-                    cx.notify();
 
                     this.workspace.clone()
                 })?;
