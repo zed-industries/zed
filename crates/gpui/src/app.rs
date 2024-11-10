@@ -368,10 +368,12 @@ impl AppContext {
         };
 
         let futures = futures::future::join_all(futures);
-        if background_executor
-            .block_to_shutdown(SHUTDOWN_TIMEOUT, futures)
-            .is_err()
-        {
+        #[cfg(any(test, feature = "test-support"))]
+        let result = background_executor.block_to_shutdown(SHUTDOWN_TIMEOUT, futures);
+        #[cfg(not(any(test, feature = "test-support")))]
+        let result = background_executor.block_with_timeout(SHUTDOWN_TIMEOUT, futures);
+
+        if result.is_err() {
             log::error!("timed out waiting on app_will_quit");
         }
     }
