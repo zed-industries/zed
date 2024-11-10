@@ -212,6 +212,8 @@ impl LogStore {
             rpc_messages.last_message_kind = Some(kind);
         }
         Self::add_debug_client_entry(&mut rpc_messages.messages, id, message, LogKind::Rpc, cx);
+
+        cx.notify();
     }
 
     fn add_debug_client_log(
@@ -225,8 +227,6 @@ impl LogStore {
             return;
         };
 
-        let mut log_messages = &mut debug_client_state.log_messages;
-
         let message = match io_kind {
             IoKind::StdErr => {
                 let mut message = message.clone();
@@ -236,7 +236,14 @@ impl LogStore {
             _ => message,
         };
 
-        Self::add_debug_client_entry(&mut log_messages, id, message, LogKind::Adapter, cx);
+        Self::add_debug_client_entry(
+            &mut debug_client_state.log_messages,
+            id,
+            message,
+            LogKind::Adapter,
+            cx,
+        );
+        cx.notify();
     }
 
     fn add_debug_client_entry(
@@ -254,7 +261,6 @@ impl LogStore {
         log_lines.push_back(message);
 
         cx.emit(Event::NewLogEntry { id, entry, kind });
-        cx.notify();
     }
 
     fn add_debug_client(
@@ -722,6 +728,7 @@ impl SearchableItem for DapLogView {
     fn replace(&mut self, _: &Self::Match, _: &SearchQuery, _: &mut ViewContext<Self>) {
         // Since DAP Log is read-only, it doesn't make sense to support replace operation.
     }
+
     fn supported_options() -> workspace::searchable::SearchOptions {
         workspace::searchable::SearchOptions {
             case: true,
