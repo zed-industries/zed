@@ -1,47 +1,72 @@
 use std::sync::Arc;
 
+use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, Global, ReadGlobal};
+use gpui::{AppContext, AsyncAppContext, ReadGlobal};
+use gpui::{Global, Task};
 use parking_lot::RwLock;
 
-struct GlobalContextServerRegistry(Arc<ContextServerRegistry>);
+use crate::ContextServer;
 
-impl Global for GlobalContextServerRegistry {}
+pub type ContextServerFactory =
+    Arc<dyn Fn(&AsyncAppContext) -> Task<Result<Arc<dyn ContextServer>>> + Send + Sync + 'static>;
 
-pub struct ContextServerRegistry {
-    registry: RwLock<HashMap<String, Vec<Arc<str>>>>,
+#[derive(Default)]
+struct GlobalContextServerFactoryRegistry(Arc<ContextServerFactoryRegistry>);
+
+impl Global for GlobalContextServerFactoryRegistry {}
+
+#[derive(Default)]
+struct ContextServerFactoryRegistryState {
+    context_servers: HashMap<Arc<str>, ContextServerFactory>,
 }
 
-impl ContextServerRegistry {
+#[derive(Default)]
+pub struct ContextServerFactoryRegistry {
+    state: RwLock<ContextServerFactoryRegistryState>,
+}
+
+impl ContextServerFactoryRegistry {
+    /// Returns the global [`ContextServerFactoryRegistry`].
     pub fn global(cx: &AppContext) -> Arc<Self> {
-        GlobalContextServerRegistry::global(cx).0.clone()
+        GlobalContextServerFactoryRegistry::global(cx).0.clone()
     }
 
-    pub fn register(cx: &mut AppContext) {
-        cx.set_global(GlobalContextServerRegistry(Arc::new(
-            ContextServerRegistry {
-                registry: RwLock::new(HashMap::default()),
-            },
-        )))
+    /// Returns the global [`ContextServerFactoryRegistry`].
+    ///
+    /// Inserts a default [`ContextServerFactoryRegistry`] if one does not yet exist.
+    pub fn default_global(cx: &mut AppContext) -> Arc<Self> {
+        cx.default_global::<GlobalContextServerFactoryRegistry>()
+            .0
+            .clone()
     }
 
-    pub fn register_command(&self, server_id: String, command_name: &str) {
-        let mut registry = self.registry.write();
-        registry
-            .entry(server_id)
-            .or_default()
-            .push(command_name.into());
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            state: RwLock::new(ContextServerFactoryRegistryState {
+                context_servers: HashMap::default(),
+            }),
+        })
     }
 
-    pub fn unregister_command(&self, server_id: &str, command_name: &str) {
-        let mut registry = self.registry.write();
-        if let Some(commands) = registry.get_mut(server_id) {
-            commands.retain(|name| name.as_ref() != command_name);
-        }
+    pub fn context_server_factories(&self) -> Vec<(Arc<str>, ContextServerFactory)> {
+        self.state
+            .read()
+            .context_servers
+            .iter()
+            .map(|(id, factory)| (id.clone(), factory.clone()))
+            .collect()
     }
 
-    pub fn get_commands(&self, server_id: &str) -> Option<Vec<Arc<str>>> {
-        let registry = self.registry.read();
-        registry.get(server_id).cloned()
+    /// Registers the provided [`ContextServerFactory`].
+    pub fn register_server_factory(&self, id: Arc<str>, factory: ContextServerFactory) {
+        let mut state = self.state.write();
+        state.context_servers.insert(id, factory);
+    }
+
+    /// Unregisters the [`ContextServerFactory`] for the server with the given ID.
+    pub fn unregister_server_factory_by_id(&self, server_id: &str) {
+        let mut state = self.state.write();
+        state.context_servers.remove(server_id);
     }
 }

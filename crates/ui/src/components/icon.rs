@@ -4,7 +4,11 @@ use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
-use crate::{prelude::*, Indicator};
+use crate::{
+    prelude::*,
+    traits::component_preview::{ComponentExample, ComponentPreview},
+    Indicator,
+};
 
 #[derive(IntoElement)]
 pub enum AnyIcon {
@@ -188,6 +192,7 @@ pub enum IconName {
     FileGit,
     FileLock,
     FileRust,
+    FileSearch,
     FileText,
     FileToml,
     FileTree,
@@ -212,6 +217,7 @@ pub enum IconName {
     LineHeight,
     Link,
     ListTree,
+    ListX,
     MagnifyingGlass,
     MailOpen,
     Maximize,
@@ -233,6 +239,7 @@ pub enum IconName {
     Public,
     PullRequest,
     Quote,
+    RefreshTitle,
     Regex,
     ReplNeutral,
     Replace,
@@ -283,12 +290,19 @@ pub enum IconName {
     Update,
     UserGroup,
     Visible,
+    Wand,
     Warning,
     WholeWord,
     XCircle,
     ZedAssistant,
     ZedAssistantFilled,
     ZedXCopilot,
+}
+
+impl From<IconName> for Icon {
+    fn from(icon: IconName) -> Self {
+        Icon::new(icon)
+    }
 }
 
 #[derive(IntoElement)]
@@ -483,5 +497,28 @@ impl RenderOnce for IconWithIndicator {
                         .child(indicator),
                 )
             })
+    }
+}
+
+impl ComponentPreview for Icon {
+    fn examples() -> Vec<ComponentExampleGroup<Icon>> {
+        let arrow_icons = vec![
+            IconName::ArrowDown,
+            IconName::ArrowLeft,
+            IconName::ArrowRight,
+            IconName::ArrowUp,
+            IconName::ArrowCircle,
+        ];
+
+        vec![example_group_with_title(
+            "Arrow Icons",
+            arrow_icons
+                .into_iter()
+                .map(|icon| {
+                    let name = format!("{:?}", icon).to_string();
+                    ComponentExample::new(name, Icon::new(icon))
+                })
+                .collect(),
+        )]
     }
 }

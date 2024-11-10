@@ -217,6 +217,7 @@ pub(crate) type KeystrokeObserver =
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
 type NewViewListener = Box<dyn FnMut(AnyView, &mut WindowContext) + 'static>;
+type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
@@ -237,10 +238,12 @@ pub struct AppContext {
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
+    pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
+    pub(crate) keyboard_layout: SharedString,
     pub(crate) global_action_listeners:
         FxHashMap<TypeId, Vec<Rc<dyn Fn(&dyn Any, DispatchPhase, &mut Self)>>>,
     pending_effects: VecDeque<Effect>,
@@ -250,12 +253,16 @@ pub struct AppContext {
     // TypeId is the type of the event that the listener callback expects
     pub(crate) event_listeners: SubscriberSet<EntityId, (TypeId, Listener)>,
     pub(crate) keystroke_observers: SubscriberSet<(), KeystrokeObserver>,
+    pub(crate) keyboard_layout_observers: SubscriberSet<(), Handler>,
     pub(crate) release_listeners: SubscriberSet<EntityId, ReleaseListener>,
     pub(crate) global_observers: SubscriberSet<TypeId, Handler>,
     pub(crate) quit_observers: SubscriberSet<(), QuitHandler>,
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
+
+    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    pub(crate) name: Option<&'static str>,
 }
 
 impl AppContext {
@@ -274,6 +281,7 @@ impl AppContext {
 
         let text_system = Arc::new(TextSystem::new(platform.text_system()));
         let entities = EntityMap::new();
+        let keyboard_layout = SharedString::from(platform.keyboard_layout());
 
         let app = Rc::new_cyclic(|this| AppCell {
             app: RefCell::new(AppContext {
@@ -293,9 +301,11 @@ impl AppContext {
                 globals_by_type: FxHashMap::default(),
                 entities,
                 new_view_observers: SubscriberSet::new(),
+                new_model_observers: SubscriberSet::new(),
                 window_handles: FxHashMap::default(),
                 windows: SlotMap::with_key(),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
+                keyboard_layout,
                 global_action_listeners: FxHashMap::default(),
                 pending_effects: VecDeque::new(),
                 pending_notifications: FxHashSet::default(),
@@ -304,15 +314,32 @@ impl AppContext {
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
+                keyboard_layout_observers: SubscriberSet::new(),
                 global_observers: SubscriberSet::new(),
                 quit_observers: SubscriberSet::new(),
                 layout_id_buffer: Default::default(),
                 propagate_event: true,
                 prompt_builder: Some(PromptBuilder::Default),
+
+                #[cfg(any(test, feature = "test-support", debug_assertions))]
+                name: None,
             }),
         });
 
         init_app_menus(platform.as_ref(), &mut app.borrow_mut());
+
+        platform.on_keyboard_layout_change(Box::new({
+            let app = Rc::downgrade(&app);
+            move || {
+                if let Some(app) = app.upgrade() {
+                    let cx = &mut app.borrow_mut();
+                    cx.keyboard_layout = SharedString::from(cx.platform.keyboard_layout());
+                    cx.keyboard_layout_observers
+                        .clone()
+                        .retain(&(), move |callback| (callback)(cx));
+                }
+            }
+        }));
 
         platform.on_quit(Box::new({
             let cx = app.clone();
@@ -345,6 +372,27 @@ impl AppContext {
         {
             log::error!("timed out waiting on app_will_quit");
         }
+    }
+
+    /// Get the id of the current keyboard layout
+    pub fn keyboard_layout(&self) -> &SharedString {
+        &self.keyboard_layout
+    }
+
+    /// Invokes a handler when the current keyboard layout changes
+    pub fn on_keyboard_layout_change<F>(&self, mut callback: F) -> Subscription
+    where
+        F: 'static + FnMut(&mut AppContext),
+    {
+        let (subscription, activate) = self.keyboard_layout_observers.insert(
+            (),
+            Box::new(move |cx| {
+                callback(cx);
+                true
+            }),
+        );
+        activate();
+        subscription
     }
 
     /// Gracefully quit the application via the platform's standard routine.
@@ -988,6 +1036,7 @@ impl AppContext {
     }
 
     /// Move the global of the given type to the stack.
+    #[track_caller]
     pub(crate) fn lease_global<G: Global>(&mut self) -> GlobalLease<G> {
         GlobalLease::new(
             self.globals_by_type
@@ -1009,6 +1058,7 @@ impl AppContext {
         activate();
         subscription
     }
+
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
@@ -1023,6 +1073,31 @@ impl AppContext {
                     .unwrap()
                     .update(cx, |view_state, cx| {
                         on_new(view_state, cx);
+                    })
+            }),
+        )
+    }
+
+    pub(crate) fn new_model_observer(&self, key: TypeId, value: NewModelListener) -> Subscription {
+        let (subscription, activate) = self.new_model_observers.insert(key, value);
+        activate();
+        subscription
+    }
+
+    /// Arrange for the given function to be invoked whenever a view of the specified type is created.
+    /// The function will be passed a mutable reference to the view along with an appropriate context.
+    pub fn observe_new_models<T: 'static>(
+        &self,
+        on_new: impl 'static + Fn(&mut T, &mut ModelContext<T>),
+    ) -> Subscription {
+        self.new_model_observer(
+            TypeId::of::<T>(),
+            Box::new(move |any_model: AnyModel, cx: &mut AppContext| {
+                any_model
+                    .downcast::<T>()
+                    .unwrap()
+                    .update(cx, |model_state, cx| {
+                        on_new(model_state, cx);
                     })
             }),
         )
@@ -1319,6 +1394,12 @@ impl AppContext {
 
         (task, is_first)
     }
+
+    /// Get the name for this App.
+    #[cfg(any(test, feature = "test-support", debug_assertions))]
+    pub fn get_name(&self) -> &'static str {
+        self.name.as_ref().unwrap()
+    }
 }
 
 impl Context for AppContext {
@@ -1333,8 +1414,21 @@ impl Context for AppContext {
     ) -> Model<T> {
         self.update(|cx| {
             let slot = cx.entities.reserve();
+            let model = slot.clone();
             let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
-            cx.entities.insert(slot, entity)
+            cx.entities.insert(slot, entity);
+
+            // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
+            fn notify_observers(cx: &mut AppContext, tid: TypeId, model: AnyModel) {
+                cx.new_model_observers.clone().retain(&tid, |observer| {
+                    let any_model = model.clone();
+                    (observer)(any_model, cx);
+                    true
+                });
+            }
+            notify_observers(cx, TypeId::of::<T>(), AnyModel::from(model.clone()));
+
+            model
         })
     }
 

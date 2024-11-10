@@ -151,28 +151,30 @@ Many language servers accept custom configuration options. You can set these in 
 
 This example configures the Rust Analyzer to use Clippy for additional linting when saving files.
 
+#### Nested objects
+
 When configuring language server options in Zed, it's important to use nested objects rather than dot-delimited strings. This is particularly relevant when working with more complex configurations. Let's look at a real-world example using the TypeScript language server:
 
 Suppose you want to configure the following settings for TypeScript:
 
 - Enable strict null checks
 - Set the target ECMAScript version to ES2020
-- Configure import organization preferences
 
 Here's how you would structure these settings in Zed's `settings.json`:
-
-Here's how you might incorrectly attempt to set these options using dot notation:
 
 ```json
 "lsp": {
   "typescript-language-server": {
     "initialization_options": {
-      // This is not supported:
-      //   "preferences.strictNullChecks": true,
-      // You express it like this:
+      // These are not supported (VSCode dotted style):
+      // "preferences.strictNullChecks": true,
+      // "preferences.target": "ES2020"
+      //
+      // These is correct (nested notation):
       "preferences": {
-        "strictNullChecks": true
-      }
+        "strictNullChecks": true,
+        "target": "ES2020"
+      },
     }
   }
 }

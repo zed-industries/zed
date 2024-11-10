@@ -1,5 +1,4 @@
 use crate::{
-    auth::split_dev_server_token,
     db::{tests::TestDb, NewUserParams, UserId},
     executor::Executor,
     rpc::{Principal, Server, ZedVersion, CLEANUP_TIMEOUT, RECONNECT_TIMEOUT},
@@ -204,7 +203,7 @@ impl TestServer {
             .override_authenticate(move |cx| {
                 cx.spawn(|_| async move {
                     let access_token = "the-token".to_string();
-                    Ok(Credentials::User {
+                    Ok(Credentials {
                         user_id: user_id.to_proto(),
                         access_token,
                     })
@@ -213,7 +212,7 @@ impl TestServer {
             .override_establish_connection(move |credentials, cx| {
                 assert_eq!(
                     credentials,
-                    &Credentials::User {
+                    &Credentials {
                         user_id: user_id.0 as u64,
                         access_token: "the-token".into()
                     }
@@ -297,7 +296,6 @@ impl TestServer {
             collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
-            dev_server_projects::init(client.clone(), cx);
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
             assistant::context_store::init(&client.clone().into());
@@ -317,135 +315,6 @@ impl TestServer {
         };
         client.wait_for_current_user(cx).await;
         client
-    }
-
-    pub async fn create_dev_server(
-        &self,
-        access_token: String,
-        cx: &mut TestAppContext,
-    ) -> TestClient {
-        cx.update(|cx| {
-            if cx.has_global::<SettingsStore>() {
-                panic!("Same cx used to create two test clients")
-            }
-            let settings = SettingsStore::test(cx);
-            cx.set_global(settings);
-            release_channel::init(SemanticVersion::default(), cx);
-            client::init_settings(cx);
-        });
-        let (dev_server_id, _) = split_dev_server_token(&access_token).unwrap();
-
-        let clock = Arc::new(FakeSystemClock::default());
-        let http = FakeHttpClient::with_404_response();
-        let mut client = cx.update(|cx| Client::new(clock, http.clone(), cx));
-        let server = self.server.clone();
-        let db = self.app_state.db.clone();
-        let connection_killers = self.connection_killers.clone();
-        let forbid_connections = self.forbid_connections.clone();
-        Arc::get_mut(&mut client)
-            .unwrap()
-            .set_id(1)
-            .set_dev_server_token(client::DevServerToken(access_token.clone()))
-            .override_establish_connection(move |credentials, cx| {
-                assert_eq!(
-                    credentials,
-                    &Credentials::DevServer {
-                        token: client::DevServerToken(access_token.to_string())
-                    }
-                );
-
-                let server = server.clone();
-                let db = db.clone();
-                let connection_killers = connection_killers.clone();
-                let forbid_connections = forbid_connections.clone();
-                cx.spawn(move |cx| async move {
-                    if forbid_connections.load(SeqCst) {
-                        Err(EstablishConnectionError::other(anyhow!(
-                            "server is forbidding connections"
-                        )))
-                    } else {
-                        let (client_conn, server_conn, killed) =
-                            Connection::in_memory(cx.background_executor().clone());
-                        let (connection_id_tx, connection_id_rx) = oneshot::channel();
-                        let dev_server = db
-                            .get_dev_server(dev_server_id)
-                            .await
-                            .expect("retrieving dev_server failed");
-                        cx.background_executor()
-                            .spawn(server.handle_connection(
-                                server_conn,
-                                "dev-server".to_string(),
-                                Principal::DevServer(dev_server),
-                                ZedVersion(SemanticVersion::new(1, 0, 0)),
-                                None,
-                                Some(connection_id_tx),
-                                Executor::Deterministic(cx.background_executor().clone()),
-                            ))
-                            .detach();
-                        let connection_id = connection_id_rx.await.map_err(|e| {
-                            EstablishConnectionError::Other(anyhow!(
-                                "{} (is server shutting down?)",
-                                e
-                            ))
-                        })?;
-                        connection_killers
-                            .lock()
-                            .insert(connection_id.into(), killed);
-                        Ok(client_conn)
-                    }
-                })
-            });
-
-        let fs = FakeFs::new(cx.executor());
-        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
-        let workspace_store = cx.new_model(|cx| WorkspaceStore::new(client.clone(), cx));
-        let language_registry = Arc::new(LanguageRegistry::test(cx.executor()));
-        let session = cx.new_model(|cx| AppSession::new(Session::test(), cx));
-        let app_state = Arc::new(workspace::AppState {
-            client: client.clone(),
-            user_store: user_store.clone(),
-            workspace_store,
-            languages: language_registry,
-            fs: fs.clone(),
-            build_window_options: |_, _| Default::default(),
-            node_runtime: NodeRuntime::unavailable(),
-            session,
-        });
-
-        cx.update(|cx| {
-            theme::init(theme::LoadThemes::JustBase, cx);
-            Project::init(&client, cx);
-            client::init(&client, cx);
-            language::init(cx);
-            editor::init(cx);
-            workspace::init(app_state.clone(), cx);
-            call::init(client.clone(), user_store.clone(), cx);
-            channel::init(&client, user_store.clone(), cx);
-            notifications::init(client.clone(), user_store, cx);
-            collab_ui::init(&app_state, cx);
-            file_finder::init(cx);
-            menu::init();
-            headless::init(
-                client.clone(),
-                headless::AppState {
-                    languages: app_state.languages.clone(),
-                    user_store: app_state.user_store.clone(),
-                    fs: fs.clone(),
-                    node_runtime: app_state.node_runtime.clone(),
-                },
-                cx,
-            )
-        })
-        .await
-        .unwrap();
-
-        TestClient {
-            app_state,
-            username: "dev-server".to_string(),
-            channel_store: cx.read(ChannelStore::global).clone(),
-            notification_store: cx.read(NotificationStore::global).clone(),
-            state: Default::default(),
-        }
     }
 
     pub fn disconnect_client(&self, peer_id: PeerId) {

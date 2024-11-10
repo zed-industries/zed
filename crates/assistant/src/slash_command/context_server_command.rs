@@ -1,15 +1,14 @@
-use super::create_label_for_command;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
-    SlashCommandOutputSection,
+    SlashCommandOutputSection, SlashCommandResult,
 };
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},
     types::Prompt,
 };
-use gpui::{AppContext, Task, WeakView, WindowContext};
+use gpui::{AppContext, Model, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -17,16 +16,24 @@ use text::LineEnding;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
 
+use crate::slash_command::create_label_for_command;
+
 pub struct ContextServerSlashCommand {
-    server_id: String,
+    server_manager: Model<ContextServerManager>,
+    server_id: Arc<str>,
     prompt: Prompt,
 }
 
 impl ContextServerSlashCommand {
-    pub fn new(server: &Arc<ContextServer>, prompt: Prompt) -> Self {
+    pub fn new(
+        server_manager: Model<ContextServerManager>,
+        server: &Arc<dyn ContextServer>,
+        prompt: Prompt,
+    ) -> Self {
         Self {
-            server_id: server.id.clone(),
+            server_id: server.id(),
             prompt,
+            server_manager,
         }
     }
 }
@@ -73,20 +80,16 @@ impl SlashCommand for ContextServerSlashCommand {
         _workspace: Option<WeakView<Workspace>>,
         cx: &mut WindowContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
+        let Ok((arg_name, arg_value)) = completion_argument(&self.prompt, arguments) else {
+            return Task::ready(Err(anyhow!("Failed to complete argument")));
+        };
+
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
-        let manager = ContextServerManager::global(cx);
-        let manager = manager.read(cx);
 
-        let (arg_name, arg_val) = match completion_argument(&self.prompt, arguments) {
-            Ok(tp) => tp,
-            Err(e) => {
-                return Task::ready(Err(e));
-            }
-        };
-        if let Some(server) = manager.get_server(&server_id) {
+        if let Some(server) = self.server_manager.read(cx).get_server(&server_id) {
             cx.foreground_executor().spawn(async move {
-                let Some(protocol) = server.client.read().clone() else {
+                let Some(protocol) = server.client() else {
                     return Err(anyhow!("Context server not initialized"));
                 };
 
@@ -99,7 +102,7 @@ impl SlashCommand for ContextServerSlashCommand {
                             },
                         ),
                         arg_name,
-                        arg_val,
+                        arg_value,
                     )
                     .await?;
 
@@ -128,7 +131,7 @@ impl SlashCommand for ContextServerSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let server_id = self.server_id.clone();
         let prompt_name = self.prompt.name.clone();
 
@@ -137,11 +140,10 @@ impl SlashCommand for ContextServerSlashCommand {
             Err(e) => return Task::ready(Err(e)),
         };
 
-        let manager = ContextServerManager::global(cx);
-        let manager = manager.read(cx);
+        let manager = self.server_manager.read(cx);
         if let Some(server) = manager.get_server(&server_id) {
             cx.foreground_executor().spawn(async move {
-                let Some(protocol) = server.client.read().clone() else {
+                let Some(protocol) = server.client() else {
                     return Err(anyhow!("Context server not initialized"));
                 };
                 let result = protocol.run_prompt(&prompt_name, prompt_args).await?;
@@ -184,7 +186,8 @@ impl SlashCommand for ContextServerSlashCommand {
                     }],
                     text: prompt,
                     run_commands_in_text: false,
-                })
+                }
+                .to_event_stream())
             })
         } else {
             Task::ready(Err(anyhow!("Context server not found")))

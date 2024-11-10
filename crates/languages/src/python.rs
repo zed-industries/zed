@@ -3,12 +3,21 @@ use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
+use language::LanguageName;
+use language::LanguageToolchainStore;
+use language::Toolchain;
+use language::ToolchainList;
+use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use pet_core::os_environment::Environment;
+use pet_core::python_environment::PythonEnvironmentKind;
+use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
 
+use std::sync::Mutex;
 use std::{
     any::Any,
     borrow::Cow,
@@ -200,12 +209,35 @@ impl LspAdapter for PythonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        cx.update(|cx| {
-            language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
+        let toolchain = toolchains
+            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .await;
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+                if let Some(python) = object
+                    .entry("python")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                {
+                    python
+                        .entry("pythonPath")
+                        .or_insert(Value::String(toolchain.path.into()));
+                }
+            }
+            user_settings
         })
     }
 }
@@ -318,6 +350,160 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .strip_suffix(".py")
         .unwrap_or(&path_with_dots)
         .to_string()
+}
+
+#[derive(Default)]
+pub(crate) struct PythonToolchainProvider {}
+
+static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
+    // Prioritize non-Conda environments.
+    PythonEnvironmentKind::Poetry,
+    PythonEnvironmentKind::Pipenv,
+    PythonEnvironmentKind::VirtualEnvWrapper,
+    PythonEnvironmentKind::Venv,
+    PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::Conda,
+    PythonEnvironmentKind::Pyenv,
+    PythonEnvironmentKind::GlobalPaths,
+    PythonEnvironmentKind::Homebrew,
+];
+
+fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
+    if let Some(kind) = kind {
+        ENV_PRIORITY_LIST
+            .iter()
+            .position(|blessed_env| blessed_env == &kind)
+            .unwrap_or(ENV_PRIORITY_LIST.len())
+    } else {
+        // Unknown toolchains are less useful than non-blessed ones.
+        ENV_PRIORITY_LIST.len() + 1
+    }
+}
+
+#[async_trait(?Send)]
+impl ToolchainLister for PythonToolchainProvider {
+    async fn list(
+        &self,
+        worktree_root: PathBuf,
+        project_env: Option<HashMap<String, String>>,
+    ) -> ToolchainList {
+        let env = project_env.unwrap_or_default();
+        let environment = EnvironmentApi::from_env(&env);
+        let locators = pet::locators::create_locators(
+            Arc::new(pet_conda::Conda::from(&environment)),
+            Arc::new(pet_poetry::Poetry::from(&environment)),
+            &environment,
+        );
+        let mut config = Configuration::default();
+        config.workspace_directories = Some(vec![worktree_root]);
+        let reporter = pet_reporter::collect::create_reporter();
+        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
+
+        let mut toolchains = reporter
+            .environments
+            .lock()
+            .ok()
+            .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
+        toolchains.sort_by(|lhs, rhs| {
+            env_priority(lhs.kind)
+                .cmp(&env_priority(rhs.kind))
+                .then_with(|| lhs.executable.cmp(&rhs.executable))
+        });
+        let mut toolchains: Vec<_> = toolchains
+            .into_iter()
+            .filter_map(|toolchain| {
+                let name = if let Some(version) = &toolchain.version {
+                    format!("Python {version} ({:?})", toolchain.kind?)
+                } else {
+                    format!("{:?}", toolchain.kind?)
+                }
+                .into();
+                Some(Toolchain {
+                    name,
+                    path: toolchain.executable?.to_str()?.to_owned().into(),
+                    language_name: LanguageName::new("Python"),
+                })
+            })
+            .collect();
+        toolchains.dedup();
+        ToolchainList {
+            toolchains,
+            default: None,
+            groups: Default::default(),
+        }
+    }
+}
+
+pub struct EnvironmentApi<'a> {
+    global_search_locations: Arc<Mutex<Vec<PathBuf>>>,
+    project_env: &'a HashMap<String, String>,
+    pet_env: pet_core::os_environment::EnvironmentApi,
+}
+
+impl<'a> EnvironmentApi<'a> {
+    pub fn from_env(project_env: &'a HashMap<String, String>) -> Self {
+        let paths = project_env
+            .get("PATH")
+            .map(|p| std::env::split_paths(p).collect())
+            .unwrap_or_default();
+
+        EnvironmentApi {
+            global_search_locations: Arc::new(Mutex::new(paths)),
+            project_env,
+            pet_env: pet_core::os_environment::EnvironmentApi::new(),
+        }
+    }
+
+    fn user_home(&self) -> Option<PathBuf> {
+        self.project_env
+            .get("HOME")
+            .or_else(|| self.project_env.get("USERPROFILE"))
+            .map(|home| pet_fs::path::norm_case(PathBuf::from(home)))
+            .or_else(|| self.pet_env.get_user_home())
+    }
+}
+
+impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
+    fn get_user_home(&self) -> Option<PathBuf> {
+        self.user_home()
+    }
+
+    fn get_root(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn get_env_var(&self, key: String) -> Option<String> {
+        self.project_env
+            .get(&key)
+            .cloned()
+            .or_else(|| self.pet_env.get_env_var(key))
+    }
+
+    fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+        if self.global_search_locations.lock().unwrap().is_empty() {
+            let mut paths =
+                std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
+                    .collect::<Vec<PathBuf>>();
+
+            log::trace!("Env PATH: {:?}", paths);
+            for p in self.pet_env.get_know_global_search_locations() {
+                if !paths.contains(&p) {
+                    paths.push(p);
+                }
+            }
+
+            let mut paths = paths
+                .into_iter()
+                .filter(|p| p.exists())
+                .collect::<Vec<PathBuf>>();
+
+            self.global_search_locations
+                .lock()
+                .unwrap()
+                .append(&mut paths);
+        }
+        self.global_search_locations.lock().unwrap().clone()
+    }
 }
 
 #[cfg(test)]

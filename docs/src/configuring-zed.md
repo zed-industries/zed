@@ -29,15 +29,65 @@ Extensions that provide language servers may also provide default settings for t
 
 # Settings
 
-## Active Pane Magnification
+## Active Pane Modifiers
+
+Styling settings applied to the active pane.
+
+### Magnification
 
 - Description: Scale by which to zoom the active pane. When set to `1.0`, the active pane has the same size as others, but when set to a larger value, the active pane takes up more space.
-- Setting: `active_pane_magnification`
+- Setting: `magnification`
+- Default: `1.0`
+
+### Border size
+
+- Description: Size of the border surrounding the active pane. When set to 0, the active pane doesn't have any border. The border is drawn inset.
+- Setting: `border_size`
+- Default: `0.0`
+
+### Inactive Opacity
+
+- Description: Opacity of inactive panels. When set to 1.0, the inactive panes have the same opacity as the active one. If set to 0, the inactive panes content will not be visible at all. Values are clamped to the [0.0, 1.0] range.
+- Setting: `inactive_opacity`
 - Default: `1.0`
 
 **Options**
 
 `float` values
+
+## Auto Install extensions
+
+- Description: Define extensions to be autoinstalled or never be installed.
+- Setting: `auto_install_extension`
+- Default: `{"html": true}`
+
+**Options**
+
+You can find the names of your currently installed extensions by listing the subfolders under the [extension installation location](./extensions/installing-extensions#installation-location):
+
+On MacOS:
+
+```sh
+ls ~/Library/Application\ Support/Zed/extensions/installed/
+```
+
+On Linux:
+
+```sh
+ls ~/.local/share/zed/extensions/installed
+```
+
+Define extensions which should be installed (`true`) or never installed (`false`).
+
+```json
+{
+  "auto_install_extensions": {
+    "html": true,
+    "dockerfile": true,
+    "docker-compose": false
+  }
+}
+```
 
 ## Autosave
 
@@ -1004,6 +1054,32 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline_blame": {
       "enabled": true,
       "delay_ms": 500
+    }
+  }
+}
+```
+
+3. Show a commit summary next to the commit date and author:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "show_commit_summary": true
+    }
+  }
+}
+```
+
+4. Use this as the minimum column at which to display inline blame information:
+
+```json
+{
+  "git": {
+    "inline_blame": {
+      "enabled": true,
+      "min_column": 80
     }
   }
 }
@@ -2008,10 +2084,14 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "folder_icons": true,
     "git_status": true,
     "indent_size": 20,
+    "indent_guides": true,
     "auto_reveal_entries": true,
     "auto_fold_dirs": true,
     "scrollbar": {
       "show": null
+    },
+    "indent_guides": {
+      "show": "always"
     }
   }
 }
@@ -2129,21 +2209,54 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 - Setting: `indent_size`
 - Default: `20`
 
-### Scrollbar
+### Indent Guides: Show
 
-- Description: Scrollbar related settings. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
-- Setting: `scrollbar`
-- Default:
+- Description: Whether to show indent guides in the project panel. Possible values: "always", "never".
+- Setting: `indent_guides`
 
 ```json
-"scrollbar": {
-    "show": null
+"indent_guides": {
+  "show": "always"
 }
 ```
 
 **Options**
 
-1. Show scrollbar in project panel
+1. Show indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "always"
+  }
+}
+```
+
+2. Hide indent guides in the project panel
+
+```json
+{
+  "indent_guides": {
+    "show": "never"
+  }
+}
+```
+
+### Scrollbar: Show
+
+- Description: Whether to show a scrollbar in the project panel. Possible values: null, "auto", "system", "always", "never". Inherits editor settings when absent, see its description for more details.
+- Setting: `scrollbar`
+- Default:
+
+```json
+"scrollbar": {
+  "show": null
+}
+```
+
+**Options**
+
+1. Show scrollbar in the project panel
 
 ```json
 {
@@ -2153,7 +2266,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-2. Hide scrollbar in project panel
+2. Hide scrollbar in the project panel
 
 ```json
 {
@@ -2198,6 +2311,12 @@ Run the `theme selector: toggle` action in the command palette to see a current 
   "indent_size": 20,
   "auto_reveal_entries": true,
   "auto_fold_dirs": true,
+  "indent_guides": {
+    "show": "always"
+  },
+  "scrollbar": {
+    "show": null
+  }
 }
 ```
 

@@ -138,6 +138,14 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| common.text_system.clone())
     }
 
+    fn keyboard_layout(&self) -> String {
+        "unknown".into()
+    }
+
+    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
+        // todo(linux)
+    }
+
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
         on_finish_launching();
 

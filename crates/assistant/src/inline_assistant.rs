@@ -1,7 +1,7 @@
 use crate::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
     AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, LineDiff, LineOperation, ModelSelector, StreamingDiff,
+    CyclePreviousInlineAssist, LineDiff, LineOperation, ModelSelector, RequestType, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
@@ -9,7 +9,7 @@ use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
     display_map::{
-        BlockContext, BlockDisposition, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+        BlockContext, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
         ToDisplayPoint,
     },
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorElement, EditorEvent, EditorMode,
@@ -21,9 +21,7 @@ use fs::Fs;
 use futures::{
     channel::mpsc,
     future::{BoxFuture, LocalBoxFuture},
-    join,
-    stream::{self, BoxStream},
-    SinkExt, Stream, StreamExt,
+    join, SinkExt, Stream, StreamExt,
 };
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, EventEmitter, FocusHandle,
@@ -32,7 +30,8 @@ use gpui::{
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
-    LanguageModel, LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+    logging::report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
 };
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
@@ -54,7 +53,9 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
 use theme::ThemeSettings;
-use ui::{prelude::*, CheckboxWithLabel, IconButtonShape, Popover, Tooltip};
+use ui::{
+    prelude::*, text_for_action, CheckboxWithLabel, IconButtonShape, KeyBinding, Popover, Tooltip,
+};
 use util::{RangeExt, ResultExt};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 
@@ -85,7 +86,7 @@ pub struct InlineAssistant {
     confirmed_assists: HashMap<InlineAssistId, Model<CodegenAlternative>>,
     prompt_history: VecDeque<String>,
     prompt_builder: Arc<PromptBuilder>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
 }
 
@@ -106,7 +107,7 @@ impl InlineAssistant {
             confirmed_assists: HashMap::default(),
             prompt_history: VecDeque::default(),
             prompt_builder,
-            telemetry: Some(telemetry),
+            telemetry,
             fs,
         }
     }
@@ -189,11 +190,16 @@ impl InlineAssistant {
         initial_prompt: Option<String>,
         cx: &mut WindowContext,
     ) {
-        let snapshot = editor.read(cx).buffer().read(cx).snapshot(cx);
+        let (snapshot, initial_selections) = editor.update(cx, |editor, cx| {
+            (
+                editor.buffer().read(cx).snapshot(cx),
+                editor.selections.all::<Point>(cx),
+            )
+        });
 
         let mut selections = Vec::<Selection<Point>>::new();
         let mut newest_selection = None;
-        for mut selection in editor.read(cx).selections.all::<Point>(cx) {
+        for mut selection in initial_selections {
             if selection.end > selection.start {
                 selection.start.column = 0;
                 // If the selection ends at the start of the line, we don't want to include it.
@@ -236,19 +242,18 @@ impl InlineAssistant {
             };
             codegen_ranges.push(start..end);
 
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                    telemetry.report_assistant_event(AssistantEvent {
-                        conversation_id: None,
-                        kind: AssistantKind::Inline,
-                        phase: AssistantPhase::Invoked,
-                        model: model.telemetry_id(),
-                        model_provider: model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
-                        language_name: buffer.language().map(|language| language.name().to_proto()),
-                    });
-                }
+            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                self.telemetry.report_assistant_event(AssistantEvent {
+                    conversation_id: None,
+                    kind: AssistantKind::Inline,
+                    phase: AssistantPhase::Invoked,
+                    message_id: None,
+                    model: model.telemetry_id(),
+                    model_provider: model.provider_id().to_string(),
+                    response_latency: None,
+                    error_message: None,
+                    language_name: buffer.language().map(|language| language.name().to_proto()),
+                });
             }
         }
 
@@ -446,15 +451,14 @@ impl InlineAssistant {
         let assist_blocks = vec![
             BlockProperties {
                 style: BlockStyle::Sticky,
-                position: range.start,
+                placement: BlockPlacement::Above(range.start),
                 height: prompt_editor_height,
                 render: build_assist_editor_renderer(prompt_editor),
-                disposition: BlockDisposition::Above,
                 priority: 0,
             },
             BlockProperties {
                 style: BlockStyle::Sticky,
-                position: range.end,
+                placement: BlockPlacement::Below(range.end),
                 height: 0,
                 render: Box::new(|cx| {
                     v_flex()
@@ -464,7 +468,6 @@ impl InlineAssistant {
                         .border_color(cx.theme().status().info_border)
                         .into_any_element()
                 }),
-                disposition: BlockDisposition::Below,
                 priority: 0,
             },
         ];
@@ -568,10 +571,13 @@ impl InlineAssistant {
             return;
         };
 
-        let editor = editor.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+        if editor.read(cx).selections.count() == 1 {
+            let (selection, buffer) = editor.update(cx, |editor, cx| {
+                (
+                    editor.selections.newest::<usize>(cx),
+                    editor.buffer().read(cx).snapshot(cx),
+                )
+            });
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
                 let assist_range = assist.range.to_offset(&buffer);
@@ -596,10 +602,13 @@ impl InlineAssistant {
             return;
         };
 
-        let editor = editor.read(cx);
-        if editor.selections.count() == 1 {
-            let selection = editor.selections.newest::<usize>(cx);
-            let buffer = editor.buffer().read(cx).snapshot(cx);
+        if editor.read(cx).selections.count() == 1 {
+            let (selection, buffer) = editor.update(cx, |editor, cx| {
+                (
+                    editor.selections.newest::<usize>(cx),
+                    editor.buffer().read(cx).snapshot(cx),
+                )
+            });
             let mut closest_assist_fallback = None;
             for assist_id in &editor_assists.assist_ids {
                 let assist = &self.assists[assist_id];
@@ -745,33 +754,6 @@ impl InlineAssistant {
 
     pub fn finish_assist(&mut self, assist_id: InlineAssistId, undo: bool, cx: &mut WindowContext) {
         if let Some(assist) = self.assists.get(&assist_id) {
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                    let language_name = assist.editor.upgrade().and_then(|editor| {
-                        let multibuffer = editor.read(cx).buffer().read(cx);
-                        let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
-                        ranges
-                            .first()
-                            .and_then(|(buffer, _, _)| buffer.read(cx).language())
-                            .map(|language| language.name())
-                    });
-                    telemetry.report_assistant_event(AssistantEvent {
-                        conversation_id: None,
-                        kind: AssistantKind::Inline,
-                        phase: if undo {
-                            AssistantPhase::Rejected
-                        } else {
-                            AssistantPhase::Accepted
-                        },
-                        model: model.telemetry_id(),
-                        model_provider: model.provider_id().to_string(),
-                        response_latency: None,
-                        error_message: None,
-                        language_name: language_name.map(|name| name.to_proto()),
-                    });
-                }
-            }
-
             let assist_group_id = assist.group_id;
             if self.assist_groups[&assist_group_id].linked {
                 for assist_id in self.unlink_assist_group(assist_group_id, cx) {
@@ -806,12 +788,45 @@ impl InlineAssistant {
                 }
             }
 
+            let active_alternative = assist.codegen.read(cx).active_alternative().clone();
+            let message_id = active_alternative.read(cx).message_id.clone();
+
+            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                let language_name = assist.editor.upgrade().and_then(|editor| {
+                    let multibuffer = editor.read(cx).buffer().read(cx);
+                    let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
+                    ranges
+                        .first()
+                        .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                        .map(|language| language.name())
+                });
+                report_assistant_event(
+                    AssistantEvent {
+                        conversation_id: None,
+                        kind: AssistantKind::Inline,
+                        message_id,
+                        phase: if undo {
+                            AssistantPhase::Rejected
+                        } else {
+                            AssistantPhase::Accepted
+                        },
+                        model: model.telemetry_id(),
+                        model_provider: model.provider_id().to_string(),
+                        response_latency: None,
+                        error_message: None,
+                        language_name: language_name.map(|name| name.to_proto()),
+                    },
+                    Some(self.telemetry.clone()),
+                    cx.http_client(),
+                    model.api_key(cx),
+                    cx.background_executor(),
+                );
+            }
+
             if undo {
                 assist.codegen.update(cx, |codegen, cx| codegen.undo(cx));
             } else {
-                let confirmed_alternative = assist.codegen.read(cx).active_alternative().clone();
-                self.confirmed_assists
-                    .insert(assist_id, confirmed_alternative);
+                self.confirmed_assists.insert(assist_id, active_alternative);
             }
         }
     }
@@ -1179,7 +1194,7 @@ impl InlineAssistant {
                 let height =
                     deleted_lines_editor.update(cx, |editor, cx| editor.max_point(cx).row().0 + 1);
                 new_blocks.push(BlockProperties {
-                    position: new_row,
+                    placement: BlockPlacement::Above(new_row),
                     height,
                     style: BlockStyle::Flex,
                     render: Box::new(move |cx| {
@@ -1191,7 +1206,6 @@ impl InlineAssistant {
                             .child(deleted_lines_editor.clone())
                             .into_any_element()
                     }),
-                    disposition: BlockDisposition::Above,
                     priority: 0,
                 });
             }
@@ -1599,7 +1613,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), cx), cx);
             editor
         });
 
@@ -1656,6 +1670,7 @@ impl PromptEditor {
         self.editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, cx);
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
+            editor.set_placeholder_text(Self::placeholder_text(self.codegen.read(cx), cx), cx);
             editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, cx);
             if focus {
@@ -1664,6 +1679,20 @@ impl PromptEditor {
             editor
         });
         self.subscribe_to_editor(cx);
+    }
+
+    fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
+        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+            .map(|keybinding| format!(" • {keybinding} for context"))
+            .unwrap_or_default();
+
+        let action = if codegen.is_insertion {
+            "Generate"
+        } else {
+            "Transform"
+        };
+
+        format!("{action}…{context_keybinding} • ↓↑ for history")
     }
 
     fn prompt(&self, cx: &AppContext) -> String {
@@ -1728,6 +1757,20 @@ impl PromptEditor {
     ) {
         match event {
             EditorEvent::Edited { .. } => {
+                if let Some(workspace) = cx.window_handle().downcast::<Workspace>() {
+                    workspace
+                        .update(cx, |workspace, cx| {
+                            let is_via_ssh = workspace
+                                .project()
+                                .update(cx, |project, _| project.is_via_ssh());
+
+                            workspace
+                                .client()
+                                .telemetry()
+                                .log_edit_event("inline assist", is_via_ssh);
+                        })
+                        .log_err();
+                }
                 let prompt = self.editor.read(cx).text(cx);
                 if self
                     .prompt_history_ix
@@ -1870,21 +1913,58 @@ impl PromptEditor {
         let codegen = self.codegen.read(cx);
         let disabled = matches!(codegen.status(cx), CodegenStatus::Idle);
 
+        let model_registry = LanguageModelRegistry::read_global(cx);
+        let default_model = model_registry.active_model();
+        let alternative_models = model_registry.inline_alternative_models();
+
+        let get_model_name = |index: usize| -> String {
+            let name = |model: &Arc<dyn LanguageModel>| model.name().0.to_string();
+
+            match index {
+                0 => default_model.as_ref().map_or_else(String::new, name),
+                index if index <= alternative_models.len() => alternative_models
+                    .get(index - 1)
+                    .map_or_else(String::new, name),
+                _ => String::new(),
+            }
+        };
+
+        let total_models = alternative_models.len() + 1;
+
+        if total_models <= 1 {
+            return div().into_any_element();
+        }
+
+        let current_index = codegen.active_alternative;
+        let prev_index = (current_index + total_models - 1) % total_models;
+        let next_index = (current_index + 1) % total_models;
+
+        let prev_model_name = get_model_name(prev_index);
+        let next_model_name = get_model_name(next_index);
+
         h_flex()
             .child(
                 IconButton::new("previous", IconName::ChevronLeft)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == 0)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Previous Alternative",
-                                &CyclePreviousInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CyclePreviousInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != 0 {
+                                    tooltip = tooltip.meta(prev_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
@@ -1908,17 +1988,25 @@ impl PromptEditor {
             .child(
                 IconButton::new("next", IconName::ChevronRight)
                     .icon_color(Color::Muted)
-                    .disabled(disabled)
+                    .disabled(disabled || current_index == total_models - 1)
                     .shape(IconButtonShape::Square)
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |cx| {
-                            Tooltip::for_action_in(
-                                "Next Alternative",
-                                &CycleNextInlineAssist,
-                                &focus_handle,
-                                cx,
-                            )
+                            cx.new_view(|cx| {
+                                let mut tooltip = Tooltip::new("Next Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CycleNextInlineAssist,
+                                        &focus_handle,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != total_models - 1 {
+                                    tooltip = tooltip.meta(next_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, cx| {
@@ -2222,7 +2310,7 @@ impl InlineAssist {
                     .read(cx)
                     .active_context(cx)?
                     .read(cx)
-                    .to_completion_request(cx),
+                    .to_completion_request(RequestType::Chat, cx),
             )
         } else {
             None
@@ -2261,8 +2349,9 @@ pub struct Codegen {
     buffer: Model<MultiBuffer>,
     range: Range<Anchor>,
     initial_transaction_id: Option<TransactionId>,
-    telemetry: Option<Arc<Telemetry>>,
+    telemetry: Arc<Telemetry>,
     builder: Arc<PromptBuilder>,
+    is_insertion: bool,
 }
 
 impl Codegen {
@@ -2270,7 +2359,7 @@ impl Codegen {
         buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         initial_transaction_id: Option<TransactionId>,
-        telemetry: Option<Arc<Telemetry>>,
+        telemetry: Arc<Telemetry>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
@@ -2279,12 +2368,13 @@ impl Codegen {
                 buffer.clone(),
                 range.clone(),
                 false,
-                telemetry.clone(),
+                Some(telemetry.clone()),
                 builder.clone(),
                 cx,
             )
         });
         let mut this = Self {
+            is_insertion: range.to_offset(&buffer.read(cx).snapshot(cx)).is_empty(),
             alternatives: vec![codegen],
             active_alternative: 0,
             seen_alternatives: HashSet::default(),
@@ -2369,7 +2459,7 @@ impl Codegen {
                     self.buffer.clone(),
                     self.range.clone(),
                     false,
-                    self.telemetry.clone(),
+                    Some(self.telemetry.clone()),
                     self.builder.clone(),
                     cx,
                 )
@@ -2472,6 +2562,7 @@ pub struct CodegenAlternative {
     line_operations: Vec<LineOperation>,
     request: Option<LanguageModelRequest>,
     elapsed_time: Option<f64>,
+    message_id: Option<String>,
 }
 
 enum CodegenStatus {
@@ -2530,6 +2621,7 @@ impl CodegenAlternative {
             buffer: buffer.clone(),
             old_buffer,
             edit_position: None,
+            message_id: None,
             snapshot,
             last_equal_ranges: Default::default(),
             transformation_transaction_id: None,
@@ -2634,20 +2726,20 @@ impl CodegenAlternative {
 
         self.edit_position = Some(self.range.start.bias_right(&self.snapshot));
 
+        let api_key = model.api_key(cx);
         let telemetry_id = model.telemetry_id();
         let provider_id = model.provider_id();
-        let chunks: LocalBoxFuture<Result<BoxStream<Result<String>>>> =
+        let stream: LocalBoxFuture<Result<LanguageModelTextStream>> =
             if user_prompt.trim().to_lowercase() == "delete" {
-                async { Ok(stream::empty().boxed()) }.boxed_local()
+                async { Ok(LanguageModelTextStream::default()) }.boxed_local()
             } else {
                 let request = self.build_request(user_prompt, assistant_panel_context, cx)?;
                 self.request = Some(request.clone());
 
-                let chunks = cx
-                    .spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await });
-                async move { Ok(chunks.await?.boxed()) }.boxed_local()
+                cx.spawn(|_, cx| async move { model.stream_completion_text(request, &cx).await })
+                    .boxed_local()
             };
-        self.handle_stream(telemetry_id, provider_id.to_string(), chunks, cx);
+        self.handle_stream(telemetry_id, provider_id.to_string(), api_key, stream, cx);
         Ok(())
     }
 
@@ -2686,7 +2778,7 @@ impl CodegenAlternative {
 
         let prompt = self
             .builder
-            .generate_content_prompt(user_prompt, language_name, buffer, range)
+            .generate_inline_transformation_prompt(user_prompt, language_name, buffer, range)
             .map_err(|e| anyhow::anyhow!("Failed to generate content prompt: {}", e))?;
 
         let mut messages = Vec::new();
@@ -2712,7 +2804,8 @@ impl CodegenAlternative {
         &mut self,
         model_telemetry_id: String,
         model_provider_id: String,
-        stream: impl 'static + Future<Output = Result<BoxStream<'static, Result<String>>>>,
+        model_api_key: Option<String>,
+        stream: impl 'static + Future<Output = Result<LanguageModelTextStream>>,
         cx: &mut ModelContext<Self>,
     ) {
         let start_time = Instant::now();
@@ -2742,6 +2835,7 @@ impl CodegenAlternative {
             }
         }
 
+        let http_client = cx.http_client().clone();
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
@@ -2757,15 +2851,21 @@ impl CodegenAlternative {
         let mut edit_start = self.range.start.to_offset(&snapshot);
         self.generation = cx.spawn(|codegen, mut cx| {
             async move {
-                let chunks = stream.await;
+                let stream = stream.await;
+                let message_id = stream
+                    .as_ref()
+                    .ok()
+                    .and_then(|stream| stream.message_id.clone());
                 let generate = async {
                     let (mut diff_tx, mut diff_rx) = mpsc::channel(1);
+                    let executor = cx.background_executor().clone();
+                    let message_id = message_id.clone();
                     let line_based_stream_diff: Task<anyhow::Result<()>> =
                         cx.background_executor().spawn(async move {
                             let mut response_latency = None;
                             let request_start = Instant::now();
                             let diff = async {
-                                let chunks = StripInvalidSpans::new(chunks?);
+                                let chunks = StripInvalidSpans::new(stream?.stream);
                                 futures::pin_mut!(chunks);
                                 let mut diff = StreamingDiff::new(selected_text.to_string());
                                 let mut line_diff = LineDiff::default();
@@ -2861,9 +2961,10 @@ impl CodegenAlternative {
 
                             let error_message =
                                 result.as_ref().err().map(|error| error.to_string());
-                            if let Some(telemetry) = telemetry {
-                                telemetry.report_assistant_event(AssistantEvent {
+                            report_assistant_event(
+                                AssistantEvent {
                                     conversation_id: None,
+                                    message_id,
                                     kind: AssistantKind::Inline,
                                     phase: AssistantPhase::Response,
                                     model: model_telemetry_id,
@@ -2871,8 +2972,12 @@ impl CodegenAlternative {
                                     response_latency,
                                     error_message,
                                     language_name: language_name.map(|name| name.to_proto()),
-                                });
-                            }
+                                },
+                                telemetry,
+                                http_client,
+                                model_api_key,
+                                &executor,
+                            );
 
                             result?;
                             Ok(())
@@ -2936,6 +3041,7 @@ impl CodegenAlternative {
 
                 codegen
                     .update(&mut cx, |this, cx| {
+                        this.message_id = message_id;
                         this.last_equal_ranges.clear();
                         if let Err(error) = result {
                             this.status = CodegenStatus::Error(error);
@@ -3487,15 +3593,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
+        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
 
         let mut new_text = concat!(
             "       let mut x = 0;\n",
@@ -3559,15 +3657,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
+        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
 
         cx.background_executor.run_until_parked();
 
@@ -3634,15 +3724,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
+        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
 
         cx.background_executor.run_until_parked();
 
@@ -3708,16 +3790,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
-
+        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
         let new_text = concat!(
             "func main() {\n",
             "\tx := 0\n",
@@ -3772,16 +3845,7 @@ mod tests {
             )
         });
 
-        let (chunks_tx, chunks_rx) = mpsc::unbounded();
-        codegen.update(cx, |codegen, cx| {
-            codegen.handle_stream(
-                String::new(),
-                String::new(),
-                future::ready(Ok(chunks_rx.map(Ok).boxed())),
-                cx,
-            )
-        });
-
+        let chunks_tx = simulate_response_stream(codegen.clone(), cx);
         chunks_tx
             .unbounded_send("let mut x = 0;\nx += 1;".to_string())
             .unwrap();
@@ -3853,6 +3917,26 @@ mod tests {
                     .collect::<Vec<_>>(),
             )
         }
+    }
+
+    fn simulate_response_stream(
+        codegen: Model<CodegenAlternative>,
+        cx: &mut TestAppContext,
+    ) -> mpsc::UnboundedSender<String> {
+        let (chunks_tx, chunks_rx) = mpsc::unbounded();
+        codegen.update(cx, |codegen, cx| {
+            codegen.handle_stream(
+                String::new(),
+                String::new(),
+                None,
+                future::ready(Ok(LanguageModelTextStream {
+                    message_id: None,
+                    stream: chunks_rx.map(Ok).boxed(),
+                })),
+                cx,
+            );
+        });
+        chunks_tx
     }
 
     fn rust_lang() -> Language {

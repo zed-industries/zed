@@ -113,7 +113,10 @@ impl InitializedContextServerProtocol {
 
         let response: types::PromptsListResponse = self
             .inner
-            .request(types::RequestType::PromptsList.as_str(), ())
+            .request(
+                types::RequestType::PromptsList.as_str(),
+                serde_json::json!({}),
+            )
             .await?;
 
         Ok(response.prompts)
@@ -125,7 +128,10 @@ impl InitializedContextServerProtocol {
 
         let response: types::ResourcesListResponse = self
             .inner
-            .request(types::RequestType::ResourcesList.as_str(), ())
+            .request(
+                types::RequestType::ResourcesList.as_str(),
+                serde_json::json!({}),
+            )
             .await?;
 
         Ok(response)
@@ -179,6 +185,39 @@ impl InitializedContextServerProtocol {
         };
 
         Ok(completion)
+    }
+
+    /// List MCP tools.
+    pub async fn list_tools(&self) -> Result<types::ListToolsResponse> {
+        self.check_capability(ServerCapability::Tools)?;
+
+        let response = self
+            .inner
+            .request::<types::ListToolsResponse>(types::RequestType::ListTools.as_str(), ())
+            .await?;
+
+        Ok(response)
+    }
+
+    /// Executes a tool with the given arguments
+    pub async fn run_tool<P: AsRef<str>>(
+        &self,
+        tool: P,
+        arguments: Option<HashMap<String, serde_json::Value>>,
+    ) -> Result<types::CallToolResponse> {
+        self.check_capability(ServerCapability::Tools)?;
+
+        let params = types::CallToolParams {
+            name: tool.as_ref().to_string(),
+            arguments,
+        };
+
+        let response: types::CallToolResponse = self
+            .inner
+            .request(types::RequestType::CallTool.as_str(), params)
+            .await?;
+
+        Ok(response)
     }
 }
 

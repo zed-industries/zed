@@ -1,6 +1,6 @@
-use crate::wasm_host::parse_wasm_extension_version;
-use crate::ExtensionManifest;
-use crate::{extension_manifest::ExtensionLibraryKind, GrammarManifestEntry};
+use crate::{
+    parse_wasm_extension_version, ExtensionLibraryKind, ExtensionManifest, GrammarManifestEntry,
+};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
@@ -135,6 +135,8 @@ impl ExtensionBuilder {
             .args(options.release.then_some("--release"))
             .arg("--target-dir")
             .arg(extension_dir.join("target"))
+            // WASI builds do not work with sccache and just stuck, so disable it.
+            .env("RUSTC_WRAPPER", "")
             .current_dir(extension_dir)
             .output()
             .context("failed to run `cargo`")?;
@@ -363,12 +365,15 @@ impl ExtensionBuilder {
 
         let output = Command::new("rustup")
             .args(["target", "add", RUST_TARGET])
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .stdout(Stdio::inherit())
             .output()
             .context("failed to run `rustup target add`")?;
         if !output.status.success() {
-            bail!("failed to install the `{RUST_TARGET}` target");
+            bail!(
+                "failed to install the `{RUST_TARGET}` target: {}",
+                String::from_utf8_lossy(&rustc_output.stderr)
+            );
         }
 
         Ok(())

@@ -40,12 +40,13 @@ use std::{
     borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
+    num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -125,7 +126,8 @@ pub struct Buffer {
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     diagnostics_timestamp: clock::Lamport,
-    completion_triggers: Vec<String>,
+    completion_triggers: BTreeSet<String>,
+    completion_triggers_per_language_server: HashMap<LanguageServerId, BTreeSet<String>>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
@@ -314,6 +316,8 @@ pub enum Operation {
         triggers: Vec<String>,
         /// The buffer's lamport timestamp.
         lamport_timestamp: clock::Lamport,
+        /// The language server ID.
+        server_id: LanguageServerId,
     },
 }
 
@@ -409,8 +413,11 @@ pub trait LocalFile: File {
     /// Returns the absolute path of this file
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
-    /// Loads the file's contents from disk.
+    /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
+
+    /// Loads the file's contents from disk.
+    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
 
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
@@ -696,12 +703,15 @@ impl Buffer {
             }));
         }
 
-        operations.push(proto::serialize_operation(
-            &Operation::UpdateCompletionTriggers {
-                triggers: self.completion_triggers.clone(),
-                lamport_timestamp: self.completion_triggers_timestamp,
-            },
-        ));
+        for (server_id, completions) in &self.completion_triggers_per_language_server {
+            operations.push(proto::serialize_operation(
+                &Operation::UpdateCompletionTriggers {
+                    triggers: completions.iter().cloned().collect(),
+                    lamport_timestamp: self.completion_triggers_timestamp,
+                    server_id: *server_id,
+                },
+            ));
+        }
 
         let text_operations = self.text.operations().clone();
         cx.background_executor().spawn(async move {
@@ -773,6 +783,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_timestamp: Default::default(),
             completion_triggers: Default::default(),
+            completion_triggers_per_language_server: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
@@ -1967,18 +1978,27 @@ impl Buffer {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
+                    let range_len = range.end - range.start;
+                    delta += new_text_length as isize - range_len as isize;
 
+                    // Decide what range of the insertion to auto-indent, and whether
+                    // the first line of the insertion should be considered a newly-inserted line
+                    // or an edit to an existing line.
                     let mut range_of_insertion_to_indent = 0..new_text_length;
-                    let mut first_line_is_new = false;
-                    let mut original_indent_column = None;
+                    let mut first_line_is_new = true;
 
-                    // When inserting an entire line at the beginning of an existing line,
-                    // treat the insertion as new.
-                    if new_text.contains('\n')
-                        && old_start.column <= before_edit.indent_size_for_line(old_start.row).len
+                    let old_line_start = before_edit.indent_size_for_line(old_start.row).len;
+                    let old_line_end = before_edit.line_len(old_start.row);
+
+                    if old_start.column > old_line_start {
+                        first_line_is_new = false;
+                    }
+
+                    if !new_text.contains('\n')
+                        && (old_start.column + (range_len as u32) < old_line_end
+                            || old_line_end == old_line_start)
                     {
-                        first_line_is_new = true;
+                        first_line_is_new = false;
                     }
 
                     // When inserting text starting with a newline, avoid auto-indenting the
@@ -1988,7 +2008,7 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    // Avoid auto-indenting after the insertion.
+                    let mut original_indent_column = None;
                     if let AutoindentMode::Block {
                         original_indent_columns,
                     } = &mode
@@ -2000,6 +2020,8 @@ impl Buffer {
                                 )
                                 .len
                             }));
+
+                        // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
@@ -2217,8 +2239,21 @@ impl Buffer {
             Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
+                server_id,
             } => {
-                self.completion_triggers = triggers;
+                if triggers.is_empty() {
+                    self.completion_triggers_per_language_server
+                        .remove(&server_id);
+                    self.completion_triggers = self
+                        .completion_triggers_per_language_server
+                        .values()
+                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .collect();
+                } else {
+                    self.completion_triggers_per_language_server
+                        .insert(server_id, triggers.iter().cloned().collect());
+                    self.completion_triggers.extend(triggers);
+                }
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -2362,13 +2397,31 @@ impl Buffer {
     }
 
     /// Override current completion triggers with the user-provided completion triggers.
-    pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
-        self.completion_triggers.clone_from(&triggers);
+    pub fn set_completion_triggers(
+        &mut self,
+        server_id: LanguageServerId,
+        triggers: BTreeSet<String>,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
+        if triggers.is_empty() {
+            self.completion_triggers_per_language_server
+                .remove(&server_id);
+            self.completion_triggers = self
+                .completion_triggers_per_language_server
+                .values()
+                .flat_map(|triggers| triggers.into_iter().cloned())
+                .collect();
+        } else {
+            self.completion_triggers_per_language_server
+                .insert(server_id, triggers.clone());
+            self.completion_triggers.extend(triggers.iter().cloned());
+        }
         self.send_operation(
             Operation::UpdateCompletionTriggers {
-                triggers,
+                triggers: triggers.iter().cloned().collect(),
                 lamport_timestamp: self.completion_triggers_timestamp,
+                server_id,
             },
             true,
             cx,
@@ -2378,7 +2431,7 @@ impl Buffer {
 
     /// Returns a list of strings which trigger a completion menu for this language.
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
-    pub fn completion_triggers(&self) -> &[String] {
+    pub fn completion_triggers(&self) -> &BTreeSet<String> {
         &self.completion_triggers
     }
 
@@ -4035,7 +4088,7 @@ impl<'a> BufferChunks<'a> {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack
@@ -4092,6 +4145,10 @@ impl<'a> BufferChunks<'a> {
                 diagnostic_endpoints
                     .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
                 *diagnostics = diagnostic_endpoints.into_iter().peekable();
+                self.hint_depth = 0;
+                self.error_depth = 0;
+                self.warning_depth = 0;
+                self.information_depth = 0;
             }
         }
     }
@@ -4309,6 +4366,13 @@ impl IndentSize {
             }
         }
         self
+    }
+
+    pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
+        match self.kind {
+            IndentKind::Space => self.len as usize,
+            IndentKind::Tab => self.len as usize * tab_size.get() as usize,
+        }
     }
 }
 

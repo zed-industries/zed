@@ -26,7 +26,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
 use util::{maybe, ResultExt};
 
-const PROVIDER_ID: &str = "anthropic";
+pub const PROVIDER_ID: &str = "anthropic";
 const PROVIDER_NAME: &str = "Anthropic";
 
 #[derive(Default, Clone, Debug, PartialEq)]
@@ -40,7 +40,7 @@ pub struct AnthropicSettings {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct AvailableModel {
-    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-20240620
+    /// The model's name in the Anthropic API. e.g. claude-3-5-sonnet-latest, claude-3-opus-20240229, etc
     pub name: String,
     /// The model's name in Zed's UI, such as in the model selector dropdown menu in the assistant panel.
     pub display_name: Option<String>,
@@ -356,6 +356,10 @@ impl LanguageModel for AnthropicModel {
         format!("anthropic/{}", self.model.id())
     }
 
+    fn api_key(&self, cx: &AppContext) -> Option<String> {
+        self.state.read(cx).api_key.clone()
+    }
+
     fn max_token_count(&self) -> usize {
         self.model.max_token_count()
     }
@@ -505,16 +509,28 @@ pub fn map_to_language_model_completion_events(
                                             LanguageModelToolUse {
                                                 id: tool_use.id,
                                                 name: tool_use.name,
-                                                input: serde_json::Value::from_str(
-                                                    &tool_use.input_json,
-                                                )
-                                                .map_err(|err| anyhow!(err))?,
+                                                input: if tool_use.input_json.is_empty() {
+                                                    serde_json::Value::Null
+                                                } else {
+                                                    serde_json::Value::from_str(
+                                                        &tool_use.input_json,
+                                                    )
+                                                    .map_err(|err| anyhow!(err))?
+                                                },
                                             },
                                         ))
                                     })),
                                     state,
                                 ));
                             }
+                        }
+                        Event::MessageStart { message } => {
+                            return Some((
+                                Some(Ok(LanguageModelCompletionEvent::StartMessage {
+                                    message_id: message.id,
+                                })),
+                                state,
+                            ))
                         }
                         Event::MessageDelta { delta, .. } => {
                             if let Some(stop_reason) = delta.stop_reason.as_deref() {

@@ -204,7 +204,7 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn generate_content_prompt(
+    pub fn generate_inline_transformation_prompt(
         &self,
         user_prompt: String,
         language_name: Option<&LanguageName>,
@@ -310,8 +310,8 @@ impl PromptBuilder {
             .render("terminal_assistant_prompt", &context)
     }
 
-    pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("edit_workflow", &())
+    pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
+        self.handlebars.lock().render("suggest_edits", &())
     }
 
     pub fn generate_project_slash_command_prompt(

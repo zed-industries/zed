@@ -12,10 +12,14 @@ mod prompts;
 mod slash_command;
 pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
+mod slash_command_working_set;
 mod streaming_diff;
 mod terminal_inline_assistant;
+mod tool_working_set;
 mod tools;
 
+pub use crate::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
+pub use crate::tool_working_set::{ToolId, ToolWorkingSet};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
@@ -23,12 +27,11 @@ use assistant_tool::ToolRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
-use context_servers::ContextServerRegistry;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
+use gpui::impl_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
-use gpui::{impl_actions, Context as _};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -41,24 +44,25 @@ use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsStore};
-use slash_command::workflow_command::WorkflowSlashCommand;
+use slash_command::search_command::SearchSlashCommandFeatureFlag;
 use slash_command::{
-    auto_command, cargo_workspace_command, context_server_command, default_command, delta_command,
-    diagnostics_command, docs_command, fetch_command, file_command, now_command, project_command,
-    prompt_command, search_command, symbols_command, tab_command, terminal_command,
-    workflow_command,
+    auto_command, cargo_workspace_command, default_command, delta_command, diagnostics_command,
+    docs_command, fetch_command, file_command, now_command, project_command, prompt_command,
+    search_command, selection_command, symbols_command, tab_command, terminal_command,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
 
+use crate::slash_command::streaming_example_command;
 use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
     assistant,
     [
         Assist,
+        Edit,
         Split,
         CopyCode,
         CycleMessageRole,
@@ -211,21 +215,23 @@ pub fn init(
         });
     }
 
-    cx.spawn(|mut cx| {
-        let client = client.clone();
-        async move {
-            let embedding_provider = CloudEmbeddingProvider::new(client.clone());
-            let semantic_index = SemanticDb::new(
-                paths::embeddings_dir().join("semantic-index-db.0.mdb"),
-                Arc::new(embedding_provider),
-                &mut cx,
-            )
-            .await?;
+    if cx.has_flag::<SearchSlashCommandFeatureFlag>() {
+        cx.spawn(|mut cx| {
+            let client = client.clone();
+            async move {
+                let embedding_provider = CloudEmbeddingProvider::new(client.clone());
+                let semantic_index = SemanticDb::new(
+                    paths::embeddings_dir().join("semantic-index-db.0.mdb"),
+                    Arc::new(embedding_provider),
+                    &mut cx,
+                )
+                .await?;
 
-            cx.update(|cx| cx.set_global(semantic_index))
-        }
-    })
-    .detach();
+                cx.update(|cx| cx.set_global(semantic_index))
+            }
+        })
+        .detach();
+    }
 
     context_store::init(&client.clone().into());
     prompt_library::init(cx);
@@ -277,67 +283,7 @@ pub fn init(
     })
     .detach();
 
-    register_context_server_handlers(cx);
-
     prompt_builder
-}
-
-fn register_context_server_handlers(cx: &mut AppContext) {
-    cx.subscribe(
-        &context_servers::manager::ContextServerManager::global(cx),
-        |manager, event, cx| match event {
-            context_servers::manager::Event::ServerStarted { server_id } => {
-                cx.update_model(
-                    &manager,
-                    |manager: &mut context_servers::manager::ContextServerManager, cx| {
-                        let slash_command_registry = SlashCommandRegistry::global(cx);
-                        let context_server_registry = ContextServerRegistry::global(cx);
-                        if let Some(server) = manager.get_server(server_id) {
-                            cx.spawn(|_, _| async move {
-                                let Some(protocol) = server.client.read().clone() else {
-                                    return;
-                                };
-
-                                if let Some(prompts) = protocol.list_prompts().await.log_err() {
-                                    for prompt in prompts
-                                        .into_iter()
-                                        .filter(context_server_command::acceptable_prompt)
-                                    {
-                                        log::info!(
-                                            "registering context server command: {:?}",
-                                            prompt.name
-                                        );
-                                        context_server_registry.register_command(
-                                            server.id.clone(),
-                                            prompt.name.as_str(),
-                                        );
-                                        slash_command_registry.register_command(
-                                            context_server_command::ContextServerSlashCommand::new(
-                                                &server, prompt,
-                                            ),
-                                            true,
-                                        );
-                                    }
-                                }
-                            })
-                            .detach();
-                        }
-                    },
-                );
-            }
-            context_servers::manager::Event::ServerStopped { server_id } => {
-                let slash_command_registry = SlashCommandRegistry::global(cx);
-                let context_server_registry = ContextServerRegistry::global(cx);
-                if let Some(commands) = context_server_registry.get_commands(server_id) {
-                    for command_name in commands {
-                        slash_command_registry.unregister_command_by_name(&command_name);
-                        context_server_registry.unregister_command(&server_id, &command_name);
-                    }
-                }
-            }
-        },
-    )
-    .detach();
 }
 
 fn init_language_model_settings(cx: &mut AppContext) {
@@ -389,6 +335,7 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry
         .register_command(cargo_workspace_command::CargoWorkspaceSlashCommand, true);
     slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
+    slash_command_registry.register_command(selection_command::SelectionCommand, true);
     slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
     slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
     slash_command_registry.register_command(now_command::NowSlashCommand, false);
@@ -397,22 +344,6 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     slash_command_registry.register_command(fetch_command::FetchSlashCommand, false);
 
     if let Some(prompt_builder) = prompt_builder {
-        cx.observe_global::<SettingsStore>({
-            let slash_command_registry = slash_command_registry.clone();
-            let prompt_builder = prompt_builder.clone();
-            move |cx| {
-                if AssistantSettings::get_global(cx).are_live_diffs_enabled(cx) {
-                    slash_command_registry.register_command(
-                        workflow_command::WorkflowSlashCommand::new(prompt_builder.clone()),
-                        true,
-                    );
-                } else {
-                    slash_command_registry.unregister_command_by_name(WorkflowSlashCommand::NAME);
-                }
-            }
-        })
-        .detach();
-
         cx.observe_flag::<project_command::ProjectSlashCommandFeatureFlag, _>({
             let slash_command_registry = slash_command_registry.clone();
             move |is_enabled, _cx| {
@@ -433,6 +364,19 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
             if is_enabled {
                 // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
                 slash_command_registry.register_command(auto_command::AutoCommand, true);
+            }
+        }
+    })
+    .detach();
+
+    cx.observe_flag::<streaming_example_command::StreamingExampleSlashCommandFeatureFlag, _>({
+        let slash_command_registry = slash_command_registry.clone();
+        move |is_enabled, _cx| {
+            if is_enabled {
+                slash_command_registry.register_command(
+                    streaming_example_command::StreamingExampleSlashCommand,
+                    false,
+                );
             }
         }
     })

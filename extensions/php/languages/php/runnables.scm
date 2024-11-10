@@ -16,7 +16,7 @@
                 (#match? @run "^test.*")
             )
         )
-    ) @phpunit-test
+    ) @_phpunit-test
     (#set! tag phpunit-test)
 )
 
@@ -41,7 +41,7 @@
                 (#not-match? @run "^test.*")
             ))
         )
-    ) @phpunit-test
+    ) @_phpunit-test
     (#set! tag phpunit-test)
 )
 
@@ -69,7 +69,7 @@
                 (#not-match? @run "^test.*")
             )
         )
-    ) @phpunit-test
+    ) @_phpunit-test
     (#set! tag phpunit-test)
 )
 
@@ -81,7 +81,7 @@
         (#not-eq? @_modifier "abstract")
         name: (_) @run
         (#match? @run ".*Test$")
-    ) @phpunit-test
+    ) @_phpunit-test
     (#set! tag phpunit-test)
 )
 
@@ -100,6 +100,6 @@
                 ]
             )
         )
-    ) @pest-test
+    ) @_pest-test
     (#set! tag pest-test)
 )
