@@ -486,7 +486,6 @@ pub fn python_env_kernel_specifications(
         };
 
         let kernelspecs = toolchains.toolchains.into_iter().map(|toolchain| {
-            let background_executor = background_executor.clone();
             background_executor.spawn(async move {
                 let python_path = toolchain.path.to_string();
 
@@ -524,8 +523,11 @@ pub fn python_env_kernel_specifications(
             })
         });
 
-        let results = futures::future::join_all(kernelspecs).await;
-        let kernel_specs: Vec<KernelSpecification> = results.into_iter().flatten().collect();
+        let kernel_specs = futures::future::join_all(kernelspecs)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
 
         anyhow::Ok(kernel_specs)
     }
