@@ -112,6 +112,7 @@ impl ComponentPreview for ContentBox {
                     .child(Label::new("Unfilled ContentBox")),
             )
             .grow(),
-        ])]
+        ])
+        .grow()]
     }
 }

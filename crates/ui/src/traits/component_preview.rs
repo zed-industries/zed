@@ -1,4 +1,3 @@
-#![allow(missing_docs)]
 use crate::prelude::*;
 use gpui::{AnyElement, SharedString};
 
@@ -53,7 +52,7 @@ pub trait ComponentPreview: IntoElement {
 
         v_flex()
             .w_full()
-            .gap_3()
+            .gap_6()
             .p_4()
             .border_1()
             .border_color(cx.theme().colors().border)
@@ -88,8 +87,8 @@ pub trait ComponentPreview: IntoElement {
 
     fn render_example_group(group: ComponentExampleGroup<Self>) -> AnyElement {
         v_flex()
-            .w_full()
-            .gap_2()
+            .gap_6()
+            .when(group.grow, |this| this.w_full().flex_1())
             .when_some(group.title, |this, title| {
                 this.child(Label::new(title).size(LabelSize::Small))
             })
@@ -114,7 +113,7 @@ pub trait ComponentPreview: IntoElement {
         };
 
         base.gap_1()
-            .flex_1()
+            .when(example.grow, |this| this.flex_1())
             .child(example.element)
             .child(
                 Label::new(example.variant_name)
@@ -153,6 +152,7 @@ impl<T> ComponentExample<T> {
 pub struct ComponentExampleGroup<T> {
     pub title: Option<SharedString>,
     pub examples: Vec<ComponentExample<T>>,
+    pub grow: bool,
 }
 
 impl<T> ComponentExampleGroup<T> {
@@ -161,14 +161,23 @@ impl<T> ComponentExampleGroup<T> {
         Self {
             title: None,
             examples,
+            grow: false,
         }
     }
 
+    /// Create a new group of examples with the given title.
     pub fn with_title(title: impl Into<SharedString>, examples: Vec<ComponentExample<T>>) -> Self {
         Self {
             title: Some(title.into()),
             examples,
+            grow: false,
         }
+    }
+
+    /// Set the group to grow to fill the available horizontal space.
+    pub fn grow(mut self) -> Self {
+        self.grow = true;
+        self
     }
 }
 
