@@ -550,8 +550,6 @@ impl DebugPanel {
                         thread_state.status = ThreadStatus::Stopped;
                     });
 
-                    cx.notify();
-
                     let existing_item = this
                         .pane
                         .read(cx)
