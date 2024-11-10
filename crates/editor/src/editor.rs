@@ -11956,7 +11956,7 @@ impl Editor {
             return;
         };
 
-        if let Some((path, position)) = dap_store.read(cx).active_debug_line() {
+        if let Some((_, path, position)) = dap_store.read(cx).active_debug_line() {
             if path == project_path {
                 self.go_to_line::<DebugCurrentRowHighlight>(
                     position.row,

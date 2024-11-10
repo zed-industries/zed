@@ -75,7 +75,7 @@ pub struct DapStore {
     delegate: DapAdapterDelegate,
     ignore_breakpoints: HashSet<DebugAdapterClientId>,
     breakpoints: BTreeMap<ProjectPath, HashSet<Breakpoint>>,
-    active_debug_line: Option<(ProjectPath, DebugPosition)>,
+    active_debug_line: Option<(DebugAdapterClientId, ProjectPath, DebugPosition)>,
     capabilities: HashMap<DebugAdapterClientId, Capabilities>,
     environment: Model<ProjectEnvironment>,
     clients: HashMap<DebugAdapterClientId, DebugAdapterClientState>,
@@ -170,20 +170,38 @@ impl DapStore {
         }
     }
 
-    pub fn active_debug_line(&self) -> Option<(ProjectPath, DebugPosition)> {
+    pub fn active_debug_line(&self) -> Option<(DebugAdapterClientId, ProjectPath, DebugPosition)> {
         self.active_debug_line.clone()
     }
 
     pub fn set_active_debug_line(
         &mut self,
+        client_id: &DebugAdapterClientId,
         project_path: &ProjectPath,
         row: u32,
         column: u32,
         cx: &mut ModelContext<Self>,
     ) {
-        self.active_debug_line = Some((project_path.clone(), DebugPosition { row, column }));
+        self.active_debug_line = Some((
+            *client_id,
+            project_path.clone(),
+            DebugPosition { row, column },
+        ));
 
         cx.notify();
+    }
+
+    pub fn remove_active_debug_line_for_client(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        cx: &mut ModelContext<Self>,
+    ) {
+        if let Some(active_line) = &self.active_debug_line {
+            if active_line.0 == *client_id {
+                self.active_debug_line.take();
+                cx.notify();
+            }
+        }
     }
 
     pub fn remove_active_debug_line(&mut self) {

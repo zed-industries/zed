@@ -159,6 +159,7 @@ impl StackFrameList {
         };
 
         cx.spawn({
+            let client_id = self.client_id;
             let workspace = self.workspace.clone();
             move |this, mut cx| async move {
                 let task = workspace.update(&mut cx, |workspace, cx| {
@@ -169,7 +170,7 @@ impl StackFrameList {
 
                 this.update(&mut cx, |this, cx| {
                     this.dap_store.update(cx, |store, cx| {
-                        store.set_active_debug_line(&project_path, row, column, cx);
+                        store.set_active_debug_line(&client_id, &project_path, row, column, cx);
                     })
                 })?;
 

@@ -322,6 +322,10 @@ impl DebugPanelItem {
             return;
         }
 
+        self.dap_store.update(cx, |store, cx| {
+            store.remove_active_debug_line_for_client(client_id, cx);
+        });
+
         self.update_thread_state_status(ThreadStatus::Exited, cx);
 
         cx.emit(DebugPanelItemEvent::Close);
