@@ -1,14 +1,16 @@
-use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
-use crate::{Project, ProjectEntryId, ProjectPath};
+use crate::{
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    Project, ProjectEntryId, ProjectPath,
+};
 use anyhow::{Context as _, Result};
-use collections::{HashMap, HashSet};
-use futures::channel::oneshot;
+use collections::{hash_map, HashMap, HashSet};
+use futures::{channel::oneshot, StreamExt};
 use gpui::{
     hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
     WeakModel,
 };
 use language::File;
-use rpc::AnyProtoClient;
+use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
 use std::num::NonZeroU64;
 use std::path::Path;
@@ -180,6 +182,11 @@ pub struct ImageStore {
     state: Box<dyn ImageStoreImpl>,
     opened_images: HashMap<ImageId, WeakModel<ImageItem>>,
     worktree_store: Model<WorktreeStore>,
+    #[allow(clippy::type_complexity)]
+    loading_images_by_path: HashMap<
+        ProjectPath,
+        postage::watch::Receiver<Option<Result<Model<ImageItem>, Arc<anyhow::Error>>>>,
+    >,
 }
 
 impl ImageStore {
@@ -204,6 +211,7 @@ impl ImageStore {
                 }
             })),
             opened_images: Default::default(),
+            loading_images_by_path: Default::default(),
             worktree_store,
         }
     }
@@ -217,6 +225,7 @@ impl ImageStore {
         Self {
             state: Box::new(cx.new_model(|_| RemoteImageStore {})),
             opened_images: Default::default(),
+            loading_images_by_path: Default::default(),
             worktree_store,
         }
     }
@@ -256,8 +265,57 @@ impl ImageStore {
             return Task::ready(Err(anyhow::anyhow!("no such worktree")));
         };
 
-        self.state
-            .open_image(project_path.path.clone(), worktree, cx)
+        let loading_watch = match self.loading_images_by_path.entry(project_path.clone()) {
+            // If the given path is already being loaded, then wait for that existing
+            // task to complete and return the same image.
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+
+            // Otherwise, record the fact that this path is now being loaded.
+            hash_map::Entry::Vacant(entry) => {
+                let (mut tx, rx) = postage::watch::channel();
+                entry.insert(rx.clone());
+
+                let project_path = project_path.clone();
+                let load_image = self
+                    .state
+                    .open_image(project_path.path.clone(), worktree, cx);
+
+                cx.spawn(move |this, mut cx| async move {
+                    let load_result = load_image.await;
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
+                        // Record the fact that the image is no longer loading.
+                        this.loading_images_by_path.remove(&project_path);
+                        let image = load_result.map_err(Arc::new)?;
+                        Ok(image)
+                    })?);
+                    anyhow::Ok(())
+                })
+                .detach();
+                rx
+            }
+        };
+
+        cx.background_executor().spawn(async move {
+            Self::wait_for_loading_image(loading_watch)
+                .await
+                .map_err(|e| e.cloned())
+        })
+    }
+
+    pub async fn wait_for_loading_image(
+        mut receiver: postage::watch::Receiver<
+            Option<Result<Model<ImageItem>, Arc<anyhow::Error>>>,
+        >,
+    ) -> Result<Model<ImageItem>, Arc<anyhow::Error>> {
+        loop {
+            if let Some(result) = receiver.borrow().as_ref() {
+                match result {
+                    Ok(image) => return Ok(image.to_owned()),
+                    Err(e) => return Err(e.to_owned()),
+                }
+            }
+            receiver.next().await;
+        }
     }
 
     pub fn reload_images(
@@ -580,5 +638,70 @@ impl ImageStoreImpl for Model<RemoteImageStore> {
 
     fn as_local(&self) -> Option<Model<LocalImageStore>> {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fs::FakeFs;
+    use gpui::TestAppContext;
+    use serde_json::json;
+    use settings::SettingsStore;
+    use std::path::PathBuf;
+
+    pub fn init_test(cx: &mut TestAppContext) {
+        if std::env::var("RUST_LOG").is_ok() {
+            env_logger::try_init().ok();
+        }
+
+        cx.update(|cx| {
+            let settings_store = SettingsStore::test(cx);
+            cx.set_global(settings_store);
+            language::init(cx);
+            Project::init_settings(cx);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_image_not_loaded_twice(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        fs.insert_tree("/root", json!({})).await;
+        // Create a png file that consists of a single white pixel
+        fs.insert_file(
+            "/root/image_1.png",
+            vec![
+                0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48,
+                0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00,
+                0x00, 0x1F, 0x15, 0xC4, 0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78,
+                0x9C, 0x63, 0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00,
+                0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE, 0x42, 0x60, 0x82,
+            ],
+        )
+        .await;
+
+        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+
+        let worktree_id =
+            cx.update(|cx| project.read(cx).worktrees(cx).next().unwrap().read(cx).id());
+
+        let project_path = ProjectPath {
+            worktree_id,
+            path: PathBuf::from("image_1.png").into(),
+        };
+
+        let (task1, task2) = project.update(cx, |project, cx| {
+            (
+                project.open_image(project_path.clone(), cx),
+                project.open_image(project_path.clone(), cx),
+            )
+        });
+
+        let image1 = task1.await.unwrap();
+        let image2 = task2.await.unwrap();
+
+        assert_eq!(image1, image2);
     }
 }
