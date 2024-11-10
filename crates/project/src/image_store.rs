@@ -267,7 +267,7 @@ impl ImageStore {
 
         let loading_watch = match self.loading_images_by_path.entry(project_path.clone()) {
             // If the given path is already being loaded, then wait for that existing
-            // task to complete and return the same buffer.
+            // task to complete and return the same image.
             hash_map::Entry::Occupied(e) => e.get().clone(),
 
             // Otherwise, record the fact that this path is now being loaded.
@@ -283,10 +283,10 @@ impl ImageStore {
                 cx.spawn(move |this, mut cx| async move {
                     let load_result = load_image.await;
                     *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
-                        // Record the fact that the buffer is no longer loading.
+                        // Record the fact that the image is no longer loading.
                         this.loading_images_by_path.remove(&project_path);
-                        let buffer = load_result.map_err(Arc::new)?;
-                        Ok(buffer)
+                        let image = load_result.map_err(Arc::new)?;
+                        Ok(image)
                     })?);
                     anyhow::Ok(())
                 })
@@ -310,7 +310,7 @@ impl ImageStore {
         loop {
             if let Some(result) = receiver.borrow().as_ref() {
                 match result {
-                    Ok(buffer) => return Ok(buffer.to_owned()),
+                    Ok(image) => return Ok(image.to_owned()),
                     Err(e) => return Err(e.to_owned()),
                 }
             }
