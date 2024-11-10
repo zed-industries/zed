@@ -749,7 +749,6 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            println!("--------------------------------------");
 
             let server = self.server.clone();
             let name = self.name.clone();

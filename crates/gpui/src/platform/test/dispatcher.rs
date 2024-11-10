@@ -133,11 +133,7 @@ impl TestDispatcher {
                 .map(|runnables| runnables.len())
                 .sum()
         };
-        if !background_only {
-            dbg!(foreground_len);
-        }
         let background_len = state.background.len();
-        dbg!(background_len);
 
         let runnable;
         let main_thread;
