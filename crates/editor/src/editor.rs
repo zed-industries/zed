@@ -102,7 +102,7 @@ use language::{
     point_to_lsp, BufferRow, CharClassifier, LanguageServerName, Runnable, RunnableRange,
 };
 use linked_editing_ranges::refresh_linked_ranges;
-use project::dap_store::BreakpointEditAction;
+use project::{dap_store::BreakpointEditAction, ProjectPath};
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -11943,16 +11943,20 @@ impl Editor {
         }
     }
 
+    pub fn project_path(&self, cx: &mut ViewContext<Self>) -> Option<ProjectPath> {
+        if let Some(buffer) = self.buffer.read(cx).as_singleton() {
+            buffer.read_with(cx, |buffer, cx| buffer.project_path(cx).map(|p| p.into()))
+        } else {
+            None
+        }
+    }
+
     pub fn go_to_active_debug_line(&mut self, cx: &mut ViewContext<Self>) {
         let Some(dap_store) = self.dap_store.as_ref() else {
             return;
         };
 
-        let Some(buffer) = self.buffer.read(cx).as_singleton() else {
-            return;
-        };
-
-        let Some(project_path) = buffer.read_with(cx, |buffer, cx| buffer.project_path(cx)) else {
+        let Some(project_path) = self.project_path(cx) else {
             return;
         };
 

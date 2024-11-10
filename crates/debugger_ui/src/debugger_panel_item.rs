@@ -22,7 +22,7 @@ use task::DebugAdapterKind;
 use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
 use workspace::item::{Item, ItemEvent};
-use workspace::Workspace;
+use workspace::{ItemHandle, Workspace};
 
 #[derive(Debug)]
 pub enum DebugPanelItemEvent {
@@ -322,11 +322,11 @@ impl DebugPanelItem {
             return;
         }
 
+        self.update_thread_state_status(ThreadStatus::Exited, cx);
+
         self.dap_store.update(cx, |store, cx| {
             store.remove_active_debug_line_for_client(client_id, cx);
         });
-
-        self.update_thread_state_status(ThreadStatus::Exited, cx);
 
         cx.emit(DebugPanelItemEvent::Close);
     }
@@ -357,19 +357,23 @@ impl DebugPanelItem {
     }
 
     fn clear_highlights(&self, cx: &mut ViewContext<Self>) {
-        self.workspace
-            .update(cx, |workspace, cx| {
-                let editor_views = workspace
-                    .items_of_type::<Editor>(cx)
-                    .collect::<Vec<View<Editor>>>();
+        if let Some((_, project_path, _)) = self.dap_store.read(cx).active_debug_line() {
+            self.workspace
+                .update(cx, |workspace, cx| {
+                    let editor = workspace
+                        .items_of_type::<Editor>(cx)
+                        .find(|editor| Some(project_path.clone()) == editor.project_path(cx));
 
-                for editor_view in editor_views {
-                    editor_view.update(cx, |editor, _| {
-                        editor.clear_row_highlights::<editor::DebugCurrentRowHighlight>();
-                    });
-                }
-            })
-            .ok();
+                    if let Some(editor) = editor {
+                        editor.update(cx, |editor, cx| {
+                            editor.clear_row_highlights::<editor::DebugCurrentRowHighlight>();
+
+                            cx.notify();
+                        });
+                    }
+                })
+                .ok();
+        }
     }
 
     pub fn go_to_current_stack_frame(&self, cx: &mut ViewContext<Self>) {
