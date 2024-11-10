@@ -669,7 +669,7 @@ mod tests {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree("/root", json!({})).await;
-        // Create a png file that with a single white pixel
+        // Create a png file that consists of a single white pixel
         fs.insert_file(
             "/root/image_1.png",
             vec![
