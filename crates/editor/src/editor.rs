@@ -9194,15 +9194,15 @@ impl Editor {
             self.clear_tasks();
             return Task::ready(());
         }
-        let project = self.project.clone();
+        let project = self.project.as_ref().map(Model::downgrade);
         cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            let Some(project) = project.and_then(|p| p.upgrade()) else {
+                return;
+            };
             let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
                 this.display_map.update(cx, |map, cx| map.snapshot(cx))
             }) else {
-                return;
-            };
-
-            let Some(project) = project else {
                 return;
             };
 
@@ -14879,3 +14879,5 @@ fn check_multiline_range(buffer: &Buffer, range: Range<usize>) -> Range<usize> {
         range.start..range.start
     }
 }
+
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
