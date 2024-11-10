@@ -281,12 +281,10 @@ impl QuickActionBar {
         let editor = if let Some(editor) = self.active_editor() {
             editor
         } else {
-            // todo!()
             return div().into_any_element();
         };
 
         let Some(worktree_id) = worktree_id_for_editor(editor.downgrade(), cx) else {
-            // todo!()
             return div().into_any_element();
         };
 
