@@ -8782,6 +8782,9 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
