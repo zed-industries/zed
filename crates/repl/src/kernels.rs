@@ -473,7 +473,6 @@ pub fn python_env_kernel_specifications(
     worktree_id: WorktreeId,
     cx: &mut AppContext,
 ) -> impl Future<Output = Result<Vec<KernelSpecification>>> {
-    let fs = project.read(cx).fs().clone();
     let python_language = LanguageName::new("Python");
 
     let toolchains = project
@@ -520,61 +519,6 @@ pub fn python_env_kernel_specifications(
                 kernel_specs.push(KernelSpecification::PythonEnv(LocalKernelSpecification {
                     name: toolchain.name.to_string(),
                     path: PathBuf::from(&python_path),
-                    kernelspec: default_kernelspec,
-                }));
-            } else {
-                continue;
-            }
-
-            let prefix = PathBuf::from(toolchain.path.to_string());
-            let kernel_dir = prefix.join("share").join("jupyter").join("kernels");
-
-            if fs.is_dir(&kernel_dir).await {
-                let mut kernelspec_dirs = fs.read_dir(&kernel_dir).await?;
-
-                while let Some(path) = kernelspec_dirs.next().await {
-                    if let Ok(path) = path {
-                        if fs.is_dir(path.as_path()).await {
-                            if let Ok(kernelspec) = read_kernelspec_at(path, fs.as_ref()).await {
-                                kernel_specs.push(KernelSpecification::PythonEnv(
-                                    LocalKernelSpecification {
-                                        name: format!("{} ({})", kernelspec.name, toolchain.name),
-                                        path: kernelspec.path,
-                                        kernelspec: kernelspec.kernelspec,
-                                    },
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Check if ipykernel is installed
-            let ipykernel_check = Command::new(toolchain.path.to_string())
-                .args(&["-c", "import ipykernel"])
-                .output()
-                .await;
-
-            if ipykernel_check.is_ok() && ipykernel_check.unwrap().status.success() {
-                // Create a default kernelspec for this environment
-                let default_kernelspec = JupyterKernelspec {
-                    argv: vec![
-                        toolchain.path.to_string(),
-                        "-m".to_string(),
-                        "ipykernel_launcher".to_string(),
-                        "-f".to_string(),
-                        "{connection_file}".to_string(),
-                    ],
-                    display_name: format!("Python ({})", toolchain.name),
-                    language: "python".to_string(),
-                    interrupt_mode: None,
-                    metadata: None,
-                    env: None,
-                };
-
-                kernel_specs.push(KernelSpecification::PythonEnv(LocalKernelSpecification {
-                    name: toolchain.name.to_string(),
-                    path: prefix,
                     kernelspec: default_kernelspec,
                 }));
             }
