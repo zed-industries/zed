@@ -13700,10 +13700,7 @@ impl CompletionProvider for Model<Project> {
             return true;
         }
 
-        buffer
-            .completion_triggers()
-            .iter()
-            .any(|string| string == text)
+        buffer.completion_triggers().contains(text)
     }
 }
 

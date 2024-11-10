@@ -481,7 +481,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // The buffer is configured based on the language server's capabilities.
     rust_buffer.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });
@@ -528,7 +532,14 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // This buffer is configured based on the second language server's
     // capabilities.
     json_buffer.update(cx, |buffer, _| {
-        assert_eq!(buffer.completion_triggers(), &[":".to_string()]);
+        assert_eq!(
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            &[":".to_string()]
+        );
     });
 
     // When opening another buffer whose language server is already running,
@@ -541,7 +552,11 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         .unwrap();
     rust_buffer2.update(cx, |buffer, _| {
         assert_eq!(
-            buffer.completion_triggers(),
+            buffer
+                .completion_triggers()
+                .into_iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             &[".".to_string(), "::".to_string()]
         );
     });

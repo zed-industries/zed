@@ -352,7 +352,6 @@ impl LspAdapter for NodeVersionAdapter {
             }
             remove_matching(&container_dir, |entry| entry != destination_path).await;
         }
-
         Ok(LanguageServerBinary {
             path: destination_path,
             env: None,

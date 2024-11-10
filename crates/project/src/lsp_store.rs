@@ -3351,11 +3351,17 @@ impl LspStore {
 
                     buffer_handle.update(cx, |buffer, cx| {
                         buffer.set_completion_triggers(
+                            server.server_id(),
                             server
                                 .capabilities()
                                 .completion_provider
                                 .as_ref()
-                                .and_then(|provider| provider.trigger_characters.clone())
+                                .and_then(|provider| {
+                                    provider
+                                        .trigger_characters
+                                        .as_ref()
+                                        .map(|characters| characters.iter().cloned().collect())
+                                })
                                 .unwrap_or_default(),
                             cx,
                         );
@@ -3394,6 +3400,7 @@ impl LspStore {
                 for adapter in self.languages.lsp_adapters(&language.name()) {
                     if let Some(server_id) = ids.get(&(worktree_id, adapter.name.clone())) {
                         buffer.update_diagnostics(*server_id, DiagnosticSet::new([], buffer), cx);
+                        buffer.set_completion_triggers(*server_id, Default::default(), cx);
                     }
                 }
             }
@@ -5797,6 +5804,7 @@ impl LspStore {
                                 DiagnosticSet::new([], buffer),
                                 cx,
                             );
+                            buffer.set_completion_triggers(server_id, Default::default(), cx);
                         });
                     }
                 });
@@ -6685,11 +6693,17 @@ impl LspStore {
 
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
+                        server_id,
                         language_server
                             .capabilities()
                             .completion_provider
                             .as_ref()
-                            .and_then(|provider| provider.trigger_characters.clone())
+                            .and_then(|provider| {
+                                provider
+                                    .trigger_characters
+                                    .as_ref()
+                                    .map(|characters| characters.iter().cloned().collect())
+                            })
                             .unwrap_or_default(),
                         cx,
                     )
