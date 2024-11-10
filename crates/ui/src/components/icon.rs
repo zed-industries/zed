@@ -1,16 +1,13 @@
 #![allow(missing_docs)]
 use crate::internal::prelude::*;
+use crate::Indicator;
 
-use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
+use gpui::{svg, AnimationElement, AnyElement, Hsla, IntoElement, Rems, Transformation};
 use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoStaticStr};
+use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
-use crate::{
-    prelude::*,
-    traits::component_preview::{ComponentExample, ComponentPreview},
-    Indicator,
-};
+register_components!(icon, [Icon, DecoratedIcon, IconWithIndicator]);
 
 #[derive(IntoElement)]
 pub enum AnyIcon {
@@ -503,24 +500,147 @@ impl RenderOnce for IconWithIndicator {
 }
 
 impl ComponentPreview for Icon {
-    fn examples() -> Vec<ComponentExampleGroup<Icon>> {
-        let arrow_icons = vec![
-            IconName::ArrowDown,
-            IconName::ArrowLeft,
-            IconName::ArrowRight,
-            IconName::ArrowUp,
-            IconName::ArrowCircle,
-        ];
+    fn description() -> impl Into<Option<&'static str>> {
+        "Icons are visual symbols used to represent ideas, objects, or actions. They communicate messages at a glance, enhance aesthetic appeal, and are used in buttons, labels, and more."
+    }
 
-        vec![example_group_with_title(
-            "Arrow Icons",
-            arrow_icons
-                .into_iter()
-                .map(|icon| {
-                    let name = format!("{:?}", icon).to_string();
-                    ComponentExample::new(name, Icon::new(icon))
-                })
-                .collect(),
-        )]
+    fn custom_example(cx: &WindowContext) -> impl Into<Option<AnyElement>> {
+        let all_icons = IconName::iter().collect::<Vec<_>>();
+        let chunk_size = 12;
+
+        Some(
+            v_flex()
+                .gap_4()
+                .children(all_icons.chunks(chunk_size).map(|chunk| {
+                    h_flex().gap_4().children(chunk.iter().map(|&icon| {
+                        div()
+                            .flex()
+                            .flex_1()
+                            .justify_center()
+                            .items_center()
+                            .size_8()
+                            .border_1()
+                            .border_color(cx.theme().colors().border)
+                            .child(Icon::new(icon))
+                    }))
+                }))
+                .into_any_element(),
+        )
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group_with_title(
+                "Sizes",
+                vec![
+                    single_example("XSmall", Icon::new(IconName::Check).size(IconSize::XSmall)),
+                    single_example("Small", Icon::new(IconName::Check).size(IconSize::Small)),
+                    single_example("Medium", Icon::new(IconName::Check).size(IconSize::Medium)),
+                ],
+            ),
+            example_group_with_title(
+                "Colors",
+                vec![
+                    single_example("Default", Icon::new(IconName::Check)),
+                    single_example("Accent", Icon::new(IconName::Check).color(Color::Accent)),
+                    single_example("Error", Icon::new(IconName::Check).color(Color::Error)),
+                ],
+            ),
+        ]
+    }
+}
+
+impl ComponentPreview for DecoratedIcon {
+    fn description() -> impl Into<Option<&'static str>> {
+        "DecoratedIcon adds visual enhancements to an icon, such as a strikethrough or an indicator dot."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group_with_title(
+                "Decorations",
+                vec![
+                    single_example(
+                        "Strikethrough",
+                        DecoratedIcon::new(
+                            Icon::new(IconName::Bell),
+                            IconDecoration::Strikethrough,
+                        ),
+                    ),
+                    single_example(
+                        "IndicatorDot",
+                        DecoratedIcon::new(Icon::new(IconName::Bell), IconDecoration::IndicatorDot),
+                    ),
+                    single_example(
+                        "X",
+                        DecoratedIcon::new(Icon::new(IconName::Bell), IconDecoration::X),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Colors",
+                vec![
+                    single_example(
+                        "Default",
+                        DecoratedIcon::new(Icon::new(IconName::Bell), IconDecoration::IndicatorDot),
+                    ),
+                    single_example(
+                        "Custom Color",
+                        DecoratedIcon::new(Icon::new(IconName::Bell), IconDecoration::IndicatorDot)
+                            .decoration_color(Color::Accent),
+                    ),
+                ],
+            ),
+        ]
+    }
+}
+
+impl ComponentPreview for IconWithIndicator {
+    fn description() -> impl Into<Option<&'static str>> {
+        "IconWithIndicator combines an icon with an indicator, useful for showing status or notifications."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![
+            example_group_with_title(
+                "Indicator Types",
+                vec![
+                    single_example(
+                        "Dot",
+                        IconWithIndicator::new(Icon::new(IconName::Bell), Some(Indicator::dot())),
+                    ),
+                    single_example(
+                        "Bar",
+                        IconWithIndicator::new(Icon::new(IconName::Bell), Some(Indicator::bar())),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Indicator Colors",
+                vec![
+                    single_example(
+                        "Info",
+                        IconWithIndicator::new(
+                            Icon::new(IconName::Bell),
+                            Some(Indicator::dot().color(Color::Info)),
+                        ),
+                    ),
+                    single_example(
+                        "Warning",
+                        IconWithIndicator::new(
+                            Icon::new(IconName::Bell),
+                            Some(Indicator::dot().color(Color::Warning)),
+                        ),
+                    ),
+                    single_example(
+                        "Error",
+                        IconWithIndicator::new(
+                            Icon::new(IconName::Bell),
+                            Some(Indicator::dot().color(Color::Error)),
+                        ),
+                    ),
+                ],
+            ),
+        ]
     }
 }
