@@ -1,10 +1,13 @@
 #![allow(missing_docs)]
+use crate::internal::prelude::*;
+use gpui::{ClickEvent, CursorStyle};
 use std::sync::Arc;
 
-use gpui::{ClickEvent, CursorStyle};
+use crate::{Color, IconButton, IconButtonShape, IconName, IconSize};
 
-use crate::{prelude::*, Color, IconButton, IconButtonShape, IconName, IconSize};
+register_components!(disclosure, [Disclosure]);
 
+// TODO: This should be DisclosureControl, not Disclosure
 #[derive(IntoElement)]
 pub struct Disclosure {
     id: ElementId,
@@ -69,5 +72,22 @@ impl RenderOnce for Disclosure {
         .when_some(self.on_toggle, move |this, on_toggle| {
             this.on_click(move |event, cx| on_toggle(event, cx))
         })
+    }
+}
+
+impl ComponentPreview for Disclosure {
+    fn description() -> impl Into<Option<&'static str>> {
+        "A Disclosure component is used to show or hide content. It's typically used in expandable/collapsible sections or tree-like structures."
+    }
+
+    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+        vec![example_group(vec![
+            single_example("Closed", Disclosure::new("closed", false)),
+            single_example("Open", Disclosure::new("open", true)),
+            single_example(
+                "Open (Selected)",
+                Disclosure::new("open", true).selected(true),
+            ),
+        ])]
     }
 }
