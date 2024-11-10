@@ -295,9 +295,11 @@ pub enum IconName {
     Visible,
     Wand,
     Warning,
+    WarningKnockout,
     WholeWord,
     X,
     XCircle,
+    XKnockout,
     ZedAssistant,
     ZedAssistantFilled,
     ZedXCopilot,
@@ -443,6 +445,79 @@ impl RenderOnce for DecoratedIcon {
             .child(self.icon)
             .child(decoration_knockout(decoration_icon))
             .child(decoration_svg(decoration_icon))
+    }
+}
+
+#[derive(IntoElement)]
+pub struct DiagnosticIcon {
+    icon: Icon,
+    is_warning: bool,
+    decoration_color: Color,
+    parent_background: Option<Hsla>,
+}
+
+impl DiagnosticIcon {
+    pub fn new(icon: Icon, is_warning: bool) -> Self {
+        Self {
+            icon,
+            is_warning,
+            decoration_color: Color::Default,
+            parent_background: None,
+        }
+    }
+
+    pub fn decoration_color(mut self, color: Color) -> Self {
+        self.decoration_color = color;
+        self
+    }
+
+    pub fn parent_background(mut self, background: Option<Hsla>) -> Self {
+        self.parent_background = background;
+        self
+    }
+}
+
+impl RenderOnce for DiagnosticIcon {
+    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+        let background = self
+            .parent_background
+            .unwrap_or_else(|| cx.theme().colors().panel_background);
+
+        let diagnostic_icon_size = IconSize::Small.rems();
+
+        // Use a different icon depending on whether the diagnostic is an error or warning
+        let (diagnostic_icon, knockout_icon) = if self.is_warning {
+            (IconName::IndicatorWarning, IconName::WarningKnockout)
+        } else {
+            (IconName::IndicatorX, IconName::XKnockout)
+        };
+
+        let decoration_svg = |icon: IconName| {
+            svg()
+                .absolute()
+                .bottom(-rems_from_px(1.5))
+                .right(-rems_from_px(1.5))
+                .path(icon.path())
+                .size(diagnostic_icon_size)
+                .text_color(self.decoration_color.color(cx))
+        };
+
+        let decoration_knockout = |icon: IconName| {
+            svg()
+                .absolute()
+                .bottom(-rems_from_px(3.))
+                .right(-rems_from_px(3.))
+                .path(icon.path())
+                .size(diagnostic_icon_size + rems_from_px(1.))
+                .text_color(background)
+        };
+
+        div()
+            .relative()
+            .size(self.icon.size)
+            .child(self.icon)
+            .child(decoration_knockout(knockout_icon))
+            .child(decoration_svg(diagnostic_icon))
     }
 }
 

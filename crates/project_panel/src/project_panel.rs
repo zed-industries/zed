@@ -3,7 +3,6 @@ mod project_panel_settings;
 use client::{ErrorCode, ErrorExt};
 use language::DiagnosticSeverity;
 use settings::{Settings, SettingsStore};
-use ui::{Scrollbar, ScrollbarState};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
@@ -50,8 +49,8 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IndentGuideColors, IndentGuideLayout,
-    KeyBinding, Label, ListItem, Tooltip,
+    prelude::*, v_flex, ContextMenu, DiagnosticIcon, Icon, IconWithIndicator, IndentGuideColors,
+    IndentGuideLayout, Indicator, KeyBinding, Label, ListItem, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2791,16 +2790,31 @@ impl ProjectPanel {
                         )
                     })
                     .child(if let Some(icon) = &icon {
-                        let icon = Icon::from_path(icon.to_string());
-                        if let Some((decoration, decoration_color)) =
+                        // Check if there's a diagnostic severity and get the decoration color
+                        if let Some((_, decoration_color)) =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
                         {
-                            h_flex().child(
-                                DecoratedIcon::new(icon.color(Color::Muted), decoration)
-                                    .decoration_color(decoration_color),
-                            )
+                            // Determine if the diagnostic is a warning
+                            let is_warning = diagnostic_severity
+                                .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
+                                .unwrap_or(false);
+                            div().child(if kind.is_file() {
+                                DiagnosticIcon::new(
+                                    Icon::from_path(icon.clone()).color(Color::Muted),
+                                    is_warning,
+                                )
+                                .decoration_color(decoration_color)
+                                .into_any_element()
+                            } else {
+                                IconWithIndicator::new(
+                                    Icon::from_path(icon.clone()).color(Color::Muted),
+                                    Some(Indicator::dot().color(decoration_color)),
+                                )
+                                .into_any_element()
+                            })
                         } else {
-                            h_flex().child(icon.color(filename_text_color))
+                            h_flex()
+                                .child(Icon::from_path(icon.to_string()).color(filename_text_color))
                         }
                     } else {
                         if let Some((icon_name, color)) =
