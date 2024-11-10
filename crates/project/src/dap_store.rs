@@ -190,6 +190,12 @@ impl DapStore {
         self.active_debug_line.take();
     }
 
+    pub fn on_file_rename(&mut self, old_project_path: ProjectPath, new_project_path: ProjectPath) {
+        if let Some(breakpoints) = self.breakpoints.remove(&old_project_path) {
+            self.breakpoints.insert(new_project_path, breakpoints);
+        }
+    }
+
     pub fn breakpoints(&self) -> &BTreeMap<ProjectPath, HashSet<Breakpoint>> {
         &self.breakpoints
     }
