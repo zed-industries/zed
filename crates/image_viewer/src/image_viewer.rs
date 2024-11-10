@@ -11,7 +11,7 @@ use theme::Theme;
 use ui::prelude::*;
 
 use file_icons::FileIcons;
-use project::{ImageItem, Project, ProjectPath};
+use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
 use settings::Settings;
 use util::paths::PathExt;
 use workspace::{
@@ -25,6 +25,33 @@ pub struct ImageView {
     image_item: Model<ImageItem>,
     project: Model<Project>,
     focus_handle: FocusHandle,
+}
+
+impl ImageView {
+    pub fn new(
+        image_item: Model<ImageItem>,
+        project: Model<Project>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        cx.subscribe(&image_item, Self::on_image_event).detach();
+        Self {
+            image_item,
+            project,
+            focus_handle: cx.focus_handle(),
+        }
+    }
+
+    fn on_image_event(
+        &mut self,
+        _: Model<ImageItem>,
+        event: &ImageItemEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            ImageItemEvent::FileHandleChanged | ImageItemEvent::Reloaded => cx.notify(),
+            ImageItemEvent::ReloadNeeded => {}
+        }
+    }
 }
 
 impl Item for ImageView {
@@ -151,13 +178,7 @@ impl SerializableItem for ImageView {
                 .update(&mut cx, |project, cx| project.open_image(project_path, cx))?
                 .await?;
 
-            cx.update(|cx| {
-                Ok(cx.new_view(|cx| ImageView {
-                    image_item,
-                    project,
-                    focus_handle: cx.focus_handle(),
-                }))
-            })?
+            cx.update(|cx| Ok(cx.new_view(|cx| ImageView::new(image_item, project, cx))))?
         })
     }
 
@@ -279,11 +300,7 @@ impl ProjectItem for ImageView {
     where
         Self: Sized,
     {
-        Self {
-            image_item: item,
-            project,
-            focus_handle: cx.focus_handle(),
-        }
+        Self::new(item, project, cx)
     }
 }
 

@@ -33,6 +33,7 @@ impl From<NonZeroU64> for ImageId {
 
 pub enum ImageItemEvent {
     ReloadNeeded,
+    Reloaded,
     FileHandleChanged,
 }
 
@@ -90,7 +91,7 @@ impl ImageItem {
             {
                 this.update(&mut cx, |this, cx| {
                     this.image = image;
-                    cx.notify();
+                    cx.emit(ImageItemEvent::Reloaded);
                 })
                 .log_err();
             }
