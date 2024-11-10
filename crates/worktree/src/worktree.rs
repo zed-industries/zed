@@ -103,6 +103,11 @@ pub struct LoadedFile {
     pub diff_base: Option<String>,
 }
 
+pub struct LoadedBinaryFile {
+    pub file: Arc<File>,
+    pub content: Vec<u8>,
+}
+
 pub struct LocalWorktree {
     snapshot: LocalSnapshot,
     scan_requests_tx: channel::Sender<ScanRequest>,
@@ -685,6 +690,19 @@ impl Worktree {
         }
     }
 
+    pub fn load_binary_file(
+        &self,
+        path: &Path,
+        cx: &ModelContext<Worktree>,
+    ) -> Task<Result<LoadedBinaryFile>> {
+        match self {
+            Worktree::Local(this) => this.load_binary_file(path, cx),
+            Worktree::Remote(_) => {
+                Task::ready(Err(anyhow!("remote worktrees can't yet load binary files")))
+            }
+        }
+    }
+
     pub fn write_file(
         &self,
         path: &Path,
@@ -1258,6 +1276,53 @@ impl LocalWorktree {
 
     pub fn get_local_repo(&self, repo: &RepositoryEntry) -> Option<&LocalRepositoryEntry> {
         self.git_repositories.get(&repo.work_directory.0)
+    }
+
+    fn load_binary_file(
+        &self,
+        path: &Path,
+        cx: &ModelContext<Worktree>,
+    ) -> Task<Result<LoadedBinaryFile>> {
+        let path = Arc::from(path);
+        let abs_path = self.absolutize(&path);
+        let fs = self.fs.clone();
+        let entry = self.refresh_entry(path.clone(), None, cx);
+        let is_private = self.is_path_private(path.as_ref());
+
+        let worktree = cx.weak_model();
+        cx.background_executor().spawn(async move {
+            let abs_path = abs_path?;
+            let content = fs.load_bytes(&abs_path).await?;
+
+            let worktree = worktree
+                .upgrade()
+                .ok_or_else(|| anyhow!("worktree was dropped"))?;
+            let file = match entry.await? {
+                Some(entry) => File::for_entry(entry, worktree),
+                None => {
+                    let metadata = fs
+                        .metadata(&abs_path)
+                        .await
+                        .with_context(|| {
+                            format!("Loading metadata for excluded file {abs_path:?}")
+                        })?
+                        .with_context(|| {
+                            format!("Excluded file {abs_path:?} got removed during loading")
+                        })?;
+                    Arc::new(File {
+                        entry_id: None,
+                        worktree,
+                        path,
+                        mtime: Some(metadata.mtime),
+                        is_local: true,
+                        is_deleted: false,
+                        is_private,
+                    })
+                }
+            };
+
+            Ok(LoadedBinaryFile { file, content })
+        })
     }
 
     fn load_file(&self, path: &Path, cx: &ModelContext<Worktree>) -> Task<Result<LoadedFile>> {
@@ -3212,6 +3277,14 @@ impl language::LocalFile for File {
         let fs = worktree.fs.clone();
         cx.background_executor()
             .spawn(async move { fs.load(&abs_path?).await })
+    }
+
+    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>> {
+        let worktree = self.worktree.read(cx).as_local().unwrap();
+        let abs_path = worktree.absolutize(&self.path);
+        let fs = worktree.fs.clone();
+        cx.background_executor()
+            .spawn(async move { fs.load_bytes(&abs_path?).await })
     }
 }
 

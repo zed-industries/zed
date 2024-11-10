@@ -6074,6 +6074,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -9178,6 +9179,7 @@ dependencies = [
  "globset",
  "gpui",
  "http_client",
+ "image",
  "itertools 0.13.0",
  "language",
  "log",
