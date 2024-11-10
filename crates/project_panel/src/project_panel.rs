@@ -871,6 +871,22 @@ impl ProjectPanel {
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
                     project_panel.update(&mut cx, |project_panel, cx| {
+                        project_panel.project.update(cx, |project, cx| {
+                            let old_path = ProjectPath {
+                                worktree_id,
+                                path: entry.path,
+                            };
+
+                            let new_path = ProjectPath {
+                                worktree_id,
+                                path: new_entry.path.clone()
+                            };
+
+                            project.dap_store().update(cx, |dap_store, _| {
+                                dap_store.on_file_rename(old_path, new_path);
+                            });
+                        });
+
                         if let Some(selection) = &mut project_panel.selection {
                             if selection.entry_id == edited_entry_id {
                                 selection.worktree_id = worktree_id;
