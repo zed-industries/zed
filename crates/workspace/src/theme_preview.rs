@@ -1,10 +1,11 @@
 #![allow(unused, dead_code)]
-use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
+use gpui::{actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla};
+use strum::IntoEnumIterator;
 use theme::all_theme_colors;
 use ui::{
-    prelude::*, utils::calculate_contrast_ratio, AudioStatus, Availability, Avatar,
-    AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike, ElevationIndex, Facepile,
-    TintColor, Tooltip,
+    element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
+    Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
+    Checkbox, CheckboxWithLabel, ElevationIndex, Facepile, Indicator, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -21,14 +22,45 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, strum::EnumIter)]
+enum ThemePreviewPage {
+    Overview,
+    Typography,
+    Components,
+}
+
+impl ThemePreviewPage {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Overview => "Overview",
+            Self::Typography => "Typography",
+            Self::Components => "Components",
+        }
+    }
+}
+
 struct ThemePreview {
+    current_page: ThemePreviewPage,
     focus_handle: FocusHandle,
 }
 
 impl ThemePreview {
     pub fn new(cx: &mut ViewContext<Self>) -> Self {
         Self {
+            current_page: ThemePreviewPage::Overview,
             focus_handle: cx.focus_handle(),
+        }
+    }
+
+    pub fn view(
+        &self,
+        page: ThemePreviewPage,
+        cx: &mut ViewContext<ThemePreview>,
+    ) -> impl IntoElement {
+        match page {
+            ThemePreviewPage::Overview => self.render_overview_page(cx).into_any_element(),
+            ThemePreviewPage::Typography => self.render_typography_page(cx).into_any_element(),
+            ThemePreviewPage::Components => self.render_components_page(cx).into_any_element(),
         }
     }
 }
@@ -427,10 +459,83 @@ impl ThemePreview {
             .text_color(cx.theme().colors().text)
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))
-            .child(self.render_avatars(cx))
-            .child(self.render_buttons(layer, cx))
             .child(self.render_text(layer, cx))
             .child(self.render_colors(layer, cx))
+    }
+
+    fn render_overview_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .id("theme-preview-overview")
+            .overflow_scroll()
+            .size_full()
+            .child(
+                v_flex()
+                    .child(Headline::new("Theme Preview").size(HeadlineSize::Large))
+                    .child(div().w_full().text_color(cx.theme().colors().text_muted).child("This view lets you preview a range of UI elements across a theme. Use it for testing out changes to the theme."))
+                    )
+            .child(self.render_theme_layer(ElevationIndex::Background, cx))
+            .child(self.render_theme_layer(ElevationIndex::Surface, cx))
+            .child(self.render_theme_layer(ElevationIndex::EditorSurface, cx))
+            .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, cx))
+    }
+
+    fn render_typography_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        v_flex()
+            .id("theme-preview-typography")
+            .overflow_scroll()
+            .size_full()
+            .child(v_flex()
+                .gap_4()
+                .child(Headline::new("Headline 1").size(HeadlineSize::XLarge))
+                .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua."))
+                .child(Headline::new("Headline 2").size(HeadlineSize::Large))
+                .child(Label::new("Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."))
+                .child(Headline::new("Headline 3").size(HeadlineSize::Medium))
+                .child(Label::new("Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur."))
+                .child(Headline::new("Headline 4").size(HeadlineSize::Small))
+                .child(Label::new("Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."))
+                .child(Headline::new("Headline 5").size(HeadlineSize::XSmall))
+                .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat."))
+                .child(Headline::new("Body Text").size(HeadlineSize::Small))
+                .child(Label::new("Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum."))
+            )
+    }
+
+    fn render_components_page(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let layer = ElevationIndex::Surface;
+
+        v_flex()
+            .id("theme-preview-components")
+            .overflow_scroll()
+            .size_full()
+            .gap_2()
+            .child(Checkbox::render_component_previews(cx))
+            .child(CheckboxWithLabel::render_component_previews(cx))
+            .child(Facepile::render_component_previews(cx))
+            .child(Button::render_component_previews(cx))
+            .child(Indicator::render_component_previews(cx))
+            .child(Icon::render_component_previews(cx))
+            .child(Table::render_component_previews(cx))
+            .child(self.render_avatars(cx))
+            .child(self.render_buttons(layer, cx))
+    }
+
+    fn render_page_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .id("theme-preview-nav")
+            .items_center()
+            .gap_4()
+            .py_2()
+            .bg(Self::preview_bg(cx))
+            .children(ThemePreviewPage::iter().map(|p| {
+                Button::new(ElementId::Name(p.name().into()), p.name())
+                    .on_click(cx.listener(move |this, _, cx| {
+                        this.current_page = p;
+                        cx.notify();
+                    }))
+                    .selected(p == self.current_page)
+                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
+            }))
     }
 }
 
@@ -439,16 +544,14 @@ impl Render for ThemePreview {
         v_flex()
             .id("theme-preview")
             .key_context("ThemePreview")
-            .overflow_scroll()
+            .items_start()
+            .overflow_hidden()
             .size_full()
             .max_h_full()
-            .p_4()
             .track_focus(&self.focus_handle)
+            .px_2()
             .bg(Self::preview_bg(cx))
-            .gap_4()
-            .child(self.render_theme_layer(ElevationIndex::Background, cx))
-            .child(self.render_theme_layer(ElevationIndex::Surface, cx))
-            .child(self.render_theme_layer(ElevationIndex::EditorSurface, cx))
-            .child(self.render_theme_layer(ElevationIndex::ElevatedSurface, cx))
+            .child(self.render_page_nav(cx))
+            .child(self.view(self.current_page, cx))
     }
 }

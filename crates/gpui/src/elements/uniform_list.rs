@@ -88,11 +88,22 @@ pub struct UniformListFrameState {
 #[derive(Clone, Debug, Default)]
 pub struct UniformListScrollHandle(pub Rc<RefCell<UniformListScrollState>>);
 
+/// Where to place the element scrolled to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollStrategy {
+    /// Place the element at the top of the list's viewport.
+    Top,
+    /// Attempt to place the element in the middle of the list's viewport.
+    /// May not be possible if there's not enough list items above the item scrolled to:
+    /// in this case, the element will be placed at the closest possible position.
+    Center,
+}
+
 #[derive(Clone, Debug, Default)]
 #[allow(missing_docs)]
 pub struct UniformListScrollState {
     pub base_handle: ScrollHandle,
-    pub deferred_scroll_to_item: Option<usize>,
+    pub deferred_scroll_to_item: Option<(usize, ScrollStrategy)>,
     /// Size of the item, captured during last layout.
     pub last_item_size: Option<ItemSize>,
 }
@@ -118,14 +129,16 @@ impl UniformListScrollHandle {
     }
 
     /// Scroll the list to the given item index.
-    pub fn scroll_to_item(&self, ix: usize) {
-        self.0.borrow_mut().deferred_scroll_to_item = Some(ix);
+    pub fn scroll_to_item(&self, ix: usize, strategy: ScrollStrategy) {
+        self.0.borrow_mut().deferred_scroll_to_item = Some((ix, strategy));
     }
 
     /// Get the index of the topmost visible child.
+    #[cfg(any(test, feature = "test-support"))]
     pub fn logical_scroll_top_index(&self) -> usize {
         let this = self.0.borrow();
         this.deferred_scroll_to_item
+            .map(|(ix, _)| ix)
             .unwrap_or_else(|| this.base_handle.logical_scroll_top().0)
     }
 }
@@ -273,18 +286,40 @@ impl Element for UniformList {
                         scroll_offset.x = Pixels::ZERO;
                     }
 
-                    if let Some(ix) = shared_scroll_to_item {
+                    if let Some((ix, scroll_strategy)) = shared_scroll_to_item {
                         let list_height = padded_bounds.size.height;
                         let mut updated_scroll_offset = shared_scroll_offset.borrow_mut();
                         let item_top = item_height * ix + padding.top;
                         let item_bottom = item_top + item_height;
                         let scroll_top = -updated_scroll_offset.y;
+                        let mut scrolled_to_top = false;
                         if item_top < scroll_top + padding.top {
+                            scrolled_to_top = true;
                             updated_scroll_offset.y = -(item_top) + padding.top;
                         } else if item_bottom > scroll_top + list_height - padding.bottom {
+                            scrolled_to_top = true;
                             updated_scroll_offset.y = -(item_bottom - list_height) - padding.bottom;
                         }
-                        scroll_offset = *updated_scroll_offset;
+
+                        match scroll_strategy {
+                            ScrollStrategy::Top => {}
+                            ScrollStrategy::Center => {
+                                if scrolled_to_top {
+                                    let item_center = item_top + item_height / 2.0;
+                                    let target_scroll_top = item_center - list_height / 2.0;
+
+                                    if item_top < scroll_top
+                                        || item_bottom > scroll_top + list_height
+                                    {
+                                        updated_scroll_offset.y = -target_scroll_top
+                                            .max(Pixels::ZERO)
+                                            .min(content_height - list_height)
+                                            .max(Pixels::ZERO);
+                                    }
+                                }
+                            }
+                        }
+                        scroll_offset = *updated_scroll_offset
                     }
 
                     let first_visible_element_ix =

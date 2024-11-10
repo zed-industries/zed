@@ -7,11 +7,13 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
+use assistant_slash_command::SlashCommandRegistry;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
+use context_servers::ContextServerFactoryRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
@@ -23,6 +25,7 @@ use gpui::{
     VisualContext,
 };
 use http_client::{read_proxy_from_env, Uri};
+use indexed_docs::IndexedDocsRegistry;
 use language::LanguageRegistry;
 use log::LevelFilter;
 use reqwest_client::ReqwestClient;
@@ -39,6 +42,7 @@ use settings::{
 };
 use simplelog::ConfigBuilder;
 use smol::process::Command;
+use snippet_provider::SnippetRegistry;
 use std::{
     env,
     fs::OpenOptions,
@@ -404,12 +408,20 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
+        let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
+            ThemeRegistry::global(cx),
+            SlashCommandRegistry::global(cx),
+            IndexedDocsRegistry::global(cx),
+            SnippetRegistry::global(cx),
+            app_state.languages.clone(),
+            ContextServerFactoryRegistry::global(cx),
+            cx,
+        );
         extension_host::init(
+            api,
             app_state.fs.clone(),
             app_state.client.clone(),
             app_state.node_runtime.clone(),
-            app_state.languages.clone(),
-            ThemeRegistry::global(cx),
             cx,
         );
         recent_projects::init(cx);

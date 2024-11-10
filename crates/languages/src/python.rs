@@ -11,11 +11,13 @@ use language::ToolchainLister;
 use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
 use node_runtime::NodeRuntime;
+use pet_core::os_environment::Environment;
 use pet_core::python_environment::PythonEnvironmentKind;
 use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
 
+use std::sync::Mutex;
 use std::{
     any::Any,
     borrow::Cow,
@@ -380,8 +382,13 @@ fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
 
 #[async_trait(?Send)]
 impl ToolchainLister for PythonToolchainProvider {
-    async fn list(&self, worktree_root: PathBuf) -> ToolchainList {
-        let environment = pet_core::os_environment::EnvironmentApi::new();
+    async fn list(
+        &self,
+        worktree_root: PathBuf,
+        project_env: Option<HashMap<String, String>>,
+    ) -> ToolchainList {
+        let env = project_env.unwrap_or_default();
+        let environment = EnvironmentApi::from_env(&env);
         let locators = pet::locators::create_locators(
             Arc::new(pet_conda::Conda::from(&environment)),
             Arc::new(pet_poetry::Poetry::from(&environment)),
@@ -424,6 +431,78 @@ impl ToolchainLister for PythonToolchainProvider {
             default: None,
             groups: Default::default(),
         }
+    }
+}
+
+pub struct EnvironmentApi<'a> {
+    global_search_locations: Arc<Mutex<Vec<PathBuf>>>,
+    project_env: &'a HashMap<String, String>,
+    pet_env: pet_core::os_environment::EnvironmentApi,
+}
+
+impl<'a> EnvironmentApi<'a> {
+    pub fn from_env(project_env: &'a HashMap<String, String>) -> Self {
+        let paths = project_env
+            .get("PATH")
+            .map(|p| std::env::split_paths(p).collect())
+            .unwrap_or_default();
+
+        EnvironmentApi {
+            global_search_locations: Arc::new(Mutex::new(paths)),
+            project_env,
+            pet_env: pet_core::os_environment::EnvironmentApi::new(),
+        }
+    }
+
+    fn user_home(&self) -> Option<PathBuf> {
+        self.project_env
+            .get("HOME")
+            .or_else(|| self.project_env.get("USERPROFILE"))
+            .map(|home| pet_fs::path::norm_case(PathBuf::from(home)))
+            .or_else(|| self.pet_env.get_user_home())
+    }
+}
+
+impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
+    fn get_user_home(&self) -> Option<PathBuf> {
+        self.user_home()
+    }
+
+    fn get_root(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn get_env_var(&self, key: String) -> Option<String> {
+        self.project_env
+            .get(&key)
+            .cloned()
+            .or_else(|| self.pet_env.get_env_var(key))
+    }
+
+    fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+        if self.global_search_locations.lock().unwrap().is_empty() {
+            let mut paths =
+                std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
+                    .collect::<Vec<PathBuf>>();
+
+            log::trace!("Env PATH: {:?}", paths);
+            for p in self.pet_env.get_know_global_search_locations() {
+                if !paths.contains(&p) {
+                    paths.push(p);
+                }
+            }
+
+            let mut paths = paths
+                .into_iter()
+                .filter(|p| p.exists())
+                .collect::<Vec<PathBuf>>();
+
+            self.global_search_locations
+                .lock()
+                .unwrap()
+                .append(&mut paths);
+        }
+        self.global_search_locations.lock().unwrap().clone()
     }
 }
 

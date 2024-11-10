@@ -6,12 +6,14 @@ use gpui::{AnyElement, ElementId, WindowContext};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToOffset};
 use std::{
+    any::TypeId,
     cmp::{self, Ordering},
     fmt, iter,
     ops::{Add, AddAssign, Deref, DerefMut, Range, Sub},
     sync::Arc,
 };
 use sum_tree::{Bias, Cursor, FilterCursor, SumTree, Summary};
+use ui::IntoElement as _;
 use util::post_inc;
 
 #[derive(Clone)]
@@ -22,17 +24,29 @@ pub struct FoldPlaceholder {
     pub constrain_width: bool,
     /// If true, merges the fold with an adjacent one.
     pub merge_adjacent: bool,
+    /// Category of the fold. Useful for carefully removing from overlapping folds.
+    pub type_tag: Option<TypeId>,
+}
+
+impl Default for FoldPlaceholder {
+    fn default() -> Self {
+        Self {
+            render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
+            constrain_width: true,
+            merge_adjacent: true,
+            type_tag: None,
+        }
+    }
 }
 
 impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
-        use gpui::IntoElement;
-
         Self {
             render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
+            type_tag: None,
         }
     }
 }
@@ -173,9 +187,34 @@ impl<'a> FoldMapWriter<'a> {
         (self.0.snapshot.clone(), edits)
     }
 
-    pub(crate) fn unfold<T: ToOffset>(
+    /// Removes any folds with the given ranges.
+    pub(crate) fn remove_folds<T: ToOffset>(
         &mut self,
         ranges: impl IntoIterator<Item = Range<T>>,
+        type_id: TypeId,
+    ) -> (FoldSnapshot, Vec<FoldEdit>) {
+        self.remove_folds_with(
+            ranges,
+            |fold| fold.placeholder.type_tag == Some(type_id),
+            false,
+        )
+    }
+
+    /// Removes any folds whose ranges intersect the given ranges.
+    pub(crate) fn unfold_intersecting<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        inclusive: bool,
+    ) -> (FoldSnapshot, Vec<FoldEdit>) {
+        self.remove_folds_with(ranges, |_| true, inclusive)
+    }
+
+    /// Removes any folds that intersect the given ranges and for which the given predicate
+    /// returns true.
+    fn remove_folds_with<T: ToOffset>(
+        &mut self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+        should_unfold: impl Fn(&Fold) -> bool,
         inclusive: bool,
     ) -> (FoldSnapshot, Vec<FoldEdit>) {
         let mut edits = Vec::new();
@@ -183,21 +222,23 @@ impl<'a> FoldMapWriter<'a> {
         let snapshot = self.0.snapshot.inlay_snapshot.clone();
         let buffer = &snapshot.buffer;
         for range in ranges.into_iter() {
-            // Remove intersecting folds and add their ranges to edits that are passed to sync.
+            let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
             let mut folds_cursor =
-                intersecting_folds(&snapshot, &self.0.snapshot.folds, range, inclusive);
+                intersecting_folds(&snapshot, &self.0.snapshot.folds, range.clone(), inclusive);
             while let Some(fold) = folds_cursor.item() {
                 let offset_range =
                     fold.range.start.to_offset(buffer)..fold.range.end.to_offset(buffer);
-                if offset_range.end > offset_range.start {
-                    let inlay_range = snapshot.to_inlay_offset(offset_range.start)
-                        ..snapshot.to_inlay_offset(offset_range.end);
-                    edits.push(InlayEdit {
-                        old: inlay_range.clone(),
-                        new: inlay_range,
-                    });
+                if should_unfold(fold) {
+                    if offset_range.end > offset_range.start {
+                        let inlay_range = snapshot.to_inlay_offset(offset_range.start)
+                            ..snapshot.to_inlay_offset(offset_range.end);
+                        edits.push(InlayEdit {
+                            old: inlay_range.clone(),
+                            new: inlay_range,
+                        });
+                    }
+                    fold_ixs_to_delete.push(*folds_cursor.start());
                 }
-                fold_ixs_to_delete.push(*folds_cursor.start());
                 folds_cursor.next(buffer);
             }
         }
@@ -665,6 +706,8 @@ impl FoldSnapshot {
     where
         T: ToOffset,
     {
+        let buffer = &self.inlay_snapshot.buffer;
+        let range = range.start.to_offset(buffer)..range.end.to_offset(buffer);
         let mut folds = intersecting_folds(&self.inlay_snapshot, &self.folds, range, false);
         iter::from_fn(move || {
             let item = folds.item();
@@ -821,15 +864,12 @@ fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: TextSummary) {
     }
 }
 
-fn intersecting_folds<'a, T>(
+fn intersecting_folds<'a>(
     inlay_snapshot: &'a InlaySnapshot,
     folds: &'a SumTree<Fold>,
-    range: Range<T>,
+    range: Range<usize>,
     inclusive: bool,
-) -> FilterCursor<'a, impl 'a + FnMut(&FoldSummary) -> bool, Fold, usize>
-where
-    T: ToOffset,
-{
+) -> FilterCursor<'a, impl 'a + FnMut(&FoldSummary) -> bool, Fold, usize> {
     let buffer = &inlay_snapshot.buffer;
     let start = buffer.anchor_before(range.start.to_offset(buffer));
     let end = buffer.anchor_after(range.end.to_offset(buffer));
@@ -1419,12 +1459,12 @@ mod tests {
         assert_eq!(snapshot4.text(), "123a⋯c123456eee");
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), false);
+        writer.unfold_intersecting(Some(Point::new(0, 4)..Point::new(0, 4)), false);
         let (snapshot5, _) = map.read(inlay_snapshot.clone(), vec![]);
         assert_eq!(snapshot5.text(), "123a⋯c123456eee");
 
         let (mut writer, _, _) = map.write(inlay_snapshot.clone(), vec![]);
-        writer.unfold(Some(Point::new(0, 4)..Point::new(0, 4)), true);
+        writer.unfold_intersecting(Some(Point::new(0, 4)..Point::new(0, 4)), true);
         let (snapshot6, _) = map.read(inlay_snapshot, vec![]);
         assert_eq!(snapshot6.text(), "123aaaaa\nbbbbbb\nccc123456eee");
     }
@@ -1913,7 +1953,7 @@ mod tests {
                     log::info!("unfolding {:?} (inclusive: {})", to_unfold, inclusive);
                     let (mut writer, snapshot, edits) = self.write(inlay_snapshot, vec![]);
                     snapshot_edits.push((snapshot, edits));
-                    let (snapshot, edits) = writer.unfold(to_unfold, inclusive);
+                    let (snapshot, edits) = writer.unfold_intersecting(to_unfold, inclusive);
                     snapshot_edits.push((snapshot, edits));
                 }
                 _ => {

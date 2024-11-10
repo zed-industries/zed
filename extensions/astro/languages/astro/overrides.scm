@@ -3,4 +3,4 @@
   (quoted_attribute_value)
 ] @string
 
-(comment) @comment
+(comment) @comment.inclusive

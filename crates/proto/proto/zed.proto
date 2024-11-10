@@ -2251,9 +2251,13 @@ message ContextOperation {
         InsertMessage insert_message = 1;
         UpdateMessage update_message = 2;
         UpdateSummary update_summary = 3;
-        SlashCommandFinished slash_command_finished = 4;
         BufferOperation buffer_operation = 5;
+        SlashCommandStarted slash_command_started = 6;
+        SlashCommandOutputSectionAdded slash_command_output_section_added = 7;
+        SlashCommandCompleted slash_command_completed = 8;
     }
+
+    reserved 4;
 
     message InsertMessage {
         ContextMessage message = 1;
@@ -2275,11 +2279,24 @@ message ContextOperation {
         repeated VectorClockEntry version = 4;
     }
 
-    message SlashCommandFinished {
+    message SlashCommandStarted {
         LamportTimestamp id = 1;
         AnchorRange output_range = 2;
-        repeated SlashCommandOutputSection sections = 3;
+        string name = 3;
         repeated VectorClockEntry version = 4;
+    }
+
+    message SlashCommandOutputSectionAdded {
+        LamportTimestamp timestamp = 1;
+        SlashCommandOutputSection section = 2;
+        repeated VectorClockEntry version = 3;
+    }
+
+    message SlashCommandCompleted {
+        LamportTimestamp id = 1;
+        LamportTimestamp timestamp = 3;
+        optional string error_message = 4;
+        repeated VectorClockEntry version = 5;
     }
 
     message BufferOperation {

@@ -591,6 +591,9 @@ pub struct LanguageConfig {
     /// the indentation level for a new line.
     #[serde(default = "auto_indent_using_last_non_empty_line_default")]
     pub auto_indent_using_last_non_empty_line: bool,
+    // Whether indentation of pasted content should be adjusted based on the context.
+    #[serde(default)]
+    pub auto_indent_on_paste: Option<bool>,
     /// A regex that is used to determine whether the indentation level should be
     /// increased in the following line.
     #[serde(default, deserialize_with = "deserialize_regex")]
@@ -718,6 +721,7 @@ impl Default for LanguageConfig {
             matcher: LanguageMatcher::default(),
             brackets: Default::default(),
             auto_indent_using_last_non_empty_line: auto_indent_using_last_non_empty_line_default(),
+            auto_indent_on_paste: None,
             increase_indent_pattern: Default::default(),
             decrease_indent_pattern: Default::default(),
             autoclose_before: Default::default(),
@@ -941,7 +945,14 @@ struct RunnableConfig {
 
 struct OverrideConfig {
     query: Query,
-    values: HashMap<u32, (String, LanguageConfigOverride)>,
+    values: HashMap<u32, OverrideEntry>,
+}
+
+#[derive(Debug)]
+struct OverrideEntry {
+    name: String,
+    range_is_inclusive: bool,
+    value: LanguageConfigOverride,
 }
 
 #[derive(Default, Clone)]
@@ -1261,58 +1272,66 @@ impl Language {
         };
 
         let mut override_configs_by_id = HashMap::default();
-        for (ix, name) in query.capture_names().iter().enumerate() {
-            if !name.starts_with('_') {
-                let value = self.config.overrides.remove(*name).unwrap_or_default();
-                for server_name in &value.opt_into_language_servers {
-                    if !self
-                        .config
-                        .scope_opt_in_language_servers
-                        .contains(server_name)
-                    {
-                        util::debug_panic!("Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server");
-                    }
-                }
-
-                override_configs_by_id.insert(ix as u32, (name.to_string(), value));
+        for (ix, mut name) in query.capture_names().iter().copied().enumerate() {
+            let mut range_is_inclusive = false;
+            if name.starts_with('_') {
+                continue;
             }
+            if let Some(prefix) = name.strip_suffix(".inclusive") {
+                name = prefix;
+                range_is_inclusive = true;
+            }
+
+            let value = self.config.overrides.get(name).cloned().unwrap_or_default();
+            for server_name in &value.opt_into_language_servers {
+                if !self
+                    .config
+                    .scope_opt_in_language_servers
+                    .contains(server_name)
+                {
+                    util::debug_panic!("Server {server_name:?} has been opted-in by scope {name:?} but has not been marked as an opt-in server");
+                }
+            }
+
+            override_configs_by_id.insert(
+                ix as u32,
+                OverrideEntry {
+                    name: name.to_string(),
+                    range_is_inclusive,
+                    value,
+                },
+            );
         }
 
-        if !self.config.overrides.is_empty() {
-            let keys = self.config.overrides.keys().collect::<Vec<_>>();
-            Err(anyhow!(
-                "language {:?} has overrides in config not in query: {keys:?}",
-                self.config.name
-            ))?;
-        }
+        let referenced_override_names = self.config.overrides.keys().chain(
+            self.config
+                .brackets
+                .disabled_scopes_by_bracket_ix
+                .iter()
+                .flatten(),
+        );
 
-        for disabled_scope_name in self
-            .config
-            .brackets
-            .disabled_scopes_by_bracket_ix
-            .iter()
-            .flatten()
-        {
+        for referenced_name in referenced_override_names {
             if !override_configs_by_id
                 .values()
-                .any(|(scope_name, _)| scope_name == disabled_scope_name)
+                .any(|entry| entry.name == *referenced_name)
             {
                 Err(anyhow!(
-                    "language {:?} has overrides in config not in query: {disabled_scope_name:?}",
+                    "language {:?} has overrides in config not in query: {referenced_name:?}",
                     self.config.name
                 ))?;
             }
         }
 
-        for (name, override_config) in override_configs_by_id.values_mut() {
-            override_config.disabled_bracket_ixs = self
+        for entry in override_configs_by_id.values_mut() {
+            entry.value.disabled_bracket_ixs = self
                 .config
                 .brackets
                 .disabled_scopes_by_bracket_ix
                 .iter()
                 .enumerate()
                 .filter_map(|(ix, disabled_scope_names)| {
-                    if disabled_scope_names.contains(name) {
+                    if disabled_scope_names.contains(&entry.name) {
                         Some(ix as u16)
                     } else {
                         None
@@ -1530,14 +1549,14 @@ impl LanguageScope {
         let id = self.override_id?;
         let grammar = self.language.grammar.as_ref()?;
         let override_config = grammar.override_config.as_ref()?;
-        override_config.values.get(&id).map(|e| e.0.as_str())
+        override_config.values.get(&id).map(|e| e.name.as_str())
     }
 
     fn config_override(&self) -> Option<&LanguageConfigOverride> {
         let id = self.override_id?;
         let grammar = self.language.grammar.as_ref()?;
         let override_config = grammar.override_config.as_ref()?;
-        override_config.values.get(&id).map(|e| &e.1)
+        override_config.values.get(&id).map(|e| &e.value)
     }
 }
 

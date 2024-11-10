@@ -7,7 +7,7 @@ use futures::FutureExt;
 use indexed_docs::{IndexedDocsDatabase, IndexedDocsProvider, PackageName, ProviderId};
 use wasmtime_wasi::WasiView;
 
-use crate::wasm_host::{WasmExtension, WasmHost};
+use extension_host::wasm_host::{WasmExtension, WasmHost};
 
 pub struct ExtensionIndexedDocsProvider {
     pub(crate) extension: WasmExtension,
@@ -58,7 +58,7 @@ impl IndexedDocsProvider for ExtensionIndexedDocsProvider {
                 let id = self.id.clone();
                 |extension, store| {
                     async move {
-                        let database_resource = store.data_mut().table().push(database)?;
+                        let database_resource = store.data_mut().table().push(database as _)?;
                         extension
                             .call_index_docs(
                                 store,

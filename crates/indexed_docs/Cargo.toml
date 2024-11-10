@@ -30,6 +30,7 @@ paths.workspace = true
 serde.workspace = true
 strum.workspace = true
 util.workspace = true
+extension_host.workspace = true
 
 [dev-dependencies]
 indoc.workspace = true

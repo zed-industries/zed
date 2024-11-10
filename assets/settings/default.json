@@ -68,9 +68,17 @@
   "ui_font_size": 16,
   // How much to fade out unused code.
   "unnecessary_code_fade": 0.3,
-  // The factor to grow the active pane by. Defaults to 1.0
-  // which gives the same size as all other panes.
-  "active_pane_magnification": 1.0,
+  // Active pane styling settings.
+  "active_pane_modifiers": {
+    // The factor to grow the active pane by. Defaults to 1.0
+    // which gives the same size as all other panes.
+    "magnification": 1.0,
+    // Inset border size of the active pane, in pixels.
+    "border_size": 0.0,
+    // Opacity of the inactive panes. 0 means transparent, 1 means opaque.
+    // Values are clamped to the [0.0, 1.0] range.
+    "inactive_opacity": 1.0
+  },
   // The direction that you want to split panes horizontally. Defaults to "up"
   "pane_split_direction_horizontal": "up",
   // The direction that you want to split panes horizontally. Defaults to "left"
@@ -152,7 +160,7 @@
   "show_signature_help_after_edits": true,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
-  // if softwrap is set to 'preferred_line_length', and will show any
+  // if 'soft_wrap' is set to 'preferred_line_length', and will show any
   // additional guides as specified by the 'wrap_guides' setting.
   "show_wrap_guides": true,
   // Character counts at which to show wrap guides in the editor.
@@ -174,6 +182,8 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
+  // Whether indentation of pasted content should be adjusted based on the context.
+  "auto_indent_on_paste": true,
   // Controls how the editor handles the autoclosed characters.
   // When set to `false`(default), skipping over and auto-removing of the closing characters
   // happen only for auto-inserted characters.
@@ -475,7 +485,7 @@
     "default_width": 640,
     // Default height when the assistant is docked to the bottom.
     "default_height": 320,
-    // The default model to use when creating new contexts.
+    // The default model to use when creating new chats.
     "default_model": {
       // The provider to use.
       "provider": "zed.dev",
@@ -820,7 +830,6 @@
   "tasks": {
     "variables": {}
   },
-  "toolchain": { "name": "default", "path": "default" },
   // An object whose keys are language names, and whose values
   // are arrays of filenames or extensions of files that should
   // use those languages.

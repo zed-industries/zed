@@ -227,7 +227,7 @@ impl History {
         if let Some(mut entry) = entries.next_back() {
             while let Some(prev_entry) = entries.next_back() {
                 if !prev_entry.suppress_grouping
-                    && entry.first_edit_at - prev_entry.last_edit_at <= self.group_interval
+                    && entry.first_edit_at - prev_entry.last_edit_at < self.group_interval
                 {
                     entry = prev_entry;
                     count += 1;

@@ -1,4 +1,6 @@
-use schemars::schema::{ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject};
+use schemars::schema::{
+    ArrayValidation, InstanceType, RootSchema, Schema, SchemaObject, SingleOrVec,
+};
 use serde_json::Value;
 
 pub struct SettingsJsonSchemaParams<'a> {
@@ -20,7 +22,10 @@ impl<'a> SettingsJsonSchemaParams<'a> {
 
     pub fn font_fallback_schema(&self) -> Schema {
         SchemaObject {
-            instance_type: Some(InstanceType::Array.into()),
+            instance_type: Some(SingleOrVec::Vec(vec![
+                InstanceType::Array,
+                InstanceType::Null,
+            ])),
             array: Some(Box::new(ArrayValidation {
                 items: Some(schemars::schema::SingleOrVec::Single(Box::new(
                     self.font_family_schema(),

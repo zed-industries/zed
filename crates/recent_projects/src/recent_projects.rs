@@ -39,7 +39,7 @@ pub struct OpenRecent {
 }
 
 fn default_create_new_window() -> bool {
-    true
+    false
 }
 
 gpui::impl_actions!(projects, [OpenRecent]);

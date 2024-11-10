@@ -290,14 +290,14 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
-            move || {
+            Arc::new(move || {
                 Ok(LoadedLanguage {
                     config: config.clone(),
                     queries: Default::default(),
                     toolchain_provider: None,
                     context_provider: None,
                 })
-            },
+            }),
         )
     }
 
@@ -438,9 +438,8 @@ impl LanguageRegistry {
         name: LanguageName,
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
-        load: impl Fn() -> Result<LoadedLanguage> + 'static + Send + Sync,
+        load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     ) {
-        let load = Arc::new(load);
         let state = &mut *self.state.write();
 
         for existing_language in &mut state.available_languages {
@@ -981,6 +980,7 @@ impl LanguageRegistryState {
                 tab_size: language.config.tab_size,
                 hard_tabs: language.config.hard_tabs,
                 soft_wrap: language.config.soft_wrap,
+                auto_indent_on_paste: language.config.auto_indent_on_paste,
                 ..Default::default()
             }
             .clone(),

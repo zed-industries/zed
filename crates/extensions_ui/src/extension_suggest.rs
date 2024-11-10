@@ -17,6 +17,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
     ("beancount", &["beancount"]),
     ("clojure", &["bb", "clj", "cljc", "cljs", "edn"]),
+    ("neocmake", &["CMakeLists.txt", "cmake"]),
     ("csharp", &["cs"]),
     ("dart", &["dart"]),
     ("dockerfile", &["Dockerfile"]),
