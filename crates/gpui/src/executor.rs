@@ -301,7 +301,7 @@ impl BackgroundExecutor {
 
     /// Block the current thread until the given future resolves
     /// or `duration` has elapsed.
-    pub fn block_with_timeout_background_and_foreground<R>(
+    pub fn block_to_shutdown<R>(
         &self,
         duration: Duration,
         future: impl Future<Output = R>,

@@ -7320,6 +7320,8 @@ async fn test_lsp_shutdown(cx: &mut gpui::TestAppContext) {
         cx,
     )
     .await;
+
+    drop(cx);
 }
 
 #[gpui::test]

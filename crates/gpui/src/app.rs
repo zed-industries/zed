@@ -369,7 +369,7 @@ impl AppContext {
 
         let futures = futures::future::join_all(futures);
         if background_executor
-            .block_with_timeout_background_and_foreground(SHUTDOWN_TIMEOUT, futures)
+            .block_to_shutdown(SHUTDOWN_TIMEOUT, futures)
             .is_err()
         {
             log::error!("timed out waiting on app_will_quit");
