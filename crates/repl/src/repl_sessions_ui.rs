@@ -1,19 +1,17 @@
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, Subscription, View,
+    Subscription, View,
 };
 use project::Item as _;
-use std::collections::HashMap;
-use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding, ListItem, Tooltip};
+use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
+use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
-use workspace::{ItemHandle, WorkspaceId};
 
 use crate::jupyter_settings::JupyterSettings;
 use crate::repl_store::ReplStore;
-use crate::{KernelSpecification, KERNEL_DOCS_URL};
 
 actions!(
     repl,
@@ -79,8 +77,7 @@ pub fn init(cx: &mut AppContext) {
                 .buffer()
                 .read(cx)
                 .as_singleton()
-                .map(|buffer| buffer.read(cx).project_path(cx))
-                .flatten();
+                .and_then(|buffer| buffer.read(cx).project_path(cx));
 
             let editor_handle = cx.view().downgrade();
 

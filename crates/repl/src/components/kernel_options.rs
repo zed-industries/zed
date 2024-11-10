@@ -4,6 +4,7 @@ use crate::KERNEL_DOCS_URL;
 
 use gpui::DismissEvent;
 
+use gpui::FontWeight;
 use picker::Picker;
 use picker::PickerDelegate;
 use project::WorktreeId;
@@ -127,24 +128,34 @@ impl PickerDelegate for KernelPickerDelegate {
                 .spacing(ListItemSpacing::Sparse)
                 .selected(selected)
                 .child(
-                    h_flex().w_full().justify_between().min_w(px(200.)).child(
-                        h_flex()
-                            .gap_1p5()
-                            .child(Label::new(kernelspec.name()))
-                            .child(
-                                Label::new(kernelspec.type_name())
-                                    .size(LabelSize::XSmall)
-                                    .color(Color::Muted),
-                            ),
-                    ),
+                    v_flex()
+                        .min_w(px(600.))
+                        .w_full()
+                        .gap_0p5()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .gap_1()
+                                .child(Label::new(kernelspec.name()).weight(FontWeight::MEDIUM))
+                                .child(
+                                    Label::new(kernelspec.language())
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            Label::new(kernelspec.path())
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        ),
                 )
-                .end_slot(div().when(is_selected, |this| {
-                    this.child(
+                .when(is_selected, |item| {
+                    item.end_slot(
                         Icon::new(IconName::Check)
                             .color(Color::Accent)
                             .size(IconSize::Small),
                     )
-                })),
+                }),
         )
     }
 
