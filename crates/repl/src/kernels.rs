@@ -467,7 +467,6 @@ async fn read_kernels_dir(path: PathBuf, fs: &dyn Fs) -> Result<Vec<LocalKernelS
     Ok(valid_kernelspecs)
 }
 
-#[allow(dead_code)]
 pub fn python_env_kernel_specifications(
     project: &Model<Project>,
     worktree_id: WorktreeId,
