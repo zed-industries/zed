@@ -30,9 +30,6 @@ struct ReplMenuState {
     status: KernelStatus,
     kernel_name: SharedString,
     kernel_language: SharedString,
-    // TODO: Persist rotation state so the
-    // icon doesn't reset on every state change
-    // current_delta: Duration,
 }
 
 impl QuickActionBar {
@@ -178,12 +175,6 @@ impl QuickActionBar {
                         },
                     )
                     .separator()
-                    .link(
-                        "Change Kernel",
-                        Box::new(zed_actions::OpenBrowser {
-                            url: format!("{}#change-kernel", ZED_REPL_DOCUMENTATION),
-                        }),
-                    )
                     .custom_entry(
                         move |_cx| {
                             Label::new("Shut Down Kernel")
