@@ -131,7 +131,7 @@ use project::{
     lsp_store::{FormatTarget, FormatTrigger},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Item, Location,
-    LocationLink, Project, ProjectPath, ProjectTransaction, TaskSourceKind,
+    LocationLink, Project, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -9130,6 +9130,9 @@ impl Editor {
     }
 
     pub fn toggle_comments(&mut self, action: &ToggleComments, cx: &mut ViewContext<Self>) {
+        if self.read_only(cx) {
+            return;
+        }
         let text_layout_details = &self.text_layout_details(cx);
         self.transact(cx, |this, cx| {
             let mut selections = this.selections.all::<MultiBufferPoint>(cx);
@@ -9539,15 +9542,15 @@ impl Editor {
             self.clear_tasks();
             return Task::ready(());
         }
-        let project = self.project.clone();
+        let project = self.project.as_ref().map(Model::downgrade);
         cx.spawn(|this, mut cx| async move {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            let Some(project) = project.and_then(|p| p.upgrade()) else {
+                return;
+            };
             let Ok(display_snapshot) = this.update(&mut cx, |this, cx| {
                 this.display_map.update(cx, |map, cx| map.snapshot(cx))
             }) else {
-                return;
-            };
-
-            let Some(project) = project else {
                 return;
             };
 
@@ -13047,60 +13050,6 @@ impl Editor {
         });
     }
 
-    fn jump(
-        &mut self,
-        path: ProjectPath,
-        position: Point,
-        anchor: language::Anchor,
-        offset_from_top: u32,
-        cx: &mut ViewContext<Self>,
-    ) {
-        let workspace = self.workspace();
-        cx.spawn(|_, mut cx| async move {
-            let workspace = workspace.ok_or_else(|| anyhow!("cannot jump without workspace"))?;
-            let editor = workspace.update(&mut cx, |workspace, cx| {
-                // Reset the preview item id before opening the new item
-                workspace.active_pane().update(cx, |pane, cx| {
-                    pane.set_preview_item_id(None, cx);
-                });
-                workspace.open_path_preview(path, None, true, true, cx)
-            })?;
-            let editor = editor
-                .await?
-                .downcast::<Editor>()
-                .ok_or_else(|| anyhow!("opened item was not an editor"))?
-                .downgrade();
-            editor.update(&mut cx, |editor, cx| {
-                let buffer = editor
-                    .buffer()
-                    .read(cx)
-                    .as_singleton()
-                    .ok_or_else(|| anyhow!("cannot jump in a multi-buffer"))?;
-                let buffer = buffer.read(cx);
-                let cursor = if buffer.can_resolve(&anchor) {
-                    language::ToPoint::to_point(&anchor, buffer)
-                } else {
-                    buffer.clip_point(position, Bias::Left)
-                };
-
-                let nav_history = editor.nav_history.take();
-                editor.change_selections(
-                    Some(Autoscroll::top_relative(offset_from_top as usize)),
-                    cx,
-                    |s| {
-                        s.select_ranges([cursor..cursor]);
-                    },
-                );
-                editor.nav_history = nav_history;
-
-                anyhow::Ok(())
-            })??;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
     fn marked_text_ranges(&self, cx: &AppContext) -> Option<Vec<Range<OffsetUtf16>>> {
         let snapshot = self.buffer.read(cx).read(cx);
         let (_, ranges) = self.text_highlights::<InputComposition>(cx)?;
@@ -14150,10 +14099,7 @@ impl CompletionProvider for Model<Project> {
             return true;
         }
 
-        buffer
-            .completion_triggers()
-            .iter()
-            .any(|string| string == text)
+        buffer.completion_triggers().contains(text)
     }
 }
 
@@ -15329,6 +15275,8 @@ fn check_multiline_range(buffer: &Buffer, range: Range<usize>) -> Range<usize> {
         range.start..range.start
     }
 }
+
+const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 struct BreakpointPromptEditor {
     pub(crate) prompt: View<Editor>,
