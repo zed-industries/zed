@@ -1,14 +1,16 @@
-use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
-use crate::{Project, ProjectEntryId, ProjectPath};
+use crate::{
+    worktree_store::{WorktreeStore, WorktreeStoreEvent},
+    Project, ProjectEntryId, ProjectPath,
+};
 use anyhow::{Context as _, Result};
-use collections::{HashMap, HashSet};
-use futures::channel::oneshot;
+use collections::{hash_map, HashMap, HashSet};
+use futures::{channel::oneshot, StreamExt};
 use gpui::{
     hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
     WeakModel,
 };
 use language::File;
-use rpc::AnyProtoClient;
+use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
 use std::num::NonZeroU64;
 use std::path::Path;
@@ -180,6 +182,11 @@ pub struct ImageStore {
     state: Box<dyn ImageStoreImpl>,
     opened_images: HashMap<ImageId, WeakModel<ImageItem>>,
     worktree_store: Model<WorktreeStore>,
+    #[allow(clippy::type_complexity)]
+    loading_images_by_path: HashMap<
+        ProjectPath,
+        postage::watch::Receiver<Option<Result<Model<ImageItem>, Arc<anyhow::Error>>>>,
+    >,
 }
 
 impl ImageStore {
@@ -204,6 +211,7 @@ impl ImageStore {
                 }
             })),
             opened_images: Default::default(),
+            loading_images_by_path: Default::default(),
             worktree_store,
         }
     }
@@ -217,6 +225,7 @@ impl ImageStore {
         Self {
             state: Box::new(cx.new_model(|_| RemoteImageStore {})),
             opened_images: Default::default(),
+            loading_images_by_path: Default::default(),
             worktree_store,
         }
     }
@@ -256,8 +265,57 @@ impl ImageStore {
             return Task::ready(Err(anyhow::anyhow!("no such worktree")));
         };
 
-        self.state
-            .open_image(project_path.path.clone(), worktree, cx)
+        let loading_watch = match self.loading_images_by_path.entry(project_path.clone()) {
+            // If the given path is already being loaded, then wait for that existing
+            // task to complete and return the same buffer.
+            hash_map::Entry::Occupied(e) => e.get().clone(),
+
+            // Otherwise, record the fact that this path is now being loaded.
+            hash_map::Entry::Vacant(entry) => {
+                let (mut tx, rx) = postage::watch::channel();
+                entry.insert(rx.clone());
+
+                let project_path = project_path.clone();
+                let load_image = self
+                    .state
+                    .open_image(project_path.path.clone(), worktree, cx);
+
+                cx.spawn(move |this, mut cx| async move {
+                    let load_result = load_image.await;
+                    *tx.borrow_mut() = Some(this.update(&mut cx, |this, _cx| {
+                        // Record the fact that the buffer is no longer loading.
+                        this.loading_images_by_path.remove(&project_path);
+                        let buffer = load_result.map_err(Arc::new)?;
+                        Ok(buffer)
+                    })?);
+                    anyhow::Ok(())
+                })
+                .detach();
+                rx
+            }
+        };
+
+        cx.background_executor().spawn(async move {
+            Self::wait_for_loading_image(loading_watch)
+                .await
+                .map_err(|e| e.cloned())
+        })
+    }
+
+    pub async fn wait_for_loading_image(
+        mut receiver: postage::watch::Receiver<
+            Option<Result<Model<ImageItem>, Arc<anyhow::Error>>>,
+        >,
+    ) -> Result<Model<ImageItem>, Arc<anyhow::Error>> {
+        loop {
+            if let Some(result) = receiver.borrow().as_ref() {
+                match result {
+                    Ok(buffer) => return Ok(buffer.to_owned()),
+                    Err(e) => return Err(e.to_owned()),
+                }
+            }
+            receiver.next().await;
+        }
     }
 
     pub fn reload_images(
