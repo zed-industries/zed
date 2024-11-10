@@ -108,12 +108,6 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
             )
             .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language.name()))?;
 
-        // let kernel_specification = store.update(cx, |store, cx| {
-        //     store
-        //         .kernelspec(language.code_fence_block_name().as_ref(), cx)
-        //         .with_context(|| format!("No kernel found for language: {}", language.name()))
-        // })?;
-
         let fs = store.read(cx).fs().clone();
         let telemetry = store.read(cx).telemetry().clone();
 

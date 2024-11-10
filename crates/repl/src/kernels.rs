@@ -573,7 +573,7 @@ pub fn python_env_kernel_specifications(
                 };
 
                 kernel_specs.push(KernelSpecification::PythonEnv(LocalKernelSpecification {
-                    name: format!("Python ({})", toolchain.name),
+                    name: toolchain.name.to_string(),
                     path: prefix,
                     kernelspec: default_kernelspec,
                 }));
