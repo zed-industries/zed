@@ -6603,7 +6603,7 @@ impl LspStore {
         self.language_server_statuses.insert(
             server_id,
             LanguageServerStatus {
-                name: adapter.name().to_string(),
+                name: language_server.name().to_string(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
@@ -6612,7 +6612,7 @@ impl LspStore {
 
         cx.emit(LspStoreEvent::LanguageServerAdded(
             server_id,
-            adapter.name(),
+            language_server.name(),
             Some(key.0),
         ));
 
@@ -6622,7 +6622,7 @@ impl LspStore {
                     project_id: *project_id,
                     server: Some(proto::LanguageServer {
                         id: server_id.0 as u64,
-                        name: adapter.name().to_string(),
+                        name: language_server.name().to_string(),
                         worktree_id: Some(key.0.to_proto()),
                     }),
                 })

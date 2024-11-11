@@ -1228,7 +1228,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
             LanguageServerId(0),
-            fake_server.server.name().into(),
+            fake_server.server.name(),
             Some(worktree_id)
         ),
     );
@@ -1363,7 +1363,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
         events.next().await.unwrap(),
         Event::LanguageServerAdded(
             LanguageServerId(1),
-            fake_server.server.name().into(),
+            fake_server.server.name(),
             Some(worktree_id)
         )
     );
