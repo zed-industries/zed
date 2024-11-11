@@ -4547,6 +4547,11 @@ impl Workspace {
                 .children(leader_border),
         )
     }
+
+    pub fn for_window(cx: &mut WindowContext) -> Option<View<Workspace>> {
+        let window = cx.window_handle().downcast::<Workspace>()?;
+        cx.read_window(&window, |workspace, _| workspace).ok()
+    }
 }
 
 fn leader_border_for_pane(
@@ -4730,6 +4735,7 @@ impl Render for Workspace {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut context = KeyContext::new_with_defaults();
         context.add("Workspace");
+        context.set("keyboard_layout", cx.keyboard_layout().clone());
         let centered_layout = self.centered_layout
             && self.center.panes().len() == 1
             && self.active_item(cx).is_some();

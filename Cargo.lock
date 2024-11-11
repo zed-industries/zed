@@ -13,6 +13,7 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "language",
+ "lsp",
  "project",
  "smallvec",
  "ui",
@@ -2815,6 +2816,7 @@ name = "context_servers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "collections",
  "command_palette_hooks",
  "futures 0.3.30",
@@ -4211,6 +4213,7 @@ dependencies = [
  "async-trait",
  "client",
  "collections",
+ "context_servers",
  "ctor",
  "db",
  "editor",
@@ -5976,6 +5979,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -6895,6 +6899,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "release_channel",
+ "schemars",
  "serde",
  "serde_json",
  "smol",
@@ -9078,6 +9083,7 @@ dependencies = [
  "globset",
  "gpui",
  "http_client",
+ "image",
  "itertools 0.13.0",
  "language",
  "log",
@@ -15352,6 +15358,7 @@ dependencies = [
  "collections",
  "command_palette",
  "command_palette_hooks",
+ "context_servers",
  "copilot",
  "db",
  "diagnostics",

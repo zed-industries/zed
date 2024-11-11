@@ -61,85 +61,45 @@ pub fn init(cx: &mut AppContext) {
             return;
         }
 
-        let editor_handle = cx.view().downgrade();
+        cx.defer(|editor, cx| {
+            let workspace = Workspace::for_window(cx);
 
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Run, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
+            let is_local_project = workspace
+                .map(|workspace| workspace.read(cx).project().read(cx).is_local())
+                .unwrap_or(false);
+
+            if !is_local_project {
+                return;
+            }
+
+            let editor_handle = cx.view().downgrade();
+
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &Run, cx| {
+                        if !JupyterSettings::enabled(cx) {
+                            return;
+                        }
+
+                        crate::run(editor_handle.clone(), true, cx).log_err();
                     }
+                })
+                .detach();
 
-                    crate::run(editor_handle.clone(), true, cx).log_err();
-                }
-            })
-            .detach();
+            editor
+                .register_action({
+                    let editor_handle = editor_handle.clone();
+                    move |_: &RunInPlace, cx| {
+                        if !JupyterSettings::enabled(cx) {
+                            return;
+                        }
 
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &RunInPlace, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
+                        crate::run(editor_handle.clone(), false, cx).log_err();
                     }
-
-                    crate::run(editor_handle.clone(), false, cx).log_err();
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &ClearOutputs, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::clear_outputs(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Interrupt, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::interrupt(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Shutdown, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::shutdown(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
-
-        editor
-            .register_action({
-                let editor_handle = editor_handle.clone();
-                move |_: &Restart, cx| {
-                    if !JupyterSettings::enabled(cx) {
-                        return;
-                    }
-
-                    crate::restart(editor_handle.clone(), cx);
-                }
-            })
-            .detach();
+                })
+                .detach();
+        });
     })
     .detach();
 }

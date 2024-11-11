@@ -808,6 +808,7 @@ pub fn handle_keymap_file_changes(
     VimModeSetting::register(cx);
 
     let (base_keymap_tx, mut base_keymap_rx) = mpsc::unbounded();
+    let (keyboard_layout_tx, mut keyboard_layout_rx) = mpsc::unbounded();
     let mut old_base_keymap = *BaseKeymap::get_global(cx);
     let mut old_vim_enabled = VimModeSetting::get_global(cx).0;
     cx.observe_global::<SettingsStore>(move |cx| {
@@ -822,6 +823,11 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
+    cx.on_keyboard_layout_change(move |_| {
+        keyboard_layout_tx.unbounded_send(()).ok();
+    })
+    .detach();
+
     load_default_keymap(cx);
 
     cx.spawn(move |cx| async move {
@@ -829,6 +835,7 @@ pub fn handle_keymap_file_changes(
         loop {
             select_biased! {
                 _ = base_keymap_rx.next() => {}
+                _ = keyboard_layout_rx.next() => {}
                 user_keymap_content = user_keymap_file_rx.next() => {
                     if let Some(user_keymap_content) = user_keymap_content {
                         match KeymapFile::parse(&user_keymap_content) {
@@ -854,7 +861,7 @@ fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
     load_default_keymap(cx);
     keymap_content.clone().add_to_cx(cx).log_err();
     cx.set_menus(app_menus());
-    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)])
+    cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
 }
 
 pub fn load_default_keymap(cx: &mut AppContext) {

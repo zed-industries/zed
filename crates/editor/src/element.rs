@@ -19,15 +19,14 @@ use crate::{
     BlockId, CodeActionsMenu, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, LineDown, LineUp, OpenExcerpts, PageDown,
-    PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
+    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, JumpData, LineDown, LineUp, OpenExcerpts,
+    PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint,
     CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
     MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
 use git::{blame::BlameEntry, diff::DiffHunkStatus, Oid};
-use gpui::Subscription;
 use gpui::{
     anchored, deferred, div, fill, outline, point, px, quad, relative, size, svg,
     transparent_black, Action, AnchorCorner, AnyElement, AvailableSpace, Bounds, ClipboardItem,
@@ -38,6 +37,7 @@ use gpui::{
     StatefulInteractiveElement, Style, Styled, TextRun, TextStyle, TextStyleRefinement, View,
     ViewContext, WeakView, WindowContext,
 };
+use gpui::{ClickEvent, Subscription};
 use itertools::Itertools;
 use language::{
     language_settings::{
@@ -1968,10 +1968,10 @@ impl EditorElement {
 
     fn layout_lines(
         rows: Range<DisplayRow>,
-        line_number_layouts: &[Option<ShapedLine>],
         snapshot: &EditorSnapshot,
         style: &EditorStyle,
         editor_width: Pixels,
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> Vec<LineWithInvisibles> {
         if rows.start >= rows.end {
@@ -2020,9 +2020,9 @@ impl EditorElement {
                 &style.text,
                 MAX_LINE_LEN,
                 rows.len(),
-                line_number_layouts,
                 snapshot.mode,
                 editor_width,
+                is_row_soft_wrapped,
                 cx,
             )
         }
@@ -2071,6 +2071,7 @@ impl EditorElement {
         scroll_width: &mut Pixels,
         resized_blocks: &mut HashMap<CustomBlockId, u32>,
         selections: &[Selection<Point>],
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> (AnyElement, Size<Pixels>) {
         let mut element = match block {
@@ -2083,8 +2084,15 @@ impl EditorElement {
                         line_layouts[align_to.row().minus(rows.start) as usize]
                             .x_for_index(align_to.column() as usize)
                     } else {
-                        layout_line(align_to.row(), snapshot, &self.style, editor_width, cx)
-                            .x_for_index(align_to.column() as usize)
+                        layout_line(
+                            align_to.row(),
+                            snapshot,
+                            &self.style,
+                            editor_width,
+                            is_row_soft_wrapped,
+                            cx,
+                        )
+                        .x_for_index(align_to.column() as usize)
                     };
 
                 let selected = selections
@@ -2125,14 +2133,6 @@ impl EditorElement {
                 height,
                 ..
             } => {
-                #[derive(Clone)]
-                struct JumpData {
-                    position: Point,
-                    anchor: text::Anchor,
-                    path: ProjectPath,
-                    line_offset_from_top: u32,
-                }
-
                 let icon_offset = gutter_dimensions.width
                     - (gutter_dimensions.left_padding + gutter_dimensions.margin);
 
@@ -2161,11 +2161,12 @@ impl EditorElement {
                 if let Some(next_excerpt) = next_excerpt {
                     let buffer = &next_excerpt.buffer;
                     let range = &next_excerpt.range;
-                    let jump_data = project::File::from_dyn(buffer.file()).map(|file| {
-                        let jump_path = ProjectPath {
-                            worktree_id: file.worktree_id(cx),
-                            path: file.path.clone(),
-                        };
+                    let jump_data = {
+                        let jump_path =
+                            project::File::from_dyn(buffer.file()).map(|file| ProjectPath {
+                                worktree_id: file.worktree_id(cx),
+                                path: file.path.clone(),
+                            });
                         let jump_anchor = range
                             .primary
                             .as_ref()
@@ -2180,21 +2181,20 @@ impl EditorElement {
                                 language::ToPoint::to_point(&jump_anchor, buffer).row;
                             jump_position.row - excerpt_start_row
                         };
-
                         let line_offset_from_top =
                             block_row_start.0 + *height + offset_from_excerpt_start
                                 - snapshot
                                     .scroll_anchor
                                     .scroll_position(&snapshot.display_snapshot)
                                     .y as u32;
-
                         JumpData {
-                            position: jump_position,
+                            excerpt_id: next_excerpt.id,
                             anchor: jump_anchor,
+                            position: language::ToPoint::to_point(&jump_anchor, buffer),
                             path: jump_path,
                             line_offset_from_top,
                         }
-                    });
+                    };
 
                     if *starts_new_buffer {
                         let include_root = self
@@ -2249,31 +2249,23 @@ impl EditorElement {
                                                     }),
                                             ),
                                         )
-                                        .when_some(jump_data, |el, jump_data| {
-                                            el.child(Icon::new(IconName::ArrowUpRight))
-                                                .cursor_pointer()
-                                                .tooltip(|cx| {
-                                                    Tooltip::for_action(
-                                                        "Jump to File",
-                                                        &OpenExcerpts,
-                                                        cx,
-                                                    )
-                                                })
-                                                .on_mouse_down(MouseButton::Left, |_, cx| {
-                                                    cx.stop_propagation()
-                                                })
-                                                .on_click(cx.listener_for(&self.editor, {
-                                                    move |editor, _, cx| {
-                                                        editor.jump(
-                                                            jump_data.path.clone(),
-                                                            jump_data.position,
-                                                            jump_data.anchor,
-                                                            jump_data.line_offset_from_top,
-                                                            cx,
-                                                        );
-                                                    }
-                                                }))
-                                        }),
+                                        .child(Icon::new(IconName::ArrowUpRight))
+                                        .cursor_pointer()
+                                        .tooltip(|cx| {
+                                            Tooltip::for_action("Jump to File", &OpenExcerpts, cx)
+                                        })
+                                        .on_mouse_down(MouseButton::Left, |_, cx| {
+                                            cx.stop_propagation()
+                                        })
+                                        .on_click(cx.listener_for(&self.editor, {
+                                            move |editor, e: &ClickEvent, cx| {
+                                                editor.open_excerpts_common(
+                                                    Some(jump_data.clone()),
+                                                    e.down.modifiers.secondary(),
+                                                    cx,
+                                                );
+                                            }
+                                        })),
                                 ),
                         );
                         if *show_excerpt_controls {
@@ -2292,6 +2284,7 @@ impl EditorElement {
                             );
                         }
                     } else {
+                        let editor = self.editor.clone();
                         result = result.child(
                             h_flex()
                                 .id("excerpt header block")
@@ -2312,32 +2305,51 @@ impl EditorElement {
                                         }),
                                 )
                                 .cursor_pointer()
-                                .when_some(jump_data.clone(), |this, jump_data| {
-                                    this.on_click(cx.listener_for(&self.editor, {
-                                        let path = jump_data.path.clone();
-                                        move |editor, _, cx| {
+                                .on_click({
+                                    let jump_data = jump_data.clone();
+                                    cx.listener_for(&self.editor, {
+                                        let jump_data = jump_data.clone();
+                                        move |editor, e: &ClickEvent, cx| {
                                             cx.stop_propagation();
-
-                                            editor.jump(
-                                                path.clone(),
-                                                jump_data.position,
-                                                jump_data.anchor,
-                                                jump_data.line_offset_from_top,
+                                            editor.open_excerpts_common(
+                                                Some(jump_data.clone()),
+                                                e.down.modifiers.secondary(),
                                                 cx,
                                             );
                                         }
-                                    }))
-                                    .tooltip(move |cx| {
-                                        Tooltip::for_action(
-                                            format!(
-                                                "Jump to {}:L{}",
-                                                jump_data.path.path.display(),
-                                                jump_data.position.row + 1
-                                            ),
-                                            &OpenExcerpts,
-                                            cx,
-                                        )
                                     })
+                                })
+                                .tooltip({
+                                    let jump_data = jump_data.clone();
+                                    move |cx| {
+                                        let jump_message = format!(
+                                            "Jump to {}:L{}",
+                                            match &jump_data.path {
+                                                Some(project_path) =>
+                                                    project_path.path.display().to_string(),
+                                                None => {
+                                                    let editor = editor.read(cx);
+                                                    editor
+                                                        .file_at(jump_data.position, cx)
+                                                        .map(|file| {
+                                                            file.full_path(cx).display().to_string()
+                                                        })
+                                                        .or_else(|| {
+                                                            Some(
+                                                                editor
+                                                                    .tab_description(0, cx)?
+                                                                    .to_string(),
+                                                            )
+                                                        })
+                                                        .unwrap_or_else(|| {
+                                                            "Unknown buffer".to_string()
+                                                        })
+                                                }
+                                            },
+                                            jump_data.position.row + 1
+                                        );
+                                        Tooltip::for_action(jump_message, &OpenExcerpts, cx)
+                                    }
                                 })
                                 .child(
                                     h_flex()
@@ -2447,6 +2459,7 @@ impl EditorElement {
         line_height: Pixels,
         line_layouts: &[LineWithInvisibles],
         selections: &[Selection<Point>],
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> Result<Vec<BlockLayout>, HashMap<CustomBlockId, u32>> {
         let (fixed_blocks, non_fixed_blocks) = snapshot
@@ -2484,6 +2497,7 @@ impl EditorElement {
                 scroll_width,
                 &mut resized_blocks,
                 selections,
+                is_row_soft_wrapped,
                 cx,
             );
             fixed_block_max_width = fixed_block_max_width.max(element_size.width + em_width);
@@ -2529,6 +2543,7 @@ impl EditorElement {
                 scroll_width,
                 &mut resized_blocks,
                 selections,
+                is_row_soft_wrapped,
                 cx,
             );
 
@@ -2575,6 +2590,7 @@ impl EditorElement {
                             scroll_width,
                             &mut resized_blocks,
                             selections,
+                            is_row_soft_wrapped,
                             cx,
                         );
 
@@ -4359,9 +4375,9 @@ impl LineWithInvisibles {
         text_style: &TextStyle,
         max_line_len: usize,
         max_line_count: usize,
-        line_number_layouts: &[Option<ShapedLine>],
         editor_mode: EditorMode,
         text_width: Pixels,
+        is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
         cx: &mut WindowContext,
     ) -> Vec<Self> {
         let mut layouts = Vec::with_capacity(max_line_count);
@@ -4489,12 +4505,9 @@ impl LineWithInvisibles {
                         if editor_mode == EditorMode::Full {
                             // Line wrap pads its contents with fake whitespaces,
                             // avoid printing them
-                            let inside_wrapped_string = line_number_layouts
-                                .get(row)
-                                .and_then(|layout| layout.as_ref())
-                                .is_none();
+                            let is_soft_wrapped = is_row_soft_wrapped(row);
                             if highlighted_chunk.is_tab {
-                                if non_whitespace_added || !inside_wrapped_string {
+                                if non_whitespace_added || !is_soft_wrapped {
                                     invisibles.push(Invisible::Tab {
                                         line_start_offset: line.len(),
                                         line_end_offset: line.len() + line_chunk.len(),
@@ -4510,7 +4523,7 @@ impl LineWithInvisibles {
                                                 (*line_byte as char).is_whitespace();
                                             non_whitespace_added |= !is_whitespace;
                                             is_whitespace
-                                                && (non_whitespace_added || !inside_wrapped_string)
+                                                && (non_whitespace_added || !is_soft_wrapped)
                                         })
                                         .map(|(whitespace_index, _)| Invisible::Whitespace {
                                             line_offset: line.len() + whitespace_index,
@@ -4873,10 +4886,10 @@ impl Element for EditorElement {
                                     editor_handle.update(cx, |editor, cx| editor.snapshot(cx));
                                 let line = Self::layout_lines(
                                     DisplayRow(0)..DisplayRow(1),
-                                    &[],
                                     &editor_snapshot,
                                     &style,
                                     px(f32::MAX),
+                                    |_| false, // Single lines never soft wrap
                                     cx,
                                 )
                                 .pop()
@@ -5085,6 +5098,8 @@ impl Element for EditorElement {
                         .buffer_rows(start_row)
                         .take((start_row..end_row).len())
                         .collect::<Vec<_>>();
+                    let is_row_soft_wrapped =
+                        |row| buffer_rows.get(row).copied().flatten().is_none();
 
                     let start_anchor = if start_row == Default::default() {
                         Anchor::min()
@@ -5176,10 +5191,10 @@ impl Element for EditorElement {
                     let mut max_visible_line_width = Pixels::ZERO;
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
-                        &line_numbers,
                         &snapshot,
                         &self.style,
                         editor_width,
+                        is_row_soft_wrapped,
                         cx,
                     );
                     for line_with_invisibles in &line_layouts {
@@ -5188,9 +5203,15 @@ impl Element for EditorElement {
                         }
                     }
 
-                    let longest_line_width =
-                        layout_line(snapshot.longest_row(), &snapshot, &style, editor_width, cx)
-                            .width;
+                    let longest_line_width = layout_line(
+                        snapshot.longest_row(),
+                        &snapshot,
+                        &style,
+                        editor_width,
+                        is_row_soft_wrapped,
+                        cx,
+                    )
+                    .width;
                     let mut scroll_width =
                         longest_line_width.max(max_visible_line_width) + overscroll.width;
 
@@ -5208,6 +5229,7 @@ impl Element for EditorElement {
                             line_height,
                             &line_layouts,
                             &local_selections,
+                            is_row_soft_wrapped,
                             cx,
                         )
                     });
@@ -5966,6 +5988,7 @@ fn layout_line(
     snapshot: &EditorSnapshot,
     style: &EditorStyle,
     text_width: Pixels,
+    is_row_soft_wrapped: impl Copy + Fn(usize) -> bool,
     cx: &mut WindowContext,
 ) -> LineWithInvisibles {
     let chunks = snapshot.highlighted_chunks(row..row + DisplayRow(1), true, style);
@@ -5974,9 +5997,9 @@ fn layout_line(
         &style.text,
         MAX_LINE_LEN,
         1,
-        &[],
         snapshot.mode,
         text_width,
+        is_row_soft_wrapped,
         cx,
     )
     .pop()
@@ -6661,15 +6684,22 @@ mod tests {
             "Hardcoded expected invisibles differ from the actual ones in '{input_text}'"
         );
 
-        init_test(cx, |s| {
-            s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-            s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
-        });
+        for show_line_numbers in [true, false] {
+            init_test(cx, |s| {
+                s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+                s.defaults.tab_size = NonZeroU32::new(TAB_SIZE);
+            });
 
-        let actual_invisibles =
-            collect_invisibles_from_new_editor(cx, EditorMode::Full, input_text, px(500.0));
+            let actual_invisibles = collect_invisibles_from_new_editor(
+                cx,
+                EditorMode::Full,
+                input_text,
+                px(500.0),
+                show_line_numbers,
+            );
 
-        assert_eq!(expected_invisibles, actual_invisibles);
+            assert_eq!(expected_invisibles, actual_invisibles);
+        }
     }
 
     #[gpui::test]
@@ -6683,14 +6713,17 @@ mod tests {
             EditorMode::SingleLine { auto_width: false },
             EditorMode::AutoHeight { max_lines: 100 },
         ] {
-            let invisibles = collect_invisibles_from_new_editor(
-                cx,
-                editor_mode_without_invisibles,
-                "\t\t\t| | a b",
-                px(500.0),
-            );
-            assert!(invisibles.is_empty(),
+            for show_line_numbers in [true, false] {
+                let invisibles = collect_invisibles_from_new_editor(
+                    cx,
+                    editor_mode_without_invisibles,
+                    "\t\t\t| | a b",
+                    px(500.0),
+                    show_line_numbers,
+                );
+                assert!(invisibles.is_empty(),
                     "For editor mode {editor_mode_without_invisibles:?} no invisibles was expected but got {invisibles:?}");
+            }
         }
     }
 
@@ -6741,43 +6774,48 @@ mod tests {
         let resize_step = 10.0;
         let mut editor_width = 200.0;
         while editor_width <= 1000.0 {
-            update_test_language_settings(cx, |s| {
-                s.defaults.tab_size = NonZeroU32::new(tab_size);
-                s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
-                s.defaults.preferred_line_length = Some(editor_width as u32);
-                s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
-            });
+            for show_line_numbers in [true, false] {
+                update_test_language_settings(cx, |s| {
+                    s.defaults.tab_size = NonZeroU32::new(tab_size);
+                    s.defaults.show_whitespaces = Some(ShowWhitespaceSetting::All);
+                    s.defaults.preferred_line_length = Some(editor_width as u32);
+                    s.defaults.soft_wrap = Some(language_settings::SoftWrap::PreferredLineLength);
+                });
 
-            let actual_invisibles = collect_invisibles_from_new_editor(
-                cx,
-                EditorMode::Full,
-                &input_text,
-                px(editor_width),
-            );
+                let actual_invisibles = collect_invisibles_from_new_editor(
+                    cx,
+                    EditorMode::Full,
+                    &input_text,
+                    px(editor_width),
+                    show_line_numbers,
+                );
 
-            // Whatever the editor size is, ensure it has the same invisible kinds in the same order
-            // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
-            let mut i = 0;
-            for (actual_index, actual_invisible) in actual_invisibles.iter().enumerate() {
-                i = actual_index;
-                match expected_invisibles.get(i) {
-                    Some(expected_invisible) => match (expected_invisible, actual_invisible) {
-                        (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
-                        | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
-                        _ => {
-                            panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
+                // Whatever the editor size is, ensure it has the same invisible kinds in the same order
+                // (no good guarantees about the offsets: wrapping could trigger padding and its tests should check the offsets).
+                let mut i = 0;
+                for (actual_index, actual_invisible) in actual_invisibles.iter().enumerate() {
+                    i = actual_index;
+                    match expected_invisibles.get(i) {
+                        Some(expected_invisible) => match (expected_invisible, actual_invisible) {
+                            (Invisible::Whitespace { .. }, Invisible::Whitespace { .. })
+                            | (Invisible::Tab { .. }, Invisible::Tab { .. }) => {}
+                            _ => {
+                                panic!("At index {i}, expected invisible {expected_invisible:?} does not match actual {actual_invisible:?} by kind. Actual invisibles: {actual_invisibles:?}")
+                            }
+                        },
+                        None => {
+                            panic!("Unexpected extra invisible {actual_invisible:?} at index {i}")
                         }
-                    },
-                    None => panic!("Unexpected extra invisible {actual_invisible:?} at index {i}"),
+                    }
                 }
-            }
-            let missing_expected_invisibles = &expected_invisibles[i + 1..];
-            assert!(
-                missing_expected_invisibles.is_empty(),
-                "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
-            );
+                let missing_expected_invisibles = &expected_invisibles[i + 1..];
+                assert!(
+                    missing_expected_invisibles.is_empty(),
+                    "Missing expected invisibles after index {i}: {missing_expected_invisibles:?}"
+                );
 
-            editor_width += resize_step;
+                editor_width += resize_step;
+            }
         }
     }
 
@@ -6786,6 +6824,7 @@ mod tests {
         editor_mode: EditorMode,
         input_text: &str,
         editor_width: Pixels,
+        show_line_numbers: bool,
     ) -> Vec<Invisible> {
         info!(
             "Creating editor with mode {editor_mode:?}, width {}px and text '{input_text}'",
@@ -6797,11 +6836,13 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
+
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, cx| {
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_wrap_width(Some(editor_width), cx);
+                editor.set_show_line_numbers(show_line_numbers, cx);
             })
             .unwrap();
         let (_, state) = cx.draw(point(px(500.), px(500.)), size(px(500.), px(500.)), |_| {

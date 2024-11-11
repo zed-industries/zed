@@ -8,10 +8,10 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
+use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
-use language::{LanguageName, LanguageServerName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
@@ -469,7 +469,7 @@ impl ExtensionImports for WasmState {
                             .and_then(|key| {
                                 ProjectSettings::get(location, cx)
                                     .lsp
-                                    .get(&LanguageServerName(key.into()))
+                                    .get(&::lsp::LanguageServerName(key.into()))
                             })
                             .cloned()
                             .unwrap_or_default();
@@ -513,7 +513,7 @@ impl ExtensionImports for WasmState {
 
         self.host
             .registration_hooks
-            .update_lsp_status(language::LanguageServerName(server_name.into()), status);
+            .update_lsp_status(::lsp::LanguageServerName(server_name.into()), status);
         Ok(())
     }
 

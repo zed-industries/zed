@@ -38,16 +38,17 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageName,
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName, LanguageToolchainStore,
-    LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter,
+    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileSystemWatcher, InsertTextFormat,
     LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus, ServerStatus,
-    SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
+    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
+    ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams,
+    WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::{Mutex, RwLock};
@@ -3351,11 +3352,17 @@ impl LspStore {
 
                     buffer_handle.update(cx, |buffer, cx| {
                         buffer.set_completion_triggers(
+                            server.server_id(),
                             server
                                 .capabilities()
                                 .completion_provider
                                 .as_ref()
-                                .and_then(|provider| provider.trigger_characters.clone())
+                                .and_then(|provider| {
+                                    provider
+                                        .trigger_characters
+                                        .as_ref()
+                                        .map(|characters| characters.iter().cloned().collect())
+                                })
                                 .unwrap_or_default(),
                             cx,
                         );
@@ -3394,6 +3401,7 @@ impl LspStore {
                 for adapter in self.languages.lsp_adapters(&language.name()) {
                     if let Some(server_id) = ids.get(&(worktree_id, adapter.name.clone())) {
                         buffer.update_diagnostics(*server_id, DiagnosticSet::new([], buffer), cx);
+                        buffer.set_completion_triggers(*server_id, Default::default(), cx);
                     }
                 }
             }
@@ -5591,6 +5599,7 @@ impl LspStore {
 
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
+            let server_name = adapter.name.clone();
             let stderr_capture = stderr_capture.clone();
 
             move |_lsp_store, cx| async move {
@@ -5601,7 +5610,7 @@ impl LspStore {
                     .update(&mut cx.clone(), |this, cx| {
                         this.languages.create_fake_language_server(
                             server_id,
-                            &adapter.name,
+                            &server_name,
                             binary.clone(),
                             cx.to_async(),
                         )
@@ -5615,6 +5624,7 @@ impl LspStore {
                 lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
+                    server_name,
                     binary,
                     &root_path,
                     adapter.code_action_kinds(),
@@ -5797,6 +5807,7 @@ impl LspStore {
                                 DiagnosticSet::new([], buffer),
                                 cx,
                             );
+                            buffer.set_completion_triggers(server_id, Default::default(), cx);
                         });
                     }
                 });
@@ -6609,7 +6620,7 @@ impl LspStore {
 
         cx.emit(LspStoreEvent::LanguageServerAdded(
             server_id,
-            language_server.name().into(),
+            language_server.name(),
             Some(key.0),
         ));
 
@@ -6685,11 +6696,17 @@ impl LspStore {
 
                 buffer_handle.update(cx, |buffer, cx| {
                     buffer.set_completion_triggers(
+                        server_id,
                         language_server
                             .capabilities()
                             .completion_provider
                             .as_ref()
-                            .and_then(|provider| provider.trigger_characters.clone())
+                            .and_then(|provider| {
+                                provider
+                                    .trigger_characters
+                                    .as_ref()
+                                    .map(|characters| characters.iter().cloned().collect())
+                            })
                             .unwrap_or_default(),
                         cx,
                     )

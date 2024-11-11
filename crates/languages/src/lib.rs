@@ -2,6 +2,7 @@ use anyhow::Context;
 use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
