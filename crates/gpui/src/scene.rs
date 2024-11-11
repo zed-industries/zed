@@ -786,11 +786,17 @@ impl Path<Pixels> {
                 (point(0., 1.), point(0., 1.), point(0., 1.)),
             );
         }
-        self.push_triangle(
-            (self.current, to + point(px(0.5), px(0.5)), to),
-            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
-        );
+
         self.current = to;
+    }
+
+    /// Draw a straight line from the current point to the given point with closed contour.
+    pub fn close_line(&mut self) {
+        for vertice in self.vertices.clone().into_iter() {
+            self.line_to(vertice.xy_position);
+        }
+
+        self.current = self.start;
     }
 
     /// Draw a curve from the current point to the given point, using the given control point.

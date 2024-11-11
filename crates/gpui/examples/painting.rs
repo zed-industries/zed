@@ -15,9 +15,8 @@ impl PaintingViewer {
 
         // draw a line
         let mut path = Path::new(point(px(50.), px(180.)));
-        path.line_to(point(px(150.), px(120.)));
-        path.line_to(point(px(151.), px(121.)));
-        path.line_to(point(px(51.), px(181.)));
+        path.line_to(point(px(100.), px(120.)));
+        path.close_line();
         lines.push(path);
 
         // draw a lightening bolt ⚡
@@ -38,6 +37,7 @@ impl PaintingViewer {
         path.line_to(point(px(320.), px(200.)));
         path.line_to(point(px(270.), px(160.)));
         path.line_to(point(px(330.), px(160.)));
+        path.line_to(point(px(350.), px(100.)));
         lines.push(path);
 
         Self {
@@ -101,10 +101,8 @@ impl Render for PaintingViewer {
                                     for p in points.iter().skip(1) {
                                         path.line_to(*p);
                                     }
-                                    // Go back to close the path
-                                    for p in points.iter().rev() {
-                                        path.curve_to(*p - point(px(1.), px(1.)), *p - point(px(0.5), px(0.5)));
-                                    }
+                                    path.close_line();
+
 
                                     cx.paint_path(path, gpui::black());
                                 }
