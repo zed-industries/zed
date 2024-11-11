@@ -38,7 +38,6 @@ use std::{
     cell::Cell,
     ffi::{c_void, CStr},
     mem,
-    ops::Range,
     path::PathBuf,
     ptr::{self, NonNull},
     rc::Rc,
@@ -335,7 +334,6 @@ struct MacWindowState {
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
     fullscreen_restore_bounds: Bounds<Pixels>,
-    ime_composing: bool,
 }
 
 impl MacWindowState {
@@ -613,7 +611,6 @@ impl MacWindow {
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
-                ime_composing: false,
             })));
 
             (*native_window).set_ivar(
@@ -1243,13 +1240,11 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         return NO;
     }
 
-    let ime_composing = std::mem::take(&mut lock.ime_composing);
     drop(lock);
 
     let is_composing = with_input_handler(this, |input_handler| input_handler.marked_text_range())
         .flatten()
-        .is_some()
-        || ime_composing;
+        .is_some();
 
     // If we're composing, send the key to the input handler first;
     // otherwise we only send to the input handler if we don't have a matching binding.
@@ -1757,6 +1752,8 @@ extern "C" fn attributed_substring_for_proposed_range(
     .unwrap_or(nil)
 }
 
+// We ignore which selector it asks us to do because the user may have
+// bound the shortcut to something else.
 extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     let state = unsafe { get_window_state(this) };
     let mut lock = state.as_ref().lock();
