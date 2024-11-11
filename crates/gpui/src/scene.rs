@@ -790,15 +790,6 @@ impl Path<Pixels> {
         self.current = to;
     }
 
-    /// Draw a straight line from the current point to the given point with closed contour.
-    pub fn close_line(&mut self) {
-        for vertice in self.vertices.clone().into_iter() {
-            self.line_to(vertice.xy_position);
-        }
-
-        self.current = self.start;
-    }
-
     /// Draw a curve from the current point to the given point, using the given control point.
     pub fn curve_to(&mut self, to: Point<Pixels>, ctrl: Point<Pixels>) {
         self.contour_count += 1;
