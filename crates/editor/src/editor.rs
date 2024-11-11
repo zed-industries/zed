@@ -11945,7 +11945,7 @@ impl Editor {
 
     pub fn project_path(&self, cx: &mut ViewContext<Self>) -> Option<ProjectPath> {
         if let Some(buffer) = self.buffer.read(cx).as_singleton() {
-            buffer.read_with(cx, |buffer, cx| buffer.project_path(cx).map(|p| p.into()))
+            buffer.read_with(cx, |buffer, cx| buffer.project_path(cx))
         } else {
             None
         }
