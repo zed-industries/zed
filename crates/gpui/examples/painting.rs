@@ -104,8 +104,14 @@ impl Render for PaintingViewer {
                                         path.line_to(*p);
                                     }
 
+                                    let mut last = points.last().unwrap();
                                     for p in points.iter().rev() {
-                                         path.line_to(point(p.x, p.y + px(1.)));
+                                        let mut offset_x = px(0.);
+                                        if last.x == p.x {
+                                            offset_x = px(1.);
+                                        }
+                                        path.line_to(point(p.x + offset_x, p.y  + px(1.)));
+                                        last = p;
                                     }
 
                                     cx.paint_path(path, gpui::black());
