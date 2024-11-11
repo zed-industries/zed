@@ -96,9 +96,7 @@ use language::{
     CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
     Point, Selection, SelectionGoal, TransactionId,
 };
-use language::{
-    point_to_lsp, BufferRow, CharClassifier, LanguageServerName, Runnable, RunnableRange,
-};
+use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
@@ -111,7 +109,7 @@ use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
 pub use lsp::CompletionContext;
 use lsp::{
     CompletionItemKind, CompletionTriggerKind, DiagnosticSeverity, InsertTextFormat,
-    LanguageServerId,
+    LanguageServerId, LanguageServerName,
 };
 use mouse_context_menu::MouseContextMenu;
 use movement::TextLayoutDetails;

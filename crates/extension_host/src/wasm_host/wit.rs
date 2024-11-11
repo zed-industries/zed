@@ -3,6 +3,7 @@ mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
+use lsp::LanguageServerName;
 // use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
@@ -11,7 +12,7 @@ use crate::DocsDatabase;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
-use language::{LanguageServerName, LspAdapterDelegate};
+use language::LspAdapterDelegate;
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{

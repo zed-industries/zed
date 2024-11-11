@@ -154,7 +154,7 @@ impl Prettier {
         node: NodeRuntime,
         cx: AsyncAppContext,
     ) -> anyhow::Result<Self> {
-        use lsp::LanguageServerBinary;
+        use lsp::{LanguageServerBinary, LanguageServerName};
 
         let executor = cx.background_executor().clone();
         anyhow::ensure!(
@@ -170,14 +170,17 @@ impl Prettier {
         let node_path = executor
             .spawn(async move { node.binary_path().await })
             .await?;
+        let server_name = LanguageServerName("prettier".into());
+        let server_binary = LanguageServerBinary {
+            path: node_path,
+            arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
+            env: None,
+        };
         let server = LanguageServer::new(
             Arc::new(parking_lot::Mutex::new(None)),
             server_id,
-            LanguageServerBinary {
-                path: node_path,
-                arguments: vec![prettier_server.into(), prettier_dir.as_path().into()],
-                env: None,
-            },
+            server_name,
+            server_binary,
             &prettier_dir,
             None,
             cx.clone(),

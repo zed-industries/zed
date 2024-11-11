@@ -30,7 +30,7 @@ use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
 use http_client::HttpClient;
 pub use language_registry::{LanguageName, LoadedLanguage};
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use parking_lot::Mutex;
 use regex::Regex;
 use schemars::{
@@ -137,57 +137,6 @@ pub static PLAIN_TEXT: LazyLock<Arc<Language>> = LazyLock::new(|| {
 pub trait ToLspPosition {
     /// Converts the value into an LSP position.
     fn to_lsp_position(self) -> lsp::Position;
-}
-
-/// A name of a language server.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
-pub struct LanguageServerName(pub SharedString);
-
-impl std::fmt::Display for LanguageServerName {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        std::fmt::Display::fmt(&self.0, f)
-    }
-}
-
-impl AsRef<str> for LanguageServerName {
-    fn as_ref(&self) -> &str {
-        self.0.as_ref()
-    }
-}
-
-impl AsRef<OsStr> for LanguageServerName {
-    fn as_ref(&self) -> &OsStr {
-        self.0.as_ref().as_ref()
-    }
-}
-
-impl JsonSchema for LanguageServerName {
-    fn schema_name() -> String {
-        "LanguageServerName".into()
-    }
-
-    fn json_schema(_: &mut SchemaGenerator) -> Schema {
-        SchemaObject {
-            instance_type: Some(InstanceType::String.into()),
-            ..Default::default()
-        }
-        .into()
-    }
-}
-impl LanguageServerName {
-    pub const fn new_static(s: &'static str) -> Self {
-        Self(SharedString::new_static(s))
-    }
-
-    pub fn from_proto(s: String) -> Self {
-        Self(s.into())
-    }
-}
-
-impl<'a> From<&'a str> for LanguageServerName {
-    fn from(str: &'a str) -> LanguageServerName {
-        LanguageServerName(str.to_string().into())
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
