@@ -7,6 +7,9 @@
 {"Put":{"state":"<a><bˇr/></a>"}}
 {"Key":"%"}
 {"Get":{"state":"<a><bˇr/></a>","mode":"Normal"}}
-{"Put":{"state":"<a>\n    <br\n    /ˇ>\n</a>"}}
+{"Put":{"state":"<div class='test' ˇid='main'>\n</div>\n"}}
 {"Key":"%"}
-{"Get":{"state":"<a>\n    ˇ<br\n    />\n</a>","mode":"Normal"}}
+{"Get":{"state":"<div class='test' id='main'>\n<ˇ/div>\n","mode":"Normal"}}
+{"Put":{"state":"<a>\n    <br\n        test = \"test\"\n    /ˇ>\n</a>"}}
+{"Key":"%"}
+{"Get":{"state":"<a>\n    ˇ<br\n        test = \"test\"\n    />\n</a>","mode":"Normal"}}

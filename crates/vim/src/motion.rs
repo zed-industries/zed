@@ -2122,9 +2122,10 @@ mod test {
         cx.shared_state().await.assert_eq("func boop(ˇ) {\n}");
     }
 
-    // cargo test -p vim --features neovim test_matching_tags
     #[gpui::test]
     async fn test_matching_tags(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new_html(cx).await;
+
         cx.neovim.exec("set filetype=html").await;
 
         cx.set_shared_state(indoc! {r"<bˇody></body>"}).await;
@@ -2144,17 +2145,31 @@ mod test {
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state().await.assert_eq(indoc! {r"<a><bˇr/></a>"});
 
-        // test multi-line self-closing tag
-        cx.set_shared_state(indoc! {r"<a>
-            <br
-            /ˇ>
-        </a>"})
+        // test tag with attributes
+        cx.set_shared_state(indoc! {r"<div class='test' ˇid='main'>
+            </div>
+            "})
             .await;
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"<a>
+        cx.shared_state()
+            .await
+            .assert_eq(indoc! {r"<div class='test' id='main'>
+            <ˇ/div>
+            "});
+
+        // test multi-line self-closing tag
+        cx.set_shared_state(indoc! {r#"<a>
+            <br
+                test = "test"
+            /ˇ>
+        </a>"#})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r#"<a>
             ˇ<br
+                test = "test"
             />
-        </a>"});
+        </a>"#});
     }
 
     #[gpui::test]
