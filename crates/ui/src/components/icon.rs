@@ -90,10 +90,10 @@ impl IconSize {
     pub fn square_components(&self, cx: &mut WindowContext) -> (Pixels, Pixels) {
         let icon_size = self.rems() * cx.rem_size();
         let padding = match self {
-            IconSize::Indicator => Spacing::None.px(cx),
-            IconSize::XSmall => Spacing::Base2.px(cx),
-            IconSize::Small => Spacing::Base2.px(cx),
-            IconSize::Medium => Spacing::Base2.px(cx),
+            IconSize::Indicator => DynamicSpacing::Base00.px(cx),
+            IconSize::XSmall => DynamicSpacing::Base02.px(cx),
+            IconSize::Small => DynamicSpacing::Base02.px(cx),
+            IconSize::Medium => DynamicSpacing::Base02.px(cx),
         };
 
         (icon_size, padding)

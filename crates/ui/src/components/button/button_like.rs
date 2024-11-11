@@ -3,7 +3,7 @@ use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, ElevationIndex, Spacing};
+use crate::{prelude::*, DynamicSpacing, ElevationIndex};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
 pub trait SelectableButton: Selectable {
@@ -491,10 +491,12 @@ impl RenderOnce for ButtonLike {
                 ButtonLikeRounding::Left => this.rounded_l_md(),
                 ButtonLikeRounding::Right => this.rounded_r_md(),
             })
-            .gap(Spacing::Base4.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large => this.px(Spacing::Base6.rems(cx)),
-                ButtonSize::Default | ButtonSize::Compact => this.px(Spacing::Base4.rems(cx)),
+                ButtonSize::Large => this.px(DynamicSpacing::Base06.rems(cx)),
+                ButtonSize::Default | ButtonSize::Compact => {
+                    this.px(DynamicSpacing::Base04.rems(cx))
+                }
                 ButtonSize::None => this,
             })
             .bg(style.enabled(self.layer, cx).background)

@@ -3867,7 +3867,7 @@ impl OutlinePanel {
                 })
                 .child(
                     h_flex()
-                        .pt(Spacing::Base4.rems(cx))
+                        .pt(DynamicSpacing::Base04.rems(cx))
                         .justify_center()
                         .child({
                             let keystroke = match self.position(cx) {
