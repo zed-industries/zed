@@ -26,6 +26,7 @@ actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
+pub const BOOK_ONBOARDING: &str = "https://zed.dev/";
 
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
@@ -259,11 +260,8 @@ impl Render for WelcomePage {
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
                                             .icon_position(IconPosition::Start)
-                                            .on_click(cx.listener(|this, _, cx| {
-                                                this.telemetry.report_app_event(
-                                                    "welcome page: view docs".to_string(),
-                                                );
-                                                cx.open_url(DOCS_URL);
+                                            .on_click(cx.listener(|_, _, cx| {
+                                                cx.open_url(BOOK_ONBOARDING);
                                             })),
                                     ),
                             ),
