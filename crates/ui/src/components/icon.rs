@@ -495,7 +495,7 @@ impl ComponentPreview for IconDecoration {
 
                 single_example(
                     name,
-                    IconDecoration::new(kind.clone(), cx.theme().colors().surface_background, cx),
+                    IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
                 )
             })
             .collect();
