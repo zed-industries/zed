@@ -1,4 +1,4 @@
-use crate::{collab_panel, ChatPanelSettings};
+use crate::collab_ui::{collab_panel, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};

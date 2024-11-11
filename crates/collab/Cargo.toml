@@ -83,7 +83,6 @@ audio.workspace = true
 call = { workspace = true, features = ["test-support"] }
 channel.workspace = true
 client = { workspace = true, features = ["test-support"] }
-collab_ui = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
@@ -120,6 +119,7 @@ unindent.workspace = true
 util.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
 worktree = { workspace = true, features = ["test-support"] }
+zed_common = { workspace = true, features = ["test-support"] }
 
 [package.metadata.cargo-machete]
 ignored = ["async-stripe"]

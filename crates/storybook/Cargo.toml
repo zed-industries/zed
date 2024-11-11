@@ -15,7 +15,6 @@ path = "src/storybook.rs"
 [dependencies]
 anyhow.workspace = true
 clap = { workspace = true, features = ["derive", "string"] }
-collab_ui = { workspace = true, features = ["stories"] }
 ctrlc = "3.4"
 dialoguer = { version = "0.11.0", features = ["fuzzy-select"] }
 editor.workspace = true
@@ -36,6 +35,7 @@ theme.workspace = true
 title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
 reqwest_client.workspace = true
+zed_common = { workspace = true, features = ["stories"] }
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }

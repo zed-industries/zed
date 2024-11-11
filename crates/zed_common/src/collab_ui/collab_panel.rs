@@ -2,7 +2,9 @@ mod channel_modal;
 mod contact_finder;
 
 use self::channel_modal::ChannelModal;
-use crate::{channel_view::ChannelView, chat_panel::ChatPanel, CollaborationPanelSettings};
+use crate::collab_ui::{
+    channel_view::ChannelView, chat_panel::ChatPanel, CollaborationPanelSettings,
+};
 use call::ActiveCall;
 use channel::{Channel, ChannelEvent, ChannelStore};
 use client::{ChannelId, Client, Contact, User, UserStore};

@@ -19,7 +19,7 @@ use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
 use theme::ThemeSettings;
 use ui::{prelude::*, TextSize};
 
-use crate::panel_settings::MessageEditorSettings;
+use crate::collab_ui::panel_settings::MessageEditorSettings;
 
 const MENTIONS_DEBOUNCE_INTERVAL: Duration = Duration::from_millis(50);
 

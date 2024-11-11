@@ -1,4 +1,4 @@
-use crate::{chat_panel::ChatPanel, NotificationPanelSettings};
+use crate::collab_ui::{chat_panel::ChatPanel, NotificationPanelSettings};
 use anyhow::Result;
 use channel::ChannelStore;
 use client::{ChannelId, Client, Notification, User, UserStore};

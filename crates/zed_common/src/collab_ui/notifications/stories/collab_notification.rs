@@ -2,7 +2,7 @@ use gpui::prelude::*;
 use story::{Story, StoryItem, StorySection};
 use ui::prelude::*;
 
-use crate::notifications::collab_notification::CollabNotification;
+use crate::collab_ui::notifications::collab_notification::CollabNotification;
 
 pub struct CollabNotificationStory;
 
