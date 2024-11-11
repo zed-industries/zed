@@ -39,8 +39,8 @@ use workspace::{
     Workspace, WorkspaceId,
 };
 
-use crate::components::{ExtensionCard, FeatureUpsell};
-use crate::extension_version_selector::{
+use crate::extensions_ui::components::{ExtensionCard, FeatureUpsell};
+use crate::extensions_ui::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
 

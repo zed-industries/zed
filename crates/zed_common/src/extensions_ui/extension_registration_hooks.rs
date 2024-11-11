@@ -12,8 +12,8 @@ use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
 
-use crate::extension_context_server::ExtensionContextServer;
-use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
+use crate::extensions_ui::extension_context_server::ExtensionContextServer;
+use crate::extensions_ui::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,

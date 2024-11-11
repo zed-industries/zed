@@ -179,7 +179,9 @@ impl Render for WelcomePage {
                                         this.telemetry.report_app_event(
                                             "welcome page: open extensions".to_string(),
                                         );
-                                        cx.dispatch_action(Box::new(extensions_ui::Extensions));
+                                        cx.dispatch_action(Box::new(
+                                            crate::extensions_ui::Extensions,
+                                        ));
                                     })),
                             ),
                     )

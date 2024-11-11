@@ -406,7 +406,7 @@ fn main() {
             app_state.client.telemetry().clone(),
             cx,
         );
-        let api = extensions_ui::ConcreteExtensionRegistrationHooks::new(
+        let api = zed_common::extensions_ui::ConcreteExtensionRegistrationHooks::new(
             ThemeRegistry::global(cx),
             SlashCommandRegistry::global(cx),
             IndexedDocsRegistry::global(cx),
@@ -463,7 +463,7 @@ fn main() {
         markdown_preview::init(cx);
         zed_common::welcome::init(cx);
         settings_ui::init(cx);
-        extensions_ui::init(cx);
+        zed_common::extensions_ui::init(cx);
 
         cx.observe_global::<SettingsStore>({
             let languages = app_state.languages.clone();
