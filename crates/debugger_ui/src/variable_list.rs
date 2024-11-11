@@ -176,7 +176,7 @@ impl VariableList {
     ) {
         match event {
             StackFrameListEvent::SelectedStackFrameChanged => {
-                self.build_entries(true, false, cx);
+                self.build_entries(true, true, cx);
             }
             StackFrameListEvent::StackFramesUpdated => {
                 self.fetch_variables(cx);
