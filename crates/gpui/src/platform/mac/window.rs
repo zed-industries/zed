@@ -1250,7 +1250,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     // otherwise we only send to the input handler if we don't have a matching binding.
     // The input handler may call `do_command_by_selector` if it doesn't know how to handle
     // a key. If it does so, it will return YES so we won't send the key twice.
-    if is_composing {
+    if is_composing || event.keystroke.key.is_empty() {
         window_state.as_ref().lock().keystroke_for_do_command = Some(event.keystroke.clone());
         let handled: BOOL = unsafe {
             let input_context: id = msg_send![this, inputContext];
@@ -1298,11 +1298,10 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         }
     }
 
-    let handled = unsafe {
+    unsafe {
         let input_context: id = msg_send![this, inputContext];
         msg_send![input_context, handleEvent: native_event]
-    };
-    handled
+    }
 }
 
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {

@@ -242,6 +242,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
     use cocoa::appkit::*;
 
     let mut characters = native_event.characters().to_str().to_string();
+    let mut ime_key = None;
     let first_char = characters.chars().next().map(|ch| ch as u16);
     let modifiers = native_event.modifierFlags();
 
@@ -255,7 +256,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
         });
 
     #[allow(non_upper_case_globals)]
-    let mut key = match first_char {
+    let key = match first_char {
         Some(SPACE_KEY) => "space".to_string(),
         Some(BACKSPACE_KEY) => "backspace".to_string(),
         Some(ENTER_KEY) | Some(NUMPAD_ENTER_KEY) => "enter".to_string(),
@@ -326,7 +327,7 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 chars_ignoring_modifiers = chars_with_cmd;
             }
 
-            if shift
+            let mut key = if shift
                 && chars_ignoring_modifiers
                     .chars()
                     .all(|c| c.is_ascii_lowercase())
@@ -337,19 +338,14 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 chars_with_shift
             } else {
                 chars_ignoring_modifiers
-            }
-        }
-    };
+            };
 
-    // When typing a dead key, we don't want to pretend we have actual input.
-    // (but on a french keyboard, cmd-^ is a dead key and we want it to generate cmd-ˆ)
-    if characters.len() == 0 && !command && !control && !function {
-        key = "".to_string()
-    };
-    let ime_key = if characters.len() > 0 && characters != key {
-        Some(characters.clone())
-    } else {
-        None
+            if characters.len() > 0 && characters != key {
+                ime_key = Some(characters.clone());
+            };
+
+            key
+        }
     };
 
     Keystroke {
