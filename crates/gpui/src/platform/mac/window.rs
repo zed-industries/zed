@@ -338,8 +338,6 @@ struct MacWindowState {
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
-    // State tracking what the IME did after the last request
-    last_ime_inputs: Option<SmallVec<[(String, Option<Range<usize>>); 1]>>,
     keystroke_for_do_command: Option<Keystroke>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
@@ -619,7 +617,6 @@ impl MacWindow {
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
-                last_ime_inputs: None,
                 keystroke_for_do_command: None,
                 external_files_dragged: false,
                 first_mouse: false,
@@ -1226,9 +1223,9 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //  Brazilian layout:
 //   - `" space` should create an unmarked quote
 //   - `" backspace` should delete the marked quote
+//   - `" "`shoud create an unmarked quote and a second marked quote
 //   - `" up` should insert a quote, unmark it, and move up one line
 //   - `" cmd-down` should insert a quote, unmark it, and move to the end of the file
-//      - NOTE: The current implementation does not move the selection to the end of the file
 //   - `cmd-ctrl-space` and clicking on an emoji should type it
 //  Czech (QWERTY) layout:
 //   - in vim mode `option-4`  should go to end of line (same as $)
@@ -1262,13 +1259,20 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         .is_some()
         || ime_composing;
 
+    // If we're composing, send the key to the input handler first;
+    // otherwise we only send to the input handler if we don't have a matching binding.
+    // The input handler may call `do_command_by_selector` if it doesn't know how to handle
+    // a key. If it does so, it will return YES so we won't send the key twice.
     if is_composing {
-        unsafe {
+        window_state.as_ref().lock().keystroke_for_do_command = Some(event.keystroke.clone());
+        let handled: BOOL = unsafe {
             let input_context: id = msg_send![this, inputContext];
-            if msg_send![input_context, handleEvent: native_event] {
-                return YES;
-            }
+            msg_send![input_context, handleEvent: native_event]
         };
+        window_state.as_ref().lock().keystroke_for_do_command.take();
+        if handled {
+            return YES;
+        }
 
         let mut callback = window_state.as_ref().lock().event_callback.take();
         let handled = if let Some(callback) = callback.as_mut() {
@@ -1295,57 +1299,6 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         let input_context: id = msg_send![this, inputContext];
         msg_send![input_context, handleEvent: native_event]
     }
-
-    // // Send the event to the input context for IME handling, unless the `fn` modifier is
-    // // being pressed.
-    // // this will call back into `insert_text`, etc.
-    // if !fn_modifier {}
-
-    // let mut handled = false;
-    // let mut lock = window_state.lock();
-    // let previous_keydown_inserted_text = lock.previous_keydown_inserted_text.take();
-
-    // drop(lock);
-
-    // if let Some((text, range)) = last_insert {
-    //     if !is_composing {
-    //         window_state.lock().previous_keydown_inserted_text = Some(text.clone());
-    //         if let Some(callback) = callback.as_mut() {
-    //             event.keystroke.ime_key = Some(text.clone());
-    //             handled = !callback(PlatformInput::KeyDown(event)).propagate;
-    //         }
-    //     }
-
-    //     if !handled {
-    //         handled = true;
-    //         send_to_input_handler(this, ImeInput::InsertText(text, range));
-    //     }
-    // } else if !is_composing {
-    //     let is_held = event.is_held;
-
-    //     if let Some(callback) = callback.as_mut() {
-    //         handled = !callback(PlatformInput::KeyDown(event)).propagate;
-    //     }
-
-    //     if !handled && is_held {
-    //         if let Some(text) = previous_keydown_inserted_text {
-    //             // macOS IME is a bit funky, and even when you've told it there's nothing to
-    //             // enter it will still swallow certain keys (e.g. 'f', 'j') and not others
-    //             // (e.g. 'n'). This is a problem for certain kinds of views, like the terminal.
-    //             with_input_handler(this, |input_handler| {
-    //                 if input_handler.selected_text_range(false).is_none() {
-    //                     handled = true;
-    //                     input_handler.replace_text_in_range(None, &text)
-    //                 }
-    //             });
-    //             window_state.lock().previous_keydown_inserted_text = Some(text);
-    //         }
-    //     }
-    // }
-
-    // window_state.lock().event_callback = callback;
-
-    // NO
 }
 
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
@@ -1989,11 +1942,6 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
         if let Some(mut input_handler) = lock.input_handler.take() {
             match ime {
                 ImeInput::InsertText(text, range) => {
-                    if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                        ime_input.push((text, range));
-                        lock.input_handler = Some(input_handler);
-                        return;
-                    }
                     drop(lock);
                     input_handler.replace_text_in_range(range, &text)
                 }
@@ -2008,12 +1956,6 @@ fn send_to_input_handler(window: &Object, ime: ImeInput) {
                 }
             }
             window_state.lock().input_handler = Some(input_handler);
-        } else {
-            if let ImeInput::InsertText(text, range) = ime {
-                if let Some(ime_input) = lock.last_ime_inputs.as_mut() {
-                    ime_input.push((text, range));
-                }
-            }
         }
     }
 }
