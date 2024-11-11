@@ -53,11 +53,7 @@ pub fn path_str(_args: TokenStream, input: TokenStream) -> TokenStream {
     input
 }
 
-/// Generates a `DynamicSpacing` enum with associated methods for flexible UI spacing.
-///
-/// This macro creates an enum where each variant represents a spacing value that adapts
-/// to different UI density settings (compact, default, comfortable). It also implements
-/// methods to convert these spacings to ratios, rems, and pixels.
+/// Generates the DynamicSpacing enum used for density-aware spacing in the UI.
 #[proc_macro]
 pub fn derive_dynamic_spacing(input: TokenStream) -> TokenStream {
     dynamic_spacing::derive_spacing(input)

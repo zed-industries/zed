@@ -47,7 +47,7 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
         .iter()
         .enumerate()
         .map(|(i, v)| {
-            let variant = format_ident!("Base{}", i);
+            let variant = format_ident!("Base{:02}", i);
             match v {
                 DynamicSpacingValue::Single(n) => {
                     let n = n.base10_parse::<f32>().unwrap();
@@ -80,7 +80,7 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
         .iter()
         .enumerate()
         .map(|(i, v)| {
-            let variant = format_ident!("Base{}", i);
+            let variant = format_ident!("Base{:02}", i);
             match v {
                 DynamicSpacingValue::Single(n) => {
                     let n = n.base10_parse::<f32>().unwrap();
@@ -105,11 +105,14 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
         .collect();
 
     let expanded = quote! {
-        /// Represents dynamic spacing values that adapt to different UI density settings.
+        /// A dynamic spacing system that adjusts spacing based on
+        /// [UiDensity].
         ///
-        /// This enum provides a set of predefined spacing values that can be used
-        /// throughout the application. Each variant represents a specific spacing
-        /// configuration, which may adapt to the current UI density setting.
+        /// The number following "Base" refers to the base pixel size
+        /// at the default rem size and spacing settings.
+        ///
+        /// When possible, [DynamicSpacing] should be used over manual
+        /// or built-in spacing values in places dynamic spacing is needed.
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub enum DynamicSpacing {
             #(
