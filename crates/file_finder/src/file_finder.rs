@@ -1193,7 +1193,6 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
-        let weak_self = cx.view().downgrade();
         Some(
             h_flex()
                 .w_full()
@@ -1219,74 +1218,12 @@ impl PickerDelegate for FileFinderDelegate {
                                 .tooltip(|cx| Tooltip::text("Open in split", cx)),
                         )
                         .menu({
-                            let weak_self = weak_self.clone();
                             move |cx| {
-                                let weak_self = weak_self.clone();
-                                Some(ContextMenu::build(cx, move |menu, cx| {
-                                    let context = weak_self
-                                        .update(cx, |this, cx| {
-                                            this.delegate.workspace.upgrade().and_then(
-                                                |workspace| {
-                                                    Some(
-                                                        workspace
-                                                            .read(cx)
-                                                            .active_item_as::<Editor>(cx)?
-                                                            .focus_handle(cx),
-                                                    )
-                                                },
-                                            )
-                                        })
-                                        .ok()
-                                        .flatten();
-                                    menu.when_some(context, |menu, context| menu.context(context))
-                                        .entry("Split left", None, {
-                                            let weak_self = weak_self.clone();
-                                            move |cx| {
-                                                weak_self
-                                                    .update(cx, |_, cx| {
-                                                        cx.dispatch_action(
-                                                            pane::SplitLeft.boxed_clone(),
-                                                        )
-                                                    })
-                                                    .ok();
-                                            }
-                                        })
-                                        .entry("Split right", None, {
-                                            let weak_self = weak_self.clone();
-                                            move |cx| {
-                                                weak_self
-                                                    .update(cx, |_, cx| {
-                                                        cx.dispatch_action(
-                                                            pane::SplitRight.boxed_clone(),
-                                                        )
-                                                    })
-                                                    .ok();
-                                            }
-                                        })
-                                        .entry("Split up", None, {
-                                            let weak_self = weak_self.clone();
-                                            move |cx| {
-                                                weak_self
-                                                    .update(cx, |_, cx| {
-                                                        cx.dispatch_action(
-                                                            pane::SplitUp.boxed_clone(),
-                                                        )
-                                                    })
-                                                    .ok();
-                                            }
-                                        })
-                                        .entry("Split down", None, {
-                                            let weak_self = weak_self.clone();
-                                            move |cx| {
-                                                weak_self
-                                                    .update(cx, |_, cx| {
-                                                        cx.dispatch_action(
-                                                            pane::SplitDown.boxed_clone(),
-                                                        )
-                                                    })
-                                                    .ok();
-                                            }
-                                        })
+                                Some(ContextMenu::build(cx, move |menu, _| {
+                                    menu.action("Split left", pane::SplitLeft.boxed_clone())
+                                        .action("Split right", pane::SplitRight.boxed_clone())
+                                        .action("Split up", pane::SplitUp.boxed_clone())
+                                        .action("Split down", pane::SplitDown.boxed_clone())
                                 }))
                             }
                         }),

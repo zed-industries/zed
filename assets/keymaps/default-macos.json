@@ -651,8 +651,10 @@
     "context": "FileFinder",
     "bindings": {
       "cmd-shift-p": "file_finder::SelectPrev",
-      "cmd-shift-r": "pane::SplitRight",
-      "cmd-shift-b": "pane::SplitDown"
+      "cmd-k up": "pane::SplitUp",
+      "cmd-k down": "pane::SplitDown",
+      "cmd-k left": "pane::SplitLeft",
+      "cmd-k right": "pane::SplitRight"
     }
   },
   {
