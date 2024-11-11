@@ -671,6 +671,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    #[allow(dead_code)]
     fn apple_press_and_hold_enabled(&mut self) -> bool {
         self.handler.apple_press_and_hold_enabled()
     }
@@ -777,6 +778,7 @@ pub trait InputHandler: 'static {
     /// sending these to the platform.
     /// TODO: Ideally we should be able to set ApplePressAndHoldEnabled in NSUserDefaults
     /// (which is how iTerm does it) but it doesn't seem to work for me.
+    #[allow(dead_code)]
     fn apple_press_and_hold_enabled(&mut self) -> bool {
         true
     }
