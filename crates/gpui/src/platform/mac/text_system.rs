@@ -1,3 +1,4 @@
+use super::open_type::apply_features_and_fallbacks;
 use crate::{
     point, px, size, Bounds, DevicePixels, Font, FontFallbacks, FontFeatures, FontId, FontMetrics,
     FontRun, FontStyle, FontWeight, GlyphId, LineLayout, Pixels, PlatformTextSystem, Point,
@@ -13,10 +14,13 @@ use core_foundation::{
     string::CFString,
 };
 use core_graphics::{
-    base::{kCGImageAlphaPremultipliedLast, CGGlyph},
+    base::{
+        kCGBitmapByteOrder32Little, kCGImageAlphaNoneSkipLast, kCGImageAlphaPremultipliedLast,
+        CGGlyph,
+    },
     color_space::CGColorSpace,
-    context::CGContext,
-    display::CGPoint,
+    context::{CGBlendMode, CGContext, CGTextDrawingMode},
+    display::{CGPoint, CGRect, CGSize},
 };
 use core_text::{
     font::CTFont,
@@ -43,11 +47,6 @@ use pathfinder_geometry::{
 };
 use smallvec::SmallVec;
 use std::{borrow::Cow, char, cmp, convert::TryFrom, sync::Arc};
-
-use super::open_type::apply_features_and_fallbacks;
-
-#[allow(non_upper_case_globals)]
-const kCGImageAlphaOnly: u32 = 7;
 
 pub(crate) struct MacTextSystem(RwLock<MacTextSystemState>);
 
@@ -359,30 +358,63 @@ impl MacTextSystemState {
             }
             let bitmap_size = bitmap_size;
 
-            let mut bytes;
-            let cx;
-            if params.is_emoji {
-                bytes = vec![0; bitmap_size.width.0 as usize * 4 * bitmap_size.height.0 as usize];
-                cx = CGContext::create_bitmap_context(
-                    Some(bytes.as_mut_ptr() as *mut _),
-                    bitmap_size.width.0 as usize,
-                    bitmap_size.height.0 as usize,
-                    8,
-                    bitmap_size.width.0 as usize * 4,
-                    &CGColorSpace::create_device_rgb(),
-                    kCGImageAlphaPremultipliedLast,
-                );
+            let color_type = if params.is_emoji {
+                kCGImageAlphaPremultipliedLast
             } else {
-                bytes = vec![0; bitmap_size.width.0 as usize * bitmap_size.height.0 as usize];
-                cx = CGContext::create_bitmap_context(
-                    Some(bytes.as_mut_ptr() as *mut _),
-                    bitmap_size.width.0 as usize,
-                    bitmap_size.height.0 as usize,
-                    8,
-                    bitmap_size.width.0 as usize,
-                    &CGColorSpace::create_device_gray(),
-                    kCGImageAlphaOnly,
+                kCGImageAlphaNoneSkipLast
+            };
+            let mut bytes =
+                vec![0; bitmap_size.width.0 as usize * 4 * bitmap_size.height.0 as usize];
+            let cx = CGContext::create_bitmap_context(
+                Some(bytes.as_mut_ptr() as *mut _),
+                bitmap_size.width.0 as usize,
+                bitmap_size.height.0 as usize,
+                8,
+                bitmap_size.width.0 as usize * 4,
+                &CGColorSpace::create_device_rgb(),
+                kCGBitmapByteOrder32Little | color_type,
+            );
+            cx.set_allows_font_subpixel_positioning(true);
+            cx.set_should_subpixel_position_fonts(true);
+            cx.set_allows_font_subpixel_quantization(false);
+            cx.set_should_subpixel_quantize_fonts(false);
+            if !params.is_emoji {
+                cx.set_should_smooth_fonts(true);
+                cx.set_should_antialias(true);
+
+                let background_color;
+                let foreground_color;
+                if params.is_light {
+                    background_color = [0., 0., 0.];
+                    foreground_color = [1., 1., 1.];
+                } else {
+                    background_color = [1., 1., 1.];
+                    foreground_color = [0., 0., 0.];
+                }
+
+                cx.set_blend_mode(CGBlendMode::Copy);
+                cx.set_rgb_fill_color(
+                    background_color[0],
+                    background_color[1],
+                    background_color[2],
+                    1.,
                 );
+                cx.fill_rect(CGRect {
+                    origin: CGPoint { x: 0.0, y: 0.0 },
+                    size: CGSize {
+                        width: bitmap_size.width.0 as CGFloat,
+                        height: bitmap_size.height.0 as CGFloat,
+                    },
+                });
+                cx.set_blend_mode(CGBlendMode::Normal);
+
+                cx.set_rgb_fill_color(
+                    foreground_color[0],
+                    foreground_color[1],
+                    foreground_color[2],
+                    1.,
+                );
+                cx.set_text_drawing_mode(CGTextDrawingMode::CGTextFill);
             }
 
             // Move the origin to bottom left and account for scaling, this
@@ -399,10 +431,7 @@ impl MacTextSystemState {
             let subpixel_shift = params
                 .subpixel_variant
                 .map(|v| v as f32 / SUBPIXEL_VARIANTS as f32);
-            cx.set_allows_font_subpixel_positioning(true);
-            cx.set_should_subpixel_position_fonts(true);
-            cx.set_allows_font_subpixel_quantization(false);
-            cx.set_should_subpixel_quantize_fonts(false);
+
             self.fonts[params.font_id.0]
                 .native_font()
                 .clone_with_font_size(f32::from(params.font_size) as CGFloat)
@@ -424,6 +453,19 @@ impl MacTextSystemState {
                     pixel[1] = (pixel[1] as f32 / a) as u8;
                     pixel[2] = (pixel[2] as f32 / a) as u8;
                 }
+            } else {
+                let mut index = 0;
+                bytes.retain_mut(|value| {
+                    index += 1;
+                    if index % 4 == 0 {
+                        if !params.is_light {
+                            *value = 255 - *value;
+                        }
+                        true
+                    } else {
+                        false
+                    }
+                });
             }
 
             Ok((bitmap_size, bytes))

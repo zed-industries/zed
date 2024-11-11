@@ -433,6 +433,12 @@ impl Hsla {
         self.a == 0.0
     }
 
+    /// Returns true if the color is considered "light", false otherwise.
+    /// A color is considered light if its lightness value is greater than 0.5.
+    pub fn is_light(&self) -> bool {
+        self.l > 0.5
+    }
+
     /// Blends `other` on top of `self` based on `other`'s alpha value. The resulting color is a combination of `self`'s and `other`'s colors.
     ///
     /// If `other`'s alpha value is 1.0 or greater, `other` color is fully opaque, thus `other` is returned as the output color.
