@@ -2510,6 +2510,10 @@ impl Editor {
             return false;
         }
 
+        if self.inline_completions_disabled_in_scope(buffer, buffer_position, cx) {
+            return false;
+        }
+
         if let Some(provider) = self.inline_completion_provider() {
             if let Some(show_inline_completions) = self.show_inline_completions_override {
                 show_inline_completions
@@ -2519,6 +2523,27 @@ impl Editor {
         } else {
             false
         }
+    }
+
+    fn inline_completions_disabled_in_scope(
+        &self,
+        buffer: &Model<Buffer>,
+        buffer_position: language::Anchor,
+        cx: &AppContext,
+    ) -> bool {
+        let snapshot = buffer.read(cx).snapshot();
+        let settings = snapshot.settings_at(buffer_position, cx);
+
+        let Some(scope) = snapshot.language_scope_at(buffer_position) else {
+            return false;
+        };
+
+        scope.override_name().map_or(false, |scope_name| {
+            settings
+                .inline_completions_disabled_in
+                .iter()
+                .any(|s| s == scope_name)
+        })
     }
 
     pub fn set_use_modal_editing(&mut self, to: bool) {

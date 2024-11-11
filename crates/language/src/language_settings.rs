@@ -112,6 +112,9 @@ pub struct LanguageSettings {
     /// Controls whether inline completions are shown immediately (true)
     /// or manually by triggering `editor::ShowInlineCompletion` (false).
     pub show_inline_completions: bool,
+    /// Controls whether inline completions are shown in the given language
+    /// scopes.
+    pub inline_completions_disabled_in: Vec<String>,
     /// Whether to show tabs and spaces in the editor.
     pub show_whitespaces: ShowWhitespaceSetting,
     /// Whether to start a new line with a comment when a previous line is a comment as well.
@@ -318,6 +321,14 @@ pub struct LanguageSettingsContent {
     /// Default: true
     #[serde(default)]
     pub show_inline_completions: Option<bool>,
+    /// Controls whether inline completions are shown in the given language
+    /// scopes.
+    ///
+    /// Example: ["string", "comment"]
+    ///
+    /// Default: []
+    #[serde(default)]
+    pub inline_completions_disabled_in: Option<Vec<String>>,
     /// Whether to show tabs and spaces in the editor.
     #[serde(default)]
     pub show_whitespaces: Option<ShowWhitespaceSetting>,
@@ -1163,6 +1174,10 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(
         &mut settings.show_inline_completions,
         src.show_inline_completions,
+    );
+    merge(
+        &mut settings.inline_completions_disabled_in,
+        src.inline_completions_disabled_in.clone(),
     );
     merge(&mut settings.show_whitespaces, src.show_whitespaces);
     merge(
