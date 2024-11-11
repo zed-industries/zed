@@ -67,6 +67,9 @@ pub struct NodeBinarySettings {
     /// If disabled, zed will download its own copy of node.
     #[serde(default)]
     pub ignore_system_version: Option<bool>,
+    /// If disabled, zed will not be allowed to download a copy of node.
+    #[serde(default)]
+    pub allow_download: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -171,6 +174,7 @@ pub struct BinarySettings {
     pub path: Option<String>,
     pub arguments: Option<Vec<String>>,
     pub ignore_system_version: Option<bool>,
+    pub allow_download: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]

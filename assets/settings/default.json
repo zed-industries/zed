@@ -861,16 +861,21 @@
   /// You can override this to use a version of node that is not in $PATH with:
   /// {
   ///   "node": {
-  ///     "path": "/path/to/node"
-  ///     "npm_path": "/path/to/npm" (defaults to node_path/../npm)
+  ///     "path": "/path/to/node",
+  ///     "npm_path": "/path/to/npm" // (defaults to node_path/../npm)
   ///   }
   /// }
-  /// or to ensure Zed always downloads and installs an isolated version of node:
+  /// to ensure Zed always downloads and installs an isolated version of node:
   /// {
   ///   "node": {
   ///     "ignore_system_version": true,
   ///   }
-  /// NOTE: changing this setting currently requires restarting Zed.
+  /// to ensure Zed never downloads and installs node:
+  /// {
+  ///   "node": {
+  ///     "allow_download": false,
+  ///   }
+  /// NOTE: changing these settings currently requires restarting Zed.
   "node": {},
   // The extensions that Zed should automatically install on startup.
   //
@@ -1076,6 +1081,12 @@
   "lsp": {
     // Specify the LSP name as a key here.
     // "rust-analyzer": {
+    //     "binary": {
+    //         "path_lookup": true,
+    //         "path": "rust-analyzer"
+    //         // Allow zed to download the binary if it's not found in the path
+    //         "allow_download": true
+    //     },
     //     // These initialization options are merged into Zed's defaults
     //     "initialization_options": {
     //         "check": {

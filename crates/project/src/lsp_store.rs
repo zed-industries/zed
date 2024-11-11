@@ -5491,7 +5491,6 @@ impl LspStore {
         &self,
         adapter: Arc<CachedLspAdapter>,
         delegate: Arc<dyn LspAdapterDelegate>,
-        allow_binary_download: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<LanguageServerBinary>> {
         let settings = ProjectSettings::get(
@@ -5525,7 +5524,10 @@ impl LspStore {
                 .as_ref()
                 .and_then(|b| b.ignore_system_version)
                 .unwrap_or_default(),
-            allow_binary_download,
+            allow_binary_download: settings
+                .as_ref()
+                .and_then(|b| b.allow_download)
+                .unwrap_or(true),
         };
         cx.spawn(|_, mut cx| async move {
             let binary_result = adapter
@@ -5595,7 +5597,7 @@ impl LspStore {
             adapter.name.0
         );
 
-        let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), true, cx);
+        let binary = self.get_language_server_binary(adapter.clone(), delegate.clone(), cx);
 
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
