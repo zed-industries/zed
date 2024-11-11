@@ -380,7 +380,7 @@ impl WindowsWindow {
         } else {
             (
                 WS_EX_APPWINDOW,
-                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_VISIBLE,
+                WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
 
