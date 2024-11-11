@@ -81,7 +81,6 @@ project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
 proto.workspace = true
-quick_action_bar.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true
 remote.workspace = true
@@ -119,6 +118,7 @@ vim.workspace = true
 welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zed_common.workspace = true
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true

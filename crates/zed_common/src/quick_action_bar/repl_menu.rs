@@ -15,7 +15,7 @@ use ui::{
 use gpui::ElementId;
 use util::ResultExt;
 
-use crate::QuickActionBar;
+use super::QuickActionBar;
 
 const ZED_REPL_DOCUMENTATION: &str = "https://zed.dev/docs/repl";
 

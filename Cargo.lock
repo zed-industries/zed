@@ -9353,24 +9353,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "quick_action_bar"
-version = "0.1.0"
-dependencies = [
- "assistant",
- "editor",
- "gpui",
- "markdown_preview",
- "picker",
- "repl",
- "search",
- "settings",
- "ui",
- "util",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "quinn"
 version = "0.11.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15404,7 +15386,6 @@ dependencies = [
  "project_panel",
  "project_symbols",
  "proto",
- "quick_action_bar",
  "recent_projects",
  "release_channel",
  "remote",
@@ -15446,6 +15427,7 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
+ "zed_common",
 ]
 
 [[package]]
@@ -15469,6 +15451,24 @@ name = "zed_clojure"
 version = "0.0.3"
 dependencies = [
  "zed_extension_api 0.1.0",
+]
+
+[[package]]
+name = "zed_common"
+version = "0.1.0"
+dependencies = [
+ "assistant",
+ "editor",
+ "gpui",
+ "markdown_preview",
+ "picker",
+ "repl",
+ "search",
+ "settings",
+ "ui",
+ "util",
+ "workspace",
+ "zed_actions",
 ]
 
 [[package]]
