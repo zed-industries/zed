@@ -373,36 +373,12 @@ fn always_use_command_layout() -> bool {
     chars_for_modified_key(0, true, false).is_ascii()
 }
 
-// fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
-//     // Ideally, we would use `[NSEvent charactersByApplyingModifiers]` but that
-//     // always returns an empty string with certain keyboards, e.g. Japanese. Synthesizing
-//     // an event with the given flags instead lets us access `characters`, which always
-//     // returns a valid string.
-//     let event = synthesize_keyboard_event(code);
-
-//     let mut flags = CGEventFlags::empty();
-//     if cmd {
-//         flags |= CGEventFlags::CGEventFlagCommand;
-//     }
-//     if shift {
-//         flags |= CGEventFlags::CGEventFlagShift;
-//     }
-//     event.set_flags(flags);
-
-//     unsafe {
-//         let event: id = msg_send![class!(NSEvent), eventWithCGEvent: &*event];
-//         event.characters().to_str().to_string()
-//     }
-// }
-// TODO: AZERTY dead keys don't seem to work... cmd-[ (or cmd-^ dead key on Azerty)
-//  do we need to re-order with respect to IME?
 fn chars_for_modified_key(code: CGKeyCode, cmd: bool, shift: bool) -> String {
     // Values from: https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/Carbon.framework/Versions/A/Frameworks/HIToolbox.framework/Versions/A/Headers/Events.h#L126
     // shifted >> 8 for UCKeyTranslate
     const CMD_MOD: u32 = 1;
     const SHIFT_MOD: u32 = 2;
     const CG_SPACE_KEY: u16 = 49;
-
     // https://github.com/phracker/MacOSX-SDKs/blob/master/MacOSX10.6.sdk/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/CarbonCore.framework/Versions/A/Headers/UnicodeUtilities.h#L278
     #[allow(non_upper_case_globals)]
     const kUCKeyActionDown: u16 = 0;
