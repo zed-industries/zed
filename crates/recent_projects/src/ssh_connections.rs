@@ -320,9 +320,9 @@ impl RenderOnce for SshConnectionHeader {
         };
 
         h_flex()
-            .px(Spacing::XLarge.rems(cx))
-            .pt(Spacing::Large.rems(cx))
-            .pb(Spacing::Small.rems(cx))
+            .px(DynamicSpacing::Base12.rems(cx))
+            .pt(DynamicSpacing::Base08.rems(cx))
+            .pb(DynamicSpacing::Base04.rems(cx))
             .rounded_t_md()
             .w_full()
             .gap_1p5()

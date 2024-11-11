@@ -38,9 +38,9 @@ impl Render for StatusBar {
         h_flex()
             .w_full()
             .justify_between()
-            .gap(Spacing::Large.rems(cx))
-            .py(Spacing::Small.rems(cx))
-            .px(Spacing::Large.rems(cx))
+            .gap(DynamicSpacing::Base08.rems(cx))
+            .py(DynamicSpacing::Base04.rems(cx))
+            .px(DynamicSpacing::Base08.rems(cx))
             .bg(cx.theme().colors().status_bar_background)
             .map(|el| match cx.window_decorations() {
                 Decorations::Server => el,
@@ -64,14 +64,14 @@ impl Render for StatusBar {
 impl StatusBar {
     fn render_left_tools(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .gap(Spacing::Large.rems(cx))
+            .gap(DynamicSpacing::Base08.rems(cx))
             .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
     fn render_right_tools(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         h_flex()
-            .gap(Spacing::Large.rems(cx))
+            .gap(DynamicSpacing::Base08.rems(cx))
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
     }
 }

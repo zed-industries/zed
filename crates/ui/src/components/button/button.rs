@@ -1,7 +1,9 @@
 #![allow(missing_docs)]
 use gpui::{AnyView, DefiniteLength};
 
-use crate::{prelude::*, ElevationIndex, IconPosition, KeyBinding, Spacing, TintColor};
+use crate::{
+    prelude::*, Color, DynamicSpacing, ElevationIndex, IconPosition, KeyBinding, TintColor,
+};
 use crate::{
     ButtonCommon, ButtonLike, ButtonSize, ButtonStyle, IconName, IconSize, Label, LineHeightStyle,
 };
@@ -398,7 +400,7 @@ impl RenderOnce for Button {
 
         self.base.child(
             h_flex()
-                .gap(Spacing::Small.rems(cx))
+                .gap(DynamicSpacing::Base04.rems(cx))
                 .when(self.icon_position == Some(IconPosition::Start), |this| {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
@@ -412,7 +414,7 @@ impl RenderOnce for Button {
                 })
                 .child(
                     h_flex()
-                        .gap(Spacing::Medium.rems(cx))
+                        .gap(DynamicSpacing::Base06.rems(cx))
                         .justify_between()
                         .child(
                             Label::new(label)
