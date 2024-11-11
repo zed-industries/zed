@@ -14,7 +14,7 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
-use http_client::github::latest_github_release;
+use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
 use language::{
     language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
@@ -989,12 +989,12 @@ async fn clear_copilot_dir() {
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &str = "dist/agent.js";
+    const SERVER_PATH: &str = "dist/language-server.js";
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let release =
-            latest_github_release("zed-industries/copilot", true, false, http.clone()).await?;
+            get_release_by_tag_name("zed-industries/copilot", "v0.7.0", http.clone()).await?;
 
         let version_dir = &paths::copilot_dir().join(format!("copilot-{}", release.tag_name));
 
