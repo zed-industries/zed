@@ -75,112 +75,196 @@ impl Render for WelcomePage {
             .track_focus(&self.focus_handle(cx))
             .child(
                 v_flex()
-                    .w_80()
-                    .gap_6()
+                    .gap_8()
                     .mx_auto()
                     .child(
                         svg()
                             .path("icons/logo_96.svg")
                             .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(80.))
-                            .h(px(80.))
+                            .w(px(64.))
+                            .h(px(64.))
                             .mx_auto(),
                     )
                     .child(
                         v_flex()
-                            .gap_2()
+                            .w_full()
                             .child(
-                                Button::new("choose-theme", "Choose Theme")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: change theme".to_string(),
-                                        );
-                                        this.workspace
-                                            .update(cx, |workspace, cx| {
-                                                theme_selector::toggle(
-                                                    workspace,
-                                                    &Default::default(),
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    })),
+                                h_flex()
+                                    .w_full()
+                                    .justify_center()
+                                    .child(Headline::new("Welcome to Zed")),
                             )
                             .child(
-                                Button::new("choose-keymap", "Choose Keymap")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: change keymap".to_string(),
-                                        );
-                                        this.workspace
-                                            .update(cx, |workspace, cx| {
-                                                base_keymap_picker::toggle(
-                                                    workspace,
-                                                    &Default::default(),
-                                                    cx,
-                                                )
-                                            })
-                                            .ok();
-                                    })),
-                            )
-                            .child(
-                                Button::new("edit settings", "Edit Settings")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: edit settings".to_string(),
-                                        );
-                                        cx.dispatch_action(Box::new(zed_actions::OpenSettings));
-                                    })),
-                            )
-                            .child(Button::new("view docs", "View Docs").full_width().on_click(
-                                cx.listener(|this, _, cx| {
-                                    this.telemetry
-                                        .report_app_event("welcome page: view docs".to_string());
-                                    cx.open_url(DOCS_URL);
-                                }),
-                            )),
+                                h_flex().w_full().justify_center().child(
+                                    Label::new("The editor for what's next")
+                                        .color(Color::Muted)
+                                        .italic(true),
+                                ),
+                            ),
                     )
                     .child(
-                        v_flex()
-                            .gap_2()
-                            .when(cfg!(target_os = "macos"), |el| {
-                                el.child(
-                                    Button::new("install-cli", "Install the CLI")
-                                        .full_width()
-                                        .on_click(cx.listener(|this, _, cx| {
-                                            this.telemetry.report_app_event(
-                                                "welcome page: install cli".to_string(),
-                                            );
-                                            cx.app_mut()
-                                                .spawn(|cx| async move {
-                                                    install_cli::install_cli(&cx).await
-                                                })
-                                                .detach_and_log_err(cx);
-                                        })),
-                                )
-                            })
+                        h_flex()
+                            .items_start()
+                            .gap_8()
                             .child(
-                                Button::new("sign-in-to-copilot", "Sign in to GitHub Copilot")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: sign in to copilot".to_string(),
-                                        );
-                                        inline_completion_button::initiate_sign_in(cx);
-                                    })),
+                                v_flex()
+                                    .gap_2()
+                                    .pr_8()
+                                    .border_r_1()
+                                    .border_color(cx.theme().colors().border_variant)
+                                    .child(
+                                        self.section_label(cx).child(
+                                            Label::new("Get Started")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        ),
+                                    )
+                                    .child(
+                                        Button::new("choose-theme", "Choose a Theme")
+                                            .icon(IconName::SwatchBook)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: change theme".to_string(),
+                                                );
+                                                this.workspace
+                                                    .update(cx, |workspace, cx| {
+                                                        theme_selector::toggle(
+                                                            workspace,
+                                                            &Default::default(),
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .ok();
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("choose-keymap", "Choose a Keymap")
+                                            .icon(IconName::Keyboard)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: change keymap".to_string(),
+                                                );
+                                                this.workspace
+                                                    .update(cx, |workspace, cx| {
+                                                        base_keymap_picker::toggle(
+                                                            workspace,
+                                                            &Default::default(),
+                                                            cx,
+                                                        )
+                                                    })
+                                                    .ok();
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new(
+                                            "sign-in-to-copilot",
+                                            "Sign in to GitHub Copilot",
+                                        )
+                                        .icon(IconName::Copilot)
+                                        .icon_size(IconSize::XSmall)
+                                        .icon_color(Color::Muted)
+                                        .icon_position(IconPosition::Start)
+                                        .on_click(
+                                            cx.listener(|this, _, cx| {
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: sign in to copilot".to_string(),
+                                                );
+                                                inline_completion_button::initiate_sign_in(cx);
+                                            }),
+                                        ),
+                                    )
+                                    .child(
+                                        Button::new("edit settings", "Edit Settings")
+                                            .icon(IconName::Settings)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: edit settings".to_string(),
+                                                );
+                                                cx.dispatch_action(Box::new(
+                                                    zed_actions::OpenSettings,
+                                                ));
+                                            })),
+                                    ),
                             )
                             .child(
-                                Button::new("explore extensions", "Explore extensions")
-                                    .full_width()
-                                    .on_click(cx.listener(|this, _, cx| {
-                                        this.telemetry.report_app_event(
-                                            "welcome page: open extensions".to_string(),
-                                        );
-                                        cx.dispatch_action(Box::new(extensions_ui::Extensions));
-                                    })),
+                                v_flex()
+                                    .gap_2()
+                                    .child(
+                                        self.section_label(cx).child(
+                                            Label::new("Resources")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        ),
+                                    )
+                                    .when(cfg!(target_os = "macos"), |el| {
+                                        el.child(
+                                            Button::new("install-cli", "Install the CLI")
+                                                .icon(IconName::Terminal)
+                                                .icon_size(IconSize::XSmall)
+                                                .icon_color(Color::Muted)
+                                                .icon_position(IconPosition::Start)
+                                                .on_click(cx.listener(|this, _, cx| {
+                                                    this.telemetry.report_app_event(
+                                                        "welcome page: install cli".to_string(),
+                                                    );
+                                                    cx.app_mut()
+                                                        .spawn(|cx| async move {
+                                                            install_cli::install_cli(&cx).await
+                                                        })
+                                                        .detach_and_log_err(cx);
+                                                })),
+                                        )
+                                    })
+                                    .child(
+                                        Button::new("view docs", "View Documentation")
+                                            .icon(IconName::FileCode)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: view docs".to_string(),
+                                                );
+                                                cx.open_url(DOCS_URL);
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("explore extensions", "Explore Extensions")
+                                            .icon(IconName::Blocks)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: open extensions".to_string(),
+                                                );
+                                                cx.dispatch_action(Box::new(
+                                                    extensions_ui::Extensions,
+                                                ));
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("view docs", "Book Onboarding")
+                                            .icon(IconName::PhoneIncoming)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(cx.listener(|this, _, cx| {
+                                                this.telemetry.report_app_event(
+                                                    "welcome page: view docs".to_string(),
+                                                );
+                                                cx.open_url(DOCS_URL);
+                                            })),
+                                    ),
                             ),
                     )
                     .child(
@@ -189,7 +273,7 @@ impl Render for WelcomePage {
                             .gap_2()
                             .bg(cx.theme().colors().elevated_surface_background)
                             .border_1()
-                            .border_color(cx.theme().colors().border)
+                            .border_color(cx.theme().colors().border_variant)
                             .rounded_md()
                             .child(CheckboxWithLabel::new(
                                 "enable-vim",
@@ -285,6 +369,10 @@ impl WelcomePage {
         });
 
         this
+    }
+
+    fn section_label(&self, cx: &WindowContext) -> Div {
+        div().font_buffer(cx).text_color(Color::Muted.color(cx))
     }
 
     fn update_settings<T: Settings>(
