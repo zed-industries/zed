@@ -51,7 +51,6 @@ use terminal_view::terminal_panel::{self, TerminalPanel};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim::VimModeSetting;
-use welcome::{BaseKeymap, MultibufferHint};
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
     open_new, AppState, NewFile, NewWindow, OpenLog, Toast, Workspace, WorkspaceSettings,
@@ -60,6 +59,7 @@ use workspace::{notifications::DetachAndPromptErr, Pane};
 use zed_actions::{
     OpenAccountSettings, OpenBrowser, OpenServerSettings, OpenSettings, OpenZedUrl, Quit,
 };
+use zed_common::welcome::{BaseKeymap, MultibufferHint};
 
 actions!(
     zed,

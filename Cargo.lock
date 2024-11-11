@@ -14208,32 +14208,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53a85b86a771b1c87058196170769dd264f66c0782acf1ae6cc51bfd64b39082"
 
 [[package]]
-name = "welcome"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "client",
- "db",
- "editor",
- "extensions_ui",
- "fuzzy",
- "gpui",
- "inline_completion_button",
- "install_cli",
- "picker",
- "project",
- "schemars",
- "serde",
- "settings",
- "theme_selector",
- "ui",
- "util",
- "vim",
- "workspace",
- "zed_actions",
-]
-
-[[package]]
 name = "which"
 version = "4.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15339,7 +15313,6 @@ dependencies = [
  "util",
  "uuid",
  "vim",
- "welcome",
  "windows 0.58.0",
  "winresource",
  "workspace",
@@ -15393,6 +15366,8 @@ dependencies = [
  "fuzzy",
  "gpui",
  "http_client",
+ "inline_completion_button",
+ "install_cli",
  "language",
  "markdown_preview",
  "menu",
@@ -15423,6 +15398,7 @@ dependencies = [
  "ui",
  "util",
  "vcs_menu",
+ "vim",
  "windows 0.58.0",
  "workspace",
  "zed_actions",

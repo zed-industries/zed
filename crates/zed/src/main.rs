@@ -55,7 +55,6 @@ use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
 use util::{maybe, parse_env_output, ResultExt, TryFutureExt};
 use uuid::Uuid;
-use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
     notifications::{simple_message_notification::MessageNotification, NotificationId},
     AppState, SerializedWorkspaceLocation, WorkspaceSettings, WorkspaceStore,
@@ -65,6 +64,7 @@ use zed::{
     handle_keymap_file_changes, initialize_workspace, open_paths_with_positions, OpenListener,
     OpenRequest,
 };
+use zed_common::welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 
 use crate::zed::inline_completion_registry;
 
@@ -461,7 +461,7 @@ fn main() {
         zed_common::collab_ui::init(&app_state, cx);
         feedback::init(cx);
         markdown_preview::init(cx);
-        welcome::init(cx);
+        zed_common::welcome::init(cx);
         settings_ui::init(cx);
         extensions_ui::init(cx);
 

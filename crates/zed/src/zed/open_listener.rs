@@ -24,9 +24,9 @@ use std::thread;
 use std::time::Duration;
 use util::paths::PathWithPosition;
 use util::ResultExt;
-use welcome::{show_welcome_view, FIRST_OPEN};
 use workspace::item::ItemHandle;
 use workspace::{AppState, OpenOptions, SerializedWorkspaceLocation, Workspace};
+use zed_common::welcome::{show_welcome_view, FIRST_OPEN};
 
 #[derive(Default, Debug)]
 pub struct OpenRequest {

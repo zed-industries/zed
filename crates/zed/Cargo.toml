@@ -114,7 +114,6 @@ urlencoding = "2.1.2"
 util.workspace = true
 uuid.workspace = true
 vim.workspace = true
-welcome.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 zed_common.workspace = true
