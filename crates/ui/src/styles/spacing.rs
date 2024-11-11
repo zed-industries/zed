@@ -1,8 +1,27 @@
 use gpui::{px, rems, Pixels, Rems, WindowContext};
 use settings::Settings;
 use theme::{ThemeSettings, UiDensity};
+use ui_macros::derive_dynamic_spacing;
 
 use crate::{rems_from_px, BASE_REM_SIZE_IN_PX};
+
+// Derives [DynamicSpacing]. See [ui_macros::derive_dynamic_spacing].
+derive_dynamic_spacing![
+    (0, 0, 0),
+    (1, 1, 2),
+    (1, 2, 4),
+    (2, 3, 4),
+    (2, 4, 6),
+    (3, 6, 8),
+    (4, 8, 10),
+    (10, 12, 14),
+    (14, 16, 18),
+    (18, 20, 22),
+    24,
+    32,
+    40,
+    48
+];
 
 /// A dynamic spacing system that adjusts spacing based on
 /// [UiDensity].

@@ -1,4 +1,5 @@
 mod derive_path_str;
+mod dynamic_spacing;
 
 use proc_macro::TokenStream;
 
@@ -50,4 +51,14 @@ pub fn derive_path_str(input: TokenStream) -> TokenStream {
 pub fn path_str(_args: TokenStream, input: TokenStream) -> TokenStream {
     // This attribute doesn't modify the input, it's just a marker
     input
+}
+
+/// Generates a `DynamicSpacing` enum with associated methods for flexible UI spacing.
+///
+/// This macro creates an enum where each variant represents a spacing value that adapts
+/// to different UI density settings (compact, default, comfortable). It also implements
+/// methods to convert these spacings to ratios, rems, and pixels.
+#[proc_macro]
+pub fn derive_dynamic_spacing(input: TokenStream) -> TokenStream {
+    dynamic_spacing::derive_spacing(input)
 }

@@ -1,0 +1,144 @@
+use proc_macro::TokenStream;
+use quote::{format_ident, quote};
+use syn::{
+    parse::Parse, parse::ParseStream, parse_macro_input, punctuated::Punctuated, LitInt, Token,
+};
+
+struct DynamicSpacingInput {
+    values: Punctuated<DynamicSpacingValue, Token![,]>,
+}
+
+enum DynamicSpacingValue {
+    Single(LitInt),
+    Tuple(LitInt, LitInt, LitInt),
+}
+
+impl Parse for DynamicSpacingInput {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        Ok(DynamicSpacingInput {
+            values: input.parse_terminated(DynamicSpacingValue::parse)?,
+        })
+    }
+}
+
+impl Parse for DynamicSpacingValue {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(syn::token::Paren) {
+            let content;
+            syn::parenthesized!(content in input);
+            let a: LitInt = content.parse()?;
+            content.parse::<Token![,]>()?;
+            let b: LitInt = content.parse()?;
+            content.parse::<Token![,]>()?;
+            let c: LitInt = content.parse()?;
+            Ok(DynamicSpacingValue::Tuple(a, b, c))
+        } else {
+            Ok(DynamicSpacingValue::Single(input.parse()?))
+        }
+    }
+}
+
+/// Derives the spacing method for the `DynamicSpacing` enum.
+pub fn derive_spacing(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DynamicSpacingInput);
+
+    let spacing_ratios: Vec<_> = input
+        .values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let variant = format_ident!("Base{}", i);
+            match v {
+                DynamicSpacingValue::Single(n) => {
+                    let n = n.base10_parse::<f32>().unwrap();
+                    quote! {
+                        DynamicSpacing::#variant => match ThemeSettings::get_global(cx).ui_density {
+                            UiDensity::Compact => (#n - 4.0).max(0.0) / BASE_REM_SIZE_IN_PX,
+                            UiDensity::Default => #n / BASE_REM_SIZE_IN_PX,
+                            UiDensity::Comfortable => (#n + 4.0) / BASE_REM_SIZE_IN_PX,
+                        }
+                    }
+                }
+                DynamicSpacingValue::Tuple(a, b, c) => {
+                    let a = a.base10_parse::<f32>().unwrap();
+                    let b = b.base10_parse::<f32>().unwrap();
+                    let c = c.base10_parse::<f32>().unwrap();
+                    quote! {
+                        DynamicSpacing::#variant => match ThemeSettings::get_global(cx).ui_density {
+                            UiDensity::Compact => #a / BASE_REM_SIZE_IN_PX,
+                            UiDensity::Default => #b / BASE_REM_SIZE_IN_PX,
+                            UiDensity::Comfortable => #c / BASE_REM_SIZE_IN_PX,
+                        }
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let variant_docs: Vec<_> = input
+        .values
+        .iter()
+        .enumerate()
+        .map(|(i, v)| {
+            let variant = format_ident!("Base{}", i);
+            match v {
+                DynamicSpacingValue::Single(n) => {
+                    let n = n.base10_parse::<f32>().unwrap();
+                    let compact = (n - 4.0).max(0.0);
+                    let comfortable = n + 4.0;
+                    quote! {
+                        #[doc = concat!("@16px/rem: `", stringify!(#compact), "px`|`", stringify!(#n), "px`|`", stringify!(#comfortable), "px` - Scales with the user's rem size.")]
+                        #variant,
+                    }
+                }
+                DynamicSpacingValue::Tuple(a, b, c) => {
+                    let a = a.base10_parse::<f32>().unwrap();
+                    let b = b.base10_parse::<f32>().unwrap();
+                    let c = c.base10_parse::<f32>().unwrap();
+                    quote! {
+                        #[doc = concat!("@16px/rem: `", stringify!(#a), "px`|`", stringify!(#b), "px`|`", stringify!(#c), "px` - Scales with the user's rem size.")]
+                        #variant,
+                    }
+                }
+            }
+        })
+        .collect();
+
+    let expanded = quote! {
+        /// Represents dynamic spacing values that adapt to different UI density settings.
+        ///
+        /// This enum provides a set of predefined spacing values that can be used
+        /// throughout the application. Each variant represents a specific spacing
+        /// configuration, which may adapt to the current UI density setting.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        pub enum DynamicSpacing {
+            #(
+                #[doc = stringify!(#variant_docs)]
+                #variant_docs
+            )*
+        }
+
+        impl DynamicSpacing {
+            /// Returns the spacing ratio, should only be used internally.
+            fn spacing_ratio(&self, cx: &WindowContext) -> f32 {
+                const BASE_REM_SIZE_IN_PX: f32 = 16.0;
+                match self {
+                    #(#spacing_ratios,)*
+                }
+            }
+
+            /// Returns the spacing value in rems.
+            pub fn rems(&self, cx: &WindowContext) -> Rems {
+                rems(self.spacing_ratio(cx))
+            }
+
+            /// Returns the spacing value in pixels.
+            pub fn px(&self, cx: &WindowContext) -> Pixels {
+                let ui_font_size_f32: f32 = ThemeSettings::get_global(cx).ui_font_size.into();
+                px(ui_font_size_f32 * self.spacing_ratio(cx))
+            }
+        }
+    };
+
+    TokenStream::from(expanded)
+}
