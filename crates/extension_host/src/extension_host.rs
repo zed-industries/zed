@@ -28,6 +28,7 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
     QUERY_FILENAME_PREFIXES,
 };
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
@@ -121,12 +122,7 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn register_lsp_adapter(&self, _language: LanguageName, _adapter: ExtensionLspAdapter) {}
 
-    fn remove_lsp_adapter(
-        &self,
-        _language: &LanguageName,
-        _server_name: &language::LanguageServerName,
-    ) {
-    }
+    fn remove_lsp_adapter(&self, _language: &LanguageName, _server_name: &LanguageServerName) {}
 
     fn register_wasm_grammars(&self, _grammars: Vec<(Arc<str>, PathBuf)>) {}
 
@@ -167,7 +163,7 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn update_lsp_status(
         &self,
-        _server_name: language::LanguageServerName,
+        _server_name: lsp::LanguageServerName,
         _status: language::LanguageServerBinaryStatus,
     ) {
     }

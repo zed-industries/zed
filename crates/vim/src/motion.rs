@@ -2125,17 +2125,15 @@ mod test {
     // cargo test -p vim --features neovim test_matching_tags
     #[gpui::test]
     async fn test_matching_tags(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new_html(cx).await;
-
         cx.neovim.exec("set filetype=html").await;
 
-        // test jumping forwards
         cx.set_shared_state(indoc! {r"<bˇody></body>"}).await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state()
             .await
             .assert_eq(indoc! {r"<body><ˇ/body>"});
         cx.simulate_shared_keystrokes("%").await;
+
         // test jumping backwards
         cx.shared_state()
             .await

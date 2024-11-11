@@ -40,7 +40,7 @@ use std::{
     borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fmt,
     future::Future,
@@ -126,7 +126,8 @@ pub struct Buffer {
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     diagnostics_timestamp: clock::Lamport,
-    completion_triggers: Vec<String>,
+    completion_triggers: BTreeSet<String>,
+    completion_triggers_per_language_server: HashMap<LanguageServerId, BTreeSet<String>>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
@@ -315,6 +316,8 @@ pub enum Operation {
         triggers: Vec<String>,
         /// The buffer's lamport timestamp.
         lamport_timestamp: clock::Lamport,
+        /// The language server ID.
+        server_id: LanguageServerId,
     },
 }
 
@@ -410,8 +413,11 @@ pub trait LocalFile: File {
     /// Returns the absolute path of this file
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
-    /// Loads the file's contents from disk.
+    /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
+
+    /// Loads the file's contents from disk.
+    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
 
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
@@ -697,12 +703,15 @@ impl Buffer {
             }));
         }
 
-        operations.push(proto::serialize_operation(
-            &Operation::UpdateCompletionTriggers {
-                triggers: self.completion_triggers.clone(),
-                lamport_timestamp: self.completion_triggers_timestamp,
-            },
-        ));
+        for (server_id, completions) in &self.completion_triggers_per_language_server {
+            operations.push(proto::serialize_operation(
+                &Operation::UpdateCompletionTriggers {
+                    triggers: completions.iter().cloned().collect(),
+                    lamport_timestamp: self.completion_triggers_timestamp,
+                    server_id: *server_id,
+                },
+            ));
+        }
 
         let text_operations = self.text.operations().clone();
         cx.background_executor().spawn(async move {
@@ -774,6 +783,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_timestamp: Default::default(),
             completion_triggers: Default::default(),
+            completion_triggers_per_language_server: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
@@ -2229,8 +2239,21 @@ impl Buffer {
             Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
+                server_id,
             } => {
-                self.completion_triggers = triggers;
+                if triggers.is_empty() {
+                    self.completion_triggers_per_language_server
+                        .remove(&server_id);
+                    self.completion_triggers = self
+                        .completion_triggers_per_language_server
+                        .values()
+                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .collect();
+                } else {
+                    self.completion_triggers_per_language_server
+                        .insert(server_id, triggers.iter().cloned().collect());
+                    self.completion_triggers.extend(triggers);
+                }
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -2374,13 +2397,31 @@ impl Buffer {
     }
 
     /// Override current completion triggers with the user-provided completion triggers.
-    pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
-        self.completion_triggers.clone_from(&triggers);
+    pub fn set_completion_triggers(
+        &mut self,
+        server_id: LanguageServerId,
+        triggers: BTreeSet<String>,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
+        if triggers.is_empty() {
+            self.completion_triggers_per_language_server
+                .remove(&server_id);
+            self.completion_triggers = self
+                .completion_triggers_per_language_server
+                .values()
+                .flat_map(|triggers| triggers.into_iter().cloned())
+                .collect();
+        } else {
+            self.completion_triggers_per_language_server
+                .insert(server_id, triggers.clone());
+            self.completion_triggers.extend(triggers.iter().cloned());
+        }
         self.send_operation(
             Operation::UpdateCompletionTriggers {
-                triggers,
+                triggers: triggers.iter().cloned().collect(),
                 lamport_timestamp: self.completion_triggers_timestamp,
+                server_id,
             },
             true,
             cx,
@@ -2390,7 +2431,7 @@ impl Buffer {
 
     /// Returns a list of strings which trigger a completion menu for this language.
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
-    pub fn completion_triggers(&self) -> &[String] {
+    pub fn completion_triggers(&self) -> &BTreeSet<String> {
         &self.completion_triggers
     }
 
