@@ -34,7 +34,7 @@ use std::{
 use text::Point;
 use ui::{
     prelude::*, ButtonLike, ContextMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
-    PopoverMenu, Tooltip,
+    PopoverMenu, PopoverMenuHandle, Tooltip,
 };
 use util::{paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
@@ -44,7 +44,14 @@ use workspace::{
 
 actions!(file_finder, [SelectPrev]);
 
-impl ModalView for FileFinder {}
+impl ModalView for FileFinder {
+    fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> workspace::DismissDecision {
+        let submenu_focused = self.picker.update(cx, |picker, cx| {
+            picker.delegate.popover_menu_handle.is_focused(cx)
+        });
+        workspace::DismissDecision::Dismiss(!submenu_focused)
+    }
+}
 
 pub struct FileFinder {
     picker: View<Picker<FileFinderDelegate>>,
@@ -262,6 +269,7 @@ pub struct FileFinderDelegate {
     history_items: Vec<FoundPath>,
     separate_history: bool,
     first_update: bool,
+    popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 /// Use a custom ordering for file finder: the regular one
@@ -590,6 +598,7 @@ impl FileFinderDelegate {
             history_items,
             separate_history,
             first_update: true,
+            popover_menu_handle: PopoverMenuHandle::default(),
         }
     }
 
@@ -1203,6 +1212,7 @@ impl PickerDelegate for FileFinderDelegate {
                 )
                 .child(
                     PopoverMenu::new("split-popover")
+                        .with_handle(self.popover_menu_handle.clone())
                         .trigger(
                             IconButton::new("split-trigger", IconName::EllipsisVertical)
                                 .icon_size(IconSize::Small)
