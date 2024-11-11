@@ -32,7 +32,6 @@ simplelog.workspace = true
 story.workspace = true
 strum = { workspace = true, features = ["derive"] }
 theme.workspace = true
-title_bar = { workspace = true, features = ["stories"] }
 ui = { workspace = true, features = ["stories"] }
 reqwest_client.workspace = true
 zed_common = { workspace = true, features = ["stories"] }

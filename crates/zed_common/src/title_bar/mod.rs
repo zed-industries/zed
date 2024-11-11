@@ -6,8 +6,8 @@ mod window_controls;
 #[cfg(feature = "stories")]
 mod stories;
 
-use crate::application_menu::ApplicationMenu;
-use crate::platforms::{platform_linux, platform_mac, platform_windows};
+use crate::title_bar::application_menu::ApplicationMenu;
+use crate::title_bar::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};

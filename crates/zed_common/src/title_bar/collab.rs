@@ -9,7 +9,7 @@ use theme::ActiveTheme;
 use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
 use workspace::notifications::DetachAndPromptErr;
 
-use crate::TitleBar;
+use crate::title_bar::TitleBar;
 
 actions!(
     collab,

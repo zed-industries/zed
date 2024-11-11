@@ -9,6 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [features]
+default = []
 stories = ["dep:story"]
 test-support = [
     "call/test-support",
@@ -26,14 +27,19 @@ test-support = [
 [dependencies]
 anyhow.workspace = true
 assistant.workspace = true
+auto_update.workspace = true
 call.workspace = true
 channel.workspace = true
 chrono.workspace = true
 client.workspace = true
 collections.workspace = true
+command_palette.workspace = true
 db.workspace = true
 editor.workspace = true
 emojis.workspace = true
+extensions_ui.workspace = true
+feature_flags.workspace = true
+feedback.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -44,7 +50,9 @@ notifications.workspace = true
 parking_lot.workspace = true
 picker.workspace = true
 project.workspace = true
+recent_projects.workspace = true
 release_channel.workspace = true
+remote.workspace = true
 repl.workspace = true
 rich_text.workspace = true
 rpc.workspace = true
@@ -57,14 +65,17 @@ settings.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }
 theme.workspace = true
+theme_selector.workspace = true
 time.workspace = true
 time_format.workspace = true
-title_bar.workspace = true
 ui.workspace = true
 util.workspace = true
 vcs_menu.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }
