@@ -2280,7 +2280,6 @@ impl OutlinePanel {
                             // For a proper git status propagation, we have to keep the entries sorted lexicographically.
                             entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
                             worktree_snapshot.propagate_git_statuses(&mut entries);
-                            project::sort_worktree_entries(&mut entries);
                             (worktree_id, entries)
                         })
                         .flat_map(|(worktree_id, entries)| {
