@@ -121,7 +121,7 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn update_lsp_status(
         &self,
-        server_name: language::LanguageServerName,
+        server_name: lsp::LanguageServerName,
         status: LanguageServerBinaryStatus,
     ) {
         self.language_registry
@@ -140,7 +140,7 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
     fn remove_lsp_adapter(
         &self,
         language_name: &language::LanguageName,
-        server_name: &language::LanguageServerName,
+        server_name: &lsp::LanguageServerName,
     ) {
         self.language_registry
             .remove_lsp_adapter(language_name, server_name);
