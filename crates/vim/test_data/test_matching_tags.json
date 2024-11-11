@@ -1,0 +1,12 @@
+{"Exec":{"command":"set filetype=html"}}
+{"Put":{"state":"<bˇody></body>"}}
+{"Key":"%"}
+{"Get":{"state":"<body><ˇ/body>","mode":"Normal"}}
+{"Key":"%"}
+{"Get":{"state":"<ˇbody></body>","mode":"Normal"}}
+{"Put":{"state":"<a><bˇr/></a>"}}
+{"Key":"%"}
+{"Get":{"state":"<a><bˇr/></a>","mode":"Normal"}}
+{"Put":{"state":"<a>\n    <br\n    /ˇ>\n</a>"}}
+{"Key":"%"}
+{"Get":{"state":"<a>\n    ˇ<br\n    />\n</a>","mode":"Normal"}}

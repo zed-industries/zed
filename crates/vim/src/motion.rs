@@ -1710,7 +1710,6 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
         let mut offset = inner.end.to_offset(map, Bias::Left);
         for c in map.buffer_snapshot.chars_at(offset) {
             if c == '/' || c == '\n' || c == '>' {
-                dbg!("Jumping forward");
                 return Some(offset.to_display_point(map));
             }
             offset += c.len_utf8();
@@ -1720,7 +1719,6 @@ fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoin
         for c in map.buffer_snapshot.chars_at(offset) {
             offset += c.len_utf8();
             if c == '<' || c == '\n' {
-                dbg!("Jumping back");
                 return Some(offset.to_display_point(map));
             }
         }
@@ -1756,17 +1754,23 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
         for (open_range, close_range) in ranges {
             if map.buffer_snapshot.chars_at(open_range.start).next() == Some('<') {
                 if offset >= open_range.start + 1 && offset < close_range.start {
-                    dbg!("Trying to match tag");
+                    let mut chars = map.buffer_snapshot.chars_at(close_range.start);
+                    if (Some('/'), Some('>')) == (chars.next(), chars.next()) {
+                        return display_point;
+                    }
                     if let Some(tag) = matching_tag(map, display_point) {
                         return tag;
                     }
+                } else if close_range.contains(&offset) {
+                    // We might be in a self closing tag which we still need to jump between
+                    return open_range.start.to_display_point(map);
                 }
             }
 
             if open_range.start >= offset && line_range.contains(&open_range.start) {
                 let distance = open_range.start - offset;
                 if distance < closest_distance {
-                    closest_pair_destination = Some(close_range.start);
+                    closest_pair_destination = Some(close_range.end - 1);
                     closest_distance = distance;
                     continue;
                 }
@@ -2121,23 +2125,38 @@ mod test {
     // cargo test -p vim --features neovim test_matching_tags
     #[gpui::test]
     async fn test_matching_tags(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new_typescript(cx).await;
+        let mut cx = NeovimBackedTestContext::new_html(cx).await;
 
         cx.neovim.exec("set filetype=html").await;
 
+        // test jumping forwards
         cx.set_shared_state(indoc! {r"<bˇody></body>"}).await;
         cx.simulate_shared_keystrokes("%").await;
         cx.shared_state()
             .await
             .assert_eq(indoc! {r"<body><ˇ/body>"});
         cx.simulate_shared_keystrokes("%").await;
+        // test jumping backwards
         cx.shared_state()
             .await
             .assert_eq(indoc! {r"<ˇbody></body>"});
 
+        // test self-closing tags
         cx.set_shared_state(indoc! {r"<a><bˇr/></a>"}).await;
         cx.simulate_shared_keystrokes("%").await;
-        cx.shared_state().await.assert_eq(indoc! {r"<a><br/></aˇ>"});
+        cx.shared_state().await.assert_eq(indoc! {r"<a><bˇr/></a>"});
+
+        // test multi-line self-closing tag
+        cx.set_shared_state(indoc! {r"<a>
+            <br
+            /ˇ>
+        </a>"})
+            .await;
+        cx.simulate_shared_keystrokes("%").await;
+        cx.shared_state().await.assert_eq(indoc! {r"<a>
+            ˇ<br
+            />
+        </a>"});
     }
 
     #[gpui::test]
