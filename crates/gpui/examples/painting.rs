@@ -4,7 +4,7 @@ use gpui::{
 };
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
-    lines: Vec<Path<Pixels>>,
+    lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
     _painting: bool,
 }
@@ -15,9 +15,9 @@ impl PaintingViewer {
 
         // draw a line
         let mut path = Path::new(point(px(50.), px(180.)));
-        path.line_to(point(px(150.), px(120.)));
-        path.line_to(point(px(150.) - px(1.), px(120.) - px(1.)));
-        path.line_to(point(px(50.) - px(1.), px(180.) - px(1.)));
+        path.curve_to(point(px(150.), px(120.)), point(px(150.3), px(120.3)));
+        path.curve_to(point(px(150.), px(180.)), point(px(150.3), px(180.3)));
+        path.curve_to(point(px(50.), px(180.)), point(px(50.3), px(180.3)));
         lines.push(path);
 
         // draw a lightening bolt ⚡
@@ -70,7 +70,7 @@ impl Render for PaintingViewer {
                     .gap_2()
                     .justify_between()
                     .items_center()
-                    .child("Mouse down any point and drag to draw lines.")
+                    .child("Mouse down any point and drag to draw lines (Hold on shift key to draw straight lines)")
                     .child(
                         div()
                             .id("clear")
@@ -96,7 +96,16 @@ impl Render for PaintingViewer {
                                 for path in default_lines {
                                     cx.paint_path(path, gpui::black());
                                 }
-                                for path in lines {
+                                for points in lines {
+                                    let mut path = Path::new(points[0]);
+                                    for p in points.iter().skip(1) {
+                                        path.line_to(*p);
+                                    }
+                                    // Go back to close the path
+                                    for p in points.iter().rev() {
+                                        path.curve_to(*p - point(px(1.), px(1.)), *p - point(px(0.5), px(0.5)));
+                                    }
+
                                     cx.paint_path(path, gpui::black());
                                 }
                             },
@@ -108,7 +117,7 @@ impl Render for PaintingViewer {
                         cx.listener(|this, ev: &MouseDownEvent, _| {
                             this._painting = true;
                             this.start = ev.position;
-                            let path = Path::new(ev.position);
+                            let path = vec![ev.position];
                             this.lines.push(path);
                         }),
                     )
@@ -117,8 +126,21 @@ impl Render for PaintingViewer {
                             return;
                         }
 
+                        let is_shifted = ev.modifiers.shift;
+                        let mut pos = ev.position;
+                        // When holding shift, draw a straight line
+                        if is_shifted {
+                            let dx = pos.x - this.start.x;
+                            let dy = pos.y - this.start.y;
+                            if dx.abs() > dy.abs() {
+                                pos.y = this.start.y;
+                            } else {
+                                pos.x = this.start.x;
+                            }
+                        }
+
                         if let Some(path) = this.lines.last_mut() {
-                            path.line_to(ev.position);
+                            path.push(pos);
                         }
 
                         cx.notify();
