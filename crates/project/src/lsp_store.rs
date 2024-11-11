@@ -6600,7 +6600,7 @@ impl LspStore {
         self.language_server_statuses.insert(
             server_id,
             LanguageServerStatus {
-                name: language_server.name().to_string(),
+                name: adapter.name().to_string(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
