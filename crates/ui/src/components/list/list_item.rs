@@ -171,7 +171,7 @@ impl RenderOnce for ListItem {
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)
-                    .px(Spacing::Small.rems(cx))
+                    .px(DynamicSpacing::Base04.rems(cx))
             })
             .when(!self.inset && !self.disabled, |this| {
                 this
@@ -195,7 +195,7 @@ impl RenderOnce for ListItem {
                     .relative()
                     .items_center()
                     .gap_1()
-                    .px(Spacing::Medium.rems(cx))
+                    .px(DynamicSpacing::Base06.rems(cx))
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
                         ListItemSpacing::Sparse => this.py_1(),
@@ -248,7 +248,7 @@ impl RenderOnce for ListItem {
                             .flex_grow()
                             .flex_shrink_0()
                             .flex_basis(relative(0.25))
-                            .gap(Spacing::Medium.rems(cx))
+                            .gap(DynamicSpacing::Base06.rems(cx))
                             .map(|list_content| {
                                 if self.overflow_x {
                                     list_content
@@ -276,7 +276,7 @@ impl RenderOnce for ListItem {
                             h_flex()
                                 .h_full()
                                 .absolute()
-                                .right(Spacing::Medium.rems(cx))
+                                .right(DynamicSpacing::Base06.rems(cx))
                                 .top_0()
                                 .visible_on_hover("list_item")
                                 .child(end_hover_slot),

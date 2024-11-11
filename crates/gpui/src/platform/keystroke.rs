@@ -134,7 +134,7 @@ impl Keystroke {
             #[cfg(target_os = "macos")]
             str.push_str("cmd-");
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             str.push_str("super-");
 
             #[cfg(target_os = "windows")]
@@ -234,7 +234,7 @@ impl std::fmt::Display for Keystroke {
             #[cfg(target_os = "macos")]
             f.write_char('⌘')?;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             f.write_char('❖')?;
 
             #[cfg(target_os = "windows")]

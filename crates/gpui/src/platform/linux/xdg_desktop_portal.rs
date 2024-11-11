@@ -162,7 +162,7 @@ impl WindowAppearance {
         }
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     fn set_native(&mut self, cs: ColorScheme) {
         *self = Self::from_native(cs);
     }
