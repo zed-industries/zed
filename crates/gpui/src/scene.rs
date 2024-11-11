@@ -786,7 +786,6 @@ impl Path<Pixels> {
                 (point(0., 1.), point(0., 1.), point(0., 1.)),
             );
         }
-
         self.current = to;
     }
 
