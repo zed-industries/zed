@@ -310,14 +310,6 @@ unsafe fn build_window_class(name: &'static str, superclass: &Class) -> *const C
     decl.register()
 }
 
-#[allow(clippy::enum_variant_names)]
-#[derive(Clone, Debug)]
-enum ImeInput {
-    InsertText(String, Option<Range<usize>>),
-    SetMarkedText(String, Option<Range<usize>>, Option<Range<usize>>),
-    UnmarkText,
-}
-
 struct MacWindowState {
     handle: AnyWindowHandle,
     executor: ForegroundExecutor,
@@ -1709,10 +1701,9 @@ extern "C" fn insert_text(this: &Object, _: Sel, text: id, replacement_range: NS
 
         let text = text.to_str();
         let replacement_range = replacement_range.to_range();
-        send_to_input_handler(
-            this,
-            ImeInput::InsertText(text.to_string(), replacement_range),
-        );
+        with_input_handler(this, |input_handler| {
+            input_handler.replace_text_in_range(replacement_range, &text)
+        });
     }
 }
 
@@ -1734,15 +1725,13 @@ extern "C" fn set_marked_text(
         let selected_range = selected_range.to_range();
         let replacement_range = replacement_range.to_range();
         let text = text.to_str();
-
-        send_to_input_handler(
-            this,
-            ImeInput::SetMarkedText(text.to_string(), replacement_range, selected_range),
-        );
+        with_input_handler(this, |input_handler| {
+            input_handler.replace_and_mark_text_in_range(replacement_range, &text, selected_range)
+        });
     }
 }
 extern "C" fn unmark_text(this: &Object, _: Sel) {
-    send_to_input_handler(this, ImeInput::UnmarkText);
+    with_input_handler(this, |input_handler| input_handler.unmark_text());
 }
 
 extern "C" fn attributed_substring_for_proposed_range(
@@ -1930,33 +1919,6 @@ where
         Some(result)
     } else {
         None
-    }
-}
-
-fn send_to_input_handler(window: &Object, ime: ImeInput) {
-    dbg!(&ime);
-    unsafe {
-        let window_state = get_window_state(window);
-        let mut lock = window_state.lock();
-
-        if let Some(mut input_handler) = lock.input_handler.take() {
-            match ime {
-                ImeInput::InsertText(text, range) => {
-                    drop(lock);
-                    input_handler.replace_text_in_range(range, &text)
-                }
-                ImeInput::SetMarkedText(text, range, marked_range) => {
-                    lock.ime_composing = true;
-                    drop(lock);
-                    input_handler.replace_and_mark_text_in_range(range, &text, marked_range)
-                }
-                ImeInput::UnmarkText => {
-                    drop(lock);
-                    input_handler.unmark_text()
-                }
-            }
-            window_state.lock().input_handler = Some(input_handler);
-        }
     }
 }
 
