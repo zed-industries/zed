@@ -95,6 +95,7 @@ impl Render for PaintingViewer {
                         canvas(
                             move |_, _| {},
                             move |_, _, cx| {
+                                const STROKE_WIDTH: Pixels = px(2.0);
                                 for path in default_lines {
                                     cx.paint_path(path, gpui::black());
                                 }
@@ -108,9 +109,9 @@ impl Render for PaintingViewer {
                                     for p in points.iter().rev() {
                                         let mut offset_x = px(0.);
                                         if last.x == p.x {
-                                            offset_x = px(1.);
+                                            offset_x = STROKE_WIDTH;
                                         }
-                                        path.line_to(point(p.x + offset_x, p.y  + px(1.)));
+                                        path.line_to(point(p.x + offset_x, p.y  + STROKE_WIDTH));
                                         last = p;
                                     }
 
