@@ -1,6 +1,6 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, App, AppContext, MouseDownEvent, MouseUpEvent, Path,
-    Pixels, Point, Render, ViewContext, WindowOptions,
+    canvas, div, point, prelude::*, px, App, AppContext, MouseDownEvent, Path, Pixels, Point,
+    Render, ViewContext, WindowOptions,
 };
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
@@ -13,18 +13,31 @@ impl PaintingViewer {
     fn new() -> Self {
         let mut lines = vec![];
 
-        // Draw a line like a lightning
-        let mut path = Path::new(point(px(0.), px(0.)));
-        path.line_to(point(px(0.), px(80.)));
-        path.line_to(point(px(100.), px(20.)));
+        // draw a line
+        let mut path = Path::new(point(px(50.), px(180.)));
+        path.line_to(point(px(150.), px(120.)));
+        path.line_to(point(px(150.) - px(1.), px(120.) - px(1.)));
+        path.line_to(point(px(50.) - px(1.), px(180.) - px(1.)));
         lines.push(path);
 
-        // Draw a line like a Big Dipper
-        let mut path = Path::new(point(px(80.), px(120.)));
-        path.line_to(point(px(100.), px(140.)));
-        path.line_to(point(px(120.), px(120.)));
-        path.line_to(point(px(140.), px(140.)));
-        path.line_to(point(px(160.), px(120.)));
+        // draw a lightening bolt ⚡
+        let mut path = Path::new(point(px(150.), px(200.)));
+        path.line_to(point(px(200.), px(125.)));
+        path.line_to(point(px(200.), px(175.)));
+        path.line_to(point(px(250.), px(100.)));
+        lines.push(path);
+
+        // draw a ⭐
+        let mut path = Path::new(point(px(350.), px(100.)));
+        path.line_to(point(px(370.), px(160.)));
+        path.line_to(point(px(430.), px(160.)));
+        path.line_to(point(px(380.), px(200.)));
+        path.line_to(point(px(400.), px(260.)));
+        path.line_to(point(px(350.), px(220.)));
+        path.line_to(point(px(300.), px(260.)));
+        path.line_to(point(px(320.), px(200.)));
+        path.line_to(point(px(270.), px(160.)));
+        path.line_to(point(px(330.), px(160.)));
         lines.push(path);
 
         Self {
@@ -112,7 +125,7 @@ impl Render for PaintingViewer {
                     }))
                     .on_mouse_up(
                         gpui::MouseButton::Left,
-                        cx.listener(|this, ev: &MouseUpEvent, _| {
+                        cx.listener(|this, _, _| {
                             this._painting = false;
                         }),
                     ),
