@@ -1259,7 +1259,9 @@ impl EditorElement {
             track_bounds
                 .horizontal
                 .map_or(text_units_per_page.horizontal, |bounds_x| {
-                    bounds_x.size.width / em_width
+                    let vertical_width = track_bounds.vertical.map_or(px(0.), |vertical| vertical.size.width);
+
+                    (bounds_x.size.width - vertical_width) / em_width
                 }),
             text_units_per_page.vertical,
         );
