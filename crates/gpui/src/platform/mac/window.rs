@@ -1212,7 +1212,7 @@ extern "C" fn handle_key_down(this: &Object, _: Sel, native_event: id) {
 //  Brazilian layout:
 //   - `" space` should create an unmarked quote
 //   - `" backspace` should delete the marked quote
-//   - `" "`shoud create an unmarked quote and a second marked quote
+//   - `" "`should create an unmarked quote and a second marked quote
 //   - `" up` should insert a quote, unmark it, and move up one line
 //   - `" cmd-down` should insert a quote, unmark it, and move to the end of the file
 //   - `cmd-ctrl-space` and clicking on an emoji should type it
@@ -1273,7 +1273,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
 
     let mut callback = window_state.as_ref().lock().event_callback.take();
     let handled = if let Some(callback) = callback.as_mut() {
-        !callback(PlatformInput::KeyDown(event)).propagate
+        !callback(PlatformInput::KeyDown(event.clone())).propagate
     } else {
         false
     };
@@ -1282,10 +1282,27 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         return handled;
     }
 
-    unsafe {
+    if event.is_held {
+        let handled = with_input_handler(&this, |input_handler| {
+            if !input_handler.apple_press_and_hold_enabled() {
+                input_handler.replace_text_in_range(
+                    None,
+                    &event.keystroke.ime_key.unwrap_or(event.keystroke.key),
+                );
+                return true;
+            }
+            false
+        });
+        if handled == Some(true) {
+            return YES;
+        }
+    }
+
+    let handled = unsafe {
         let input_context: id = msg_send![this, inputContext];
         msg_send![input_context, handleEvent: native_event]
-    }
+    };
+    handled
 }
 
 extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {

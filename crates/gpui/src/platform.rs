@@ -671,6 +671,10 @@ impl PlatformInputHandler {
             .flatten()
     }
 
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        self.handler.apple_press_and_hold_enabled()
+    }
+
     pub(crate) fn dispatch_input(&mut self, input: &str, cx: &mut WindowContext) {
         self.handler.replace_text_in_range(None, input, cx);
     }
@@ -768,6 +772,14 @@ pub trait InputHandler: 'static {
         range_utf16: Range<usize>,
         cx: &mut WindowContext,
     ) -> Option<Bounds<Pixels>>;
+
+    /// Allows a given input context to opt into getting raw key repeats instead of
+    /// sending these to the platform.
+    /// TODO: Ideally we should be able to set ApplePressAndHoldEnabled in NSUserDefaults
+    /// (which is how iTerm does it) but it doesn't seem to work for me.
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        true
+    }
 }
 
 /// The variables that can be configured when creating a new window
