@@ -224,7 +224,9 @@ impl ReplStore {
                     runtime_specification.kernelspec.language.to_lowercase()
                         == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
-                _ => false,
+                KernelSpecification::Remote(_) => {
+                    unimplemented!()
+                }
             })
             .cloned()
     }
