@@ -11,7 +11,10 @@ mod linux;
 mod mac;
 
 #[cfg(any(
-    all(any(target_os = "linux", target_os = "freebsd"), any(feature = "x11", feature = "wayland")),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        any(feature = "x11", feature = "wayland")
+    ),
     target_os = "windows",
     feature = "macos-blade"
 ))]
@@ -508,7 +511,10 @@ pub(crate) enum AtlasKey {
 
 impl AtlasKey {
     #[cfg_attr(
-        all(any(target_os = "linux", target_os = "freebsd"), not(any(feature = "x11", feature = "wayland"))),
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            not(any(feature = "x11", feature = "wayland"))
+        ),
         allow(dead_code)
     )]
     pub(crate) fn texture_kind(&self) -> AtlasTextureKind {
@@ -572,7 +578,10 @@ pub(crate) struct AtlasTextureId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 #[cfg_attr(
-    all(any(target_os = "linux", target_os = "freebsd"), not(any(feature = "x11", feature = "wayland"))),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
     allow(dead_code)
 )]
 pub(crate) enum AtlasTextureKind {
@@ -603,7 +612,10 @@ pub(crate) struct PlatformInputHandler {
 }
 
 #[cfg_attr(
-    all(any(target_os = "linux", target_os = "freebsd"), not(any(feature = "x11", feature = "wayland"))),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
     allow(dead_code)
 )]
 impl PlatformInputHandler {
@@ -814,7 +826,10 @@ pub struct WindowOptions {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 #[cfg_attr(
-    all(any(target_os = "linux", target_os = "freebsd"), not(any(feature = "x11", feature = "wayland"))),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
     allow(dead_code)
 )]
 pub(crate) struct WindowParams {

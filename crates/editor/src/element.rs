@@ -650,7 +650,9 @@ impl EditorElement {
             cx.stop_propagation();
         } else if end_selection && pending_nonempty_selections {
             cx.stop_propagation();
-        } else if cfg!(any(target_os = "linux", target_os = "freebsd")) && event.button == MouseButton::Middle {
+        } else if cfg!(any(target_os = "linux", target_os = "freebsd"))
+            && event.button == MouseButton::Middle
+        {
             if !text_hitbox.is_hovered(cx) || editor.read_only(cx) {
                 return;
             }
