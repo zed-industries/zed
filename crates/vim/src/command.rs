@@ -628,10 +628,12 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
             ("tabo", "nly"),
             workspace::CloseInactiveItems {
                 save_intent: Some(SaveIntent::Close),
+                close_pinned: false,
             },
         )
         .bang(workspace::CloseInactiveItems {
             save_intent: Some(SaveIntent::Skip),
+            close_pinned: false,
         }),
         VimCommand::new(
             ("on", "ly"),
@@ -682,6 +684,7 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::str(("Ch", "at"), "chat_panel::ToggleFocus"),
         VimCommand::str(("No", "tifications"), "notification_panel::ToggleFocus"),
         VimCommand::str(("A", "I"), "assistant::ToggleFocus"),
+        VimCommand::new(("noh", "lsearch"), search::buffer_search::Dismiss),
         VimCommand::new(("$", ""), EndOfDocument),
         VimCommand::new(("%", ""), EndOfDocument),
         VimCommand::new(("0", ""), StartOfDocument),

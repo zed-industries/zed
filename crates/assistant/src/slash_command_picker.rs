@@ -1,17 +1,15 @@
 use std::sync::Arc;
 
-use assistant_slash_command::SlashCommandRegistry;
-
 use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
-use ui::{prelude::*, KeyBinding, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
+use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
 
 use crate::assistant_panel::ContextEditor;
-use crate::QuoteSelection;
+use crate::SlashCommandWorkingSet;
 
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
-    registry: Arc<SlashCommandRegistry>,
+    working_set: Arc<SlashCommandWorkingSet>,
     active_context_editor: WeakView<ContextEditor>,
     trigger: T,
 }
@@ -32,7 +30,6 @@ enum SlashCommandEntry {
         renderer: fn(&mut WindowContext<'_>) -> AnyElement,
         on_confirm: fn(&mut WindowContext<'_>),
     },
-    QuoteButton,
 }
 
 impl AsRef<str> for SlashCommandEntry {
@@ -40,7 +37,6 @@ impl AsRef<str> for SlashCommandEntry {
         match self {
             SlashCommandEntry::Info(SlashCommandInfo { name, .. })
             | SlashCommandEntry::Advert { name, .. } => name,
-            SlashCommandEntry::QuoteButton => "Quote Selection",
         }
     }
 }
@@ -54,12 +50,12 @@ pub(crate) struct SlashCommandDelegate {
 
 impl<T: PopoverTrigger> SlashCommandSelector<T> {
     pub(crate) fn new(
-        registry: Arc<SlashCommandRegistry>,
+        working_set: Arc<SlashCommandWorkingSet>,
         active_context_editor: WeakView<ContextEditor>,
         trigger: T,
     ) -> Self {
         SlashCommandSelector {
-            registry,
+            working_set,
             active_context_editor,
             trigger,
         }
@@ -153,9 +149,6 @@ impl PickerDelegate for SlashCommandDelegate {
                         })
                         .ok();
                 }
-                SlashCommandEntry::QuoteButton => {
-                    cx.dispatch_action(Box::new(QuoteSelection));
-                }
                 SlashCommandEntry::Advert { on_confirm, .. } => {
                     on_confirm(cx);
                 }
@@ -223,40 +216,6 @@ impl PickerDelegate for SlashCommandDelegate {
                             ),
                     ),
             ),
-            SlashCommandEntry::QuoteButton => {
-                let focus = cx.focus_handle();
-                let key_binding = KeyBinding::for_action_in(&QuoteSelection, &focus, cx);
-
-                Some(
-                    ListItem::new(ix)
-                        .inset(true)
-                        .spacing(ListItemSpacing::Dense)
-                        .selected(selected)
-                        .child(
-                            v_flex()
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(Icon::new(IconName::Quote).size(IconSize::XSmall))
-                                        .child(
-                                            div().font_buffer(cx).child(
-                                                Label::new("selection").size(LabelSize::Small),
-                                            ),
-                                        ),
-                                )
-                                .child(
-                                    h_flex()
-                                        .gap_1p5()
-                                        .child(
-                                            Label::new("Insert editor selection")
-                                                .color(Color::Muted)
-                                                .size(LabelSize::Small),
-                                        )
-                                        .children(key_binding.map(|kb| kb.render(cx))),
-                                ),
-                        ),
-                )
-            }
             SlashCommandEntry::Advert { renderer, .. } => Some(
                 ListItem::new(ix)
                     .inset(true)
@@ -271,11 +230,11 @@ impl PickerDelegate for SlashCommandDelegate {
 impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let all_models = self
-            .registry
-            .featured_command_names()
+            .working_set
+            .featured_command_names(cx)
             .into_iter()
             .filter_map(|command_name| {
-                let command = self.registry.command(&command_name)?;
+                let command = self.working_set.command(&command_name, cx)?;
                 let menu_text = SharedString::from(Arc::from(command.menu_text()));
                 let label = command.label(cx);
                 let args = label.filter_range.end.ne(&label.text.len()).then(|| {
@@ -290,47 +249,44 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                     icon: command.icon(),
                 }))
             })
-            .chain([
-                SlashCommandEntry::Advert {
-                    name: "create-your-command".into(),
-                    renderer: |cx| {
-                        v_flex()
-                            .w_full()
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .font_buffer(cx)
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        h_flex()
-                                            .items_center()
-                                            .gap_1p5()
-                                            .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
-                                            .child(
-                                                div().font_buffer(cx).child(
-                                                    Label::new("create-your-command")
-                                                        .size(LabelSize::Small),
-                                                ),
+            .chain([SlashCommandEntry::Advert {
+                name: "create-your-command".into(),
+                renderer: |cx| {
+                    v_flex()
+                        .w_full()
+                        .child(
+                            h_flex()
+                                .w_full()
+                                .font_buffer(cx)
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_1p5()
+                                        .child(Icon::new(IconName::Plus).size(IconSize::XSmall))
+                                        .child(
+                                            div().font_buffer(cx).child(
+                                                Label::new("create-your-command")
+                                                    .size(LabelSize::Small),
                                             ),
-                                    )
-                                    .child(
-                                        Icon::new(IconName::ArrowUpRight)
-                                            .size(IconSize::XSmall)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                            .child(
-                                Label::new("Create your custom command")
-                                    .size(LabelSize::Small)
-                                    .color(Color::Muted),
-                            )
-                            .into_any_element()
-                    },
-                    on_confirm: |cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
+                                        ),
+                                )
+                                .child(
+                                    Icon::new(IconName::ArrowUpRight)
+                                        .size(IconSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                        .child(
+                            Label::new("Create your custom command")
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        )
+                        .into_any_element()
                 },
-                SlashCommandEntry::QuoteButton,
-            ])
+                on_confirm: |cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
+            }])
             .collect::<Vec<_>>();
 
         let delegate = SlashCommandDelegate {

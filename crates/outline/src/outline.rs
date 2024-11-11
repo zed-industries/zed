@@ -1,20 +1,23 @@
-use editor::{
-    actions::ToggleOutline, scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode,
-};
-use fuzzy::StringMatch;
-use gpui::{
-    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, ParentElement,
-    Point, Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
-};
-use language::Outline;
-use ordered_float::OrderedFloat;
-use picker::{Picker, PickerDelegate};
+use std::ops::Range;
 use std::{
     cmp::{self, Reverse},
     sync::Arc,
 };
 
-use theme::ActiveTheme;
+use editor::{
+    actions::ToggleOutline, scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode,
+};
+use fuzzy::StringMatch;
+use gpui::{
+    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
+    ParentElement, Point, Render, Styled, StyledText, Task, TextStyle, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
+};
+use language::{Outline, OutlineItem};
+use ordered_float::OrderedFloat;
+use picker::{Picker, PickerDelegate};
+use settings::Settings;
+use theme::{color_alpha, ActiveTheme, ThemeSettings};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
@@ -282,10 +285,46 @@ impl PickerDelegate for OutlineViewDelegate {
                     div()
                         .text_ui(cx)
                         .pl(rems(outline_item.depth as f32))
-                        .child(language::render_item(outline_item, mat.ranges(), cx)),
+                        .child(render_item(outline_item, mat.ranges(), cx)),
                 ),
         )
     }
+}
+
+pub fn render_item<T>(
+    outline_item: &OutlineItem<T>,
+    match_ranges: impl IntoIterator<Item = Range<usize>>,
+    cx: &AppContext,
+) -> StyledText {
+    let highlight_style = HighlightStyle {
+        background_color: Some(color_alpha(cx.theme().colors().text_accent, 0.3)),
+        ..Default::default()
+    };
+    let custom_highlights = match_ranges
+        .into_iter()
+        .map(|range| (range, highlight_style));
+
+    let settings = ThemeSettings::get_global(cx);
+
+    // TODO: We probably shouldn't need to build a whole new text style here
+    // but I'm not sure how to get the current one and modify it.
+    // Before this change TextStyle::default() was used here, which was giving us the wrong font and text color.
+    let text_style = TextStyle {
+        color: cx.theme().colors().text,
+        font_family: settings.buffer_font.family.clone(),
+        font_features: settings.buffer_font.features.clone(),
+        font_fallbacks: settings.buffer_font.fallbacks.clone(),
+        font_size: settings.buffer_font_size(cx).into(),
+        font_weight: settings.buffer_font.weight,
+        line_height: relative(1.),
+        ..Default::default()
+    };
+    let highlights = gpui::combine_highlights(
+        custom_highlights,
+        outline_item.highlight_ranges.iter().cloned(),
+    );
+
+    StyledText::new(outline_item.text.clone()).with_highlights(&text_style, highlights)
 }
 
 #[cfg(test)]

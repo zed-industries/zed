@@ -129,6 +129,11 @@ pub trait Extension: Send + Sync {
         Err("`run_slash_command` not implemented".to_string())
     }
 
+    /// Returns the command used to start a context server.
+    fn context_server_command(&mut self, _context_server_id: &ContextServerId) -> Result<Command> {
+        Err("`context_server_command` not implemented".to_string())
+    }
+
     /// Returns a list of package names as suggestions to be included in the
     /// search results of the `/docs` slash command.
     ///
@@ -270,6 +275,11 @@ impl wit::Guest for Component {
         extension().run_slash_command(command, args, worktree)
     }
 
+    fn context_server_command(context_server_id: String) -> Result<wit::Command> {
+        let context_server_id = ContextServerId(context_server_id);
+        extension().context_server_command(&context_server_id)
+    }
+
     fn suggest_docs_packages(provider: String) -> Result<Vec<String>, String> {
         extension().suggest_docs_packages(provider)
     }
@@ -294,6 +304,22 @@ impl AsRef<str> for LanguageServerId {
 }
 
 impl fmt::Display for LanguageServerId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// The ID of a context server.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone)]
+pub struct ContextServerId(String);
+
+impl AsRef<str> for ContextServerId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ContextServerId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
     }

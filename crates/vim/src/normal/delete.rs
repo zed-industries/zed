@@ -28,25 +28,30 @@ impl Vim {
                         original_columns.insert(selection.id, original_head.column());
                         motion.expand_selection(map, selection, times, true, &text_layout_details);
 
-                        // Motion::NextWordStart on an empty line should delete it.
-                        if let Motion::NextWordStart {
-                            ignore_punctuation: _,
-                        } = motion
-                        {
-                            if selection.is_empty()
-                                && map
-                                    .buffer_snapshot
-                                    .line_len(MultiBufferRow(selection.start.to_point(map).row))
-                                    == 0
-                            {
-                                selection.end = map
-                                    .buffer_snapshot
-                                    .clip_point(
-                                        Point::new(selection.start.to_point(map).row + 1, 0),
-                                        Bias::Left,
-                                    )
-                                    .to_display_point(map)
+                        match motion {
+                            // Motion::NextWordStart on an empty line should delete it.
+                            Motion::NextWordStart { .. } => {
+                                if selection.is_empty()
+                                    && map
+                                        .buffer_snapshot
+                                        .line_len(MultiBufferRow(selection.start.to_point(map).row))
+                                        == 0
+                                {
+                                    selection.end = map
+                                        .buffer_snapshot
+                                        .clip_point(
+                                            Point::new(selection.start.to_point(map).row + 1, 0),
+                                            Bias::Left,
+                                        )
+                                        .to_display_point(map)
+                                }
                             }
+                            Motion::EndOfDocument {} => {
+                                // Deleting until the end of the document includes the last line, including
+                                // soft-wrapped lines.
+                                selection.end = map.max_point()
+                            }
+                            _ => {}
                         }
                     });
                 });

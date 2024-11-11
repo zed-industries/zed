@@ -1,10 +1,20 @@
+#[cfg(target_os = "macos")]
+mod mac_watcher;
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub mod linux_watcher;
+
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
-#[cfg(target_os = "linux")]
-use std::{fs::File, os::fd::AsFd};
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use std::fs::File;
+#[cfg(unix)]
+use std::os::fd::AsFd;
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 
 #[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
@@ -45,14 +55,14 @@ pub trait Watcher: Send + Sync {
     fn remove(&self, path: &Path) -> Result<()>;
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub enum PathEventKind {
     Removed,
     Created,
     Changed,
 }
 
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct PathEvent {
     pub path: PathBuf,
     pub kind: Option<PathEventKind>,
@@ -89,6 +99,7 @@ pub trait Fs: Send + Sync {
     async fn trash_file(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.remove_file(path, options).await
     }
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>>;
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>>;
     async fn load(&self, path: &Path) -> Result<String> {
         Ok(String::from_utf8(self.load_bytes(path).await?)?)
@@ -179,6 +190,52 @@ pub struct Metadata {
 pub struct RealFs {
     git_hosting_provider_registry: Arc<GitHostingProviderRegistry>,
     git_binary_path: Option<PathBuf>,
+}
+
+pub trait FileHandle: Send + Sync + std::fmt::Debug {
+    fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf>;
+}
+
+impl FileHandle for std::fs::File {
+    #[cfg(target_os = "macos")]
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        use std::{
+            ffi::{CStr, OsStr},
+            os::unix::ffi::OsStrExt,
+        };
+
+        let fd = self.as_fd();
+        let mut path_buf: [libc::c_char; libc::PATH_MAX as usize] = [0; libc::PATH_MAX as usize];
+
+        let result = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETPATH, path_buf.as_mut_ptr()) };
+        if result == -1 {
+            anyhow::bail!("fcntl returned -1".to_string());
+        }
+
+        let c_str = unsafe { CStr::from_ptr(path_buf.as_ptr()) };
+        let path = PathBuf::from(OsStr::from_bytes(c_str.to_bytes()));
+        Ok(path)
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        let fd = self.as_fd();
+        let fd_path = format!("/proc/self/fd/{}", fd.as_raw_fd());
+        let new_path = std::fs::read_link(fd_path)?;
+        if new_path
+            .file_name()
+            .is_some_and(|f| f.to_string_lossy().ends_with(" (deleted)"))
+        {
+            anyhow::bail!("file was deleted")
+        };
+
+        Ok(new_path)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn current_path(&self, _: &Arc<dyn Fs>) -> Result<PathBuf> {
+        anyhow::bail!("unimplemented")
+    }
 }
 
 pub struct RealWatcher {}
@@ -334,7 +391,7 @@ impl Fs for RealFs {
         Ok(())
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
         let file = File::open(path)?;
         match trash::trash_file(&file.as_fd()).await {
@@ -366,7 +423,7 @@ impl Fs for RealFs {
         self.trash_file(path, options).await
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn trash_dir(&self, path: &Path, options: RemoveOptions) -> Result<()> {
         self.trash_file(path, options).await
     }
@@ -394,6 +451,10 @@ impl Fs for RealFs {
         Ok(Box::new(std::fs::File::open(path)?))
     }
 
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
+        Ok(Arc::new(std::fs::File::open(path)?))
+    }
+
     async fn load(&self, path: &Path) -> Result<String> {
         let path = path.to_path_buf();
         let text = smol::unblock(|| std::fs::read_to_string(path)).await?;
@@ -407,7 +468,7 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = if cfg!(target_os = "linux") {
+            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
                 // Use the directory of the destination as temp dir to avoid
                 // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
                 // See https://github.com/zed-industries/zed/pull/8437 for more details.
@@ -530,14 +591,21 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use fsevent::{EventStream, StreamFlags};
+        use fsevent::StreamFlags;
 
-        let (tx, rx) = smol::channel::unbounded();
-        let (stream, handle) = EventStream::new(&[path], latency);
-        std::thread::spawn(move || {
-            stream.run(move |events| {
-                smol::block_on(
-                    tx.send(
+        let (events_tx, events_rx) = smol::channel::unbounded();
+        let handles = Arc::new(parking_lot::Mutex::new(collections::BTreeMap::default()));
+        let watcher = Arc::new(mac_watcher::MacWatcher::new(
+            events_tx,
+            Arc::downgrade(&handles),
+            latency,
+        ));
+        watcher.add(path).expect("handles can't be dropped");
+
+        (
+            Box::pin(
+                events_rx
+                    .map(|events| {
                         events
                             .into_iter()
                             .map(|event| {
@@ -555,23 +623,18 @@ impl Fs for RealFs {
                                     kind,
                                 }
                             })
-                            .collect(),
-                    ),
-                )
-                .is_ok()
-            });
-        });
-
-        (
-            Box::pin(rx.chain(futures::stream::once(async move {
-                drop(handle);
-                vec![]
-            }))),
-            Arc::new(RealWatcher {}),
+                            .collect()
+                    })
+                    .chain(futures::stream::once(async move {
+                        drop(handles);
+                        vec![]
+                    })),
+            ),
+            watcher,
         )
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn watch(
         &self,
         path: &Path,
@@ -580,79 +643,24 @@ impl Fs for RealFs {
         Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
         Arc<dyn Watcher>,
     ) {
-        use notify::EventKind;
         use parking_lot::Mutex;
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let root_path = path.to_path_buf();
+        let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
 
-        // Check if root path is a symlink
-        let target_path = self.read_link(&path).await.ok();
-
-        watcher::global({
-            let target_path = target_path.clone();
-            |g| {
-                let tx = tx.clone();
-                let pending_paths = pending_paths.clone();
-                g.add(move |event: &notify::Event| {
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-                    let mut paths = event
-                        .paths
-                        .iter()
-                        .filter_map(|path| {
-                            if let Some(target) = target_path.clone() {
-                                if path.starts_with(target) {
-                                    return Some(PathEvent {
-                                        path: path.clone(),
-                                        kind,
-                                    });
-                                }
-                            } else if path.starts_with(&root_path) {
-                                return Some(PathEvent {
-                                    path: path.clone(),
-                                    kind,
-                                });
-                            }
-                            None
-                        })
-                        .collect::<Vec<_>>();
-
-                    if !paths.is_empty() {
-                        paths.sort();
-                        let mut pending_paths = pending_paths.lock();
-                        if pending_paths.is_empty() {
-                            tx.try_send(()).ok();
-                        }
-                        util::extend_sorted(&mut *pending_paths, paths, usize::MAX, |a, b| {
-                            a.path.cmp(&b.path)
-                        });
-                    }
-                })
-            }
-        })
-        .log_err();
-
-        let watcher = Arc::new(RealWatcher {});
-
-        watcher.add(path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
+        watcher.add(&path).ok(); // Ignore "file doesn't exist error" and rely on parent watcher.
+        if let Some(parent) = path.parent() {
+            // watch the parent dir so we can tell when settings.json is created
+            watcher.add(parent).log_err();
+        }
 
         // Check if path is a symlink and follow the target parent
-        if let Some(target) = target_path {
+        if let Some(target) = self.read_link(&path).await.ok() {
             watcher.add(&target).ok();
             if let Some(parent) = target.parent() {
                 watcher.add(parent).log_err();
             }
-        }
-
-        // watch the parent dir so we can tell when settings.json is created
-        if let Some(parent) = path.parent() {
-            watcher.add(parent).log_err();
         }
 
         (
@@ -773,7 +781,7 @@ impl Fs for RealFs {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 impl Watcher for RealWatcher {
     fn add(&self, _: &Path) -> Result<()> {
         Ok(())
@@ -781,23 +789,6 @@ impl Watcher for RealWatcher {
 
     fn remove(&self, _: &Path) -> Result<()> {
         Ok(())
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Watcher for RealWatcher {
-    fn add(&self, path: &Path) -> Result<()> {
-        use notify::Watcher;
-        Ok(watcher::global(|w| {
-            w.inotify
-                .lock()
-                .watch(path, notify::RecursiveMode::NonRecursive)
-        })??)
-    }
-
-    fn remove(&self, path: &Path) -> Result<()> {
-        use notify::Watcher;
-        Ok(watcher::global(|w| w.inotify.lock().unwatch(path))??)
     }
 }
 
@@ -819,6 +810,7 @@ struct FakeFsState {
     buffered_events: Vec<PathEvent>,
     metadata_call_count: usize,
     read_dir_call_count: usize,
+    moves: std::collections::HashMap<u64, PathBuf>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -990,6 +982,7 @@ impl FakeFs {
                 events_paused: false,
                 read_dir_call_count: 0,
                 metadata_call_count: 0,
+                moves: Default::default(),
             }),
         });
 
@@ -1427,6 +1420,27 @@ impl Watcher for FakeWatcher {
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[derive(Debug)]
+struct FakeHandle {
+    inode: u64,
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl FileHandle for FakeHandle {
+    fn current_path(&self, fs: &Arc<dyn Fs>) -> Result<PathBuf> {
+        let state = fs.as_fake().state.lock();
+        let Some(target) = state.moves.get(&self.inode) else {
+            anyhow::bail!("fake fd not moved")
+        };
+
+        if state.try_read_path(&target, false).is_some() {
+            return Ok(target.clone());
+        }
+        anyhow::bail!("fake fd target not found")
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait::async_trait]
 impl Fs for FakeFs {
     async fn create_dir(&self, path: &Path) -> Result<()> {
@@ -1563,6 +1577,14 @@ impl Fs for FakeFs {
                 Err(anyhow!("path does not exist: {}", &old_path.display()))
             }
         })?;
+
+        let inode = match *moved_entry.lock() {
+            FakeFsEntry::File { inode, .. } => inode,
+            FakeFsEntry::Dir { inode, .. } => inode,
+            _ => 0,
+        };
+
+        state.moves.insert(inode, new_path.clone());
 
         state.write_path(&new_path, |e| {
             match e {
@@ -1706,6 +1728,19 @@ impl Fs for FakeFs {
     async fn open_sync(&self, path: &Path) -> Result<Box<dyn io::Read>> {
         let bytes = self.load_internal(path).await?;
         Ok(Box::new(io::Cursor::new(bytes)))
+    }
+
+    async fn open_handle(&self, path: &Path) -> Result<Arc<dyn FileHandle>> {
+        self.simulate_random_delay().await;
+        let state = self.state.lock();
+        let entry = state.read_path(&path)?;
+        let entry = entry.lock();
+        let inode = match *entry {
+            FakeFsEntry::File { inode, .. } => inode,
+            FakeFsEntry::Dir { inode, .. } => inode,
+            _ => unreachable!(),
+        };
+        Ok(Arc::new(FakeHandle { inode }))
     }
 
     async fn load(&self, path: &Path) -> Result<String> {
@@ -2082,51 +2117,5 @@ mod tests {
             fs.load("/root/dir2/link-to-dir3/d".as_ref()).await.unwrap(),
             "D",
         );
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub mod watcher {
-    use std::sync::OnceLock;
-
-    use parking_lot::Mutex;
-    use util::ResultExt;
-
-    pub struct GlobalWatcher {
-        // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
-        pub(super) inotify: Mutex<notify::INotifyWatcher>,
-        pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
-    }
-
-    impl GlobalWatcher {
-        pub(super) fn add(&self, cb: impl Fn(&notify::Event) + Send + Sync + 'static) {
-            self.watchers.lock().push(Box::new(cb))
-        }
-    }
-
-    static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
-        OnceLock::new();
-
-    fn handle_event(event: Result<notify::Event, notify::Error>) {
-        let Some(event) = event.log_err() else { return };
-        global::<()>(move |watcher| {
-            for f in watcher.watchers.lock().iter() {
-                f(&event)
-            }
-        })
-        .log_err();
-    }
-
-    pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
-        let result = INOTIFY_INSTANCE.get_or_init(|| {
-            notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
-                inotify: Mutex::new(file_watcher),
-                watchers: Default::default(),
-            })
-        });
-        match result {
-            Ok(g) => Ok(f(g)),
-            Err(e) => Err(anyhow::anyhow!("{}", e)),
-        }
     }
 }

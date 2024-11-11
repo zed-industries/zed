@@ -711,7 +711,7 @@ impl settings::Settings for ThemeSettings {
     ) -> schemars::schema::RootSchema {
         let mut root_schema = generator.root_schema_for::<ThemeSettingsContent>();
         let theme_names = ThemeRegistry::global(cx)
-            .list_names(params.staff_mode)
+            .list_names()
             .into_iter()
             .map(|theme_name| Value::String(theme_name.to_string()))
             .collect();

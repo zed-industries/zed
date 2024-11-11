@@ -1,4 +1,5 @@
 use crate::wasm_host::{wit::ToWasmtimeResult, WasmState};
+use crate::DocsDatabase;
 use ::http_client::{AsyncBody, HttpRequestExt};
 use ::settings::{Settings, WorktreeId};
 use anyhow::{anyhow, bail, Context, Result};
@@ -7,48 +8,227 @@ use async_tar::Archive;
 use async_trait::async_trait;
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
-use indexed_docs::IndexedDocsDatabase;
+use language::LanguageName;
 use language::{
     language_settings::AllLanguageSettings, LanguageServerBinaryStatus, LspAdapterDelegate,
 };
-use language::{LanguageName, LanguageServerName};
 use project::project_settings::ProjectSettings;
 use semantic_version::SemanticVersion;
 use std::{
-    env,
     path::{Path, PathBuf},
     sync::{Arc, OnceLock},
 };
 use util::maybe;
 use wasmtime::component::{Linker, Resource};
 
-pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 2, 0);
-pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 2, 0);
+use super::latest;
+
+pub const MIN_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
+pub const MAX_VERSION: SemanticVersion = SemanticVersion::new(0, 1, 0);
 
 wasmtime::component::bindgen!({
     async: true,
     trappable_imports: true,
-    path: "../extension_api/wit/since_v0.2.0",
+    path: "../extension_api/wit/since_v0.1.0",
     with: {
          "worktree": ExtensionWorktree,
          "key-value-store": ExtensionKeyValueStore,
-         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
+         "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream,
+         "zed:extension/github": latest::zed::extension::github,
+         "zed:extension/nodejs": latest::zed::extension::nodejs,
+         "zed:extension/platform": latest::zed::extension::platform,
+         "zed:extension/slash-command": latest::zed::extension::slash_command,
     },
 });
 
 pub use self::zed::extension::*;
 
 mod settings {
-    include!(concat!(env!("OUT_DIR"), "/since_v0.2.0/settings.rs"));
+    include!(concat!(env!("OUT_DIR"), "/since_v0.1.0/settings.rs"));
 }
 
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
-pub type ExtensionKeyValueStore = Arc<IndexedDocsDatabase>;
+pub type ExtensionKeyValueStore = Arc<dyn DocsDatabase>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
     LINKER.get_or_init(|| super::new_linker(Extension::add_to_linker))
+}
+
+impl From<Command> for latest::Command {
+    fn from(value: Command) -> Self {
+        Self {
+            command: value.command,
+            args: value.args,
+            env: value.env,
+        }
+    }
+}
+
+impl From<SettingsLocation> for latest::SettingsLocation {
+    fn from(value: SettingsLocation) -> Self {
+        Self {
+            worktree_id: value.worktree_id,
+            path: value.path,
+        }
+    }
+}
+
+impl From<LanguageServerInstallationStatus> for latest::LanguageServerInstallationStatus {
+    fn from(value: LanguageServerInstallationStatus) -> Self {
+        match value {
+            LanguageServerInstallationStatus::None => Self::None,
+            LanguageServerInstallationStatus::Downloading => Self::Downloading,
+            LanguageServerInstallationStatus::CheckingForUpdate => Self::CheckingForUpdate,
+            LanguageServerInstallationStatus::Failed(message) => Self::Failed(message),
+        }
+    }
+}
+
+impl From<DownloadedFileType> for latest::DownloadedFileType {
+    fn from(value: DownloadedFileType) -> Self {
+        match value {
+            DownloadedFileType::Gzip => Self::Gzip,
+            DownloadedFileType::GzipTar => Self::GzipTar,
+            DownloadedFileType::Zip => Self::Zip,
+            DownloadedFileType::Uncompressed => Self::Uncompressed,
+        }
+    }
+}
+
+impl From<Range> for latest::Range {
+    fn from(value: Range) -> Self {
+        Self {
+            start: value.start,
+            end: value.end,
+        }
+    }
+}
+
+impl From<CodeLabelSpan> for latest::CodeLabelSpan {
+    fn from(value: CodeLabelSpan) -> Self {
+        match value {
+            CodeLabelSpan::CodeRange(range) => Self::CodeRange(range.into()),
+            CodeLabelSpan::Literal(literal) => Self::Literal(literal.into()),
+        }
+    }
+}
+
+impl From<CodeLabelSpanLiteral> for latest::CodeLabelSpanLiteral {
+    fn from(value: CodeLabelSpanLiteral) -> Self {
+        Self {
+            text: value.text,
+            highlight_name: value.highlight_name,
+        }
+    }
+}
+
+impl From<CodeLabel> for latest::CodeLabel {
+    fn from(value: CodeLabel) -> Self {
+        Self {
+            code: value.code,
+            spans: value.spans.into_iter().map(Into::into).collect(),
+            filter_range: value.filter_range.into(),
+        }
+    }
+}
+
+impl From<latest::Completion> for Completion {
+    fn from(value: latest::Completion) -> Self {
+        Self {
+            label: value.label,
+            detail: value.detail,
+            kind: value.kind.map(Into::into),
+            insert_text_format: value.insert_text_format.map(Into::into),
+        }
+    }
+}
+
+impl From<latest::lsp::CompletionKind> for lsp::CompletionKind {
+    fn from(value: latest::lsp::CompletionKind) -> Self {
+        match value {
+            latest::lsp::CompletionKind::Text => Self::Text,
+            latest::lsp::CompletionKind::Method => Self::Method,
+            latest::lsp::CompletionKind::Function => Self::Function,
+            latest::lsp::CompletionKind::Constructor => Self::Constructor,
+            latest::lsp::CompletionKind::Field => Self::Field,
+            latest::lsp::CompletionKind::Variable => Self::Variable,
+            latest::lsp::CompletionKind::Class => Self::Class,
+            latest::lsp::CompletionKind::Interface => Self::Interface,
+            latest::lsp::CompletionKind::Module => Self::Module,
+            latest::lsp::CompletionKind::Property => Self::Property,
+            latest::lsp::CompletionKind::Unit => Self::Unit,
+            latest::lsp::CompletionKind::Value => Self::Value,
+            latest::lsp::CompletionKind::Enum => Self::Enum,
+            latest::lsp::CompletionKind::Keyword => Self::Keyword,
+            latest::lsp::CompletionKind::Snippet => Self::Snippet,
+            latest::lsp::CompletionKind::Color => Self::Color,
+            latest::lsp::CompletionKind::File => Self::File,
+            latest::lsp::CompletionKind::Reference => Self::Reference,
+            latest::lsp::CompletionKind::Folder => Self::Folder,
+            latest::lsp::CompletionKind::EnumMember => Self::EnumMember,
+            latest::lsp::CompletionKind::Constant => Self::Constant,
+            latest::lsp::CompletionKind::Struct => Self::Struct,
+            latest::lsp::CompletionKind::Event => Self::Event,
+            latest::lsp::CompletionKind::Operator => Self::Operator,
+            latest::lsp::CompletionKind::TypeParameter => Self::TypeParameter,
+            latest::lsp::CompletionKind::Other(kind) => Self::Other(kind),
+        }
+    }
+}
+
+impl From<latest::lsp::InsertTextFormat> for lsp::InsertTextFormat {
+    fn from(value: latest::lsp::InsertTextFormat) -> Self {
+        match value {
+            latest::lsp::InsertTextFormat::PlainText => Self::PlainText,
+            latest::lsp::InsertTextFormat::Snippet => Self::Snippet,
+            latest::lsp::InsertTextFormat::Other(value) => Self::Other(value),
+        }
+    }
+}
+
+impl From<latest::lsp::Symbol> for lsp::Symbol {
+    fn from(value: latest::lsp::Symbol) -> Self {
+        Self {
+            name: value.name,
+            kind: value.kind.into(),
+        }
+    }
+}
+
+impl From<latest::lsp::SymbolKind> for lsp::SymbolKind {
+    fn from(value: latest::lsp::SymbolKind) -> Self {
+        match value {
+            latest::lsp::SymbolKind::File => Self::File,
+            latest::lsp::SymbolKind::Module => Self::Module,
+            latest::lsp::SymbolKind::Namespace => Self::Namespace,
+            latest::lsp::SymbolKind::Package => Self::Package,
+            latest::lsp::SymbolKind::Class => Self::Class,
+            latest::lsp::SymbolKind::Method => Self::Method,
+            latest::lsp::SymbolKind::Property => Self::Property,
+            latest::lsp::SymbolKind::Field => Self::Field,
+            latest::lsp::SymbolKind::Constructor => Self::Constructor,
+            latest::lsp::SymbolKind::Enum => Self::Enum,
+            latest::lsp::SymbolKind::Interface => Self::Interface,
+            latest::lsp::SymbolKind::Function => Self::Function,
+            latest::lsp::SymbolKind::Variable => Self::Variable,
+            latest::lsp::SymbolKind::Constant => Self::Constant,
+            latest::lsp::SymbolKind::String => Self::String,
+            latest::lsp::SymbolKind::Number => Self::Number,
+            latest::lsp::SymbolKind::Boolean => Self::Boolean,
+            latest::lsp::SymbolKind::Array => Self::Array,
+            latest::lsp::SymbolKind::Object => Self::Object,
+            latest::lsp::SymbolKind::Key => Self::Key,
+            latest::lsp::SymbolKind::Null => Self::Null,
+            latest::lsp::SymbolKind::EnumMember => Self::EnumMember,
+            latest::lsp::SymbolKind::Struct => Self::Struct,
+            latest::lsp::SymbolKind::Event => Self::Event,
+            latest::lsp::SymbolKind::Operator => Self::Operator,
+            latest::lsp::SymbolKind::TypeParameter => Self::TypeParameter,
+            latest::lsp::SymbolKind::Other(kind) => Self::Other(kind),
+        }
+    }
 }
 
 #[async_trait]
@@ -253,134 +433,7 @@ async fn convert_response(
 }
 
 #[async_trait]
-impl nodejs::Host for WasmState {
-    async fn node_binary_path(&mut self) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .binary_path()
-            .await
-            .map(|path| path.to_string_lossy().to_string())
-            .to_wasmtime_result()
-    }
-
-    async fn npm_package_latest_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<String, String>> {
-        self.host
-            .node_runtime
-            .npm_package_latest_version(&package_name)
-            .await
-            .to_wasmtime_result()
-    }
-
-    async fn npm_package_installed_version(
-        &mut self,
-        package_name: String,
-    ) -> wasmtime::Result<Result<Option<String>, String>> {
-        self.host
-            .node_runtime
-            .npm_package_installed_version(&self.work_dir(), &package_name)
-            .await
-            .to_wasmtime_result()
-    }
-
-    async fn npm_install_package(
-        &mut self,
-        package_name: String,
-        version: String,
-    ) -> wasmtime::Result<Result<(), String>> {
-        self.host
-            .node_runtime
-            .npm_install_packages(&self.work_dir(), &[(&package_name, &version)])
-            .await
-            .to_wasmtime_result()
-    }
-}
-
-#[async_trait]
 impl lsp::Host for WasmState {}
-
-impl From<::http_client::github::GithubRelease> for github::GithubRelease {
-    fn from(value: ::http_client::github::GithubRelease) -> Self {
-        Self {
-            version: value.tag_name,
-            assets: value.assets.into_iter().map(Into::into).collect(),
-        }
-    }
-}
-
-impl From<::http_client::github::GithubReleaseAsset> for github::GithubReleaseAsset {
-    fn from(value: ::http_client::github::GithubReleaseAsset) -> Self {
-        Self {
-            name: value.name,
-            download_url: value.browser_download_url,
-        }
-    }
-}
-
-#[async_trait]
-impl github::Host for WasmState {
-    async fn latest_github_release(
-        &mut self,
-        repo: String,
-        options: github::GithubReleaseOptions,
-    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
-        maybe!(async {
-            let release = ::http_client::github::latest_github_release(
-                &repo,
-                options.require_assets,
-                options.pre_release,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(release.into())
-        })
-        .await
-        .to_wasmtime_result()
-    }
-
-    async fn github_release_by_tag_name(
-        &mut self,
-        repo: String,
-        tag: String,
-    ) -> wasmtime::Result<Result<github::GithubRelease, String>> {
-        maybe!(async {
-            let release = ::http_client::github::get_release_by_tag_name(
-                &repo,
-                &tag,
-                self.host.http_client.clone(),
-            )
-            .await?;
-            Ok(release.into())
-        })
-        .await
-        .to_wasmtime_result()
-    }
-}
-
-#[async_trait]
-impl platform::Host for WasmState {
-    async fn current_platform(&mut self) -> Result<(platform::Os, platform::Architecture)> {
-        Ok((
-            match env::consts::OS {
-                "macos" => platform::Os::Mac,
-                "linux" => platform::Os::Linux,
-                "windows" => platform::Os::Windows,
-                _ => panic!("unsupported os"),
-            },
-            match env::consts::ARCH {
-                "aarch64" => platform::Architecture::Aarch64,
-                "x86" => platform::Architecture::X86,
-                "x86_64" => platform::Architecture::X8664,
-                _ => panic!("unsupported architecture"),
-            },
-        ))
-    }
-}
-
-#[async_trait]
-impl slash_command::Host for WasmState {}
 
 #[async_trait]
 impl ExtensionImports for WasmState {
@@ -416,7 +469,7 @@ impl ExtensionImports for WasmState {
                             .and_then(|key| {
                                 ProjectSettings::get(location, cx)
                                     .lsp
-                                    .get(&LanguageServerName::from_proto(key))
+                                    .get(&::lsp::LanguageServerName(key.into()))
                             })
                             .cloned()
                             .unwrap_or_default();
@@ -459,8 +512,8 @@ impl ExtensionImports for WasmState {
         };
 
         self.host
-            .language_registry
-            .update_lsp_status(language::LanguageServerName(server_name.into()), status);
+            .registration_hooks
+            .update_lsp_status(::lsp::LanguageServerName(server_name.into()), status);
         Ok(())
     }
 

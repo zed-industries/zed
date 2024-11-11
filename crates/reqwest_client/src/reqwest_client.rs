@@ -61,7 +61,7 @@ impl ReqwestClient {
 impl From<reqwest::Client> for ReqwestClient {
     fn from(client: reqwest::Client) -> Self {
         let handle = tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
-            log::info!("no tokio runtime found, creating one for Reqwest...");
+            log::debug!("no tokio runtime found, creating one for Reqwest...");
             let runtime = RUNTIME.get_or_init(|| {
                 tokio::runtime::Builder::new_multi_thread()
                     // Since we now have two executors, let's try to keep our footprint small

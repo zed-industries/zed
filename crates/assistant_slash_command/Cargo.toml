@@ -18,6 +18,7 @@ derive_more.workspace = true
 futures.workspace = true
 gpui.workspace = true
 language.workspace = true
+language_model.workspace = true
 parking_lot.workspace = true
 serde.workspace = true
 serde_json.workspace = true

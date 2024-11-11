@@ -2120,8 +2120,8 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
                         },
                     ],
                     disabled_scopes_by_bracket_ix: vec![
-                        Vec::new(), //
-                        vec!["string".into()],
+                        Vec::new(),                              //
+                        vec!["string".into(), "comment".into()], // single quotes disabled
                     ],
                 },
                 overrides: [(
@@ -2142,6 +2142,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             r#"
                 (jsx_element) @element
                 (string) @string
+                (comment) @comment.inclusive
                 [
                     (jsx_opening_element)
                     (jsx_closing_element)
@@ -2155,7 +2156,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             a["b"] = <C d="e">
                 <F></F>
                 { g() }
-            </C>;
+            </C>; // a comment
         "#
         .unindent();
 
@@ -2168,6 +2169,14 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         assert_eq!(
             config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
+        );
+
+        let comment_config = snapshot
+            .language_scope_at(text.find("comment").unwrap() + "comment".len())
+            .unwrap();
+        assert_eq!(
+            comment_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
         );
 
         let string_config = snapshot

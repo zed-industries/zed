@@ -4,14 +4,17 @@
 mod app_menu;
 mod keystroke;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 mod linux;
 
 #[cfg(target_os = "macos")]
 mod mac;
 
 #[cfg(any(
-    all(target_os = "linux", any(feature = "x11", feature = "wayland")),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        any(feature = "x11", feature = "wayland")
+    ),
     target_os = "windows",
     feature = "macos-blade"
 ))]
@@ -57,7 +60,7 @@ use uuid::Uuid;
 pub use app_menu::*;
 pub use keystroke::*;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use mac::*;
@@ -72,7 +75,7 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     Rc::new(MacPlatform::new(headless))
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
     if headless {
         return Rc::new(HeadlessClient::new());
@@ -92,7 +95,7 @@ pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
 
 /// Return which compositor we're guessing we'll use.
 /// Does not attempt to connect to the given compositor
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 #[inline]
 pub fn guess_compositor() -> &'static str {
     if std::env::var_os("ZED_HEADLESS").is_some() {
@@ -169,6 +172,7 @@ pub(crate) trait Platform: 'static {
 
     fn on_quit(&self, callback: Box<dyn FnMut()>);
     fn on_reopen(&self, callback: Box<dyn FnMut()>);
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>);
 
     fn set_menus(&self, menus: Vec<Menu>, keymap: &Keymap);
     fn get_menus(&self) -> Option<Vec<OwnedMenu>> {
@@ -180,6 +184,7 @@ pub(crate) trait Platform: 'static {
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>);
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
+    fn keyboard_layout(&self) -> String;
 
     fn compositor_name(&self) -> &'static str {
         ""
@@ -190,10 +195,10 @@ pub(crate) trait Platform: 'static {
     fn set_cursor_style(&self, style: CursorStyle);
     fn should_auto_hide_scrollbars(&self) -> bool;
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn write_to_primary(&self, item: ClipboardItem);
     fn write_to_clipboard(&self, item: ClipboardItem);
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     fn read_from_primary(&self) -> Option<ClipboardItem>;
     fn read_from_clipboard(&self) -> Option<ClipboardItem>;
 
@@ -506,7 +511,10 @@ pub(crate) enum AtlasKey {
 
 impl AtlasKey {
     #[cfg_attr(
-        all(target_os = "linux", not(any(feature = "x11", feature = "wayland"))),
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            not(any(feature = "x11", feature = "wayland"))
+        ),
         allow(dead_code)
     )]
     pub(crate) fn texture_kind(&self) -> AtlasTextureKind {
@@ -570,7 +578,10 @@ pub(crate) struct AtlasTextureId {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(C)]
 #[cfg_attr(
-    all(target_os = "linux", not(any(feature = "x11", feature = "wayland"))),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
     allow(dead_code)
 )]
 pub(crate) enum AtlasTextureKind {
@@ -601,7 +612,10 @@ pub(crate) struct PlatformInputHandler {
 }
 
 #[cfg_attr(
-    all(target_os = "linux", not(any(feature = "x11", feature = "wayland"))),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
     allow(dead_code)
 )]
 impl PlatformInputHandler {
@@ -623,7 +637,7 @@ impl PlatformInputHandler {
             .flatten()
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
         self.cx
             .update(|cx| self.handler.text_for_range(range_utf16, cx))
@@ -812,7 +826,10 @@ pub struct WindowOptions {
 /// The variables that can be configured when creating a new window
 #[derive(Debug)]
 #[cfg_attr(
-    all(target_os = "linux", not(any(feature = "x11", feature = "wayland"))),
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
     allow(dead_code)
 )]
 pub(crate) struct WindowParams {
@@ -823,17 +840,17 @@ pub(crate) struct WindowParams {
     pub titlebar: Option<TitlebarOptions>,
 
     /// The kind of window to create
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub kind: WindowKind,
 
     /// Whether the window should be movable by the user
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub is_movable: bool,
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub focus: bool,
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub show: bool,
 
     #[cfg_attr(feature = "wayland", allow(dead_code))]
@@ -1339,7 +1356,7 @@ impl ClipboardString {
             .and_then(|m| serde_json::from_str(m).ok())
     }
 
-    #[cfg_attr(target_os = "linux", allow(dead_code))]
+    #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
     pub(crate) fn text_hash(text: &str) -> u64 {
         let mut hasher = SeaHasher::new();
         text.hash(&mut hasher);
