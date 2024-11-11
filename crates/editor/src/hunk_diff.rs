@@ -9,8 +9,9 @@ use multi_buffer::{
 use std::{ops::Range, sync::Arc};
 use text::OffsetRangeExt;
 use ui::{
-    prelude::*, ActiveTheme, ContextMenu, IconButtonShape, InteractiveElement, IntoElement,
-    ParentElement, PopoverMenu, Styled, Tooltip, ViewContext, VisualContext,
+    prelude::*, ActiveTheme, ButtonLike, ContextMenu, ElevationIndex, IconButtonShape,
+    InteractiveElement, IntoElement, KeyBinding, ParentElement, PopoverMenu, Styled, Tooltip,
+    ViewContext, VisualContext,
 };
 use util::RangeExt;
 use workspace::Item;
@@ -422,9 +423,9 @@ impl Editor {
 
         BlockProperties {
             placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
-            height: 1,
+            height: 0,
             style: BlockStyle::Sticky,
-            priority: 0,
+            priority: 1,
             render: Arc::new({
                 let editor = cx.view().clone();
                 let hunk = hunk.clone();
@@ -438,231 +439,49 @@ impl Editor {
                         .block_mouse_down()
                         .h(cx.line_height())
                         .w_full()
-                        .border_t_1()
-                        .border_color(border_color)
-                        .bg(bg_color)
-                        .child(
-                            div()
-                                .id("gutter-strip")
-                                .w(EditorElement::diff_hunk_strip_width(cx.line_height()))
-                                .h_full()
-                                .bg(gutter_color)
-                                .cursor(CursorStyle::PointingHand)
-                                .on_click({
-                                    let editor = editor.clone();
-                                    let hunk = hunk.clone();
-                                    move |_event, cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.toggle_hovered_hunk(&hunk, cx);
-                                        });
-                                    }
-                                }),
-                        )
                         .child(
                             h_flex()
-                                .px_6()
-                                .size_full()
-                                .justify_end()
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .when(!is_branch_buffer, |row| {
-                                            row.child(
-                                                IconButton::new("next-hunk", IconName::ArrowDown)
-                                                    .shape(IconButtonShape::Square)
-                                                    .icon_size(IconSize::Small)
-                                                    .tooltip({
-                                                        let focus_handle = editor.focus_handle(cx);
-                                                        move |cx| {
-                                                            Tooltip::for_action_in(
-                                                                "Next Hunk",
-                                                                &GoToHunk,
-                                                                &focus_handle,
-                                                                cx,
-                                                            )
-                                                        }
-                                                    })
-                                                    .on_click({
-                                                        let editor = editor.clone();
-                                                        let hunk = hunk.clone();
-                                                        move |_event, cx| {
-                                                            editor.update(cx, |editor, cx| {
-                                                                editor.go_to_subsequent_hunk(
-                                                                    hunk.multi_buffer_range.end,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                    }),
-                                            )
-                                            .child(
-                                                IconButton::new("prev-hunk", IconName::ArrowUp)
-                                                    .shape(IconButtonShape::Square)
-                                                    .icon_size(IconSize::Small)
-                                                    .tooltip({
-                                                        let focus_handle = editor.focus_handle(cx);
-                                                        move |cx| {
-                                                            Tooltip::for_action_in(
-                                                                "Previous Hunk",
-                                                                &GoToPrevHunk,
-                                                                &focus_handle,
-                                                                cx,
-                                                            )
-                                                        }
-                                                    })
-                                                    .on_click({
-                                                        let editor = editor.clone();
-                                                        let hunk = hunk.clone();
-                                                        move |_event, cx| {
-                                                            editor.update(cx, |editor, cx| {
-                                                                editor.go_to_preceding_hunk(
-                                                                    hunk.multi_buffer_range.start,
-                                                                    cx,
-                                                                );
-                                                            });
-                                                        }
-                                                    }),
-                                            )
-                                        })
-                                        .child(
-                                            IconButton::new("discard", IconName::Undo)
-                                                .shape(IconButtonShape::Square)
-                                                .icon_size(IconSize::Small)
-                                                .tooltip({
-                                                    let focus_handle = editor.focus_handle(cx);
-                                                    move |cx| {
-                                                        Tooltip::for_action_in(
-                                                            "Discard Hunk",
-                                                            &RevertSelectedHunks,
-                                                            &focus_handle,
-                                                            cx,
-                                                        )
-                                                    }
-                                                })
-                                                .on_click({
-                                                    let editor = editor.clone();
-                                                    let hunk = hunk.clone();
-                                                    move |_event, cx| {
-                                                        let multi_buffer =
-                                                            editor.read(cx).buffer().clone();
-                                                        let multi_buffer_snapshot =
-                                                            multi_buffer.read(cx).snapshot(cx);
-                                                        let mut revert_changes = HashMap::default();
-                                                        if let Some(hunk) =
-                                                            crate::hunk_diff::to_diff_hunk(
-                                                                &hunk,
-                                                                &multi_buffer_snapshot,
-                                                            )
-                                                        {
-                                                            Editor::prepare_revert_change(
-                                                                &mut revert_changes,
-                                                                &multi_buffer,
-                                                                &hunk,
-                                                                cx,
-                                                            );
-                                                        }
-                                                        if !revert_changes.is_empty() {
-                                                            editor.update(cx, |editor, cx| {
-                                                                editor.revert(revert_changes, cx)
-                                                            });
-                                                        }
-                                                    }
-                                                }),
-                                        )
-                                        .map(|this| {
-                                            if is_branch_buffer {
-                                                this.child(
-                                                    IconButton::new("apply", IconName::Check)
-                                                        .shape(IconButtonShape::Square)
-                                                        .icon_size(IconSize::Small)
-                                                        .tooltip({
-                                                            let focus_handle =
-                                                                editor.focus_handle(cx);
-                                                            move |cx| {
-                                                                Tooltip::for_action_in(
-                                                                    "Apply Hunk",
-                                                                    &ApplyDiffHunk,
-                                                                    &focus_handle,
-                                                                    cx,
-                                                                )
-                                                            }
-                                                        })
-                                                        .on_click({
-                                                            let editor = editor.clone();
-                                                            let hunk = hunk.clone();
-                                                            move |_event, cx| {
-                                                                editor.update(cx, |editor, cx| {
-                                                                    editor
-                                                                        .apply_diff_hunks_in_range(
-                                                                            hunk.multi_buffer_range
-                                                                                .clone(),
-                                                                            cx,
-                                                                        );
-                                                                });
-                                                            }
-                                                        }),
-                                                )
-                                            } else {
-                                                this.child({
-                                                    let focus = editor.focus_handle(cx);
-                                                    PopoverMenu::new("hunk-controls-dropdown")
-                                                        .trigger(
-                                                            IconButton::new(
-                                                                "toggle_editor_selections_icon",
-                                                                IconName::EllipsisVertical,
-                                                            )
-                                                            .shape(IconButtonShape::Square)
-                                                            .icon_size(IconSize::Small)
-                                                            .style(ButtonStyle::Subtle)
-                                                            .selected(
-                                                                hunk_controls_menu_handle
-                                                                    .is_deployed(),
-                                                            )
-                                                            .when(
-                                                                !hunk_controls_menu_handle
-                                                                    .is_deployed(),
-                                                                |this| {
-                                                                    this.tooltip(|cx| {
-                                                                        Tooltip::text(
-                                                                            "Hunk Controls",
-                                                                            cx,
-                                                                        )
-                                                                    })
-                                                                },
-                                                            ),
-                                                        )
-                                                        .anchor(AnchorCorner::TopRight)
-                                                        .with_handle(hunk_controls_menu_handle)
-                                                        .menu(move |cx| {
-                                                            let focus = focus.clone();
-                                                            let menu = ContextMenu::build(
-                                                                cx,
-                                                                move |menu, _| {
-                                                                    menu.context(focus.clone())
-                                                                        .action(
-                                                                            "Discard All Hunks",
-                                                                            RevertFile
-                                                                                .boxed_clone(),
-                                                                        )
-                                                                },
-                                                            );
-                                                            Some(menu)
-                                                        })
-                                                })
-                                            }
-                                        }),
-                                )
-                                .when(!is_branch_buffer, |div| {
-                                    div.child(
-                                        IconButton::new("collapse", IconName::Close)
+                                .w_full()
+                                .gap_1()
+                                .when(!is_branch_buffer, |row| {
+                                    row.child(
+                                        IconButton::new("next-hunk", IconName::ArrowDown)
                                             .shape(IconButtonShape::Square)
                                             .icon_size(IconSize::Small)
                                             .tooltip({
                                                 let focus_handle = editor.focus_handle(cx);
                                                 move |cx| {
                                                     Tooltip::for_action_in(
-                                                        "Collapse Hunk",
-                                                        &ToggleHunkDiff,
+                                                        "Next Hunk",
+                                                        &GoToHunk,
+                                                        &focus_handle.clone(),
+                                                        cx,
+                                                    )
+                                                }
+                                            })
+                                            .on_click({
+                                                let editor = editor.clone();
+                                                let hunk = hunk.clone();
+                                                move |_event, cx| {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.go_to_subsequent_hunk(
+                                                            hunk.multi_buffer_range.end,
+                                                            cx,
+                                                        );
+                                                    });
+                                                }
+                                            }),
+                                    )
+                                    .child(
+                                        IconButton::new("prev-hunk", IconName::ArrowUp)
+                                            .shape(IconButtonShape::Square)
+                                            .icon_size(IconSize::Small)
+                                            .tooltip({
+                                                let focus_handle = editor.focus_handle(cx);
+                                                move |cx| {
+                                                    Tooltip::for_action_in(
+                                                        "Previous Hunk",
+                                                        &GoToPrevHunk,
                                                         &focus_handle,
                                                         cx,
                                                     )
@@ -673,14 +492,416 @@ impl Editor {
                                                 let hunk = hunk.clone();
                                                 move |_event, cx| {
                                                     editor.update(cx, |editor, cx| {
-                                                        editor.toggle_hovered_hunk(&hunk, cx);
+                                                        editor.go_to_preceding_hunk(
+                                                            hunk.multi_buffer_range.start,
+                                                            cx,
+                                                        );
                                                     });
                                                 }
                                             }),
                                     )
+                                })
+                                .child(
+                                    ButtonLike::new("discard")
+                                        .layer(ElevationIndex::ModalSurface)
+                                        .tooltip({
+                                            let focus_handle = editor.focus_handle(cx);
+                                            move |cx| {
+                                                Tooltip::for_action_in(
+                                                    "Discard Hunk",
+                                                    &RevertSelectedHunks,
+                                                    &focus_handle,
+                                                    cx,
+                                                )
+                                            }
+                                        })
+                                        // .when_some(tooltip, |button, tooltip| {
+                                        //     button.tooltip(move |_| tooltip.clone())
+                                        // })
+                                        .child(Label::new("Discard"))
+                                        .children({
+                                            let focus_handle = editor.focus_handle(cx);
+                                            KeyBinding::for_action_in(
+                                                &RevertSelectedHunks,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                            .map(|binding| binding.into_any_element())
+                                        })
+                                        .on_click({
+                                            let editor = editor.clone();
+                                            let hunk = hunk.clone();
+                                            move |_event, cx| {
+                                                let multi_buffer = editor.read(cx).buffer().clone();
+                                                let multi_buffer_snapshot =
+                                                    multi_buffer.read(cx).snapshot(cx);
+                                                let mut revert_changes = HashMap::default();
+                                                if let Some(hunk) = crate::hunk_diff::to_diff_hunk(
+                                                    &hunk,
+                                                    &multi_buffer_snapshot,
+                                                ) {
+                                                    Editor::prepare_revert_change(
+                                                        &mut revert_changes,
+                                                        &multi_buffer,
+                                                        &hunk,
+                                                        cx,
+                                                    );
+                                                }
+                                                if !revert_changes.is_empty() {
+                                                    editor.update(cx, |editor, cx| {
+                                                        editor.revert(revert_changes, cx)
+                                                    });
+                                                }
+                                            }
+                                        }),
+                                )
+                                .map(|this| {
+                                    if is_branch_buffer {
+                                        this.child(
+                                            IconButton::new("apply", IconName::Check)
+                                                .shape(IconButtonShape::Square)
+                                                .icon_size(IconSize::Small)
+                                                .tooltip({
+                                                    let focus_handle = editor.focus_handle(cx);
+                                                    move |cx| {
+                                                        Tooltip::for_action_in(
+                                                            "Apply Hunk",
+                                                            &ApplyDiffHunk,
+                                                            &focus_handle,
+                                                            cx,
+                                                        )
+                                                    }
+                                                })
+                                                .on_click({
+                                                    let editor = editor.clone();
+                                                    let hunk = hunk.clone();
+                                                    move |_event, cx| {
+                                                        editor.update(cx, |editor, cx| {
+                                                            editor.apply_diff_hunks_in_range(
+                                                                hunk.multi_buffer_range.clone(),
+                                                                cx,
+                                                            );
+                                                        });
+                                                    }
+                                                }),
+                                        )
+                                    } else {
+                                        this.child({
+                                            let focus = editor.focus_handle(cx);
+                                            PopoverMenu::new("hunk-controls-dropdown")
+                                                .trigger(
+                                                    IconButton::new(
+                                                        "toggle_editor_selections_icon",
+                                                        IconName::EllipsisVertical,
+                                                    )
+                                                    .shape(IconButtonShape::Square)
+                                                    .icon_size(IconSize::Small)
+                                                    .style(ButtonStyle::Subtle)
+                                                    .selected(
+                                                        hunk_controls_menu_handle.is_deployed(),
+                                                    )
+                                                    .when(
+                                                        !hunk_controls_menu_handle.is_deployed(),
+                                                        |this| {
+                                                            this.tooltip(|cx| {
+                                                                Tooltip::text("Hunk Controls", cx)
+                                                            })
+                                                        },
+                                                    ),
+                                                )
+                                                .anchor(AnchorCorner::TopRight)
+                                                .with_handle(hunk_controls_menu_handle)
+                                                .menu(move |cx| {
+                                                    let focus = focus.clone();
+                                                    let menu =
+                                                        ContextMenu::build(cx, move |menu, _| {
+                                                            menu.context(focus.clone()).action(
+                                                                "Discard All Hunks",
+                                                                RevertFile.boxed_clone(),
+                                                            )
+                                                        });
+                                                    Some(menu)
+                                                })
+                                        })
+                                    }
                                 }),
                         )
+                        .when(!is_branch_buffer, |div| {
+                            div.child(
+                                IconButton::new("collapse", IconName::Close)
+                                    .shape(IconButtonShape::Square)
+                                    .icon_size(IconSize::Small)
+                                    .tooltip({
+                                        let focus_handle = editor.focus_handle(cx);
+                                        move |cx| {
+                                            Tooltip::for_action_in(
+                                                "Collapse Hunk",
+                                                &ToggleHunkDiff,
+                                                &focus_handle,
+                                                cx,
+                                            )
+                                        }
+                                    })
+                                    .on_click({
+                                        let editor = editor.clone();
+                                        let hunk = hunk.clone();
+                                        move |_event, cx| {
+                                            editor.update(cx, |editor, cx| {
+                                                editor.toggle_hovered_hunk(&hunk, cx);
+                                            });
+                                        }
+                                    }),
+                            )
+                        })
                         .into_any_element()
+
+                    // h_flex()
+                    //     .id(cx.block_id)
+                    //     .h(cx.line_height())
+                    //     .w_full()
+                    //     .border_t_1()
+                    //     .border_color(border_color)
+                    //     .bg(bg_color)
+                    //     .child(
+                    //         div()
+                    //             .id("gutter-strip")
+                    //             .w(EditorElement::diff_hunk_strip_width(cx.line_height()))
+                    //             .h_full()
+                    //             .bg(gutter_color)
+                    //             .cursor(CursorStyle::PointingHand)
+                    //             .on_click({
+                    //                 let editor = editor.clone();
+                    //                 let hunk = hunk.clone();
+                    //                 move |_event, cx| {
+                    //                     editor.update(cx, |editor, cx| {
+                    //                         editor.toggle_hovered_hunk(&hunk, cx);
+                    //                     });
+                    //                 }
+                    //             }),
+                    //     )
+                    //     .child(
+                    //         h_flex()
+                    //             .px_6()
+                    //             .size_full()
+                    //             .justify_end()
+                    //             .child(
+                    //                 h_flex()
+                    //                     .gap_1()
+                    //                     .when(!is_branch_buffer, |row| {
+                    //                         row.child(
+                    //                             IconButton::new("next-hunk", IconName::ArrowDown)
+                    //                                 .shape(IconButtonShape::Square)
+                    //                                 .icon_size(IconSize::Small)
+                    //                                 .tooltip({
+                    //                                     let focus_handle = editor.focus_handle(cx);
+                    //                                     move |cx| {
+                    //                                         Tooltip::for_action_in(
+                    //                                             "Next Hunk",
+                    //                                             &GoToHunk,
+                    //                                             &focus_handle,
+                    //                                             cx,
+                    //                                         )
+                    //                                     }
+                    //                                 })
+                    //                                 .on_click({
+                    //                                     let editor = editor.clone();
+                    //                                     let hunk = hunk.clone();
+                    //                                     move |_event, cx| {
+                    //                                         editor.update(cx, |editor, cx| {
+                    //                                             editor.go_to_subsequent_hunk(
+                    //                                                 hunk.multi_buffer_range.end,
+                    //                                                 cx,
+                    //                                             );
+                    //                                         });
+                    //                                     }
+                    //                                 }),
+                    //                         )
+                    //                         .child(
+                    //                             IconButton::new("prev-hunk", IconName::ArrowUp)
+                    //                                 .shape(IconButtonShape::Square)
+                    //                                 .icon_size(IconSize::Small)
+                    //                                 .tooltip({
+                    //                                     let focus_handle = editor.focus_handle(cx);
+                    //                                     move |cx| {
+                    //                                         Tooltip::for_action_in(
+                    //                                             "Previous Hunk",
+                    //                                             &GoToPrevHunk,
+                    //                                             &focus_handle,
+                    //                                             cx,
+                    //                                         )
+                    //                                     }
+                    //                                 })
+                    //                                 .on_click({
+                    //                                     let editor = editor.clone();
+                    //                                     let hunk = hunk.clone();
+                    //                                     move |_event, cx| {
+                    //                                         editor.update(cx, |editor, cx| {
+                    //                                             editor.go_to_preceding_hunk(
+                    //                                                 hunk.multi_buffer_range.start,
+                    //                                                 cx,
+                    //                                             );
+                    //                                         });
+                    //                                     }
+                    //                                 }),
+                    //                         )
+                    //                     })
+                    //                     .child(
+                    //                         IconButton::new("discard", IconName::Undo)
+                    //                             .shape(IconButtonShape::Square)
+                    //                             .icon_size(IconSize::Small)
+                    //                             .tooltip({
+                    //                                 let focus_handle = editor.focus_handle(cx);
+                    //                                 move |cx| {
+                    //                                     Tooltip::for_action_in(
+                    //                                         "Discard Hunk",
+                    //                                         &RevertSelectedHunks,
+                    //                                         &focus_handle,
+                    //                                         cx,
+                    //                                     )
+                    //                                 }
+                    //                             })
+                    //                             .on_click({
+                    //                                 let editor = editor.clone();
+                    //                                 let hunk = hunk.clone();
+                    //                                 move |_event, cx| {
+                    //                                     let multi_buffer =
+                    //                                         editor.read(cx).buffer().clone();
+                    //                                     let multi_buffer_snapshot =
+                    //                                         multi_buffer.read(cx).snapshot(cx);
+                    //                                     let mut revert_changes = HashMap::default();
+                    //                                     if let Some(hunk) =
+                    //                                         crate::hunk_diff::to_diff_hunk(
+                    //                                             &hunk,
+                    //                                             &multi_buffer_snapshot,
+                    //                                         )
+                    //                                     {
+                    //                                         Editor::prepare_revert_change(
+                    //                                             &mut revert_changes,
+                    //                                             &multi_buffer,
+                    //                                             &hunk,
+                    //                                             cx,
+                    //                                         );
+                    //                                     }
+                    //                                     if !revert_changes.is_empty() {
+                    //                                         editor.update(cx, |editor, cx| {
+                    //                                             editor.revert(revert_changes, cx)
+                    //                                         });
+                    //                                     }
+                    //                                 }
+                    //                             }),
+                    //                     )
+                    //                     .map(|this| {
+                    //                         if is_branch_buffer {
+                    //                             this.child(
+                    //                                 IconButton::new("apply", IconName::Check)
+                    //                                     .shape(IconButtonShape::Square)
+                    //                                     .icon_size(IconSize::Small)
+                    //                                     .tooltip({
+                    //                                         let focus_handle =
+                    //                                             editor.focus_handle(cx);
+                    //                                         move |cx| {
+                    //                                             Tooltip::for_action_in(
+                    //                                                 "Apply Hunk",
+                    //                                                 &ApplyDiffHunk,
+                    //                                                 &focus_handle,
+                    //                                                 cx,
+                    //                                             )
+                    //                                         }
+                    //                                     })
+                    //                                     .on_click({
+                    //                                         let editor = editor.clone();
+                    //                                         let hunk = hunk.clone();
+                    //                                         move |_event, cx| {
+                    //                                             editor.update(cx, |editor, cx| {
+                    //                                                 editor
+                    //                                                     .apply_diff_hunks_in_range(
+                    //                                                         hunk.multi_buffer_range
+                    //                                                             .clone(),
+                    //                                                         cx,
+                    //                                                     );
+                    //                                             });
+                    //                                         }
+                    //                                     }),
+                    //                             )
+                    //                         } else {
+                    //                             this.child({
+                    //                                 let focus = editor.focus_handle(cx);
+                    //                                 PopoverMenu::new("hunk-controls-dropdown")
+                    //                                     .trigger(
+                    //                                         IconButton::new(
+                    //                                             "toggle_editor_selections_icon",
+                    //                                             IconName::EllipsisVertical,
+                    //                                         )
+                    //                                         .shape(IconButtonShape::Square)
+                    //                                         .icon_size(IconSize::Small)
+                    //                                         .style(ButtonStyle::Subtle)
+                    //                                         .selected(
+                    //                                             hunk_controls_menu_handle
+                    //                                                 .is_deployed(),
+                    //                                         )
+                    //                                         .when(
+                    //                                             !hunk_controls_menu_handle
+                    //                                                 .is_deployed(),
+                    //                                             |this| {
+                    //                                                 this.tooltip(|cx| {
+                    //                                                     Tooltip::text(
+                    //                                                         "Hunk Controls",
+                    //                                                         cx,
+                    //                                                     )
+                    //                                                 })
+                    //                                             },
+                    //                                         ),
+                    //                                     )
+                    //                                     .anchor(AnchorCorner::TopRight)
+                    //                                     .with_handle(hunk_controls_menu_handle)
+                    //                                     .menu(move |cx| {
+                    //                                         let focus = focus.clone();
+                    //                                         let menu = ContextMenu::build(
+                    //                                             cx,
+                    //                                             move |menu, _| {
+                    //                                                 menu.context(focus.clone())
+                    //                                                     .action(
+                    //                                                         "Discard All Hunks",
+                    //                                                         RevertFile
+                    //                                                             .boxed_clone(),
+                    //                                                     )
+                    //                                             },
+                    //                                         );
+                    //                                         Some(menu)
+                    //                                     })
+                    //                             })
+                    //                         }
+                    //                     }),
+                    //             )
+                    //             .when(!is_branch_buffer, |div| {
+                    //                 div.child(
+                    //                     IconButton::new("collapse", IconName::Close)
+                    //                         .shape(IconButtonShape::Square)
+                    //                         .icon_size(IconSize::Small)
+                    //                         .tooltip({
+                    //                             let focus_handle = editor.focus_handle(cx);
+                    //                             move |cx| {
+                    //                                 Tooltip::for_action_in(
+                    //                                     "Collapse Hunk",
+                    //                                     &ToggleHunkDiff,
+                    //                                     &focus_handle,
+                    //                                     cx,
+                    //                                 )
+                    //                             }
+                    //                         })
+                    //                         .on_click({
+                    //                             let editor = editor.clone();
+                    //                             let hunk = hunk.clone();
+                    //                             move |_event, cx| {
+                    //                                 editor.update(cx, |editor, cx| {
+                    //                                     editor.toggle_hovered_hunk(&hunk, cx);
+                    //                                 });
+                    //                             }
+                    //                         }),
+                    //                 )
+                    //             }),
+                    //     )
+                    //     .into_any_element()
                 }
             }),
         }
@@ -707,7 +928,7 @@ impl Editor {
             placement: BlockPlacement::Above(hunk.multi_buffer_range.start),
             height,
             style: BlockStyle::Flex,
-            priority: 0,
+            priority: 1,
             render: Arc::new(move |cx| {
                 let width = EditorElement::diff_hunk_strip_width(cx.line_height());
                 let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
