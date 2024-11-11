@@ -8,6 +8,13 @@ struct DynamicSpacingInput {
     values: Punctuated<DynamicSpacingValue, Token![,]>,
 }
 
+// The input for the derive macro is a list of values.
+//
+// When a single value is provided, the standard spacing formula is
+// used to derive the of spacing values.
+//
+// When a tuple of three values is provided, the values are used as
+// the spacing values directly.
 enum DynamicSpacingValue {
     Single(LitInt),
     Tuple(LitInt, LitInt, LitInt),
@@ -45,9 +52,15 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
     let spacing_ratios: Vec<_> = input
         .values
         .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let variant = format_ident!("Base{:02}", i);
+        .map(|v| {
+            let variant = match v {
+                DynamicSpacingValue::Single(n) => {
+                    format_ident!("Base{:02}", n.base10_parse::<u32>().unwrap())
+                }
+                DynamicSpacingValue::Tuple(_, b, _) => {
+                    format_ident!("Base{:02}", b.base10_parse::<u32>().unwrap())
+                }
+            };
             match v {
                 DynamicSpacingValue::Single(n) => {
                     let n = n.base10_parse::<f32>().unwrap();
@@ -78,11 +91,14 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
     let variant_docs: Vec<_> = input
         .values
         .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            let variant = format_ident!("Base{:02}", i);
+        .map(|v| {
+            let variant = match v {
+                DynamicSpacingValue::Single(n) => format_ident!("Base{:02}", n.base10_parse::<u32>().unwrap()),
+                DynamicSpacingValue::Tuple(_, b, _) => format_ident!("Base{:02}", b.base10_parse::<u32>().unwrap()),
+            };
             match v {
                 DynamicSpacingValue::Single(n) => {
+                    // When a single value is passed in, derive the compact and comfortable values.
                     let n = n.base10_parse::<f32>().unwrap();
                     let compact = (n - 4.0).max(0.0);
                     let comfortable = n + 4.0;

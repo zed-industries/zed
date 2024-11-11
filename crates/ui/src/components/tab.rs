@@ -158,7 +158,7 @@ impl RenderOnce for Tab {
                     .group("")
                     .relative()
                     .h(rems(Self::CONTENT_HEIGHT_IN_REMS))
-                    .px(crate::custom_spacing(cx, 4.))
+                    .px(DynamicSpacing::Base04.px(cx))
                     .gap(DynamicSpacing::Base04.rems(cx))
                     .text_color(text_color)
                     .child(start_slot)

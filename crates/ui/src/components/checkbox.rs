@@ -85,7 +85,7 @@ impl RenderOnce for Checkbox {
             .id(self.id)
             .justify_center()
             .items_center()
-            .size(crate::styles::custom_spacing(cx, 20.))
+            .size(DynamicSpacing::Base20.rems(cx))
             .group(group_id.clone())
             .child(
                 div()
@@ -94,7 +94,7 @@ impl RenderOnce for Checkbox {
                     .justify_center()
                     .items_center()
                     .m(DynamicSpacing::Base04.px(cx))
-                    .size(crate::styles::custom_spacing(cx, 16.))
+                    .size(DynamicSpacing::Base16.rems(cx))
                     .rounded_sm()
                     .bg(bg_color)
                     .border_1()

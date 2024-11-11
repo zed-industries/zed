@@ -3,8 +3,6 @@ use settings::Settings;
 use theme::{ThemeSettings, UiDensity};
 use ui_macros::derive_dynamic_spacing;
 
-use crate::rems_from_px;
-
 // Derives [DynamicSpacing]. See [ui_macros::derive_dynamic_spacing].
 derive_dynamic_spacing![
     (0, 0, 0),
@@ -23,19 +21,12 @@ derive_dynamic_spacing![
     48
 ];
 
-/// Returns the current [`UiDensity`] setting.
+/// Returns the current [`UiDensity`] setting. Use this to
+/// modify or show something in the UI other than spacing.
 ///
-/// Do not use this for custom spacing values.
-/// Use existing [`Spacing`] values instead.
+/// Do not use this to calculate spacing values.
+///
+/// Always use [DynamicSpacing] for spacing values.
 pub fn ui_density(cx: &WindowContext) -> UiDensity {
     ThemeSettings::get_global(cx).ui_density
-}
-
-/// If you use this, talk to @iamnbutler and let me know what you're doing
-/// that needs custom spacing–I'd love to understand so we can extend the
-/// system further and remove the need for this.
-///
-/// Returns a custom spacing value based on the current [`UiDensity`].
-pub fn custom_spacing(cx: &WindowContext, size: f32) -> Rems {
-    rems_from_px(size * ui_density(cx).spacing_ratio())
 }
