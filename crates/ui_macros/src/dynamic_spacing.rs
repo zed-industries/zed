@@ -106,7 +106,7 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
                     let compact = (n - 4.0).max(0.0);
                     let comfortable = n + 4.0;
                     format!(
-                        "@16px/rem: `{}px`|`{}px`|`{}px` - Scales with the user's rem size.",
+                        "`{}px`|`{}px`|`{}px (@16px/rem)` - Scales with the user's rem size.",
                         compact, n, comfortable
                     )
                 }
@@ -115,7 +115,7 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
                     let b = b.base10_parse::<f32>().unwrap();
                     let c = c.base10_parse::<f32>().unwrap();
                     format!(
-                        "@16px/rem: `{}px`|`{}px`|`{}px` - Scales with the user's rem size.",
+                        "`{}px`|`{}px`|`{}px (@16px/rem)` - Scales with the user's rem size.",
                         a, b, c
                     )
                 }
