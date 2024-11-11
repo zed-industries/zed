@@ -1,6 +1,6 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, App, AppContext, MouseDownEvent, Path, Pixels, Point,
-    Render, ViewContext, WindowOptions,
+    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
+    Pixels, Point, Render, ViewContext, WindowOptions,
 };
 struct PaintingViewer {
     default_lines: Vec<Path<Pixels>>,
@@ -40,6 +40,26 @@ impl PaintingViewer {
         path.line_to(point(px(270.), px(160.)));
         path.line_to(point(px(330.), px(160.)));
         path.line_to(point(px(350.), px(100.)));
+        lines.push(path);
+
+        let square_bounds = Bounds {
+            origin: point(px(450.), px(100.)),
+            size: size(px(200.), px(80.)),
+        };
+        let height = square_bounds.size.height;
+        let horizontal_offset = height;
+        let vertical_offset = px(30.);
+        let mut path = Path::new(square_bounds.lower_left());
+        path.curve_to(
+            square_bounds.origin + point(horizontal_offset, vertical_offset),
+            square_bounds.origin + point(px(0.0), vertical_offset),
+        );
+        path.line_to(square_bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+        path.curve_to(
+            square_bounds.lower_right(),
+            square_bounds.upper_right() + point(px(0.0), vertical_offset),
+        );
+        path.line_to(square_bounds.lower_left());
         lines.push(path);
 
         Self {
