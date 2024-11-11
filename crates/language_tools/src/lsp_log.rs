@@ -7,10 +7,10 @@ use gpui::{
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
-use language::{LanguageServerId, LanguageServerName};
+use language::LanguageServerId;
 use lsp::{
-    notification::SetTrace, IoKind, LanguageServer, MessageType, ServerCapabilities,
-    SetTraceParams, TraceValue,
+    notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
+    ServerCapabilities, SetTraceParams, TraceValue,
 };
 use project::{search::SearchQuery, Project, WorktreeId};
 use std::{borrow::Cow, sync::Arc};

@@ -4850,11 +4850,10 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         });
         let new_server_name = new_server.server.name();
         assert!(
-            !servers_with_hover_requests.contains_key(new_server_name),
+            !servers_with_hover_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_hover_requests.insert(
                     new_server_name.clone(),
@@ -5074,11 +5073,10 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         let new_server_name = new_server.server.name();
 
         assert!(
-            !servers_with_actions_requests.contains_key(new_server_name),
+            !servers_with_actions_requests.contains_key(&new_server_name),
             "Unexpected: initialized server with the same name twice. Name: `{new_server_name}`"
         );
-        let new_server_name = new_server_name.to_string();
-        match new_server_name.as_str() {
+        match new_server_name.0.as_ref() {
             "TailwindServer" | "TypeScriptServer" => {
                 servers_with_actions_requests.insert(
                     new_server_name.clone(),

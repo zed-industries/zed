@@ -38,16 +38,17 @@ use language::{
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
     range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
     DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageName,
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName, LanguageToolchainStore,
-    LocalFile, LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset,
-    ToPointUtf16, Transaction, Unclipped,
+    LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter,
+    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
+    Unclipped,
 };
 use lsp::{
     CodeActionKind, CompletionContext, DiagnosticSeverity, DiagnosticTag,
     DidChangeWatchedFilesRegistrationOptions, Edit, FileSystemWatcher, InsertTextFormat,
     LanguageServer, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerId,
-    LspRequestFuture, MessageActionItem, MessageType, OneOf, ServerHealthStatus, ServerStatus,
-    SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams, WorkspaceFolder,
+    LanguageServerName, LspRequestFuture, MessageActionItem, MessageType, OneOf,
+    ServerHealthStatus, ServerStatus, SymbolKind, TextEdit, Url, WorkDoneProgressCancelParams,
+    WorkspaceFolder,
 };
 use node_runtime::read_package_installed_version;
 use parking_lot::{Mutex, RwLock};
@@ -5591,6 +5592,7 @@ impl LspStore {
 
         let pending_server = cx.spawn({
             let adapter = adapter.clone();
+            let server_name = adapter.name.clone();
             let stderr_capture = stderr_capture.clone();
 
             move |_lsp_store, cx| async move {
@@ -5601,7 +5603,7 @@ impl LspStore {
                     .update(&mut cx.clone(), |this, cx| {
                         this.languages.create_fake_language_server(
                             server_id,
-                            &adapter.name,
+                            &server_name,
                             binary.clone(),
                             cx.to_async(),
                         )
@@ -5615,6 +5617,7 @@ impl LspStore {
                 lsp::LanguageServer::new(
                     stderr_capture,
                     server_id,
+                    server_name,
                     binary,
                     &root_path,
                     adapter.code_action_kinds(),

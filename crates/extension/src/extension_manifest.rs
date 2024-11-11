@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
-use language::{LanguageName, LanguageServerName};
+use language::LanguageName;
+use lsp::LanguageServerName;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
