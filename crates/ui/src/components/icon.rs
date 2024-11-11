@@ -273,6 +273,7 @@ pub enum IconName {
     Terminal,
     Trash,
     TrashAlt,
+    Triangle,
     TriangleRight,
     Undo,
     Unpin,
@@ -286,6 +287,7 @@ pub enum IconName {
     ZedAssistant,
     ZedAssistantFilled,
     ZedXCopilot,
+    X,
 }
 
 impl From<IconName> for Icon {

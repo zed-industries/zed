@@ -49,8 +49,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, DiagnosticIcon, Icon, IconWithIndicator, IndentGuideColors,
-    IndentGuideLayout, Indicator, KeyBinding, Label, ListItem, Scrollbar, ScrollbarState, Tooltip,
+    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
+    IconWithIndicator, IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label,
+    ListItem, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -2779,20 +2780,32 @@ impl ProjectPanel {
                             let is_warning = diagnostic_severity
                                 .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
                                 .unwrap_or(false);
-                            div().child(if kind.is_file() {
-                                DiagnosticIcon::new(
+                            div().child(
+                                DecoratedIcon::new(
                                     Icon::from_path(icon.clone()).color(Color::Muted),
-                                    is_warning,
+                                    Some(
+                                        IconDecoration::new(
+                                            if kind.is_file() {
+                                                if is_warning {
+                                                    IconDecorationKind::Triangle
+                                                } else {
+                                                    IconDecorationKind::X
+                                                }
+                                            } else {
+                                                IconDecorationKind::Dot
+                                            },
+                                            cx.theme().colors().surface_background,
+                                            cx,
+                                        )
+                                        .color(decoration_color.color(cx))
+                                        .position(Point {
+                                            x: px(-2.),
+                                            y: px(-2.),
+                                        }),
+                                    ),
                                 )
-                                .decoration_color(decoration_color)
-                                .into_any_element()
-                            } else {
-                                IconWithIndicator::new(
-                                    Icon::from_path(icon.clone()).color(Color::Muted),
-                                    Some(Indicator::dot().color(decoration_color)),
-                                )
-                                .into_any_element()
-                            })
+                                .into_any_element(),
+                            )
                         } else {
                             h_flex()
                                 .child(Icon::from_path(icon.to_string()).color(filename_text_color))
