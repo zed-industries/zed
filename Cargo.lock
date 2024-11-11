@@ -13,6 +13,7 @@ dependencies = [
  "futures 0.3.30",
  "gpui",
  "language",
+ "lsp",
  "project",
  "smallvec",
  "ui",
@@ -5978,6 +5979,7 @@ dependencies = [
  "settings",
  "theme",
  "ui",
+ "util",
  "workspace",
 ]
 
@@ -6897,6 +6899,7 @@ dependencies = [
  "parking_lot",
  "postage",
  "release_channel",
+ "schemars",
  "serde",
  "serde_json",
  "smol",
@@ -9080,6 +9083,7 @@ dependencies = [
  "globset",
  "gpui",
  "http_client",
+ "image",
  "itertools 0.13.0",
  "language",
  "log",

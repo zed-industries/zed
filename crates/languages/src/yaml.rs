@@ -3,10 +3,9 @@ use async_trait::async_trait;
 use futures::StreamExt;
 use gpui::AsyncAppContext;
 use language::{
-    language_settings::AllLanguageSettings, LanguageServerName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate,
+    language_settings::AllLanguageSettings, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
-use lsp::LanguageServerBinary;
+use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::lsp_store::language_server_settings;
 use serde_json::Value;
