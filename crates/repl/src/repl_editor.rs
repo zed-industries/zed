@@ -101,11 +101,7 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
 
         let kernel_specification = store
             .read(cx)
-            .active_kernelspec(
-                project_path.worktree_id,
-                language.code_fence_block_name().as_ref(),
-                cx,
-            )
+            .active_kernelspec(project_path.worktree_id, Some(language.clone()), cx)
             .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language.name()))?;
 
         let fs = store.read(cx).fs().clone();
@@ -205,16 +201,14 @@ pub fn session(editor: WeakView<Editor>, cx: &mut WindowContext) -> SessionSuppo
         return SessionSupport::Unsupported;
     };
 
-    let kernelspec = store.read(cx).active_kernelspec(
-        worktree_id,
-        language.code_fence_block_name().as_ref(),
-        cx,
-    );
+    let kernelspec = store
+        .read(cx)
+        .active_kernelspec(worktree_id, Some(language.clone()), cx);
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(kernelspec),
         None => {
-            if language_supported(&language) {
+            if language_supported(&language.clone()) {
                 SessionSupport::RequiresSetup(language.name())
             } else {
                 SessionSupport::Unsupported

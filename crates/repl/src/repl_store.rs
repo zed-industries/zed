@@ -7,6 +7,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
+use language::Language;
 use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
@@ -171,20 +172,28 @@ impl ReplStore {
     pub fn active_kernelspec(
         &self,
         worktree_id: WorktreeId,
-        language_at_cursor: &str,
+        language_at_cursor: Option<Arc<Language>>,
         cx: &AppContext,
     ) -> Option<KernelSpecification> {
         let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
-        selected_kernelspec.or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
+
+        if let Some(language_at_cursor) = language_at_cursor {
+            selected_kernelspec
+                .or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
+        } else {
+            selected_kernelspec
+        }
     }
 
     fn kernelspec_legacy_by_lang_only(
         &self,
-        language_at_cursor: &str,
+        language_at_cursor: Arc<Language>,
         cx: &AppContext,
     ) -> Option<KernelSpecification> {
         let settings = JupyterSettings::get_global(cx);
-        let selected_kernel = settings.kernel_selections.get(language_at_cursor);
+        let selected_kernel = settings
+            .kernel_selections
+            .get(language_at_cursor.code_fence_block_name().as_ref());
 
         let found_by_name = self
             .kernel_specifications
@@ -209,7 +218,7 @@ impl ReplStore {
             .find(|kernel_option| match kernel_option {
                 KernelSpecification::Jupyter(runtime_specification) => {
                     runtime_specification.kernelspec.language.to_lowercase()
-                        == language_at_cursor.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
                 // todo!()
                 _ => false,

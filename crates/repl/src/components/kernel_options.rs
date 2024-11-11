@@ -189,7 +189,7 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
             .cloned()
             .collect();
 
-        let selected_kernelspec = store.active_kernelspec(self.worktree_id, "todo", cx);
+        let selected_kernelspec = store.active_kernelspec(self.worktree_id, None, cx);
 
         let delegate = KernelPickerDelegate {
             on_select: self.on_select,
