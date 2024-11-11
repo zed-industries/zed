@@ -220,7 +220,10 @@ impl ReplStore {
                     runtime_specification.kernelspec.language.to_lowercase()
                         == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
-                // todo!()
+                KernelSpecification::PythonEnv(runtime_specification) => {
+                    runtime_specification.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
+                }
                 _ => false,
             })
             .cloned()
