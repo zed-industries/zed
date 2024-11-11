@@ -21,7 +21,7 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
     Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
@@ -50,8 +50,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IconWithIndicator, IndentGuideColors, IndentGuideLayout, Indicator, KeyBinding, Label,
-    ListItem, Scrollbar, ScrollbarState, Tooltip,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, Scrollbar, ScrollbarState,
+    Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -241,6 +241,26 @@ struct DraggedProjectEntryView {
     details: EntryDetails,
     width: Pixels,
     selections: Arc<BTreeSet<SelectedEntry>>,
+}
+
+struct ItemColors {
+    default: Hsla,
+    hover: Hsla,
+    drag_over: Hsla,
+    selected: Hsla,
+    marked_active: Hsla,
+}
+
+fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
+    let colors = cx.theme().colors();
+
+    ItemColors {
+        default: colors.surface_background,
+        hover: colors.ghost_element_hover,
+        drag_over: colors.drop_target_background,
+        selected: colors.surface_background,
+        marked_active: colors.ghost_element_selected,
+    }
 }
 
 impl ProjectPanel {
@@ -2576,16 +2596,20 @@ impl ProjectPanel {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
+
         let selection = SelectedEntry {
             worktree_id: details.worktree_id,
             entry_id,
         };
+
         let is_marked = self.marked_entries.contains(&selection);
         let is_active = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
+
         let width = self.size(cx);
         let file_name = details.filename.clone();
+
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
             let filename = self.filename_editor.read(cx).text(cx);
@@ -2596,6 +2620,7 @@ impl ProjectPanel {
 
         let filename_text_color = details.filename_text_color;
         let diagnostic_severity = details.diagnostic_severity;
+        let item_colors = get_item_color(cx);
 
         let canonical_path = details
             .canonical_path
@@ -2676,9 +2701,7 @@ impl ProjectPanel {
                     selections: selection.marked_selections.clone(),
                 })
             })
-            .drag_over::<DraggedSelection>(|style, _, cx| {
-                style.bg(cx.theme().colors().drop_target_background)
-            })
+            .drag_over::<DraggedSelection>(move |style, _, _| style.bg(item_colors.drag_over))
             .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
                 this.hover_scroll_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
@@ -2794,7 +2817,11 @@ impl ProjectPanel {
                                             } else {
                                                 IconDecorationKind::Dot
                                             },
-                                            cx.theme().colors().surface_background,
+                                            if is_marked || is_active {
+                                                item_colors.selected
+                                            } else {
+                                                item_colors.default
+                                            },
                                             cx,
                                         )
                                         .color(decoration_color.color(cx))
@@ -2807,8 +2834,7 @@ impl ProjectPanel {
                                 .into_any_element(),
                             )
                         } else {
-                            h_flex()
-                                .child(Icon::from_path(icon.to_string()).color(filename_text_color))
+                            h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
                         }
                     } else {
                         if let Some((icon_name, color)) =
@@ -2912,14 +2938,14 @@ impl ProjectPanel {
                 if is_active {
                     style
                 } else {
-                    let hover_color = cx.theme().colors().ghost_element_hover;
-                    style.bg(hover_color).border_color(hover_color)
+                    style.bg(item_colors.hover).border_color(item_colors.hover)
                 }
             })
             .when(is_marked || is_active, |this| {
-                let colors = cx.theme().colors();
-                this.when(is_marked, |this| this.bg(colors.ghost_element_selected))
-                    .border_color(colors.ghost_element_selected)
+                this.when(is_marked, |this| {
+                    this.bg(item_colors.marked_active)
+                        .border_color(item_colors.marked_active)
+                })
             })
             .when(
                 !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
