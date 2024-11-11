@@ -88,37 +88,41 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
         })
         .collect();
 
-    let variant_docs: Vec<_> = input
+    let (variant_names, doc_strings): (Vec<_>, Vec<_>) = input
         .values
         .iter()
         .map(|v| {
             let variant = match v {
-                DynamicSpacingValue::Single(n) => format_ident!("Base{:02}", n.base10_parse::<u32>().unwrap()),
-                DynamicSpacingValue::Tuple(_, b, _) => format_ident!("Base{:02}", b.base10_parse::<u32>().unwrap()),
-            };
-            match v {
                 DynamicSpacingValue::Single(n) => {
-                    // When a single value is passed in, derive the compact and comfortable values.
+                    format_ident!("Base{:02}", n.base10_parse::<u32>().unwrap())
+                }
+                DynamicSpacingValue::Tuple(_, b, _) => {
+                    format_ident!("Base{:02}", b.base10_parse::<u32>().unwrap())
+                }
+            };
+            let doc_string = match v {
+                DynamicSpacingValue::Single(n) => {
                     let n = n.base10_parse::<f32>().unwrap();
                     let compact = (n - 4.0).max(0.0);
                     let comfortable = n + 4.0;
-                    quote! {
-                        #[doc = concat!("@16px/rem: `", stringify!(#compact), "px`|`", stringify!(#n), "px`|`", stringify!(#comfortable), "px` - Scales with the user's rem size.")]
-                        #variant,
-                    }
+                    format!(
+                        "`{}px`|`{}px`|`{}px (@16px/rem)` - Scales with the user's rem size.",
+                        compact, n, comfortable
+                    )
                 }
                 DynamicSpacingValue::Tuple(a, b, c) => {
                     let a = a.base10_parse::<f32>().unwrap();
                     let b = b.base10_parse::<f32>().unwrap();
                     let c = c.base10_parse::<f32>().unwrap();
-                    quote! {
-                        #[doc = concat!("@16px/rem: `", stringify!(#a), "px`|`", stringify!(#b), "px`|`", stringify!(#c), "px` - Scales with the user's rem size.")]
-                        #variant,
-                    }
+                    format!(
+                        "`{}px`|`{}px`|`{}px (@16px/rem)` - Scales with the user's rem size.",
+                        a, b, c
+                    )
                 }
-            }
+            };
+            (quote!(#variant), quote!(#doc_string))
         })
-        .collect();
+        .unzip();
 
     let expanded = quote! {
         /// A dynamic spacing system that adjusts spacing based on
@@ -132,8 +136,8 @@ pub fn derive_spacing(input: TokenStream) -> TokenStream {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
         pub enum DynamicSpacing {
             #(
-                #[doc = stringify!(#variant_docs)]
-                #variant_docs
+                #[doc = #doc_strings]
+                #variant_names,
             )*
         }
 
