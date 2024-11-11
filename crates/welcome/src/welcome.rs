@@ -78,16 +78,17 @@ impl Render for WelcomePage {
                     .gap_8()
                     .mx_auto()
                     .child(
-                        svg()
-                            .path("icons/logo_96.svg")
-                            .text_color(cx.theme().colors().icon_disabled)
-                            .w(px(64.))
-                            .h(px(64.))
-                            .mx_auto(),
-                    )
-                    .child(
                         v_flex()
                             .w_full()
+                            .child(
+                                svg()
+                                    .path("icons/logo_96.svg")
+                                    .text_color(cx.theme().colors().icon_disabled)
+                                    .w(px(40.))
+                                    .h(px(40.))
+                                    .mx_auto()
+                                    .mb_2(),
+                            )
                             .child(
                                 h_flex()
                                     .w_full()
@@ -271,7 +272,7 @@ impl Render for WelcomePage {
                         v_flex()
                             .p_3()
                             .gap_2()
-                            .bg(cx.theme().colors().elevated_surface_background)
+                            .bg(cx.theme().colors().element_background)
                             .border_1()
                             .border_color(cx.theme().colors().border_variant)
                             .rounded_md()
@@ -372,7 +373,10 @@ impl WelcomePage {
     }
 
     fn section_label(&self, cx: &WindowContext) -> Div {
-        div().font_buffer(cx).text_color(Color::Muted.color(cx))
+        div()
+            .pl_1()
+            .font_buffer(cx)
+            .text_color(Color::Muted.color(cx))
     }
 
     fn update_settings<T: Settings>(
