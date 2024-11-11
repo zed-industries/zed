@@ -1,4 +1,4 @@
-use crate::{
+use crate::assistant::{
     assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
     AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
     CyclePreviousInlineAssist, LineDiff, LineOperation, ModelSelector, RequestType, StreamingDiff,
@@ -1682,7 +1682,7 @@ impl PromptEditor {
     }
 
     fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+        let context_keybinding = text_for_action(&crate::assistant::ToggleFocus, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

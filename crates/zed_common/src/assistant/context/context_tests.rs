@@ -1,7 +1,7 @@
 use super::{AssistantEdit, MessageCacheMetadata};
-use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
-use crate::{
+use crate::assistant::slash_command_working_set::SlashCommandWorkingSet;
+use crate::assistant::ToolWorkingSet;
+use crate::assistant::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
     MessageStatus, PromptBuilder,
@@ -399,7 +399,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
             "src": {
                 "lib.rs": "fn one() -> usize { 1 }",
                 "main.rs": "
-                    use crate::one;
+                    use crate::assistant::one;
                     fn main() { one(); }
                 ".unindent(),
             }

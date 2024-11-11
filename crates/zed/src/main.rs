@@ -395,7 +395,7 @@ fn main() {
         );
         snippet_provider::init(cx);
         inline_completion_registry::init(app_state.client.telemetry().clone(), cx);
-        let prompt_builder = assistant::init(
+        let prompt_builder = zed_common::assistant::init(
             app_state.fs.clone(),
             app_state.client.clone(),
             stdout_is_a_pty(),

@@ -12,7 +12,7 @@ use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
 use workspace::{dock::Panel, Workspace};
 
-use crate::DEFAULT_CONTEXT_LINES;
+use crate::assistant::DEFAULT_CONTEXT_LINES;
 
 use super::create_label_for_command;
 

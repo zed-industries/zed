@@ -2,7 +2,7 @@ use super::{
     create_label_for_command, search_command::add_search_result_section, SlashCommand,
     SlashCommandOutput,
 };
-use crate::PromptBuilder;
+use crate::assistant::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
 use feature_flags::FeatureFlag;

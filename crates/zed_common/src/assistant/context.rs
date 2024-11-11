@@ -1,9 +1,9 @@
 #[cfg(test)]
 mod context_tests;
 
-use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
-use crate::{
+use crate::assistant::slash_command_working_set::SlashCommandWorkingSet;
+use crate::assistant::ToolWorkingSet;
+use crate::assistant::{
     prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
@@ -1654,7 +1654,7 @@ impl Context {
                     range: patch_start..patch_start,
                     title: String::new().into(),
                     edits: Default::default(),
-                    status: crate::AssistantPatchStatus::Pending,
+                    status: crate::assistant::AssistantPatchStatus::Pending,
                 };
 
                 while let Some(tag) = tags.next() {

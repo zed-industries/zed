@@ -18,8 +18,8 @@ mod terminal_inline_assistant;
 mod tool_working_set;
 mod tools;
 
-pub use crate::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
-pub use crate::tool_working_set::{ToolId, ToolWorkingSet};
+pub use crate::assistant::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
+pub use crate::assistant::tool_working_set::{ToolId, ToolWorkingSet};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
@@ -55,8 +55,8 @@ use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
 
-use crate::slash_command::streaming_example_command;
-use crate::slash_command_settings::SlashCommandSettings;
+use crate::assistant::slash_command::streaming_example_command;
+use crate::assistant::slash_command_settings::SlashCommandSettings;
 
 actions!(
     assistant,

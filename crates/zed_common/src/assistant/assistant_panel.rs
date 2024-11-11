@@ -1,7 +1,7 @@
-use crate::slash_command::file_command::codeblock_fence_for_path;
-use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
-use crate::{
+use crate::assistant::slash_command::file_command::codeblock_fence_for_path;
+use crate::assistant::slash_command_working_set::SlashCommandWorkingSet;
+use crate::assistant::ToolWorkingSet;
+use crate::assistant::{
     assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
     prompt_library::open_prompt_library,

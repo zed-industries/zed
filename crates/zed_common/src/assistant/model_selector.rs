@@ -6,7 +6,7 @@ use workspace::ShowConfiguration;
 
 use std::sync::Arc;
 
-use crate::assistant_settings::AssistantSettings;
+use crate::assistant::assistant_settings::AssistantSettings;
 use fs::Fs;
 use gpui::{Action, AnyElement, DismissEvent, SharedString, Task};
 use picker::{Picker, PickerDelegate};

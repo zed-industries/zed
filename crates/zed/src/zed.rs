@@ -9,7 +9,6 @@ mod open_listener;
 pub(crate) mod windows_only_instance;
 
 pub use app_menus::*;
-use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
@@ -23,6 +22,7 @@ use gpui::{
     VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
+use zed_common::assistant::PromptBuilder;
 
 use anyhow::Context as _;
 use assets::Assets;
@@ -239,7 +239,7 @@ pub fn initialize_workspace(
         let prompt_builder = prompt_builder.clone();
         cx.spawn(|workspace_handle, mut cx| async move {
             let assistant_panel =
-                assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
+                zed_common::assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
 
             let project_panel = ProjectPanel::load(workspace_handle.clone(), cx.clone());
             let outline_panel = OutlinePanel::load(workspace_handle.clone(), cx.clone());

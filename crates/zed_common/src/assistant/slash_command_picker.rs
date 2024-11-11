@@ -4,8 +4,8 @@ use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger};
 
-use crate::assistant_panel::ContextEditor;
-use crate::SlashCommandWorkingSet;
+use crate::assistant::assistant_panel::ContextEditor;
+use crate::assistant::SlashCommandWorkingSet;
 
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {

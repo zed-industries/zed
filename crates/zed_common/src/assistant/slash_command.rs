@@ -1,5 +1,5 @@
-use crate::assistant_panel::ContextEditor;
-use crate::SlashCommandWorkingSet;
+use crate::assistant::assistant_panel::ContextEditor;
+use crate::assistant::SlashCommandWorkingSet;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::{SlashCommand, SlashCommandOutput, SlashCommandRegistry};

@@ -25,58 +25,95 @@ test-support = [
 ]
 
 [dependencies]
+anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-assistant.workspace = true
+assets.workspace = true
+assistant_slash_command.workspace = true
+assistant_tool.workspace = true
+async-watch.workspace = true
 auto_update.workspace = true
 call.workspace = true
+cargo_toml.workspace = true
 channel.workspace = true
 chrono.workspace = true
 client.workspace = true
+clock.workspace = true
 collections.workspace = true
 command_palette.workspace = true
+command_palette_hooks.workspace = true
+context_servers.workspace = true
 db.workspace = true
 editor.workspace = true
 emojis.workspace = true
 extensions_ui.workspace = true
 feature_flags.workspace = true
 feedback.workspace = true
+fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
+globset.workspace = true
 gpui.workspace = true
+handlebars.workspace = true
+heed.workspace = true
+html_to_markdown.workspace = true
+http_client.workspace = true
+indexed_docs.workspace = true
+indoc.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
 language.workspace = true
+language_model.workspace = true
+log.workspace = true
+lsp.workspace = true
+markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
+multi_buffer.workspace = true
 notifications.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
+open_ai = { workspace = true, features = ["schemars"] }
+ordered-float.workspace = true
 parking_lot.workspace = true
+paths.workspace = true
 picker.workspace = true
 project.workspace = true
+proto.workspace = true
 recent_projects.workspace = true
+regex.workspace = true
 release_channel.workspace = true
 remote.workspace = true
 repl.workspace = true
 rich_text.workspace = true
+rope.workspace = true
 rpc.workspace = true
 schemars.workspace = true
 search.workspace = true
+semantic_index.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
 settings.workspace = true
+similar.workspace = true
 smallvec.workspace = true
+smol.workspace = true
 story = { workspace = true, optional = true }
+strum.workspace = true
+telemetry_events.workspace = true
+terminal.workspace = true
+terminal_view.workspace = true
+text.workspace = true
 theme.workspace = true
 theme_selector.workspace = true
 time.workspace = true
 time_format.workspace = true
+toml.workspace = true
 ui.workspace = true
 util.workspace = true
+uuid.workspace = true
 vcs_menu.workspace = true
 vim.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
@@ -85,14 +122,24 @@ windows.workspace = true
 call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
+ctor.workspace = true
 editor = { workspace = true, features = ["test-support"] }
+env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
+language = { workspace = true, features = ["test-support"] }
+language_model = { workspace = true, features = ["test-support"] }
+languages = { workspace = true, features = ["test-support"] }
+log.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+rand.workspace = true
 rpc = { workspace = true, features = ["test-support"] }
+serde_json_lenient.workspace = true
 settings = { workspace = true, features = ["test-support"] }
+text = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
+unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

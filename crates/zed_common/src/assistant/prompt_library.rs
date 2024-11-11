@@ -1,5 +1,5 @@
-use crate::SlashCommandWorkingSet;
-use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
+use crate::assistant::SlashCommandWorkingSet;
+use crate::assistant::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};

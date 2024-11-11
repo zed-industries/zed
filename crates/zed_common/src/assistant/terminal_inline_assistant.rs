@@ -1,4 +1,4 @@
-use crate::{
+use crate::assistant::{
     humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
     ModelSelector, RequestType, DEFAULT_CONTEXT_LINES,
 };

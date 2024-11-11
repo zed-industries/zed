@@ -1,5 +1,5 @@
-use assistant::assistant_settings::AssistantSettings;
-use assistant::AssistantPanel;
+use crate::assistant::assistant_settings::AssistantSettings;
+use crate::assistant::AssistantPanel;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,

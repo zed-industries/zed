@@ -1,9 +1,9 @@
-use crate::slash_command::context_server_command;
-use crate::{
+use crate::assistant::slash_command::context_server_command;
+use crate::assistant::{
     prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
     ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
 };
-use crate::{tools, SlashCommandId, ToolId, ToolWorkingSet};
+use crate::assistant::{tools, SlashCommandId, ToolId, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;

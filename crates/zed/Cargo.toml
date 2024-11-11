@@ -19,7 +19,6 @@ assistant_slash_command.workspace = true
 activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
-assistant.workspace = true
 async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true

@@ -4,7 +4,6 @@ members = [
     "crates/activity_indicator",
     "crates/anthropic",
     "crates/assets",
-    "crates/assistant",
     "crates/assistant_slash_command",
     "crates/assistant_tool",
     "crates/audio",
@@ -178,7 +177,6 @@ activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
-assistant = { path = "crates/assistant" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_tool = { path = "crates/assistant_tool" }
 audio = { path = "crates/audio" }

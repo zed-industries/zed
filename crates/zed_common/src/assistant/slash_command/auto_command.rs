@@ -18,7 +18,7 @@ use ui::{prelude::*, BorrowAppContext, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::slash_command::create_label_for_command;
+use crate::assistant::slash_command::create_label_for_command;
 
 pub struct AutoSlashCommandFeatureFlag;
 

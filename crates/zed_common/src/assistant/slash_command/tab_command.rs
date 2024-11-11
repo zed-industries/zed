@@ -16,7 +16,7 @@ use ui::{prelude::*, ActiveTheme, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::slash_command::file_command::append_buffer_to_output;
+use crate::assistant::slash_command::file_command::append_buffer_to_output;
 
 pub(crate) struct TabSlashCommand;
 

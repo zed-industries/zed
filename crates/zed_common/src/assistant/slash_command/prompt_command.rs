@@ -1,4 +1,4 @@
-use crate::prompt_library::PromptStore;
+use crate::assistant::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
