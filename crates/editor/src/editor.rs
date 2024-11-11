@@ -12691,9 +12691,11 @@ impl Editor {
                             Some(scroll_offset) => Autoscroll::top_relative(scroll_offset as usize),
                             None => Autoscroll::newest(),
                         };
+                        let nav_history = editor.nav_history.take();
                         editor.change_selections(Some(autoscroll), cx, |s| {
                             s.select_ranges(ranges);
                         });
+                        editor.nav_history = nav_history;
                     });
                 }
             })
