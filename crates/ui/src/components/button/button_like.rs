@@ -491,10 +491,10 @@ impl RenderOnce for ButtonLike {
                 ButtonLikeRounding::Left => this.rounded_l_md(),
                 ButtonLikeRounding::Right => this.rounded_r_md(),
             })
-            .gap(Spacing::Small.rems(cx))
+            .gap(Spacing::Base4.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large => this.px(Spacing::Medium.rems(cx)),
-                ButtonSize::Default | ButtonSize::Compact => this.px(Spacing::Small.rems(cx)),
+                ButtonSize::Large => this.px(Spacing::Base6.rems(cx)),
+                ButtonSize::Default | ButtonSize::Compact => this.px(Spacing::Base4.rems(cx)),
                 ButtonSize::None => this,
             })
             .bg(style.enabled(self.layer, cx).background)

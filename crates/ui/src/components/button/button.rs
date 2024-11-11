@@ -398,7 +398,7 @@ impl RenderOnce for Button {
 
         self.base.child(
             h_flex()
-                .gap(Spacing::Small.rems(cx))
+                .gap(Spacing::Base4.rems(cx))
                 .when(self.icon_position == Some(IconPosition::Start), |this| {
                     this.children(self.icon.map(|icon| {
                         ButtonIcon::new(icon)
@@ -412,7 +412,7 @@ impl RenderOnce for Button {
                 })
                 .child(
                     h_flex()
-                        .gap(Spacing::Medium.rems(cx))
+                        .gap(Spacing::Base6.rems(cx))
                         .justify_between()
                         .child(
                             Label::new(label)

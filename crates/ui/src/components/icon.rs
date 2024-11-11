@@ -91,9 +91,9 @@ impl IconSize {
         let icon_size = self.rems() * cx.rem_size();
         let padding = match self {
             IconSize::Indicator => Spacing::None.px(cx),
-            IconSize::XSmall => Spacing::XSmall.px(cx),
-            IconSize::Small => Spacing::XSmall.px(cx),
-            IconSize::Medium => Spacing::XSmall.px(cx),
+            IconSize::XSmall => Spacing::Base2.px(cx),
+            IconSize::Small => Spacing::Base2.px(cx),
+            IconSize::Medium => Spacing::Base2.px(cx),
         };
 
         (icon_size, padding)

@@ -84,7 +84,7 @@ impl RenderOnce for KeyBinding {
                         .join(" ")
                 )
             })
-            .gap(Spacing::Small.rems(cx))
+            .gap(Spacing::Base4.rems(cx))
             .flex_none()
             .children(self.key_binding.keystrokes().iter().map(|keystroke| {
                 let key_icon = self.icon_for_key(keystroke);
