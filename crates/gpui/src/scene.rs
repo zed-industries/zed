@@ -2,8 +2,8 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 use crate::{
-    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, Radians, ScaledPixels, Size,
+    bounds_tree::BoundsTree, point, px, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners,
+    Edges, Hsla, Pixels, Point, Radians, ScaledPixels, Size,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -786,6 +786,10 @@ impl Path<Pixels> {
                 (point(0., 1.), point(0., 1.), point(0., 1.)),
             );
         }
+        self.push_triangle(
+            (self.current, to + point(px(0.5), px(0.5)), to),
+            (point(0., 0.), point(0.5, 0.), point(1., 1.)),
+        );
         self.current = to;
     }
 

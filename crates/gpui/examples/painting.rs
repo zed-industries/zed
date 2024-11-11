@@ -15,9 +15,9 @@ impl PaintingViewer {
 
         // draw a line
         let mut path = Path::new(point(px(50.), px(180.)));
-        path.curve_to(point(px(150.), px(120.)), point(px(150.3), px(120.3)));
-        path.curve_to(point(px(150.), px(180.)), point(px(150.3), px(180.3)));
-        path.curve_to(point(px(50.), px(180.)), point(px(50.3), px(180.3)));
+        path.line_to(point(px(150.), px(120.)));
+        path.line_to(point(px(151.), px(121.)));
+        path.line_to(point(px(51.), px(181.)));
         lines.push(path);
 
         // draw a lightening bolt ⚡
