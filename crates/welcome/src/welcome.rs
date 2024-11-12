@@ -74,6 +74,7 @@ impl Render for WelcomePage {
             .anchor(AnchorCorner::TopLeft)
             .trigger(
                 Button::new("usage-data-info", "Learn More")
+                    .color(Color::Muted)
                     .label_size(LabelSize::XSmall)
             )
             .menu({
@@ -81,16 +82,24 @@ impl Render for WelcomePage {
                     ContextMenu::build(cx, move |menu, _| {
                         menu.custom_entry(
                             move |_| {
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
+                                div()
+                                    .max_w_64()
+                                    .flex_wrap()
                                     .child(
-                                        div()
-                                            .max_w_64()
-                                            .flex_wrap()
-                                            .child(
-                                                Label::new("Your telemetry data is never shared with any third-party groups. To delete your account and data, email hi@zed.dev")
-                                            )
+                                        Label::new("Your telemetry data is never shared with any third-party groups.").size(LabelSize::Small)
+                                    )
+                                    .into_any_element()
+                            },
+                            move |_| {},
+                        )
+                        .separator()
+                        .custom_entry(
+                            move |_| {
+                                div()
+                                    .max_w_64()
+                                    .flex_wrap()
+                                    .child(
+                                        Label::new("Send an email to hi@zed.dev to delete your account and data.").size(LabelSize::Small)
                                     )
                                     .into_any_element()
                             },
@@ -323,6 +332,32 @@ impl Render for WelcomePage {
                                     );
                                 }),
                             ))
+                            .child(CheckboxWithLabel::new(
+                                "enable-crash",
+                                Label::new("Send crash reports"),
+                                if TelemetrySettings::get_global(cx).diagnostics {
+                                    ui::Selection::Selected
+                                } else {
+                                    ui::Selection::Unselected
+                                },
+                                cx.listener(move |this, selection, cx| {
+                                    this.telemetry.report_app_event(
+                                        "welcome page: toggle diagnostic telemetry".to_string(),
+                                    );
+                                    this.update_settings::<TelemetrySettings>(selection, cx, {
+                                        let telemetry = this.telemetry.clone();
+
+                                        move |settings, value| {
+                                            settings.diagnostics = Some(value);
+
+                                            telemetry.report_setting_event(
+                                                "diagnostic telemetry",
+                                                value.to_string(),
+                                            );
+                                        }
+                                    });
+                                }),
+                            ))
                             .child(
                                 h_flex()
                                     .w_full()
@@ -358,33 +393,7 @@ impl Render for WelcomePage {
                                         }),
                                     ))
                                     .child(account_info_popover),
-                            )
-                            .child(CheckboxWithLabel::new(
-                                "enable-crash",
-                                Label::new("Send crash reports"),
-                                if TelemetrySettings::get_global(cx).diagnostics {
-                                    ui::Selection::Selected
-                                } else {
-                                    ui::Selection::Unselected
-                                },
-                                cx.listener(move |this, selection, cx| {
-                                    this.telemetry.report_app_event(
-                                        "welcome page: toggle diagnostic telemetry".to_string(),
-                                    );
-                                    this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        let telemetry = this.telemetry.clone();
-
-                                        move |settings, value| {
-                                            settings.diagnostics = Some(value);
-
-                                            telemetry.report_setting_event(
-                                                "diagnostic telemetry",
-                                                value.to_string(),
-                                            );
-                                        }
-                                    });
-                                }),
-                            )),
+                            ),
                     ),
             )
     }
