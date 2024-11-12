@@ -1,9 +1,10 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{io::BufReader, StreamExt};
 use gpui::{AppContext, AsyncAppContext};
+use http_client::github::AssetKind;
 use http_client::github::{latest_github_release, GitHubLspBinaryVersion};
 pub use language::*;
 use lsp::LanguageServerBinary;
@@ -12,7 +13,6 @@ use smol::fs::{self};
 use std::{
     any::Any,
     borrow::Cow,
-    env::consts,
     path::{Path, PathBuf},
     sync::Arc,
     sync::LazyLock,
@@ -24,8 +24,41 @@ use crate::language_settings::language_settings;
 
 pub struct RustLspAdapter;
 
+#[cfg(target_os = "macos")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "apple-darwin";
+}
+
+#[cfg(target_os = "linux")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::TarGz;
+    const ARCH_SERVER_NAME: &str = "unknown-linux-gnu";
+}
+
+#[cfg(target_os = "windows")]
+impl RustLspAdapter {
+    const GITHUB_ASSET_KIND: AssetKind = AssetKind::Zip;
+    const ARCH_SERVER_NAME: &str = "pc-windows-msvc";
+}
+
 impl RustLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("rust-analyzer");
+
+    fn build_asset_name() -> String {
+        let extension = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz => "gz", // Nb: rust-analyzer releases use .gz not .tar.gz
+            AssetKind::Zip => "zip",
+        };
+
+        format!(
+            "{}-{}-{}.{}",
+            Self::SERVER_NAME,
+            std::env::consts::ARCH,
+            Self::ARCH_SERVER_NAME,
+            extension
+        )
+    }
 }
 
 #[async_trait(?Send)]
@@ -79,19 +112,8 @@ impl LspAdapter for RustLspAdapter {
             delegate.http_client(),
         )
         .await?;
-        let os = match consts::OS {
-            "macos" => "apple-darwin",
-            "linux" => "unknown-linux-gnu",
-            "windows" => "pc-windows-msvc",
-            other => bail!("Running on unsupported os: {other}"),
-        };
-        let arch = consts::ARCH;
-        let suffix = if consts::OS == "windows" {
-            ".zip"
-        } else {
-            ".tar.gz"
-        };
-        let asset_name = format!("rust-analyzer-{arch}-{os}{suffix}");
+        let asset_name = Self::build_asset_name();
+
         let asset = release
             .assets
             .iter()
@@ -110,46 +132,48 @@ impl LspAdapter for RustLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let version = version.downcast::<GitHubLspBinaryVersion>().unwrap();
-
-        let extract_path = container_dir.join(format!("rust-analyzer-{}", version.name));
-        let bin_path = match consts::OS {
-            "macos" | "linux" => extract_path.clone(),
-            "windows" => extract_path.clone().join("rust-analyzer.exe"),
-            other => bail!("Running on unsupported os: {other}"),
+        let destination_path = container_dir.join(format!("rust-analyzer-{}", version.name));
+        let server_path = match Self::GITHUB_ASSET_KIND {
+            AssetKind::TarGz => destination_path.clone(), // Tar extracts in place.
+            AssetKind::Zip => destination_path.clone().join("rust-analyzer.exe"), // zip contains a .exe
         };
 
-        if fs::metadata(&bin_path).await.is_err() {
+        if fs::metadata(&server_path).await.is_err() {
+            remove_matching(&container_dir, |entry| entry != destination_path).await;
+
             let mut response = delegate
                 .http_client()
                 .get(&version.url, Default::default(), true)
                 .await
                 .map_err(|err| anyhow!("error downloading release: {}", err))?;
-            if version.url.ends_with(".zip") {
-                node_runtime::extract_zip(
-                    &extract_path,
-                    BufReader::new(response.body_mut()),
-                )
-                .await?;
-            } else if version.url.ends_with(".tar.gz") {
-                let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
-                let archive = async_tar::Archive::new(decompressed_bytes);
-                archive.unpack(&extract_path).await?;
-            }
+            match Self::GITHUB_ASSET_KIND {
+                AssetKind::TarGz => {
+                    let decompressed_bytes = GzipDecoder::new(BufReader::new(response.body_mut()));
+                    let archive = async_tar::Archive::new(decompressed_bytes);
+                    archive.unpack(&destination_path).await?;
+                }
+                AssetKind::Zip => {
+                    node_runtime::extract_zip(
+                        &destination_path,
+                        BufReader::new(response.body_mut()),
+                    )
+                    .await?;
+                }
+            };
+
             // todo("windows")
             #[cfg(not(windows))]
             {
                 fs::set_permissions(
-                    &bin_path,
+                    &server_path,
                     <fs::Permissions as fs::unix::PermissionsExt>::from_mode(0o755),
                 )
                 .await?;
             }
-
-            remove_matching(&container_dir, |entry| entry != extract_path).await;
         }
 
         Ok(LanguageServerBinary {
-            path: bin_path,
+            path: server_path,
             env: None,
             arguments: Default::default(),
         })
