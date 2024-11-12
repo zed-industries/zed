@@ -15,6 +15,7 @@ Zed supports ways to spawn (and rerun) commands using its integrated terminal to
     // Whether to use a new terminal tab or reuse the existing one to spawn the process, defaults to `false`.
     "use_new_terminal": false,
     // Whether to allow multiple instances of the same task to be run, or rather wait for the existing ones to finish, defaults to `false`.
+    // If `use_new_terminal` is set to `false`, any existing task is instead cancelled before starting a new one.
     "allow_concurrent_runs": false,
     // What to do with the terminal pane and tab, after the command was started:
     // * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
