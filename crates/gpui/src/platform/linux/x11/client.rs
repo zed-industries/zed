@@ -38,8 +38,8 @@ use crate::platform::{LinuxCommon, PlatformWindow};
 use crate::{
     modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
     DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
-    Platform, PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta, Size, TouchPhase,
-    WindowParams, X11Window,
+    Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 use super::{
@@ -531,7 +531,9 @@ impl X11Client {
 
             for window in windows_to_refresh.into_iter() {
                 if let Some(window) = self.get_window(window) {
-                    window.refresh();
+                    window.refresh(RequestFrameOptions {
+                        require_presentation: true,
+                    });
                 }
             }
 
@@ -1356,7 +1358,7 @@ impl LinuxClient for X11Client {
                         if let Some(window) = state.windows.get(&x_window) {
                             let window = window.window.clone();
                             drop(state);
-                            window.refresh();
+                            window.refresh(Default::default());
                         }
                         xcb_connection
                     };
