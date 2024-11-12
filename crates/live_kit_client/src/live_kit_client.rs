@@ -1,3 +1,5 @@
+// TODO livekit suppress all livekit-related warnings during compilation
+
 mod remote_video_track_view;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
@@ -21,10 +23,11 @@ use webrtc::{
     video_stream::native::NativeVideoStream,
 };
 
-#[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
+// TODO livekit restore this
+// #[cfg(all(not(any(test, feature = "test-support")), not(target_os = "windows")))]
 pub use livekit::*;
-#[cfg(any(test, feature = "test-support", target_os = "windows"))]
-pub use test::*;
+// #[cfg(any(test, feature = "test-support", target_os = "windows"))]
+// pub use test::*;
 
 pub use remote_video_track_view::{RemoteVideoTrackView, RemoteVideoTrackViewEvent};
 
@@ -136,7 +139,8 @@ pub fn capture_local_audio_track(
         },
         sample_rate,
         channels,
-        Some(true),
+        // TODO livekit: Pull these out of a proto later
+        100,
     );
 
     let stream_task = cx.foreground_executor().spawn(async move {
@@ -173,7 +177,8 @@ pub fn play_remote_audio_track(
 ) -> AudioStream {
     let buffer = Arc::new(Mutex::new(Vec::<i16>::new()));
     let (stream_config_tx, mut stream_config_rx) = futures::channel::mpsc::unbounded();
-    let mut stream = NativeAudioStream::new(track.rtc_track());
+    // TODO livekit: Pull these out of a proto later
+    let mut stream = NativeAudioStream::new(track.rtc_track(), 48000, 1);
 
     let receive_task = cx.background_executor().spawn({
         let buffer = buffer.clone();
