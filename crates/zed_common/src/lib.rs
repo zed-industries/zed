@@ -8,6 +8,7 @@ pub mod project_symbols;
 pub mod quick_action_bar;
 pub mod repl;
 pub mod settings_ui;
+pub mod snippets_ui;
 pub mod tab_switcher;
 pub mod title_bar;
 pub mod toolchain_selector;
