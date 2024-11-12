@@ -1,12 +1,15 @@
 mod project_panel_settings;
 
 use client::{ErrorCode, ErrorExt};
+use language::DiagnosticSeverity;
 use settings::{Settings, SettingsStore};
-use ui::{Scrollbar, ScrollbarState};
 
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    items::entry_git_aware_label_color,
+    items::{
+        entry_diagnostic_aware_icon_decoration_and_color,
+        entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
+    },
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
@@ -18,7 +21,7 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView,
+    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render, ScrollStrategy,
     Stateful, Styled, Subscription, Task, UniformListScrollHandle, View, ViewContext,
@@ -30,7 +33,9 @@ use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
     WorktreeId,
 };
-use project_panel_settings::{ProjectPanelDockPosition, ProjectPanelSettings, ShowIndentGuides};
+use project_panel_settings::{
+    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
+};
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -44,8 +49,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, Icon, IndentGuideColors, IndentGuideLayout, KeyBinding, Label,
-    ListItem, Tooltip,
+    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, Scrollbar, ScrollbarState,
+    Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::{
@@ -90,6 +96,7 @@ pub struct ProjectPanel {
     vertical_scrollbar_state: ScrollbarState,
     horizontal_scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
+    diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
     max_width_item_index: Option<usize>,
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
@@ -133,6 +140,8 @@ struct EntryDetails {
     is_editing: bool,
     is_processing: bool,
     is_cut: bool,
+    filename_text_color: Color,
+    diagnostic_severity: Option<DiagnosticSeverity>,
     git_status: Option<GitFileStatus>,
     is_private: bool,
     worktree_id: WorktreeId,
@@ -234,6 +243,26 @@ struct DraggedProjectEntryView {
     selections: Arc<BTreeSet<SelectedEntry>>,
 }
 
+struct ItemColors {
+    default: Hsla,
+    hover: Hsla,
+    drag_over: Hsla,
+    selected: Hsla,
+    marked_active: Hsla,
+}
+
+fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
+    let colors = cx.theme().colors();
+
+    ItemColors {
+        default: colors.surface_background,
+        hover: colors.ghost_element_hover,
+        drag_over: colors.drop_target_background,
+        selected: colors.surface_background,
+        marked_active: colors.ghost_element_selected,
+    }
+}
+
 impl ProjectPanel {
     fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let project = workspace.project().clone();
@@ -256,6 +285,14 @@ impl ProjectPanel {
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
+                }
+                project::Event::DiskBasedDiagnosticsFinished { .. }
+                | project::Event::DiagnosticsUpdated { .. } => {
+                    if ProjectPanelSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off
+                    {
+                        this.update_diagnostics(cx);
+                        cx.notify();
+                    }
                 }
                 project::Event::WorktreeRemoved(id) => {
                     this.expanded_dir_ids.remove(id);
@@ -302,10 +339,11 @@ impl ProjectPanel {
             .detach();
 
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
-            cx.observe_global::<SettingsStore>(move |_, cx| {
+            cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
                     project_panel_settings = new_settings;
+                    this.update_diagnostics(cx);
                     cx.notify();
                 }
             })
@@ -340,6 +378,7 @@ impl ProjectPanel {
                 horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
                     .parent_view(cx.view()),
                 max_width_item_index: None,
+                diagnostics: Default::default(),
                 scroll_handle,
                 mouse_down: false,
             };
@@ -454,6 +493,64 @@ impl ProjectPanel {
             }
             panel
         })
+    }
+
+    fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        let mut diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity> =
+            Default::default();
+        let show_diagnostics_setting = ProjectPanelSettings::get_global(cx).show_diagnostics;
+
+        if show_diagnostics_setting != ShowDiagnostics::Off {
+            self.project
+                .read(cx)
+                .diagnostic_summaries(false, cx)
+                .filter_map(|(path, _, diagnostic_summary)| {
+                    if diagnostic_summary.error_count > 0 {
+                        Some((path, DiagnosticSeverity::ERROR))
+                    } else if show_diagnostics_setting == ShowDiagnostics::All
+                        && diagnostic_summary.warning_count > 0
+                    {
+                        Some((path, DiagnosticSeverity::WARNING))
+                    } else {
+                        None
+                    }
+                })
+                .for_each(|(project_path, diagnostic_severity)| {
+                    let mut path_buffer = PathBuf::new();
+                    Self::update_strongest_diagnostic_severity(
+                        &mut diagnostics,
+                        &project_path,
+                        path_buffer.clone(),
+                        diagnostic_severity,
+                    );
+
+                    for component in project_path.path.components() {
+                        path_buffer.push(component);
+                        Self::update_strongest_diagnostic_severity(
+                            &mut diagnostics,
+                            &project_path,
+                            path_buffer.clone(),
+                            diagnostic_severity,
+                        );
+                    }
+                });
+        }
+        self.diagnostics = diagnostics;
+    }
+
+    fn update_strongest_diagnostic_severity(
+        diagnostics: &mut HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
+        project_path: &ProjectPath,
+        path_buffer: PathBuf,
+        diagnostic_severity: DiagnosticSeverity,
+    ) {
+        diagnostics
+            .entry((project_path.worktree_id, path_buffer.clone()))
+            .and_modify(|strongest_diagnostic_severity| {
+                *strongest_diagnostic_severity =
+                    std::cmp::min(*strongest_diagnostic_severity, diagnostic_severity);
+            })
+            .or_insert(diagnostic_severity);
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
@@ -2353,6 +2450,23 @@ impl ProjectPanel {
                         worktree_id: snapshot.id(),
                         entry_id: entry.id,
                     };
+
+                    let is_marked = self.marked_entries.contains(&selection);
+
+                    let diagnostic_severity = self
+                        .diagnostics
+                        .get(&(*worktree_id, entry.path.to_path_buf()))
+                        .cloned();
+
+                    let filename_text_color = if entry.kind.is_file()
+                        && diagnostic_severity
+                            .map_or(false, |severity| severity == DiagnosticSeverity::ERROR)
+                    {
+                        Color::Error
+                    } else {
+                        entry_git_aware_label_color(status, entry.is_ignored, is_marked)
+                    };
+
                     let mut details = EntryDetails {
                         filename,
                         icon,
@@ -2362,13 +2476,15 @@ impl ProjectPanel {
                         is_ignored: entry.is_ignored,
                         is_expanded,
                         is_selected: self.selection == Some(selection),
-                        is_marked: self.marked_entries.contains(&selection),
+                        is_marked,
                         is_editing: false,
                         is_processing: false,
                         is_cut: self
                             .clipboard
                             .as_ref()
                             .map_or(false, |e| e.is_cut() && e.items().contains(&selection)),
+                        filename_text_color,
+                        diagnostic_severity,
                         git_status: status,
                         is_private: entry.is_private,
                         worktree_id: *worktree_id,
@@ -2480,18 +2596,20 @@ impl ProjectPanel {
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
         let show_editor = details.is_editing && !details.is_processing;
+
         let selection = SelectedEntry {
             worktree_id: details.worktree_id,
             entry_id,
         };
+
         let is_marked = self.marked_entries.contains(&selection);
         let is_active = self
             .selection
             .map_or(false, |selection| selection.entry_id == entry_id);
+
         let width = self.size(cx);
-        let filename_text_color =
-            entry_git_aware_label_color(details.git_status, details.is_ignored, is_marked);
         let file_name = details.filename.clone();
+
         let mut icon = details.icon.clone();
         if settings.file_icons && show_editor && details.kind.is_file() {
             let filename = self.filename_editor.read(cx).text(cx);
@@ -2499,6 +2617,10 @@ impl ProjectPanel {
                 icon = FileIcons::get_icon(Path::new(&filename), cx);
             }
         }
+
+        let filename_text_color = details.filename_text_color;
+        let diagnostic_severity = details.diagnostic_severity;
+        let item_colors = get_item_color(cx);
 
         let canonical_path = details
             .canonical_path
@@ -2579,9 +2701,7 @@ impl ProjectPanel {
                     selections: selection.marked_selections.clone(),
                 })
             })
-            .drag_over::<DraggedSelection>(|style, _, cx| {
-                style.bg(cx.theme().colors().drop_target_background)
-            })
+            .drag_over::<DraggedSelection>(move |style, _, _| style.bg(item_colors.drag_over))
             .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
                 this.hover_scroll_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
@@ -2675,12 +2795,60 @@ impl ProjectPanel {
                         )
                     })
                     .child(if let Some(icon) = &icon {
-                        h_flex().child(Icon::from_path(icon.to_string()).color(filename_text_color))
+                        // Check if there's a diagnostic severity and get the decoration color
+                        if let Some((_, decoration_color)) =
+                            entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
+                        {
+                            // Determine if the diagnostic is a warning
+                            let is_warning = diagnostic_severity
+                                .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
+                                .unwrap_or(false);
+                            div().child(
+                                DecoratedIcon::new(
+                                    Icon::from_path(icon.clone()).color(Color::Muted),
+                                    Some(
+                                        IconDecoration::new(
+                                            if kind.is_file() {
+                                                if is_warning {
+                                                    IconDecorationKind::Triangle
+                                                } else {
+                                                    IconDecorationKind::X
+                                                }
+                                            } else {
+                                                IconDecorationKind::Dot
+                                            },
+                                            if is_marked || is_active {
+                                                item_colors.selected
+                                            } else {
+                                                item_colors.default
+                                            },
+                                            cx,
+                                        )
+                                        .color(decoration_color.color(cx))
+                                        .position(Point {
+                                            x: px(-2.),
+                                            y: px(-2.),
+                                        }),
+                                    ),
+                                )
+                                .into_any_element(),
+                            )
+                        } else {
+                            h_flex().child(Icon::from_path(icon.to_string()).color(Color::Muted))
+                        }
                     } else {
-                        h_flex()
-                            .size(IconSize::default().rems())
-                            .invisible()
-                            .flex_none()
+                        if let Some((icon_name, color)) =
+                            entry_diagnostic_aware_icon_name_and_color(diagnostic_severity)
+                        {
+                            h_flex()
+                                .size(IconSize::default().rems())
+                                .child(Icon::new(icon_name).color(color).size(IconSize::Small))
+                        } else {
+                            h_flex()
+                                .size(IconSize::default().rems())
+                                .invisible()
+                                .flex_none()
+                        }
                     })
                     .child(
                         if let (Some(editor), true) = (Some(&self.filename_editor), show_editor) {
@@ -2770,14 +2938,14 @@ impl ProjectPanel {
                 if is_active {
                     style
                 } else {
-                    let hover_color = cx.theme().colors().ghost_element_hover;
-                    style.bg(hover_color).border_color(hover_color)
+                    style.bg(item_colors.hover).border_color(item_colors.hover)
                 }
             })
             .when(is_marked || is_active, |this| {
-                let colors = cx.theme().colors();
-                this.when(is_marked, |this| this.bg(colors.ghost_element_selected))
-                    .border_color(colors.ghost_element_selected)
+                this.when(is_marked, |this| {
+                    this.bg(item_colors.marked_active)
+                        .border_color(item_colors.marked_active)
+                })
             })
             .when(
                 !self.mouse_down && is_active && self.focus_handle.contains_focused(cx),
