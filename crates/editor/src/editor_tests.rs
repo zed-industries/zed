@@ -4205,7 +4205,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
         "},
         indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
             // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
             // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
@@ -4214,7 +4214,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇ
+            // porttitor id. Aliquam id accumsan eros.
         "},
         language_with_c_comments.clone(),
         &mut cx,
@@ -4226,7 +4226,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ»
         "},
         indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            «// Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
             // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
             // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
@@ -4235,7 +4235,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇ
+            // porttitor id. Aliquam id accumsan eros.ˇ»
         "},
         language_with_c_comments.clone(),
         &mut cx,
@@ -4250,16 +4250,16 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
         "},
         indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. ˇVivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam
+            // auctor, eu lacinia sapien scelerisque. ˇVivamus sit amet neque et quam
             // tincidunt hendrerit. Praesent semper egestas tellus id dignissim.
-            // Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed
+            // Pellentesque odio lectus, iaculis ac volutpat et, ˇblandit quis urna. Sed
             // vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam,
             // et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum
             // dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu
             // viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis
-            // porttitor id. Aliquam id accumsan eros.ˇ
+            // porttitor id. Aliquam id accumsan eros.
         "},
         language_with_c_comments.clone(),
         &mut cx,
@@ -4275,17 +4275,17 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
         "},
         indoc! {"
-            // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            // ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. ˇVivamus mollis elit
             // purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus
-            // auctor, eu lacinia sapien scelerisque.ˇ
+            // auctor, eu lacinia sapien scelerisque.
             //
-            // Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
+            // ˇVivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas
             // tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et,
-            // blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
+            // ˇblandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec
             // molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque
             // nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas
             // porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id
-            // vulputate turpis porttitor id. Aliquam id accumsan eros.ˇ
+            // vulputate turpis porttitor id. Aliquam id accumsan eros.
         "},
         language_with_c_comments.clone(),
         &mut cx,
@@ -4297,7 +4297,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis. Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id accumsan eros.
         "},
         indoc! {"
-            # Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            # ˇLorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
             # purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
             # eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
             # hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
@@ -4306,7 +4306,7 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             # in. Integer sit amet scelerisque nisi. Lorem ipsum dolor sit amet, consectetur
             # adipiscing elit. Cras egestas porta metus, eu viverra ipsum efficitur quis.
             # Donec luctus eros turpis, id vulputate turpis porttitor id. Aliquam id
-            # accumsan eros.ˇ
+            # accumsan eros.
         "},
         language_with_pound_comments.clone(),
         &mut cx,
@@ -4342,13 +4342,13 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         indoc! {"
             # Hello
 
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit
             purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
             eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
             hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
             lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
             nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
-            Integer sit amet scelerisque nisi.ˇ
+            Integer sit amet scelerisque nisi.
         "},
         markdown_language,
         &mut cx,
@@ -4359,13 +4359,13 @@ async fn test_rewrap(cx: &mut TestAppContext) {
             Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor, eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in. Integer sit amet scelerisque nisi.
         "},
         indoc! {"
-            Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus mollis elit
+            Lorem ipsum dolor sit amet, ˇconsectetur adipiscing elit. Vivamus mollis elit
             purus, a ornare lacus gravida vitae. Proin consectetur felis vel purus auctor,
             eu lacinia sapien scelerisque. Vivamus sit amet neque et quam tincidunt
             hendrerit. Praesent semper egestas tellus id dignissim. Pellentesque odio
             lectus, iaculis ac volutpat et, blandit quis urna. Sed vestibulum nisi sit amet
             nisl venenatis tempus. Donec molestie blandit quam, et porta nunc laoreet in.
-            Integer sit amet scelerisque nisi.ˇ
+            Integer sit amet scelerisque nisi.
         "},
         plaintext_language,
         &mut cx,
@@ -4387,9 +4387,9 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         indoc! {"
             fn foo() {
                 if true {
-                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+            «        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
                     // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
-                    // egestas tellus id dignissim.ˇ
+                    // egestas tellus id dignissim.ˇ»
                     do_something();
                 } else {
                     //
@@ -4416,9 +4416,9 @@ async fn test_rewrap(cx: &mut TestAppContext) {
         indoc! {"
             fn foo() {
                 if true {
-                    // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
+            «ˇ        // Lorem ipsum dolor sit amet, consectetur adipiscing elit. Vivamus
                     // mollis elit purus, a ornare lacus gravida vitae. Praesent semper
-                    // egestas tellus id dignissim.ˇ
+                    // egestas tellus id dignissim.»
                     do_something();
                 } else {
                     //
