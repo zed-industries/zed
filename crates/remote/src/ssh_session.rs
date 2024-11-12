@@ -1415,6 +1415,7 @@ impl SshRemoteConnection {
                         println!("  --> 1.3");
                         let x = listener.send_password(password).await;
                         println!("  --> 1.3.1: {:?}", x);
+                        listener.disconnect();
                     } else {
                         println!("  --> 1.4");
                         if let Some(kill_tx) = kill_tx.take() {
@@ -1544,12 +1545,14 @@ impl SshRemoteConnection {
             socket_path,
         };
 
+        println!("--> 6");
         let mut this = Self {
             socket,
             master_process: Mutex::new(Some(master_process)),
             _temp_dir: temp_dir,
             remote_binary_path: None,
         };
+        println!("--> 7");
 
         let (release_channel, version, commit) = cx.update(|cx| {
             (
@@ -1558,12 +1561,13 @@ impl SshRemoteConnection {
                 AppCommitSha::try_global(cx),
             )
         })?;
+        println!("--> 8");
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
                 .await?,
         );
+        println!("--> 9");
 
-        println!("--> 6");
         Ok(this)
     }
 
@@ -2428,9 +2432,9 @@ mod ipc {
             println!("=> Reading connection on named pipe");
             let raw_handle = (*self.pipe).0 as isize;
             smol::unblock(move || {
-                ONCE.call_once(|| unsafe {
-                    ConnectNamedPipe(HANDLE(raw_handle as _), None).log_err();
-                });
+                // ONCE.call_once(|| unsafe {
+                unsafe { ConnectNamedPipe(HANDLE(raw_handle as _), None).log_err() };
+                // });
                 let mut buffer = [0u8; SSH_NAMED_PIPE_MAX_SIZE];
                 let mut bytes_read = 0;
                 println!("  => Reading from named pipe");
@@ -2482,6 +2486,16 @@ mod ipc {
                 Ok(())
             })
             .await
+        }
+
+        #[cfg(target_os = "windows")]
+        pub(super) fn disconnect(&self) {
+            use util::ResultExt;
+            use windows::Win32::System::Pipes::DisconnectNamedPipe;
+
+            unsafe {
+                DisconnectNamedPipe(*self.pipe).log_err();
+            }
         }
     }
 
@@ -2577,17 +2591,20 @@ mod ipc {
         let ps1_content = format!(
             r#"
             $argsString = [String]::Join("`0", $args) + "`0"
+            if (-not $argsString) {{
+                $argsString = "empty"
+            }}
 
             $pipeName = "{}"
             $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream(".", $pipeName, [System.IO.Pipes.PipeDirection]::InOut)
 
             $pipeClient.Connect()
 
+            $reader = New-Object System.IO.StreamReader($pipeClient)
             $writer = New-Object System.IO.StreamWriter($pipeClient)
+
             $writer.WriteLine($argsString)
             $writer.Flush()
-
-            $reader = New-Object System.IO.StreamReader($pipeClient)
             $response = $reader.ReadLine()
 
             # $reader.Close()
@@ -2601,7 +2618,7 @@ mod ipc {
         smol::fs::write(&ps1_path, ps1_content).await?;
         let cmd_content = format!(
             r#"
-            powershell -ExecutionPolicy Bypass -File "{}" $args
+            powershell.exe -ExecutionPolicy Bypass -File "{}" %*
             "#,
             ps1_path.to_string_lossy()
         );
