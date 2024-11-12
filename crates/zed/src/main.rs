@@ -453,7 +453,7 @@ fn main() {
         terminal_view::init(cx);
         journal::init(app_state.clone(), cx);
         zed_common::language_selector::init(cx);
-        toolchain_selector::init(cx);
+        zed_common::toolchain_selector::init(cx);
         theme_selector::init(cx);
         language_tools::init(cx);
         call::init(app_state.client.clone(), app_state.user_store.clone(), cx);

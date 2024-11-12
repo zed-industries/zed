@@ -12429,21 +12429,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "toolchain_selector"
-version = "0.1.0"
-dependencies = [
- "editor",
- "fuzzy",
- "gpui",
- "language",
- "picker",
- "project",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "topological-sort"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15027,7 +15012,6 @@ dependencies = [
  "theme",
  "theme_selector",
  "time",
- "toolchain_selector",
  "tree-sitter-md",
  "tree-sitter-rust",
  "ui",

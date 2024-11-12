@@ -8,7 +8,7 @@ use project::WorktreeId;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::ToolchainSelector;
+use crate::toolchain_selector::ToolchainSelector;
 
 pub struct ActiveToolchain {
     active_toolchain: Option<Toolchain>,

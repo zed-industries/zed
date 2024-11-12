@@ -208,7 +208,7 @@ pub fn initialize_workspace(
         let active_buffer_language =
             cx.new_view(|_| zed_common::language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
-            cx.new_view(|cx| toolchain_selector::ActiveToolchain::new(workspace, cx));
+            cx.new_view(|cx| zed_common::toolchain_selector::ActiveToolchain::new(workspace, cx));
         let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
         let cursor_position =
             cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
