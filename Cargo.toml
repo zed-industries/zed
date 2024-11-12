@@ -71,7 +71,6 @@ members = [
     "crates/prettier",
     "crates/project",
     "crates/project_panel",
-    "crates/project_symbols",
     "crates/proto",
     "crates/recent_projects",
     "crates/refineable",
@@ -236,7 +235,6 @@ plugin_macros = { path = "crates/plugin_macros" }
 prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
-project_symbols = { path = "crates/project_symbols" }
 proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }

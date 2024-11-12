@@ -8947,28 +8947,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "project_symbols"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "editor",
- "futures 0.3.30",
- "fuzzy",
- "gpui",
- "language",
- "lsp",
- "ordered-float 2.10.1",
- "picker",
- "project",
- "release_channel",
- "serde_json",
- "settings",
- "theme",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "prometheus"
 version = "0.13.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15024,7 +15002,6 @@ dependencies = [
  "profiling",
  "project",
  "project_panel",
- "project_symbols",
  "proto",
  "recent_projects",
  "release_channel",
