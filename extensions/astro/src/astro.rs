@@ -123,6 +123,25 @@ impl AstroExtension {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn astro_lsp_path(server_path: &str) -> String {
+    env::current_dir()
+        .unwrap()
+        .join(&server_path)
+        .to_string_lossy()
+        .trim_start_matches("/")
+        .to_string()
+}
+
+#[cfg(not(target_os = "windows"))]
+fn astro_lsp_path(server_path: &str) -> String {
+    env::current_dir()
+        .unwrap()
+        .join(&server_path)
+        .to_string_lossy()
+        .to_string()
+}
+
 impl zed::Extension for AstroExtension {
     fn new() -> Self {
         Self {
@@ -137,16 +156,14 @@ impl zed::Extension for AstroExtension {
         worktree: &zed::Worktree,
     ) -> Result<zed::Command> {
         let server_path = self.server_script_path(language_server_id, worktree)?;
+
+        let script_path = astro_lsp_path(&server_path);
+
+        println!("Astro script path: {:?}", script_path);
+
         Ok(zed::Command {
             command: zed::node_binary_path()?,
-            args: vec![
-                env::current_dir()
-                    .unwrap()
-                    .join(&server_path)
-                    .to_string_lossy()
-                    .to_string(),
-                "--stdio".to_string(),
-            ],
+            args: vec![script_path, "--stdio".to_string()],
             env: Default::default(),
         })
     }
