@@ -1180,7 +1180,5 @@
   //   "executable": "/path",
   //   "args": ['arg1", "args2"]
   // }
-  "experimental.context_servers": {
-    "servers": []
-  }
+  "context_servers": {}
 }

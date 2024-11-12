@@ -145,49 +145,52 @@ impl ContextStore {
                     project: project.clone(),
                     prompt_builder,
                 };
-                this.handle_project_changed(project, cx);
+                this.handle_project_changed(project.clone(), cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
 
-                // TODO: At the time when we construct the `ContextStore` we may not have yet initialized the extensions.
-                // In order to register the context servers when the extension is loaded, we're periodically looping to
-                // see if there are context servers to register.
-                //
-                // I tried doing this in a subscription on the `ExtensionStore`, but it never seemed to fire.
-                //
-                // We should find a more elegant way to do this.
-                let context_server_factory_registry =
-                    ContextServerFactoryRegistry::default_global(cx);
-                cx.spawn(|context_store, mut cx| async move {
-                    loop {
-                        let mut servers_to_register = Vec::new();
-                        for (_id, factory) in
-                            context_server_factory_registry.context_server_factories()
-                        {
-                            if let Some(server) = factory(&cx).await.log_err() {
-                                servers_to_register.push(server);
+                if project.read(cx).is_local() {
+                    // TODO: At the time when we construct the `ContextStore` we may not have yet initialized the extensions.
+                    // In order to register the context servers when the extension is loaded, we're periodically looping to
+                    // see if there are context servers to register.
+                    //
+                    // I tried doing this in a subscription on the `ExtensionStore`, but it never seemed to fire.
+                    //
+                    // We should find a more elegant way to do this.
+                    let context_server_factory_registry =
+                        ContextServerFactoryRegistry::default_global(cx);
+                    cx.spawn(|context_store, mut cx| async move {
+                        loop {
+                            let mut servers_to_register = Vec::new();
+                            for (_id, factory) in
+                                context_server_factory_registry.context_server_factories()
+                            {
+                                if let Some(server) = factory(project.clone(), &cx).await.log_err()
+                                {
+                                    servers_to_register.push(server);
+                                }
                             }
+
+                            let Some(_) = context_store
+                                .update(&mut cx, |this, cx| {
+                                    this.context_server_manager.update(cx, |this, cx| {
+                                        for server in servers_to_register {
+                                            this.add_server(server, cx).detach_and_log_err(cx);
+                                        }
+                                    })
+                                })
+                                .log_err()
+                            else {
+                                break;
+                            };
+
+                            smol::Timer::after(Duration::from_millis(100)).await;
                         }
 
-                        let Some(_) = context_store
-                            .update(&mut cx, |this, cx| {
-                                this.context_server_manager.update(cx, |this, cx| {
-                                    for server in servers_to_register {
-                                        this.add_server(server, cx).detach_and_log_err(cx);
-                                    }
-                                })
-                            })
-                            .log_err()
-                        else {
-                            break;
-                        };
-
-                        smol::Timer::after(Duration::from_millis(100)).await;
-                    }
-
-                    anyhow::Ok(())
-                })
-                .detach_and_log_err(cx);
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx);
+                }
 
                 this
             })?;

@@ -2,14 +2,18 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use collections::HashMap;
-use gpui::{AppContext, AsyncAppContext, ReadGlobal};
-use gpui::{Global, Task};
+use gpui::{AppContext, AsyncAppContext, Global, Model, ReadGlobal, Task};
 use parking_lot::RwLock;
+use project::Project;
 
 use crate::ContextServer;
 
-pub type ContextServerFactory =
-    Arc<dyn Fn(&AsyncAppContext) -> Task<Result<Arc<dyn ContextServer>>> + Send + Sync + 'static>;
+pub type ContextServerFactory = Arc<
+    dyn Fn(Model<Project>, &AsyncAppContext) -> Task<Result<Arc<dyn ContextServer>>>
+        + Send
+        + Sync
+        + 'static,
+>;
 
 #[derive(Default)]
 struct GlobalContextServerFactoryRegistry(Arc<ContextServerFactoryRegistry>);

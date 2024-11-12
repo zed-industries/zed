@@ -22,6 +22,7 @@ async-tar.workspace = true
 async-trait.workspace = true
 client.workspace = true
 collections.workspace = true
+context_servers.workspace = true
 extension.workspace = true
 fs.workspace = true
 futures.workspace = true

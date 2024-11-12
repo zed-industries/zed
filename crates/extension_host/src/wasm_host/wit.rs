@@ -4,7 +4,6 @@ mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
 use lsp::LanguageServerName;
-// use indexed_docs::IndexedDocsDatabase;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
 
@@ -27,7 +26,7 @@ pub use latest::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
     },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
-    CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
+    CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
 
@@ -389,10 +388,11 @@ impl Extension {
         &self,
         store: &mut Store<WasmState>,
         context_server_id: Arc<str>,
+        project: Resource<ExtensionProject>,
     ) -> Result<Result<Command, String>> {
         match self {
             Extension::V020(ext) => {
-                ext.call_context_server_command(store, &context_server_id)
+                ext.call_context_server_command(store, &context_server_id, project)
                     .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) | Extension::V010(_) => {

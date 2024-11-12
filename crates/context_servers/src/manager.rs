@@ -36,6 +36,7 @@ use crate::{
 
 #[derive(Deserialize, Serialize, Default, Clone, PartialEq, Eq, JsonSchema, Debug)]
 pub struct ContextServerSettings {
+    #[serde(default)]
     pub context_servers: HashMap<Arc<str>, ServerConfig>,
 }
 
@@ -297,8 +298,10 @@ impl ContextServerManager {
 
         log::trace!("servers_to_add={:?}", servers_to_add);
         for (id, config) in servers_to_add {
-            let server = Arc::new(NativeContextServer::new(id, Arc::new(config)));
-            self.add_server(server, cx).detach_and_log_err(cx);
+            if config.command.is_some() {
+                let server = Arc::new(NativeContextServer::new(id, Arc::new(config)));
+                self.add_server(server, cx).detach_and_log_err(cx);
+            }
         }
 
         for id in servers_to_remove {
