@@ -1,28 +1,26 @@
 use crate::{
     px, AbsoluteLength, AnyElement, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
-    FocusableElement, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity,
-    IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri,
-    StatefulInteractiveElement, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
+    GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity, IntoElement, LayoutId,
+    Length, ObjectFit, Pixels, RenderImage, Resource, SharedString, SharedUri, StyleRefinement,
+    Styled, SvgSize, WindowContext,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 
-use futures::{AsyncReadExt, Future};
-use image::{
-    codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageError, ImageFormat,
-};
+use futures::{AsyncReadExt, Future, TryFutureExt};
+use image::{codecs::gif::GifDecoder, AnimationDecoder, Frame, ImageBuffer, ImageFormat};
 use smallvec::SmallVec;
 use std::{
     fs,
     io::Cursor,
     ops::{Deref, DerefMut},
-    path::PathBuf,
+    path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
-use thiserror::Error;
 use util::ResultExt;
 
-use super::Stateful;
+use super::{FocusableElement, Stateful, StatefulInteractiveElement};
 
 /// The delay before showing the loading state.
 pub const LOADING_DELAY: Duration = Duration::from_millis(200);
@@ -30,36 +28,32 @@ pub const LOADING_DELAY: Duration = Duration::from_millis(200);
 /// A source of image content.
 #[derive(Clone)]
 pub enum ImageSource {
-    /// Image content will be loaded from provided URI at render time.
-    Uri(SharedUri),
-    /// Image content will be loaded from the provided file at render time.
-    File(Arc<PathBuf>),
+    /// The image content will be loaded from some resource location
+    Resource(Resource),
     /// Cached image data
     Render(Arc<RenderImage>),
     /// Cached image data
     Image(Arc<Image>),
-    /// Image content will be loaded from Asset at render time.
-    Embedded(SharedString),
     /// A custom loading function to use
-    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>>>>),
+    Custom(Arc<dyn Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, Arc<anyhow::Error>>>>),
 }
 
 fn is_uri(uri: &str) -> bool {
-    uri.contains("://")
+    http_client::Uri::from_str(uri).is_ok()
 }
 
 impl From<SharedUri> for ImageSource {
     fn from(value: SharedUri) -> Self {
-        Self::Uri(value)
+        Self::Resource(Resource::Uri(value))
     }
 }
 
-impl From<&'static str> for ImageSource {
-    fn from(s: &'static str) -> Self {
+impl<'a> From<&'a str> for ImageSource {
+    fn from(s: &'a str) -> Self {
         if is_uri(s) {
-            Self::Uri(s.into())
+            Self::Resource(Resource::Uri(s.to_string().into()))
         } else {
-            Self::Embedded(s.into())
+            Self::Resource(Resource::Embedded(s.to_string().into()))
         }
     }
 }
@@ -67,32 +61,28 @@ impl From<&'static str> for ImageSource {
 impl From<String> for ImageSource {
     fn from(s: String) -> Self {
         if is_uri(&s) {
-            Self::Uri(s.into())
+            Self::Resource(Resource::Uri(s.into()))
         } else {
-            Self::Embedded(s.into())
+            Self::Resource(Resource::Embedded(s.into()))
         }
     }
 }
 
 impl From<SharedString> for ImageSource {
     fn from(s: SharedString) -> Self {
-        if is_uri(&s) {
-            Self::Uri(s.into())
-        } else {
-            Self::Embedded(s)
-        }
+        s.as_ref().into()
     }
 }
 
-impl From<Arc<PathBuf>> for ImageSource {
-    fn from(value: Arc<PathBuf>) -> Self {
-        Self::File(value)
+impl From<Arc<Path>> for ImageSource {
+    fn from(value: Arc<Path>) -> Self {
+        Self::Resource(value.into())
     }
 }
 
 impl From<PathBuf> for ImageSource {
     fn from(value: PathBuf) -> Self {
-        Self::File(value.into())
+        Self::Resource(value.into())
     }
 }
 
@@ -102,8 +92,9 @@ impl From<Arc<RenderImage>> for ImageSource {
     }
 }
 
-impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>>> + 'static> From<F>
-    for ImageSource
+impl<
+        F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>, Arc<anyhow::Error>>> + 'static,
+    > From<F> for ImageSource
 {
     fn from(value: F) -> Self {
         Self::Custom(Arc::new(value))
@@ -422,24 +413,15 @@ impl FocusableElement for Img {}
 impl StatefulInteractiveElement for Img {}
 
 impl ImageSource {
-    pub(crate) fn use_data(&self, cx: &mut WindowContext) -> Option<Result<Arc<RenderImage>>> {
+    pub(crate) fn use_data(
+        &self,
+        cx: &mut WindowContext,
+    ) -> Option<Result<Arc<RenderImage>, Arc<anyhow::Error>>> {
         match self {
-            ImageSource::Uri(_) | ImageSource::Embedded(_) | ImageSource::File(_) => {
-                let uri_or_path: UriOrPath = match self {
-                    ImageSource::Uri(uri) => uri.clone().into(),
-                    ImageSource::File(path) => path.clone().into(),
-                    ImageSource::Embedded(path) => UriOrPath::Embedded(path.clone()),
-                    _ => unreachable!(),
-                };
-
-                cx.use_asset::<ImageAsset>(&uri_or_path)
-                    .map(|result| result.map_err(|e| anyhow!(e)))
-            }
+            ImageSource::Resource(resource) => cx.use_asset::<ResourceLoader>(&resource),
             ImageSource::Custom(loading_fn) => loading_fn(cx),
             ImageSource::Render(data) => Some(Ok(data.to_owned())),
-            ImageSource::Image(data) => cx
-                .use_asset::<ImageDecoder>(data)
-                .map(|result| result.map_err(|e| anyhow!(e))),
+            ImageSource::Image(data) => cx.use_asset::<ImageDecoder>(data),
         }
     }
 }
@@ -462,11 +444,11 @@ impl Asset for ImageDecoder {
 
 /// An image asset.
 #[derive(Clone)]
-pub enum ImageAsset {}
+pub enum ResourceLoader {}
 
-impl Asset for ImageAsset {
-    type Source = UriOrPath;
-    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+impl Asset for ResourceLoader {
+    type Source = Resource;
+    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
 
     fn load(
         source: Self::Source,
@@ -479,34 +461,33 @@ impl Asset for ImageAsset {
         let asset_source = cx.asset_source().clone();
         async move {
             let bytes = match source.clone() {
-                UriOrPath::Path(uri) => fs::read(uri.as_ref())?,
-                UriOrPath::Uri(uri) => {
+                Resource::Path(uri) => fs::read(uri.as_ref())?,
+                Resource::Uri(uri) => {
                     let mut response = client
                         .get(uri.as_ref(), ().into(), true)
                         .await
-                        .map_err(|e| ImageCacheError::Client(Arc::new(e)))?;
+                        .map_err(|e| anyhow!(e))?;
                     let mut body = Vec::new();
                     response.body_mut().read_to_end(&mut body).await?;
                     if !response.status().is_success() {
                         let mut body = String::from_utf8_lossy(&body).into_owned();
                         let first_line = body.lines().next().unwrap_or("").trim_end();
                         body.truncate(first_line.len());
-                        return Err(ImageCacheError::BadStatus {
+                        bail!(
+                            "Request for {:?} failed with status {:?}: {}",
                             uri,
-                            status: response.status(),
-                            body,
-                        });
+                            response.status(),
+                            body
+                        );
                     }
                     body
                 }
-                UriOrPath::Embedded(path) => {
+                Resource::Embedded(path) => {
                     let data = asset_source.load(&path).ok().flatten();
                     if let Some(data) = data {
                         data.to_vec()
                     } else {
-                        return Err(ImageCacheError::Asset(
-                            format!("not found: {}", path).into(),
-                        ));
+                        bail!("Embedded resource not found: {}", path);
                     }
                 }
             };
@@ -560,53 +541,6 @@ impl Asset for ImageAsset {
 
             Ok(Arc::new(data))
         }
-    }
-}
-
-/// An error that can occur when interacting with the image cache.
-#[derive(Debug, Error, Clone)]
-pub enum ImageCacheError {
-    /// An error that occurred while fetching an image from a remote source.
-    #[error("http error: {0}")]
-    Client(#[from] Arc<anyhow::Error>),
-    /// An error that occurred while reading the image from disk.
-    #[error("IO error: {0}")]
-    Io(Arc<std::io::Error>),
-    /// An error that occurred while processing an image.
-    #[error("unexpected http status for {uri}: {status}, body: {body}")]
-    BadStatus {
-        /// The URI of the image.
-        uri: SharedUri,
-        /// The HTTP status code.
-        status: http_client::StatusCode,
-        /// The HTTP response body.
-        body: String,
-    },
-    /// An error that occurred while processing an asset.
-    #[error("asset error: {0}")]
-    Asset(SharedString),
-    /// An error that occurred while processing an image.
-    #[error("image error: {0}")]
-    Image(Arc<ImageError>),
-    /// An error that occurred while processing an SVG.
-    #[error("svg error: {0}")]
-    Usvg(Arc<usvg::Error>),
-}
-
-impl From<std::io::Error> for ImageCacheError {
-    fn from(error: std::io::Error) -> Self {
-        Self::Io(Arc::new(error))
-    }
-}
-
-impl From<ImageError> for ImageCacheError {
-    fn from(error: ImageError) -> Self {
-        Self::Image(Arc::new(error))
-    }
-}
-
-impl From<usvg::Error> for ImageCacheError {
-    fn from(error: usvg::Error) -> Self {
-        Self::Usvg(Arc::new(error))
+        .map_err(|e| Arc::new(e))
     }
 }

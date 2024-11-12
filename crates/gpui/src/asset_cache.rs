@@ -1,28 +1,34 @@
 use crate::{AppContext, SharedString, SharedUri};
 use futures::Future;
 use std::hash::{Hash, Hasher};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// TODO
+/// An enum representing
 #[derive(Debug, PartialEq, Eq, Hash, Clone)]
-pub enum UriOrPath {
-    /// TODO
+pub enum Resource {
+    /// This resource is at a given URI
     Uri(SharedUri),
-    /// TODO
-    Path(Arc<PathBuf>),
-    /// TODO
+    /// This resource is at a given path in the file system
+    Path(Arc<Path>),
+    /// This resource is embedded in the application binary
     Embedded(SharedString),
 }
 
-impl From<SharedUri> for UriOrPath {
+impl From<SharedUri> for Resource {
     fn from(value: SharedUri) -> Self {
         Self::Uri(value)
     }
 }
 
-impl From<Arc<PathBuf>> for UriOrPath {
-    fn from(value: Arc<PathBuf>) -> Self {
+impl From<PathBuf> for Resource {
+    fn from(value: PathBuf) -> Self {
+        Self::Path(value.into())
+    }
+}
+
+impl From<Arc<Path>> for Resource {
+    fn from(value: Arc<Path>) -> Self {
         Self::Path(value)
     }
 }

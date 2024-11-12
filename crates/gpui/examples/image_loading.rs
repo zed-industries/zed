@@ -1,9 +1,10 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
+use anyhow::anyhow;
 use gpui::{
     black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
-    AppContext, Asset, AssetSource, Bounds, Hsla, ImageAsset, ImageCacheError, Length, Pixels,
-    RenderImage, SharedString, UriOrPath, ViewContext, WindowBounds, WindowContext, WindowOptions,
+    AppContext, Asset, AssetSource, Bounds, Hsla, Length, Pixels, RenderImage, Resource,
+    ResourceLoader, SharedString, ViewContext, WindowBounds, WindowContext, WindowOptions,
     LOADING_DELAY,
 };
 
@@ -41,21 +42,18 @@ struct LoadImageWithParameters {}
 impl Asset for LoadImageWithParameters {
     type Source = LoadImageParameters;
 
-    type Output = Result<Arc<RenderImage>, ImageCacheError>;
+    type Output = Result<Arc<RenderImage>, Arc<anyhow::Error>>;
 
     fn load(
         parameters: Self::Source,
         cx: &mut AppContext,
     ) -> impl std::future::Future<Output = Self::Output> + Send + 'static {
         let timer = cx.background_executor().timer(parameters.timeout);
-        let data = ImageAsset::load(
-            UriOrPath::Path(Arc::new(Path::new(IMAGE).to_path_buf())),
-            cx,
-        );
+        let data = ResourceLoader::load(Resource::Path(Path::new(IMAGE).to_path_buf().into()), cx);
         async move {
             timer.await;
             if parameters.fail {
-                Err(ImageCacheError::Asset("Failed to load image".into()))
+                Err(Arc::new(anyhow!("Failed to load image")))
             } else {
                 data.await
             }
@@ -114,7 +112,6 @@ impl Render for ImageLoadingExample {
                                 timeout: LOADING_DELAY.saturating_sub(Duration::from_millis(25)),
                                 fail: false,
                             })
-                            .map(|result| result.map_err(|e| e.into()))
                         })
                         .id("image-1")
                         .border_1()
