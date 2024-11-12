@@ -459,22 +459,16 @@ impl ExtensionImports for WasmState {
                                     .context_servers
                                     .get(key.as_str())
                             })
-                            .cloned();
-
-                        if let Some(settings) = settings {
-                            Ok(serde_json::to_string(&settings::ContextServerSettings {
-                                command: settings.command.map(|command| {
-                                    settings::CommandSettings {
-                                        path: Some(command.path),
-                                        arguments: Some(command.args),
-                                        env: command.env.map(|env| env.into_iter().collect()),
-                                    }
-                                }),
-                                settings: settings.settings,
-                            })?)
-                        } else {
-                            Ok(serde_json::to_string(&serde_json::Value::Null)?)
-                        }
+                            .cloned()
+                            .unwrap_or_default();
+                        Ok(serde_json::to_string(&settings::ContextServerSettings {
+                            command: settings.command.map(|command| settings::CommandSettings {
+                                path: Some(command.path),
+                                arguments: Some(command.args),
+                                env: command.env.map(|env| env.into_iter().collect()),
+                            }),
+                            settings: settings.settings,
+                        })?)
                     }
                     _ => {
                         bail!("Unknown settings category: {}", category);

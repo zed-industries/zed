@@ -40,7 +40,7 @@ pub struct ContextServerSettings {
     pub context_servers: HashMap<Arc<str>, ServerConfig>,
 }
 
-#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug)]
+#[derive(Deserialize, Serialize, Clone, PartialEq, Eq, JsonSchema, Debug, Default)]
 pub struct ServerConfig {
     pub command: Option<ServerCommand>,
     pub settings: Option<serde_json::Value>,
