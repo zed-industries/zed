@@ -2,9 +2,8 @@ use std::{path::Path, sync::Arc, time::Duration};
 
 use gpui::{
     div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
-    AppContext, Asset, AssetSource, Bounds, ImageAsset, ImageCacheError, InteractiveElement as _,
-    IntoElement, Length, ParentElement, Pixels, Render, RenderImage, SharedString, Styled,
-    UriOrPath, ViewContext, VisualContext as _, WindowBounds, WindowContext, WindowOptions,
+    AppContext, Asset, AssetSource, Bounds, ImageAsset, ImageCacheError, Length, Pixels,
+    RenderImage, SharedString, UriOrPath, ViewContext, WindowBounds, WindowContext, WindowOptions,
     LOADING_DELAY,
 };
 
