@@ -179,6 +179,8 @@ impl VariableList {
                 self.build_entries(true, true, cx);
             }
             StackFrameListEvent::StackFramesUpdated => {
+                self.entries.clear();
+
                 self.fetch_variables(cx);
             }
         }

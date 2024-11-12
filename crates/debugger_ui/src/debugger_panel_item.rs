@@ -134,8 +134,8 @@ impl DebugPanelItem {
             cx.subscribe(
                 &stack_frame_list,
                 move |this: &mut Self, _, event: &StackFrameListEvent, cx| match event {
-                    StackFrameListEvent::SelectedStackFrameChanged => this.clear_highlights(cx),
-                    _ => {}
+                    StackFrameListEvent::SelectedStackFrameChanged
+                    | StackFrameListEvent::StackFramesUpdated => this.clear_highlights(cx),
                 },
             ),
         ];
@@ -261,8 +261,6 @@ impl DebugPanelItem {
                     editor.move_to_end(&editor::actions::MoveToEnd, cx);
                     editor.insert(format!("{}\n", &event.output.trim_end()).as_str(), cx);
                     editor.set_read_only(true);
-
-                    cx.notify();
                 });
             }
         }
