@@ -258,7 +258,7 @@ impl Render for WelcomePage {
                                         )
                                     })
                                     .child(
-                                        Button::new("view docs", "View Documentation")
+                                        Button::new("view-docs", "View Documentation")
                                             .icon(IconName::FileCode)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
@@ -271,7 +271,7 @@ impl Render for WelcomePage {
                                             })),
                                     )
                                     .child(
-                                        Button::new("explore extensions", "Explore Extensions")
+                                        Button::new("explore-extensions", "Explore Extensions")
                                             .icon(IconName::Blocks)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
@@ -286,7 +286,7 @@ impl Render for WelcomePage {
                                             })),
                                     )
                                     .child(
-                                        Button::new("view docs", "Book Onboarding")
+                                        Button::new("book-onboarding", "Book Onboarding")
                                             .icon(IconName::PhoneIncoming)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
