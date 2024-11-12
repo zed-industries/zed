@@ -663,15 +663,17 @@ impl PlatformWindow for WindowsWindow {
                     set_window_composition_attribute(window_state.hwnd, None, 0);
                 }
             }
+            //Transparent effect might cause some flickering and performance issues due `WS_EX_COMPOSITED` is enabled
+            //if `WS_EX_COMPOSITED` is removed the window instance won't initiate
             if background_appearance == WindowBackgroundAppearance::Transparent {
                 unsafe {
                     let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
                     SetWindowLongW(
                         window_state.hwnd,
                         GWL_EXSTYLE,
-                        current_style | WS_EX_LAYERED.0 as i32,
+                        current_style | WS_EX_LAYERED.0 as i32 | WS_EX_COMPOSITED.0 as i32,
                     );
-                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 225, LWA_ALPHA)
+                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 240, LWA_ALPHA)
                         .inspect_err(|e| log::error!("Unable to set window to transparent: {e}"))
                         .ok();
                 };
@@ -681,7 +683,7 @@ impl PlatformWindow for WindowsWindow {
                     SetWindowLongW(
                         window_state.hwnd,
                         GWL_EXSTYLE,
-                        current_style & !WS_EX_LAYERED.0 as i32,
+                        current_style & !WS_EX_LAYERED.0 as i32 & WS_EX_COMPOSITED.0 as i32,
                     );
                 }
             }
