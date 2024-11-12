@@ -308,6 +308,10 @@ impl DebugPanelItem {
 
         self.update_thread_state_status(ThreadStatus::Stopped, cx);
 
+        self.dap_store.update(cx, |store, cx| {
+            store.remove_active_debug_line_for_client(client_id, cx);
+        });
+
         cx.emit(DebugPanelItemEvent::Close);
     }
 

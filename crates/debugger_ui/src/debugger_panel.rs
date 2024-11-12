@@ -130,10 +130,6 @@ impl DebugPanel {
                         project::Event::DebugClientStopped(client_id) => {
                             cx.emit(DebugPanelEvent::ClientStopped(*client_id));
 
-                            this.dap_store.update(cx, |store, cx| {
-                                store.remove_active_debug_line_for_client(client_id, cx);
-                            });
-
                             this.thread_states
                                 .retain(|&(client_id_, _), _| client_id_ != *client_id);
 
