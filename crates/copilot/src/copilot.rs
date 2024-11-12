@@ -21,7 +21,7 @@ use language::{
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
-use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
@@ -446,9 +446,11 @@ impl Copilot {
                 Path::new("/")
             };
 
+            let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(
                 Arc::new(Mutex::new(None)),
                 new_server_id,
+                server_name,
                 binary,
                 root_path,
                 None,
@@ -864,7 +866,11 @@ impl Copilot {
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
         let position = position.to_point_utf16(buffer);
-        let settings = language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx);
+        let settings = language_settings(
+            buffer.language_at(position).map(|l| l.name()),
+            buffer.file(),
+            cx,
+        );
         let tab_size = settings.tab_size;
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
@@ -1266,6 +1272,10 @@ mod tests {
         }
 
         fn load(&self, _: &AppContext) -> Task<Result<String>> {
+            unimplemented!()
+        }
+
+        fn load_bytes(&self, _cx: &AppContext) -> Task<Result<Vec<u8>>> {
             unimplemented!()
         }
     }

@@ -659,15 +659,22 @@ impl<'a> NumericPrefixWithSuffix<'a> {
         Self(prefix, remainder)
     }
 }
+
+/// When dealing with equality, we need to consider the case of the strings to achieve strict equality
+/// to handle cases like "a" < "A" instead of "a" == "A".
 impl Ord for NumericPrefixWithSuffix<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
         match (self.0, other.0) {
-            (None, None) => UniCase::new(self.1).cmp(&UniCase::new(other.1)),
+            (None, None) => UniCase::new(self.1)
+                .cmp(&UniCase::new(other.1))
+                .then_with(|| self.1.cmp(other.1).reverse()),
             (None, Some(_)) => Ordering::Greater,
             (Some(_), None) => Ordering::Less,
-            (Some(a), Some(b)) => a
-                .cmp(&b)
-                .then_with(|| UniCase::new(self.1).cmp(&UniCase::new(other.1))),
+            (Some(a), Some(b)) => a.cmp(&b).then_with(|| {
+                UniCase::new(self.1)
+                    .cmp(&UniCase::new(other.1))
+                    .then_with(|| self.1.cmp(other.1).reverse())
+            }),
         }
     }
 }
@@ -729,7 +736,7 @@ mod tests {
     }
 
     #[test]
-    fn test_trancate_and_trailoff() {
+    fn test_truncate_and_trailoff() {
         assert_eq!(truncate_and_trailoff("", 5), "");
         assert_eq!(truncate_and_trailoff("èèèèèè", 7), "èèèèèè");
         assert_eq!(truncate_and_trailoff("èèèèèè", 6), "èèèèèè");

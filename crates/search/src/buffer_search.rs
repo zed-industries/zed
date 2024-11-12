@@ -133,6 +133,10 @@ impl BufferSearchBar {
             },
         )
     }
+
+    pub fn query_editor_focused(&self) -> bool {
+        self.query_editor_focused
+    }
 }
 
 impl EventEmitter<Event> for BufferSearchBar {}
@@ -544,6 +548,9 @@ impl BufferSearchBar {
             this.select_all_matches(action, cx);
         }));
         registrar.register_handler(ForDeployed(|this, _: &editor::actions::Cancel, cx| {
+            this.dismiss(&Dismiss, cx);
+        }));
+        registrar.register_handler(ForDeployed(|this, _: &Dismiss, cx| {
             this.dismiss(&Dismiss, cx);
         }));
 

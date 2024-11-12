@@ -28,11 +28,9 @@ fn main() {
         let clock = Arc::new(FakeSystemClock::default());
 
         let http = Arc::new(HttpClientWithUrl::new(
-            Arc::new(ureq_client::UreqClient::new(
-                None,
-                "Zed semantic index example".to_string(),
-                cx.background_executor().clone(),
-            )),
+            Arc::new(
+                reqwest_client::ReqwestClient::user_agent("Zed semantic index example").unwrap(),
+            ),
             "http://localhost:11434",
             None,
         ));

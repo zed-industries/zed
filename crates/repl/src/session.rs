@@ -1,14 +1,15 @@
 use crate::components::KernelListItem;
-use crate::KernelStatus;
+use crate::setup_editor_session_actions;
 use crate::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
+    KernelStatus,
 };
 use client::telemetry::Telemetry;
 use collections::{HashMap, HashSet};
 use editor::{
     display_map::{
-        BlockContext, BlockDisposition, BlockId, BlockProperties, BlockStyle, CustomBlockId,
+        BlockContext, BlockId, BlockPlacement, BlockProperties, BlockStyle, CustomBlockId,
         RenderBlock,
     },
     scroll::Autoscroll,
@@ -17,8 +18,7 @@ use editor::{
 use futures::io::BufReader;
 use futures::{AsyncBufReadExt as _, FutureExt as _, StreamExt as _};
 use gpui::{
-    div, prelude::*, EntityId, EventEmitter, Model, Render, Subscription, Task, View, ViewContext,
-    WeakView,
+    div, prelude::*, EventEmitter, Model, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use language::Point;
 use project::Fs;
@@ -91,12 +91,11 @@ impl EditorBlock {
 
             let invalidation_anchor = buffer.read(cx).read(cx).anchor_before(next_row_start);
             let block = BlockProperties {
-                position: code_range.end,
+                placement: BlockPlacement::Below(code_range.end),
                 // Take up at least one height for status, allow the editor to determine the real height based on the content from render
                 height: 1,
                 style: BlockStyle::Sticky,
                 render: Self::create_output_area_renderer(execution_view.clone(), on_close.clone()),
-                disposition: BlockDisposition::Below,
                 priority: 0,
             };
 
@@ -149,23 +148,21 @@ impl EditorBlock {
                 .w(text_line_height)
                 .h(text_line_height)
                 .child(
-                    IconButton::new(
-                        ("close_output_area", EntityId::from(cx.block_id)),
-                        IconName::Close,
-                    )
-                    .icon_size(IconSize::Small)
-                    .icon_color(Color::Muted)
-                    .size(ButtonSize::Compact)
-                    .shape(IconButtonShape::Square)
-                    .tooltip(|cx| Tooltip::text("Close output area", cx))
-                    .on_click(move |_, cx| {
-                        if let BlockId::Custom(block_id) = block_id {
-                            (on_close)(block_id, cx)
-                        }
-                    }),
+                    IconButton::new("close_output_area", IconName::Close)
+                        .icon_size(IconSize::Small)
+                        .icon_color(Color::Muted)
+                        .size(ButtonSize::Compact)
+                        .shape(IconButtonShape::Square)
+                        .tooltip(|cx| Tooltip::text("Close output area", cx))
+                        .on_click(move |_, cx| {
+                            if let BlockId::Custom(block_id) = block_id {
+                                (on_close)(block_id, cx)
+                            }
+                        }),
                 );
 
             div()
+                .id(cx.block_id)
                 .flex()
                 .items_start()
                 .min_h(text_line_height)
@@ -211,6 +208,14 @@ impl Session {
             None => Subscription::new(|| {}),
         };
 
+        let editor_handle = editor.clone();
+
+        editor
+            .update(cx, |editor, _cx| {
+                setup_editor_session_actions(editor, editor_handle);
+            })
+            .ok();
+
         let mut session = Self {
             fs,
             editor,
@@ -228,7 +233,7 @@ impl Session {
     }
 
     fn start_kernel(&mut self, cx: &mut ViewContext<Self>) {
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language();
         let entity_id = self.editor.entity_id();
         let working_directory = self
             .editor
@@ -237,7 +242,7 @@ impl Session {
             .unwrap_or_else(temp_dir);
 
         self.telemetry.report_repl_event(
-            kernel_language.clone(),
+            kernel_language.into(),
             KernelStatus::Starting.to_string(),
             cx.entity_id().to_string(),
         );
@@ -560,7 +565,7 @@ impl Session {
                 self.kernel.set_execution_state(&status.execution_state);
 
                 self.telemetry.report_repl_event(
-                    self.kernel_specification.kernelspec.language.clone(),
+                    self.kernel_specification.language().into(),
                     KernelStatus::from(&self.kernel).to_string(),
                     cx.entity_id().to_string(),
                 );
@@ -611,7 +616,7 @@ impl Session {
         }
 
         let kernel_status = KernelStatus::from(&kernel).to_string();
-        let kernel_language = self.kernel_specification.kernelspec.language.clone();
+        let kernel_language = self.kernel_specification.language().into();
 
         self.telemetry.report_repl_event(
             kernel_language,
@@ -753,7 +758,7 @@ impl Render for Session {
                 Kernel::Shutdown => Color::Disabled,
                 Kernel::Restarting => Color::Modified,
             })
-            .child(Label::new(self.kernel_specification.name.clone()))
+            .child(Label::new(self.kernel_specification.name()))
             .children(status_text.map(|status_text| Label::new(format!("({status_text})"))))
             .button(
                 Button::new("shutdown", "Shutdown")

@@ -18,7 +18,9 @@ use crate::{
 };
 use anyhow::{anyhow, Context, Result};
 use async_watch as watch;
+use clock::Lamport;
 pub use clock::ReplicaId;
+use collections::HashMap;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
@@ -35,14 +37,16 @@ use smallvec::SmallVec;
 use smol::future::yield_now;
 use std::{
     any::Any,
+    borrow::Cow,
     cell::Cell,
     cmp::{self, Ordering, Reverse},
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     ffi::OsStr,
     fmt,
     future::Future,
     iter::{self, Iterator, Peekable},
     mem,
+    num::NonZeroU32,
     ops::{Deref, DerefMut, Range},
     path::{Path, PathBuf},
     str,
@@ -90,7 +94,7 @@ enum BufferDiffBase {
     PastBufferVersion {
         buffer: Model<Buffer>,
         rope: Rope,
-        operations_to_ignore: Vec<clock::Lamport>,
+        merged_operations: Vec<Lamport>,
     },
 }
 
@@ -122,7 +126,8 @@ pub struct Buffer {
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
     remote_selections: TreeMap<ReplicaId, SelectionSet>,
     diagnostics_timestamp: clock::Lamport,
-    completion_triggers: Vec<String>,
+    completion_triggers: BTreeSet<String>,
+    completion_triggers_per_language_server: HashMap<LanguageServerId, BTreeSet<String>>,
     completion_triggers_timestamp: clock::Lamport,
     deferred_ops: OperationQueue<Operation>,
     capability: Capability,
@@ -183,7 +188,7 @@ pub enum CursorShape {
     /// A block that surrounds the following character
     Block,
     /// An underline that runs along the following character
-    Underscore,
+    Underline,
     /// A box drawn around the following character
     Hollow,
 }
@@ -311,6 +316,8 @@ pub enum Operation {
         triggers: Vec<String>,
         /// The buffer's lamport timestamp.
         lamport_timestamp: clock::Lamport,
+        /// The language server ID.
+        server_id: LanguageServerId,
     },
 }
 
@@ -333,6 +340,8 @@ pub enum BufferEvent {
     FileHandleChanged,
     /// The buffer was reloaded.
     Reloaded,
+    /// The buffer is in need of a reload
+    ReloadNeeded,
     /// The buffer's diff_base changed.
     DiffBaseChanged,
     /// Buffer's excerpts for a certain diff base were recalculated.
@@ -404,8 +413,11 @@ pub trait LocalFile: File {
     /// Returns the absolute path of this file
     fn abs_path(&self, cx: &AppContext) -> PathBuf;
 
-    /// Loads the file's contents from disk.
+    /// Loads the file contents from disk and returns them as a UTF-8 encoded string.
     fn load(&self, cx: &AppContext) -> Task<Result<String>>;
+
+    /// Loads the file's contents from disk.
+    fn load_bytes(&self, cx: &AppContext) -> Task<Result<Vec<u8>>>;
 
     /// Returns true if the file should not be shared with collaborators.
     fn is_private(&self, _: &AppContext) -> bool {
@@ -437,7 +449,7 @@ struct AutoindentRequest {
     is_block_mode: bool,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct AutoindentRequestEntry {
     /// A range of the buffer whose indentation should be adjusted.
     range: Range<Anchor>,
@@ -691,12 +703,15 @@ impl Buffer {
             }));
         }
 
-        operations.push(proto::serialize_operation(
-            &Operation::UpdateCompletionTriggers {
-                triggers: self.completion_triggers.clone(),
-                lamport_timestamp: self.completion_triggers_timestamp,
-            },
-        ));
+        for (server_id, completions) in &self.completion_triggers_per_language_server {
+            operations.push(proto::serialize_operation(
+                &Operation::UpdateCompletionTriggers {
+                    triggers: completions.iter().cloned().collect(),
+                    lamport_timestamp: self.completion_triggers_timestamp,
+                    server_id: *server_id,
+                },
+            ));
+        }
 
         let text_operations = self.text.operations().clone();
         cx.background_executor().spawn(async move {
@@ -768,6 +783,7 @@ impl Buffer {
             diagnostics: Default::default(),
             diagnostics_timestamp: Default::default(),
             completion_triggers: Default::default(),
+            completion_triggers_per_language_server: Default::default(),
             completion_triggers_timestamp: Default::default(),
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
@@ -802,7 +818,7 @@ impl Buffer {
                 diff_base: Some(BufferDiffBase::PastBufferVersion {
                     buffer: this.clone(),
                     rope: self.as_rope().clone(),
-                    operations_to_ignore: Vec::new(),
+                    merged_operations: Default::default(),
                 }),
                 language: self.language.clone(),
                 has_conflict: self.has_conflict,
@@ -826,42 +842,60 @@ impl Buffer {
         })
     }
 
-    /// Applies all of the changes in this buffer that intersect the given `range`
-    /// to its base buffer. This buffer must be a branch buffer to call this method.
-    pub fn merge_into_base(&mut self, range: Option<Range<usize>>, cx: &mut ModelContext<Self>) {
+    /// Applies all of the changes in this buffer that intersect any of the
+    /// given `ranges` to its base buffer.
+    ///
+    /// If `ranges` is empty, then all changes will be applied. This buffer must
+    /// be a branch buffer to call this method.
+    pub fn merge_into_base(&mut self, ranges: Vec<Range<usize>>, cx: &mut ModelContext<Self>) {
         let Some(base_buffer) = self.diff_base_buffer() else {
             debug_panic!("not a branch buffer");
             return;
         };
 
-        base_buffer.update(cx, |base_buffer, cx| {
-            let edits = self
-                .edits_since::<usize>(&base_buffer.version)
-                .filter_map(|edit| {
-                    if range
-                        .as_ref()
-                        .map_or(true, |range| range.overlaps(&edit.new))
-                    {
-                        Some((edit.old, self.text_for_range(edit.new).collect::<String>()))
-                    } else {
-                        None
+        let mut ranges = if ranges.is_empty() {
+            &[0..usize::MAX]
+        } else {
+            ranges.as_slice()
+        }
+        .into_iter()
+        .peekable();
+
+        let mut edits = Vec::new();
+        for edit in self.edits_since::<usize>(&base_buffer.read(cx).version()) {
+            let mut is_included = false;
+            while let Some(range) = ranges.peek() {
+                if range.end < edit.new.start {
+                    ranges.next().unwrap();
+                } else {
+                    if range.start <= edit.new.end {
+                        is_included = true;
                     }
-                })
-                .collect::<Vec<_>>();
-
-            let operation = base_buffer.edit(edits, None, cx);
-
-            // Prevent this operation from being reapplied to the branch.
-            if let Some(BufferDiffBase::PastBufferVersion {
-                operations_to_ignore,
-                ..
-            }) = &mut self.diff_base
-            {
-                operations_to_ignore.extend(operation);
+                    break;
+                }
             }
 
+            if is_included {
+                edits.push((
+                    edit.old.clone(),
+                    self.text_for_range(edit.new.clone()).collect::<String>(),
+                ));
+            }
+        }
+
+        let operation = base_buffer.update(cx, |base_buffer, cx| {
             cx.emit(BufferEvent::DiffBaseChanged);
+            base_buffer.edit(edits, None, cx)
         });
+
+        if let Some(operation) = operation {
+            if let Some(BufferDiffBase::PastBufferVersion {
+                merged_operations, ..
+            }) = &mut self.diff_base
+            {
+                merged_operations.push(operation);
+            }
+        }
     }
 
     fn on_base_buffer_event(
@@ -870,31 +904,32 @@ impl Buffer {
         event: &BufferEvent,
         cx: &mut ModelContext<Self>,
     ) {
-        if let BufferEvent::Operation { operation, .. } = event {
-            if let Some(BufferDiffBase::PastBufferVersion {
-                operations_to_ignore,
-                ..
-            }) = &mut self.diff_base
-            {
-                let mut is_ignored = false;
-                if let Operation::Buffer(text::Operation::Edit(buffer_operation)) = &operation {
-                    operations_to_ignore.retain(|operation_to_ignore| {
-                        match buffer_operation.timestamp.cmp(&operation_to_ignore) {
-                            Ordering::Less => true,
-                            Ordering::Equal => {
-                                is_ignored = true;
-                                false
-                            }
-                            Ordering::Greater => false,
-                        }
-                    });
-                }
-                if !is_ignored {
-                    self.apply_ops([operation.clone()], cx);
-                    self.diff_base_version += 1;
-                }
+        let BufferEvent::Operation { operation, .. } = event else {
+            return;
+        };
+        let Some(BufferDiffBase::PastBufferVersion {
+            merged_operations, ..
+        }) = &mut self.diff_base
+        else {
+            return;
+        };
+
+        let mut operation_to_undo = None;
+        if let Operation::Buffer(text::Operation::Edit(operation)) = &operation {
+            if let Ok(ix) = merged_operations.binary_search(&operation.timestamp) {
+                merged_operations.remove(ix);
+                operation_to_undo = Some(operation.timestamp);
             }
         }
+
+        self.apply_ops([operation.clone()], cx);
+
+        if let Some(timestamp) = operation_to_undo {
+            let counts = [(timestamp, u32::MAX)].into_iter().collect();
+            self.undo_operations(counts, cx);
+        }
+
+        self.diff_base_version += 1;
     }
 
     #[cfg(test)]
@@ -1055,7 +1090,7 @@ impl Buffer {
                     file_changed = true;
 
                     if !self.is_dirty() {
-                        self.reload(cx).close();
+                        cx.emit(BufferEvent::ReloadNeeded);
                     }
                 }
             }
@@ -1134,7 +1169,6 @@ impl Buffer {
                 this.non_text_state_update_count += 1;
                 if let Some(BufferDiffBase::PastBufferVersion { rope, .. }) = &mut this.diff_base {
                     *rope = diff_base_rope;
-                    cx.emit(BufferEvent::DiffBaseChanged);
                 }
                 cx.emit(BufferEvent::DiffUpdated);
             })
@@ -1397,24 +1431,17 @@ impl Buffer {
                     yield_now().await;
                 }
 
-                // In block mode, only compute indentation suggestions for the first line
-                // of each insertion. Otherwise, compute suggestions for every inserted line.
-                let new_edited_row_ranges = contiguous_ranges(
-                    row_ranges.iter().flat_map(|(range, _)| {
-                        if request.is_block_mode {
-                            range.start..range.start + 1
-                        } else {
-                            range.clone()
-                        }
-                    }),
-                    max_rows_between_yields,
-                );
-
                 // Compute new suggestions for each line, but only include them in the result
                 // if they differ from the old suggestion for that line.
                 let mut language_indent_sizes = language_indent_sizes_by_new_row.iter().peekable();
                 let mut language_indent_size = IndentSize::default();
-                for new_edited_row_range in new_edited_row_ranges {
+                for (row_range, original_indent_column) in row_ranges {
+                    let new_edited_row_range = if request.is_block_mode {
+                        row_range.start..row_range.start + 1
+                    } else {
+                        row_range.clone()
+                    };
+
                     let suggestions = snapshot
                         .suggest_autoindents(new_edited_row_range.clone())
                         .into_iter()
@@ -1448,22 +1475,9 @@ impl Buffer {
                             }
                         }
                     }
-                    yield_now().await;
-                }
 
-                // For each block of inserted text, adjust the indentation of the remaining
-                // lines of the block by the same amount as the first line was adjusted.
-                if request.is_block_mode {
-                    for (row_range, original_indent_column) in
-                        row_ranges
-                            .into_iter()
-                            .filter_map(|(range, original_indent_column)| {
-                                if range.len() > 1 {
-                                    Some((range, original_indent_column?))
-                                } else {
-                                    None
-                                }
-                            })
+                    if let (true, Some(original_indent_column)) =
+                        (request.is_block_mode, original_indent_column)
                     {
                         let new_indent = indent_sizes
                             .get(&row_range.start)
@@ -1488,6 +1502,8 @@ impl Buffer {
                             }
                         }
                     }
+
+                    yield_now().await;
                 }
             }
 
@@ -1962,18 +1978,27 @@ impl Buffer {
                     let new_text_length = new_text.len();
                     let old_start = range.start.to_point(&before_edit);
                     let new_start = (delta + range.start as isize) as usize;
-                    delta += new_text_length as isize - (range.end as isize - range.start as isize);
+                    let range_len = range.end - range.start;
+                    delta += new_text_length as isize - range_len as isize;
 
+                    // Decide what range of the insertion to auto-indent, and whether
+                    // the first line of the insertion should be considered a newly-inserted line
+                    // or an edit to an existing line.
                     let mut range_of_insertion_to_indent = 0..new_text_length;
-                    let mut first_line_is_new = false;
-                    let mut original_indent_column = None;
+                    let mut first_line_is_new = true;
 
-                    // When inserting an entire line at the beginning of an existing line,
-                    // treat the insertion as new.
-                    if new_text.contains('\n')
-                        && old_start.column <= before_edit.indent_size_for_line(old_start.row).len
+                    let old_line_start = before_edit.indent_size_for_line(old_start.row).len;
+                    let old_line_end = before_edit.line_len(old_start.row);
+
+                    if old_start.column > old_line_start {
+                        first_line_is_new = false;
+                    }
+
+                    if !new_text.contains('\n')
+                        && (old_start.column + (range_len as u32) < old_line_end
+                            || old_line_end == old_line_start)
                     {
-                        first_line_is_new = true;
+                        first_line_is_new = false;
                     }
 
                     // When inserting text starting with a newline, avoid auto-indenting the
@@ -1983,7 +2008,7 @@ impl Buffer {
                         first_line_is_new = true;
                     }
 
-                    // Avoid auto-indenting after the insertion.
+                    let mut original_indent_column = None;
                     if let AutoindentMode::Block {
                         original_indent_columns,
                     } = &mode
@@ -1995,6 +2020,8 @@ impl Buffer {
                                 )
                                 .len
                             }));
+
+                        // Avoid auto-indenting the line after the edit.
                         if new_text[range_of_insertion_to_indent.clone()].ends_with('\n') {
                             range_of_insertion_to_indent.end -= 1;
                         }
@@ -2212,8 +2239,21 @@ impl Buffer {
             Operation::UpdateCompletionTriggers {
                 triggers,
                 lamport_timestamp,
+                server_id,
             } => {
-                self.completion_triggers = triggers;
+                if triggers.is_empty() {
+                    self.completion_triggers_per_language_server
+                        .remove(&server_id);
+                    self.completion_triggers = self
+                        .completion_triggers_per_language_server
+                        .values()
+                        .flat_map(|triggers| triggers.into_iter().cloned())
+                        .collect();
+                } else {
+                    self.completion_triggers_per_language_server
+                        .insert(server_id, triggers.iter().cloned().collect());
+                    self.completion_triggers.extend(triggers);
+                }
                 self.text.lamport_clock.observe(lamport_timestamp);
             }
         }
@@ -2310,6 +2350,18 @@ impl Buffer {
         undone
     }
 
+    pub fn undo_operations(
+        &mut self,
+        counts: HashMap<Lamport, u32>,
+        cx: &mut ModelContext<Buffer>,
+    ) {
+        let was_dirty = self.is_dirty();
+        let operation = self.text.undo_operations(counts);
+        let old_version = self.version.clone();
+        self.send_operation(Operation::Buffer(operation), true, cx);
+        self.did_edit(&old_version, was_dirty, cx);
+    }
+
     /// Manually redoes a specific transaction in the buffer's redo history.
     pub fn redo(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
         let was_dirty = self.is_dirty();
@@ -2345,13 +2397,31 @@ impl Buffer {
     }
 
     /// Override current completion triggers with the user-provided completion triggers.
-    pub fn set_completion_triggers(&mut self, triggers: Vec<String>, cx: &mut ModelContext<Self>) {
-        self.completion_triggers.clone_from(&triggers);
+    pub fn set_completion_triggers(
+        &mut self,
+        server_id: LanguageServerId,
+        triggers: BTreeSet<String>,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.completion_triggers_timestamp = self.text.lamport_clock.tick();
+        if triggers.is_empty() {
+            self.completion_triggers_per_language_server
+                .remove(&server_id);
+            self.completion_triggers = self
+                .completion_triggers_per_language_server
+                .values()
+                .flat_map(|triggers| triggers.into_iter().cloned())
+                .collect();
+        } else {
+            self.completion_triggers_per_language_server
+                .insert(server_id, triggers.clone());
+            self.completion_triggers.extend(triggers.iter().cloned());
+        }
         self.send_operation(
             Operation::UpdateCompletionTriggers {
-                triggers,
+                triggers: triggers.iter().cloned().collect(),
                 lamport_timestamp: self.completion_triggers_timestamp,
+                server_id,
             },
             true,
             cx,
@@ -2361,7 +2431,7 @@ impl Buffer {
 
     /// Returns a list of strings which trigger a completion menu for this language.
     /// Usually this is driven by LSP server which returns a list of trigger characters for completions.
-    pub fn completion_triggers(&self) -> &[String] {
+    pub fn completion_triggers(&self) -> &BTreeSet<String> {
         &self.completion_triggers
     }
 
@@ -2458,7 +2528,11 @@ impl BufferSnapshot {
     /// Returns [`IndentSize`] for a given position that respects user settings
     /// and language preferences.
     pub fn language_indent_size_at<T: ToOffset>(&self, position: T, cx: &AppContext) -> IndentSize {
-        let settings = language_settings(self.language_at(position), self.file(), cx);
+        let settings = language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file(),
+            cx,
+        );
         if settings.hard_tabs {
             IndentSize::tab()
         } else {
@@ -2791,11 +2865,15 @@ impl BufferSnapshot {
 
     /// Returns the settings for the language at the given location.
     pub fn settings_at<'a, D: ToOffset>(
-        &self,
+        &'a self,
         position: D,
         cx: &'a AppContext,
-    ) -> &'a LanguageSettings {
-        language_settings(self.language_at(position), self.file.as_ref(), cx)
+    ) -> Cow<'a, LanguageSettings> {
+        language_settings(
+            self.language_at(position).map(|l| l.name()),
+            self.file.as_ref(),
+            cx,
+        )
     }
 
     pub fn char_classifier_at<T: ToOffset>(&self, point: T) -> CharClassifier {
@@ -3497,7 +3575,8 @@ impl BufferSnapshot {
         ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
-        let language_settings = language_settings(self.language(), self.file.as_ref(), cx);
+        let language_settings =
+            language_settings(self.language().map(|l| l.name()), self.file.as_ref(), cx);
         let settings = language_settings.indent_guides;
         if !ignore_disabled_for_language && !settings.enabled {
             return Vec::new();
@@ -4009,7 +4088,7 @@ impl<'a> BufferChunks<'a> {
         let old_range = std::mem::replace(&mut self.range, range.clone());
         self.chunks.set_range(self.range.clone());
         if let Some(highlights) = self.highlights.as_mut() {
-            if old_range.start >= self.range.start && old_range.end <= self.range.end {
+            if old_range.start <= self.range.start && old_range.end >= self.range.end {
                 // Reuse existing highlights stack, as the new range is a subrange of the old one.
                 highlights
                     .stack
@@ -4066,6 +4145,10 @@ impl<'a> BufferChunks<'a> {
                 diagnostic_endpoints
                     .sort_unstable_by_key(|endpoint| (endpoint.offset, !endpoint.is_start));
                 *diagnostics = diagnostic_endpoints.into_iter().peekable();
+                self.hint_depth = 0;
+                self.error_depth = 0;
+                self.warning_depth = 0;
+                self.information_depth = 0;
             }
         }
     }
@@ -4283,6 +4366,13 @@ impl IndentSize {
             }
         }
         self
+    }
+
+    pub fn len_with_expanded_tabs(&self, tab_size: NonZeroU32) -> usize {
+        match self.kind {
+            IndentKind::Space => self.len as usize,
+            IndentKind::Tab => self.len as usize * tab_size.get() as usize,
+        }
     }
 }
 

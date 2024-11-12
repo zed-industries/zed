@@ -18,7 +18,6 @@ collections.workspace = true
 ctor.workspace = true
 editor.workspace = true
 env_logger.workspace = true
-futures.workspace = true
 gpui.workspace = true
 language.workspace = true
 log.workspace = true

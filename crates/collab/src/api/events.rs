@@ -429,8 +429,6 @@ pub async fn post_events(
                 country_code.clone(),
                 checksum_matched,
             )),
-            // Needed for clients sending old copilot_event types
-            Event::Copilot(_) => {}
             Event::InlineCompletion(event) => {
                 to_upload
                     .inline_completion_events
@@ -672,13 +670,13 @@ pub struct EditorEventRow {
     time: i64,
     copilot_enabled: bool,
     copilot_enabled_for_language: bool,
-    historical_event: bool,
     architecture: String,
     is_staff: Option<bool>,
     major: Option<i32>,
     minor: Option<i32>,
     patch: Option<i32>,
     checksum_matched: bool,
+    is_via_ssh: bool,
 }
 
 impl EditorEventRow {
@@ -719,7 +717,7 @@ impl EditorEventRow {
             country_code: country_code.unwrap_or("XX".to_string()),
             region_code: "".to_string(),
             city: "".to_string(),
-            historical_event: false,
+            is_via_ssh: event.is_via_ssh,
         }
     }
 }
@@ -1263,6 +1261,7 @@ pub struct EditEventRow {
     period_start: i64,
     period_end: i64,
     environment: String,
+    is_via_ssh: bool,
 }
 
 impl EditEventRow {
@@ -1296,6 +1295,7 @@ impl EditEventRow {
             period_start: period_start.timestamp_millis(),
             period_end: period_end.timestamp_millis(),
             environment: event.environment,
+            is_via_ssh: event.is_via_ssh,
         }
     }
 }

@@ -1,14 +1,26 @@
-use anyhow::Result;
+use anyhow::ensure;
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use collections::HashMap;
 use gpui::AppContext;
 use gpui::AsyncAppContext;
-use language::{ContextProvider, LanguageServerName, LspAdapter, LspAdapterDelegate};
+use language::LanguageName;
+use language::LanguageToolchainStore;
+use language::Toolchain;
+use language::ToolchainList;
+use language::ToolchainLister;
+use language::{ContextProvider, LspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerBinary;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
+use pet_core::os_environment::Environment;
+use pet_core::python_environment::PythonEnvironmentKind;
+use pet_core::Configuration;
 use project::lsp_store::language_server_settings;
-use serde_json::Value;
+use serde_json::{json, Value};
+use smol::{lock::OnceCell, process::Command};
 
+use std::sync::Mutex;
 use std::{
     any::Any,
     borrow::Cow,
@@ -200,12 +212,35 @@ impl LspAdapter for PythonLspAdapter {
     async fn workspace_configuration(
         self: Arc<Self>,
         adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
         cx: &mut AsyncAppContext,
     ) -> Result<Value> {
-        cx.update(|cx| {
-            language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
-                .and_then(|s| s.settings.clone())
-                .unwrap_or_default()
+        let toolchain = toolchains
+            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .await;
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_default();
+
+            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+                if let Some(python) = object
+                    .entry("python")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                {
+                    python
+                        .entry("pythonPath")
+                        .or_insert(Value::String(toolchain.path.into()));
+                }
+            }
+            user_settings
         })
     }
 }
@@ -318,6 +353,439 @@ fn python_module_name_from_relative_path(relative_path: &str) -> String {
         .strip_suffix(".py")
         .unwrap_or(&path_with_dots)
         .to_string()
+}
+
+#[derive(Default)]
+pub(crate) struct PythonToolchainProvider {}
+
+static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
+    // Prioritize non-Conda environments.
+    PythonEnvironmentKind::Poetry,
+    PythonEnvironmentKind::Pipenv,
+    PythonEnvironmentKind::VirtualEnvWrapper,
+    PythonEnvironmentKind::Venv,
+    PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::Conda,
+    PythonEnvironmentKind::Pyenv,
+    PythonEnvironmentKind::GlobalPaths,
+    PythonEnvironmentKind::Homebrew,
+];
+
+fn env_priority(kind: Option<PythonEnvironmentKind>) -> usize {
+    if let Some(kind) = kind {
+        ENV_PRIORITY_LIST
+            .iter()
+            .position(|blessed_env| blessed_env == &kind)
+            .unwrap_or(ENV_PRIORITY_LIST.len())
+    } else {
+        // Unknown toolchains are less useful than non-blessed ones.
+        ENV_PRIORITY_LIST.len() + 1
+    }
+}
+
+#[async_trait(?Send)]
+impl ToolchainLister for PythonToolchainProvider {
+    async fn list(
+        &self,
+        worktree_root: PathBuf,
+        project_env: Option<HashMap<String, String>>,
+    ) -> ToolchainList {
+        let env = project_env.unwrap_or_default();
+        let environment = EnvironmentApi::from_env(&env);
+        let locators = pet::locators::create_locators(
+            Arc::new(pet_conda::Conda::from(&environment)),
+            Arc::new(pet_poetry::Poetry::from(&environment)),
+            &environment,
+        );
+        let mut config = Configuration::default();
+        config.workspace_directories = Some(vec![worktree_root]);
+        let reporter = pet_reporter::collect::create_reporter();
+        pet::find::find_and_report_envs(&reporter, config, &locators, &environment, None);
+
+        let mut toolchains = reporter
+            .environments
+            .lock()
+            .ok()
+            .map_or(Vec::new(), |mut guard| std::mem::take(&mut guard));
+        toolchains.sort_by(|lhs, rhs| {
+            env_priority(lhs.kind)
+                .cmp(&env_priority(rhs.kind))
+                .then_with(|| lhs.executable.cmp(&rhs.executable))
+        });
+        let mut toolchains: Vec<_> = toolchains
+            .into_iter()
+            .filter_map(|toolchain| {
+                let name = if let Some(version) = &toolchain.version {
+                    format!("Python {version} ({:?})", toolchain.kind?)
+                } else {
+                    format!("{:?}", toolchain.kind?)
+                }
+                .into();
+                Some(Toolchain {
+                    name,
+                    path: toolchain.executable?.to_str()?.to_owned().into(),
+                    language_name: LanguageName::new("Python"),
+                })
+            })
+            .collect();
+        toolchains.dedup();
+        ToolchainList {
+            toolchains,
+            default: None,
+            groups: Default::default(),
+        }
+    }
+}
+
+pub struct EnvironmentApi<'a> {
+    global_search_locations: Arc<Mutex<Vec<PathBuf>>>,
+    project_env: &'a HashMap<String, String>,
+    pet_env: pet_core::os_environment::EnvironmentApi,
+}
+
+impl<'a> EnvironmentApi<'a> {
+    pub fn from_env(project_env: &'a HashMap<String, String>) -> Self {
+        let paths = project_env
+            .get("PATH")
+            .map(|p| std::env::split_paths(p).collect())
+            .unwrap_or_default();
+
+        EnvironmentApi {
+            global_search_locations: Arc::new(Mutex::new(paths)),
+            project_env,
+            pet_env: pet_core::os_environment::EnvironmentApi::new(),
+        }
+    }
+
+    fn user_home(&self) -> Option<PathBuf> {
+        self.project_env
+            .get("HOME")
+            .or_else(|| self.project_env.get("USERPROFILE"))
+            .map(|home| pet_fs::path::norm_case(PathBuf::from(home)))
+            .or_else(|| self.pet_env.get_user_home())
+    }
+}
+
+impl<'a> pet_core::os_environment::Environment for EnvironmentApi<'a> {
+    fn get_user_home(&self) -> Option<PathBuf> {
+        self.user_home()
+    }
+
+    fn get_root(&self) -> Option<PathBuf> {
+        None
+    }
+
+    fn get_env_var(&self, key: String) -> Option<String> {
+        self.project_env
+            .get(&key)
+            .cloned()
+            .or_else(|| self.pet_env.get_env_var(key))
+    }
+
+    fn get_know_global_search_locations(&self) -> Vec<PathBuf> {
+        if self.global_search_locations.lock().unwrap().is_empty() {
+            let mut paths =
+                std::env::split_paths(&self.get_env_var("PATH".to_string()).unwrap_or_default())
+                    .collect::<Vec<PathBuf>>();
+
+            log::trace!("Env PATH: {:?}", paths);
+            for p in self.pet_env.get_know_global_search_locations() {
+                if !paths.contains(&p) {
+                    paths.push(p);
+                }
+            }
+
+            let mut paths = paths
+                .into_iter()
+                .filter(|p| p.exists())
+                .collect::<Vec<PathBuf>>();
+
+            self.global_search_locations
+                .lock()
+                .unwrap()
+                .append(&mut paths);
+        }
+        self.global_search_locations.lock().unwrap().clone()
+    }
+}
+
+pub(crate) struct PyLspAdapter {
+    python_venv_base: OnceCell<Result<Arc<Path>, String>>,
+}
+impl PyLspAdapter {
+    const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("pylsp");
+    pub(crate) fn new() -> Self {
+        Self {
+            python_venv_base: OnceCell::new(),
+        }
+    }
+    async fn ensure_venv(delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>> {
+        let python_path = Self::find_base_python(delegate)
+            .await
+            .ok_or_else(|| anyhow!("Could not find Python installation for PyLSP"))?;
+        let work_dir = delegate
+            .language_server_download_dir(&Self::SERVER_NAME)
+            .await
+            .ok_or_else(|| anyhow!("Could not get working directory for PyLSP"))?;
+        let mut path = PathBuf::from(work_dir.as_ref());
+        path.push("pylsp-venv");
+        if !path.exists() {
+            Command::new(python_path)
+                .arg("-m")
+                .arg("venv")
+                .arg("pylsp-venv")
+                .current_dir(work_dir)
+                .spawn()?
+                .output()
+                .await?;
+        }
+
+        Ok(path.into())
+    }
+    // Find "baseline", user python version from which we'll create our own venv.
+    async fn find_base_python(delegate: &dyn LspAdapterDelegate) -> Option<PathBuf> {
+        for path in ["python3", "python"] {
+            if let Some(path) = delegate.which(path.as_ref()).await {
+                return Some(path);
+            }
+        }
+        None
+    }
+
+    async fn base_venv(&self, delegate: &dyn LspAdapterDelegate) -> Result<Arc<Path>, String> {
+        self.python_venv_base
+            .get_or_init(move || async move {
+                Self::ensure_venv(delegate)
+                    .await
+                    .map_err(|e| format!("{e}"))
+            })
+            .await
+            .clone()
+    }
+}
+
+#[async_trait(?Send)]
+impl LspAdapter for PyLspAdapter {
+    fn name(&self) -> LanguageServerName {
+        Self::SERVER_NAME.clone()
+    }
+
+    async fn check_if_user_installed(
+        &self,
+        _: &dyn LspAdapterDelegate,
+        _: &AsyncAppContext,
+    ) -> Option<LanguageServerBinary> {
+        // We don't support user-provided pylsp, as global packages are discouraged in Python ecosystem.
+        None
+    }
+
+    async fn fetch_latest_server_version(
+        &self,
+        _: &dyn LspAdapterDelegate,
+    ) -> Result<Box<dyn 'static + Any + Send>> {
+        // let uri = "https://pypi.org/pypi/python-lsp-server/json";
+        // let mut root_manifest = delegate
+        //     .http_client()
+        //     .get(&uri, Default::default(), true)
+        //     .await?;
+        // let mut body = Vec::new();
+        // root_manifest.body_mut().read_to_end(&mut body).await?;
+        // let as_str = String::from_utf8(body)?;
+        // let json = serde_json::Value::from_str(&as_str)?;
+        // let latest_version = json
+        //     .get("info")
+        //     .and_then(|info| info.get("version"))
+        //     .and_then(|version| version.as_str().map(ToOwned::to_owned))
+        //     .ok_or_else(|| {
+        //         anyhow!("PyPI response did not contain version info for python-language-server")
+        //     })?;
+        Ok(Box::new(()) as Box<_>)
+    }
+
+    async fn fetch_server_binary(
+        &self,
+        _: Box<dyn 'static + Send + Any>,
+        _: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Result<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
+        let pip_path = venv.join("bin").join("pip3");
+        ensure!(
+            Command::new(pip_path.as_path())
+                .arg("install")
+                .arg("python-lsp-server")
+                .output()
+                .await?
+                .status
+                .success(),
+            "python-lsp-server installation failed"
+        );
+        ensure!(
+            Command::new(pip_path.as_path())
+                .arg("install")
+                .arg("python-lsp-server[all]")
+                .output()
+                .await?
+                .status
+                .success(),
+            "python-lsp-server[all] installation failed"
+        );
+        ensure!(
+            Command::new(pip_path)
+                .arg("install")
+                .arg("pylsp-mypy")
+                .output()
+                .await?
+                .status
+                .success(),
+            "pylsp-mypy installation failed"
+        );
+        let pylsp = venv.join("bin").join("pylsp");
+        Ok(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec![],
+        })
+    }
+
+    async fn cached_server_binary(
+        &self,
+        _: PathBuf,
+        delegate: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let venv = self.base_venv(delegate).await.ok()?;
+        let pylsp = venv.join("bin").join("pylsp");
+        Some(LanguageServerBinary {
+            path: pylsp,
+            env: None,
+            arguments: vec![],
+        })
+    }
+
+    async fn process_completions(&self, _items: &mut [lsp::CompletionItem]) {}
+
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let label = &item.label;
+        let grammar = language.grammar()?;
+        let highlight_id = match item.kind? {
+            lsp::CompletionItemKind::METHOD => grammar.highlight_id_for_name("function.method")?,
+            lsp::CompletionItemKind::FUNCTION => grammar.highlight_id_for_name("function")?,
+            lsp::CompletionItemKind::CLASS => grammar.highlight_id_for_name("type")?,
+            lsp::CompletionItemKind::CONSTANT => grammar.highlight_id_for_name("constant")?,
+            _ => return None,
+        };
+        Some(language::CodeLabel {
+            text: label.clone(),
+            runs: vec![(0..label.len(), highlight_id)],
+            filter_range: 0..label.len(),
+        })
+    }
+
+    async fn label_for_symbol(
+        &self,
+        name: &str,
+        kind: lsp::SymbolKind,
+        language: &Arc<language::Language>,
+    ) -> Option<language::CodeLabel> {
+        let (text, filter_range, display_range) = match kind {
+            lsp::SymbolKind::METHOD | lsp::SymbolKind::FUNCTION => {
+                let text = format!("def {}():\n", name);
+                let filter_range = 4..4 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CLASS => {
+                let text = format!("class {}:", name);
+                let filter_range = 6..6 + name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            lsp::SymbolKind::CONSTANT => {
+                let text = format!("{} = 0", name);
+                let filter_range = 0..name.len();
+                let display_range = 0..filter_range.end;
+                (text, filter_range, display_range)
+            }
+            _ => return None,
+        };
+
+        Some(language::CodeLabel {
+            runs: language.highlight_text(&text.as_str().into(), display_range.clone()),
+            text: text[display_range].to_string(),
+            filter_range,
+        })
+    }
+
+    async fn workspace_configuration(
+        self: Arc<Self>,
+        adapter: &Arc<dyn LspAdapterDelegate>,
+        toolchains: Arc<dyn LanguageToolchainStore>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<Value> {
+        let toolchain = toolchains
+            .active_toolchain(adapter.worktree_id(), LanguageName::new("Python"), cx)
+            .await;
+        cx.update(move |cx| {
+            let mut user_settings =
+                language_server_settings(adapter.as_ref(), &Self::SERVER_NAME, cx)
+                    .and_then(|s| s.settings.clone())
+                    .unwrap_or_else(|| {
+                        json!({
+                            "plugins": {
+                                "rope_autoimport": {"enabled": true},
+                                "mypy": {"enabled": true}
+                            }
+                        })
+                    });
+
+            // If python.pythonPath is not set in user config, do so using our toolchain picker.
+            if let Some(toolchain) = toolchain {
+                if user_settings.is_null() {
+                    user_settings = Value::Object(serde_json::Map::default());
+                }
+                let object = user_settings.as_object_mut().unwrap();
+                if let Some(python) = object
+                    .entry("plugins")
+                    .or_insert(Value::Object(serde_json::Map::default()))
+                    .as_object_mut()
+                {
+                    if let Some(jedi) = python
+                        .entry("jedi")
+                        .or_insert(Value::Object(serde_json::Map::default()))
+                        .as_object_mut()
+                    {
+                        jedi.insert(
+                            "environment".to_string(),
+                            Value::String(toolchain.path.clone().into()),
+                        );
+                    }
+                    if let Some(pylint) = python
+                        .entry("mypy")
+                        .or_insert(Value::Object(serde_json::Map::default()))
+                        .as_object_mut()
+                    {
+                        pylint.insert(
+                            "overrides".to_string(),
+                            Value::Array(vec![
+                                Value::String("--python-executable".into()),
+                                Value::String(toolchain.path.into()),
+                            ]),
+                        );
+                    }
+                }
+            }
+            user_settings = Value::Object(serde_json::Map::from_iter([(
+                "pylsp".to_string(),
+                user_settings,
+            )]));
+
+            user_settings
+        })
+    }
 }
 
 #[cfg(test)]

@@ -1,19 +1,13 @@
-[tool.poetry]
+[project]
 name = "update-top-ranking-issues"
 version = "0.1.0"
-description = ""
-authors = ["Joseph T. Lyons <JosephTLyons@gmail.com>"]
 readme = "README.md"
-
-[tool.poetry.dependencies]
-mypy = "1.6.0"
-PyGithub = "1.55"
-python = "3.12.7"
-pytz = "2022.1"
-typer = "0.9.0"
-types-pytz = "2023.3.1.1"
-
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires-python = ">=3.13"
+dependencies = [
+    "mypy>=1.11.2",
+    "pygithub>=2.4.0",
+    "pytz>=2024.2",
+    "ruff>=0.6.9",
+    "typer>=0.12.5",
+    "types-pytz>=2024.2.0.20241003",
+]

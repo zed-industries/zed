@@ -30,6 +30,7 @@ use crate::{
 };
 use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
+use super::anthropic::count_anthropic_tokens;
 use super::open_ai::count_open_ai_tokens;
 
 const PROVIDER_ID: &str = "copilot_chat";
@@ -179,13 +180,19 @@ impl LanguageModel for CopilotChatLanguageModel {
         request: LanguageModelRequest,
         cx: &AppContext,
     ) -> BoxFuture<'static, Result<usize>> {
-        let model = match self.model {
-            CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
-            CopilotChatModel::Gpt4 => open_ai::Model::Four,
-            CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-        };
-
-        count_open_ai_tokens(request, model, cx)
+        match self.model {
+            CopilotChatModel::Claude3_5Sonnet => count_anthropic_tokens(request, cx),
+            _ => {
+                let model = match self.model {
+                    CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
+                    CopilotChatModel::Gpt4 => open_ai::Model::Four,
+                    CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
+                    CopilotChatModel::O1Preview | CopilotChatModel::O1Mini => open_ai::Model::Four,
+                    CopilotChatModel::Claude3_5Sonnet => unreachable!(),
+                };
+                count_open_ai_tokens(request, model, cx)
+            }
+        }
     }
 
     fn stream_completion(
@@ -209,7 +216,8 @@ impl LanguageModel for CopilotChatLanguageModel {
             }
         }
 
-        let request = self.to_copilot_chat_request(request);
+        let copilot_request = self.to_copilot_chat_request(request);
+        let is_streaming = copilot_request.stream;
         let Ok(low_speed_timeout) = cx.update(|cx| {
             AllLanguageModelSettings::get_global(cx)
                 .copilot_chat
@@ -220,16 +228,31 @@ impl LanguageModel for CopilotChatLanguageModel {
 
         let request_limiter = self.request_limiter.clone();
         let future = cx.spawn(|cx| async move {
-            let response = CopilotChat::stream_completion(request, low_speed_timeout, cx);
+            let response = CopilotChat::stream_completion(copilot_request, low_speed_timeout, cx);
             request_limiter.stream(async move {
                 let response = response.await?;
                 let stream = response
-                    .filter_map(|response| async move {
+                    .filter_map(move |response| async move {
                         match response {
                             Ok(result) => {
                                 let choice = result.choices.first();
                                 match choice {
-                                    Some(choice) => Some(Ok(choice.delta.content.clone().unwrap_or_default())),
+                                    Some(choice) if !is_streaming => {
+                                        match &choice.message {
+                                            Some(msg) => Some(Ok(msg.content.clone().unwrap_or_default())),
+                                            None => Some(Err(anyhow::anyhow!(
+                                                "The Copilot Chat API returned a response with no message content"
+                                            ))),
+                                        }
+                                    },
+                                    Some(choice) => {
+                                        match &choice.delta {
+                                            Some(delta) => Some(Ok(delta.content.clone().unwrap_or_default())),
+                                            None => Some(Err(anyhow::anyhow!(
+                                                "The Copilot Chat API returned a response with no delta content"
+                                            ))),
+                                        }
+                                    },
                                     None => Some(Err(anyhow::anyhow!(
                                         "The Copilot Chat API returned a response with no choices, but hadn't finished the message yet. Please try again."
                                     ))),
