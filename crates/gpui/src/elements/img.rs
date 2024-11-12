@@ -541,6 +541,6 @@ impl Asset for ResourceLoader {
 
             Ok(Arc::new(data))
         }
-        .map_err(|e| Arc::new(e))
+        .map_err(Arc::new)
     }
 }
