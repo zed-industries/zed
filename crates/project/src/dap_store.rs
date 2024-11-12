@@ -417,7 +417,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.spawn(|this, mut cx| async move {
@@ -602,7 +606,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -630,7 +638,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.spawn(|this, mut cx| async move {
@@ -684,7 +696,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.background_executor().spawn(async move {
@@ -713,7 +729,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.background_executor().spawn(async move {
@@ -736,7 +756,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -767,7 +791,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -799,7 +827,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -829,7 +861,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Variable>>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.background_executor().spawn(async move {
@@ -855,7 +891,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<EvaluateResponse>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.background_executor().spawn(async move {
@@ -882,7 +922,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<CompletionItem>>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.background_executor().spawn(async move {
@@ -910,7 +954,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         let supports_set_expression = self
@@ -950,7 +998,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.background_executor()
@@ -964,7 +1016,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         let capabilities = self.capabilities_by_id(client_id);
@@ -989,7 +1045,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.background_executor().spawn(async move {
@@ -1010,7 +1070,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         let supports_restart = self
@@ -1055,7 +1119,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.clients.remove(&client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         cx.emit(DapStoreEvent::DebugClientStopped(*client_id));
@@ -1133,7 +1201,11 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(client) = self.client_by_id(client_id) else {
-            return Task::ready(Err(anyhow!("Could not found client")));
+            return Task::ready(Err(anyhow!(
+                "Could not find client: file: {}:{}",
+                file!(),
+                line!()
+            )));
         };
 
         if Self::INDEX_STARTS_AT_ONE {
