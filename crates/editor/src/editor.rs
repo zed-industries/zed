@@ -6313,6 +6313,8 @@ impl Editor {
         let mut row_ranges = Vec::<Range<MultiBufferRow>>::new();
         for selection in self.selections.all::<Point>(cx) {
             let start = MultiBufferRow(selection.start.row);
+            // Treat single line selections as if they include the next line. Otherwise this action
+            // would do nothing for single line selections individual cursors.
             let end = if selection.start.row == selection.end.row {
                 MultiBufferRow(selection.start.row + 1)
             } else {
