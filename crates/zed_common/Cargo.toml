@@ -66,6 +66,7 @@ indexed_docs.workspace = true
 indoc.workspace = true
 inline_completion_button.workspace = true
 install_cli.workspace = true
+itertools.workspace = true
 language.workspace = true
 language_model.workspace = true
 log.workspace = true
@@ -80,6 +81,7 @@ num-format.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
+outline.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true

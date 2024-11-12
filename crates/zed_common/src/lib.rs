@@ -1,6 +1,7 @@
 pub mod activity_indicator;
 pub mod assistant;
 pub mod assistant_slash_command;
+pub mod breadcrumbs;
 pub mod collab_ui;
 pub mod extensions_ui;
 pub mod language_selector;

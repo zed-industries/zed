@@ -21,7 +21,6 @@ async-watch.workspace = true
 audio.workspace = true
 auto_update.workspace = true
 backtrace = "0.3"
-breadcrumbs.workspace = true
 call.workspace = true
 channel.workspace = true
 chrono.workspace = true

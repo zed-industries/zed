@@ -9,7 +9,6 @@ mod open_listener;
 pub(crate) mod windows_only_instance;
 
 pub use app_menus::*;
-use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
 use command_palette_hooks::CommandPaletteFilter;
@@ -23,6 +22,7 @@ use gpui::{
 };
 pub use open_listener::*;
 use zed_common::assistant::PromptBuilder;
+use zed_common::breadcrumbs::Breadcrumbs;
 
 use anyhow::Context as _;
 use assets::Assets;

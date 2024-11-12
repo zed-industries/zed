@@ -1712,19 +1712,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "breadcrumbs"
-version = "0.1.0"
-dependencies = [
- "editor",
- "gpui",
- "itertools 0.13.0",
- "outline",
- "theme",
- "ui",
- "workspace",
-]
-
-[[package]]
 name = "bstr"
 version = "1.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14901,7 +14888,6 @@ dependencies = [
  "audio",
  "auto_update",
  "backtrace",
- "breadcrumbs",
  "call",
  "channel",
  "chrono",
@@ -15064,6 +15050,7 @@ dependencies = [
  "indoc",
  "inline_completion_button",
  "install_cli",
+ "itertools 0.13.0",
  "language",
  "language_model",
  "languages",
@@ -15080,6 +15067,7 @@ dependencies = [
  "ollama",
  "open_ai",
  "ordered-float 2.10.1",
+ "outline",
  "parking_lot",
  "paths",
  "picker",
