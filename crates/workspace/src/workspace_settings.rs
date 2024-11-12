@@ -19,6 +19,7 @@ pub struct WorkspaceSettings {
     pub when_closing_with_no_tabs: CloseWindowWhenNoItems,
     pub use_system_path_prompts: bool,
     pub command_aliases: HashMap<String, String>,
+    pub use_native_tabs: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema)]
@@ -128,6 +129,10 @@ pub struct WorkspaceSettingsContent {
     ///
     /// Default: true
     pub command_aliases: Option<HashMap<String, String>>,
+    /// Whether to use native tabs on macOS.
+    ///
+    /// Default: false
+    pub use_native_tabs: Option<bool>,
 }
 
 #[derive(Deserialize)]

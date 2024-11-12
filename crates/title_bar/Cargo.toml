@@ -41,6 +41,7 @@ project.workspace = true
 recent_projects.workspace = true
 remote.workspace = true
 rpc.workspace = true
+settings.workspace = true
 serde.workspace = true
 smallvec.workspace = true
 story = { workspace = true, optional = true }

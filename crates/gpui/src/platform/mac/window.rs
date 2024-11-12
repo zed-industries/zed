@@ -13,7 +13,7 @@ use cocoa::{
         NSApplication, NSBackingStoreBuffered, NSColor, NSEvent, NSEventModifierFlags,
         NSFilenamesPboardType, NSPasteboard, NSScreen, NSView, NSViewHeightSizable,
         NSViewWidthSizable, NSWindow, NSWindowButton, NSWindowCollectionBehavior,
-        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTitleVisibility,
+        NSWindowOcclusionState, NSWindowStyleMask, NSWindowTabbingMode, NSWindowTitleVisibility,
     },
     base::{id, nil},
     foundation::{
@@ -337,6 +337,7 @@ struct MacWindowState {
     last_key_equivalent: Option<KeyDownEvent>,
     synthetic_drag_counter: usize,
     traffic_light_position: Option<Point<Pixels>>,
+    use_native_tabs: Option<bool>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     // State tracking what the IME did after the last request
     last_ime_inputs: Option<SmallVec<[(String, Option<Range<usize>>); 1]>>,
@@ -350,6 +351,12 @@ struct MacWindowState {
 
 impl MacWindowState {
     fn move_traffic_light(&self) {
+        if let Some(use_native_tabs) = self.use_native_tabs {
+            if use_native_tabs {
+                return;
+            }
+        }
+
         if let Some(traffic_light_position) = self.traffic_light_position {
             if self.is_fullscreen() {
                 // Moving traffic lights while fullscreen doesn't work,
@@ -618,6 +625,9 @@ impl MacWindow {
                 traffic_light_position: titlebar
                     .as_ref()
                     .and_then(|titlebar| titlebar.traffic_light_position),
+                use_native_tabs: titlebar
+                    .as_ref()
+                    .and_then(|titlebar| titlebar.use_native_tabs),
                 previous_modifiers_changed_event: None,
                 last_ime_inputs: None,
                 previous_keydown_inserted_text: None,
@@ -636,6 +646,18 @@ impl MacWindow {
                 WINDOW_STATE_IVAR,
                 Arc::into_raw(window.0.clone()) as *const c_void,
             );
+
+            // Prefer native tabs over separate windows, when opening multiple instances of Zed.
+            let use_native_tabs = titlebar
+                .as_ref()
+                .and_then(|titlebar| titlebar.use_native_tabs)
+                .unwrap_or(false);
+
+            if use_native_tabs {
+                // note: this should be `NSWindowTabbingModePreferred`, but the bindings are incorrect.
+                // (https://github.com/servo/core-foundation-rs/pull/714)
+                native_window.setTabbingMode_(NSWindowTabbingMode::NSWindowTabbingModeDisallowed);
+            }
 
             if let Some(title) = titlebar
                 .as_ref()

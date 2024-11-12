@@ -14,12 +14,13 @@ use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
-    Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
+    Interactivity, IntoElement, Model, MouseButton, ParentElement, PromptLevel, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
 use project::{Project, RepositoryEntry};
 use recent_projects::{OpenRemote, RecentProjects};
 use rpc::proto;
+use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -29,7 +30,7 @@ use ui::{
 };
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
-use workspace::{notifications::NotifyResultExt, Workspace};
+use workspace::{notifications::NotifyResultExt, Workspace, WorkspaceSettings};
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -66,6 +67,7 @@ pub struct TitleBar {
     workspace: WeakView<Workspace>,
     should_move: bool,
     application_menu: Option<View<ApplicationMenu>>,
+    use_native_tabs: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -93,7 +95,13 @@ impl Render for TitleBar {
                 if cx.is_fullscreen() {
                     this.pl_2()
                 } else if self.platform_style == PlatformStyle::Mac {
-                    this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                    // When native tabs are enabled, the native titlebar is also displayed on top of the window.
+                    // Therefore, we don't need to add the traffic light padding that is normally needed for the custom titlebar.
+                    if self.use_native_tabs {
+                        this.pl_2()
+                    } else {
+                        this.pl(px(platform_mac::TRAFFIC_LIGHT_PADDING))
+                    }
                 } else {
                     this.pl_2()
                 }
@@ -220,6 +228,8 @@ impl TitleBar {
             }
         };
 
+        let use_native_tabs = WorkspaceSettings::get_global(cx).use_native_tabs;
+
         let mut subscriptions = Vec::new();
         subscriptions.push(
             cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
@@ -230,6 +240,26 @@ impl TitleBar {
         subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe_global::<SettingsStore>(move |this, cx| {
+            let use_native_tabs = WorkspaceSettings::get_global(cx).use_native_tabs;
+            if this.use_native_tabs != use_native_tabs {
+                let answer = cx.prompt(
+                    PromptLevel::Warning,
+                    "A setting has changed that requires a restart to take effect.",
+                    Some("Press the restart button to restart Zed and enable the setting."),
+                    &["Cancel", "Restart"],
+                );
+                cx.spawn(|_, mut cx| async move {
+                    if answer.await? != 1 {
+                        return Ok(());
+                    }
+                    cx.update(|cx| {
+                        workspace::reload(&Default::default(), cx);
+                    })
+                })
+                .detach();
+            }
+        }));
 
         Self {
             platform_style,
@@ -241,6 +271,7 @@ impl TitleBar {
             project,
             user_store,
             client,
+            use_native_tabs,
             _subscriptions: subscriptions,
         }
     }
