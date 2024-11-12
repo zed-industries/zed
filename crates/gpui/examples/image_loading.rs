@@ -1,8 +1,8 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use gpui::{
-    div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
-    AppContext, Asset, AssetSource, Bounds, ImageAsset, ImageCacheError, Length, Pixels,
+    black, div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
+    AppContext, Asset, AssetSource, Bounds, Hsla, ImageAsset, ImageCacheError, Length, Pixels,
     RenderImage, SharedString, UriOrPath, ViewContext, WindowBounds, WindowContext, WindowOptions,
     LOADING_DELAY,
 };
@@ -67,28 +67,33 @@ struct ImageLoadingExample {}
 
 impl ImageLoadingExample {
     fn loading_element() -> impl IntoElement {
-        div()
-            .border_1()
-            .border_color(gpui::yellow())
-            .size_full()
-            .flex_none()
-            .bg(gpui::blue())
-            .with_animation(
-                "pulsating-bg",
-                Animation::new(Duration::from_secs(2))
+        div().size_full().flex_none().p_0p5().rounded_sm().child(
+            div().size_full().with_animation(
+                "loading-bg",
+                Animation::new(Duration::from_secs(3))
                     .repeat()
-                    .with_easing(pulsating_between(0.3, 0.7)),
-                move |this, delta| this.bg(gpui::blue().opacity(0.8 - delta)),
-            )
+                    .with_easing(pulsating_between(0.04, 0.24)),
+                move |this, delta| this.bg(black().opacity(delta)),
+            ),
+        )
     }
 
     fn fallback_element() -> impl IntoElement {
-        div()
-            .border_1()
-            .border_color(gpui::red())
-            .size_full()
-            .flex_none()
-            .bg(gpui::red())
+        let fallback_color: Hsla = black().opacity(0.5);
+
+        div().size_full().flex_none().p_0p5().child(
+            div()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .text_sm()
+                .text_color(fallback_color)
+                .border_1()
+                .border_color(fallback_color)
+                .child("?"),
+        )
     }
 }
 
