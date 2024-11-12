@@ -19,8 +19,8 @@ use gpui::{
 use project::dap_store::DapStore;
 use settings::Settings;
 use task::DebugAdapterKind;
-use ui::WindowContext;
 use ui::{prelude::*, Tooltip};
+use ui::{Indicator, WindowContext};
 use workspace::item::{Item, ItemEvent};
 use workspace::{ItemHandle, Workspace};
 
@@ -42,6 +42,7 @@ enum ThreadItem {
 pub struct DebugPanelItem {
     thread_id: u64,
     console: View<Console>,
+    show_console_indicator: bool,
     focus_handle: FocusHandle,
     dap_store: Model<DapStore>,
     output_editor: View<Editor>,
@@ -156,6 +157,7 @@ impl DebugPanelItem {
 
         Self {
             console,
+            show_console_indicator: false,
             thread_id,
             dap_store,
             workspace,
@@ -254,6 +256,10 @@ impl DebugPanelItem {
                 self.console.update(cx, |console, cx| {
                     console.add_message(&event.output, cx);
                 });
+
+                if !matches!(self.active_thread_item, ThreadItem::Console) {
+                    self.show_console_indicator = true;
+                }
             }
             _ => {
                 self.output_editor.update(cx, |editor, cx| {
@@ -392,6 +398,9 @@ impl DebugPanelItem {
         thread_item: ThreadItem,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement {
+        let has_indicator =
+            matches!(thread_item, ThreadItem::Console) && self.show_console_indicator;
+
         div()
             .id(label.clone())
             .px_2()
@@ -401,9 +410,17 @@ impl DebugPanelItem {
             .when(self.active_thread_item == thread_item, |this| {
                 this.border_color(cx.theme().colors().border)
             })
-            .child(Button::new(label.clone(), label.clone()))
+            .child(
+                h_flex()
+                    .child(Button::new(label.clone(), label.clone()))
+                    .when(has_indicator, |this| this.child(Indicator::dot())),
+            )
             .on_click(cx.listener(move |this, _, cx| {
                 this.active_thread_item = thread_item.clone();
+
+                if matches!(this.active_thread_item, ThreadItem::Console) {
+                    this.show_console_indicator = false;
+                }
 
                 cx.notify();
             }))
