@@ -1385,7 +1385,7 @@ impl SshRemoteConnection {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener =
             UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
-        println!("Listening on {:?}", listener.local_addr()?);
+        println!("-> asskpass socket: {:?}", askpass_socket.display());
 
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
         let mut kill_tx = Some(askpass_kill_master_tx);
@@ -1473,7 +1473,7 @@ impl SshRemoteConnection {
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = Duration::from_secs(10);
+        let connection_timeout = Duration::from_secs(1000);
 
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {
