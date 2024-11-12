@@ -2193,6 +2193,18 @@ Or to set a `socks5` proxy:
 }
 ```
 
+## Native tabs
+
+- Description: Enables MacOS Sierra window tabs.
+- Setting: `native_tabs`
+- Default: `false`
+
+Note, only works on macOS Sierra and above. Needs a restart of Zed to take effect.
+
+**Options**
+
+`boolean` values
+
 ## Preview tabs
 
 - Description:
