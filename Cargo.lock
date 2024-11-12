@@ -3,25 +3,6 @@
 version = 3
 
 [[package]]
-name = "activity_indicator"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "auto_update",
- "editor",
- "extension_host",
- "futures 0.3.30",
- "gpui",
- "language",
- "lsp",
- "project",
- "smallvec",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "addr2line"
 version = "0.24.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -14927,7 +14908,6 @@ dependencies = [
 name = "zed"
 version = "0.162.0"
 dependencies = [
- "activity_indicator",
  "anyhow",
  "ashpd",
  "assets",

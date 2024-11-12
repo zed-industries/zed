@@ -204,7 +204,7 @@ pub fn initialize_workspace(
         let diagnostic_summary =
             cx.new_view(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator =
-            activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
+            zed_common::activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
             cx.new_view(|_| zed_common::language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =

@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/activity_indicator",
     "crates/anthropic",
     "crates/assets",
     "crates/assistant_tool",
@@ -165,7 +164,6 @@ default-members = ["crates/zed"]
 # Workspace member crates
 #
 
-activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }

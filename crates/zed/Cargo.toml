@@ -15,7 +15,6 @@ name = "zed"
 path = "src/main.rs"
 
 [dependencies]
-activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 async-watch.workspace = true
