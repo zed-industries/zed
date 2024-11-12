@@ -918,6 +918,8 @@
     // Whether a preview tab gets replaced when code navigation is used to navigate away from the tab.
     "enable_preview_from_code_navigation": false
   },
+  // Whether to use native tabs on macOS.
+  "use_native_tabs": false,
   // Settings related to the file finder.
   "file_finder": {
     // Whether to show file icons in the file finder.

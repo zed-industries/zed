@@ -116,6 +116,7 @@ pub fn open_rules_library(
                         title: Some("Rules Library".into()),
                         appears_transparent: cfg!(target_os = "macos"),
                         traffic_light_position: Some(point(px(9.0), px(9.0))),
+                        use_native_tabs: Default::default(),
                     }),
                     app_id: Some(app_id.to_owned()),
                     window_bounds: Some(WindowBounds::Windowed(bounds)),

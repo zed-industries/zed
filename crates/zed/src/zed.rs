@@ -139,11 +139,14 @@ pub fn build_window_options(display_uuid: Option<Uuid>, cx: &mut App) -> WindowO
         _ => gpui::WindowDecorations::Client,
     };
 
+    let use_native_tabs = WorkspaceSettings::get_global(cx).use_native_tabs;
+
     WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: None,
-            appears_transparent: true,
+            appears_transparent: !use_native_tabs,
             traffic_light_position: Some(point(px(9.0), px(9.0))),
+            use_native_tabs: Some(use_native_tabs),
         }),
         window_bounds: None,
         focus: false,
