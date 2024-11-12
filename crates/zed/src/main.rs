@@ -440,7 +440,7 @@ fn main() {
 
         go_to_line::init(cx);
         file_finder::init(cx);
-        tab_switcher::init(cx);
+        zed_common::tab_switcher::init(cx);
         outline::init(cx);
         project_symbols::init(cx);
         project_panel::init(Assets, cx);

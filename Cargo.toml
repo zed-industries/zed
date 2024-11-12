@@ -98,7 +98,6 @@ members = [
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
-    "crates/tab_switcher",
     "crates/task",
     "crates/tasks_ui",
     "crates/telemetry_events",
@@ -263,7 +262,6 @@ storybook = { path = "crates/storybook" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
-tab_switcher = { path = "crates/tab_switcher" }
 task = { path = "crates/task" }
 tasks_ui = { path = "crates/tasks_ui" }
 telemetry_events = { path = "crates/telemetry_events" }

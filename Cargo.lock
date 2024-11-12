@@ -11796,29 +11796,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tab_switcher"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "ctor",
- "editor",
- "env_logger 0.11.5",
- "gpui",
- "language",
- "menu",
- "picker",
- "project",
- "serde",
- "serde_json",
- "settings",
- "theme",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "taffy"
 version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15066,7 +15043,6 @@ dependencies = [
  "snippets_ui",
  "supermaven",
  "sysinfo",
- "tab_switcher",
  "task",
  "tasks_ui",
  "telemetry_events",
@@ -15228,7 +15204,6 @@ dependencies = [
  "vcs_menu",
  "vim",
  "wasmtime-wasi",
- "windows 0.58.0",
  "workspace",
  "zed_actions",
 ]

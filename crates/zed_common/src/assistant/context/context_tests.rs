@@ -6,11 +6,11 @@ use crate::assistant::{
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
     MessageStatus, PromptBuilder,
 };
-use anyhow::Result;
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
+use anyhow::Result;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{

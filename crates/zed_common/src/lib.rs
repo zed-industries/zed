@@ -6,5 +6,6 @@ pub mod language_selector;
 pub mod quick_action_bar;
 pub mod repl;
 pub mod settings_ui;
+pub mod tab_switcher;
 pub mod title_bar;
 pub mod welcome;

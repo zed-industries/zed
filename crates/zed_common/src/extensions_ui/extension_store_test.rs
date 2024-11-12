@@ -1,4 +1,4 @@
-use assistant_slash_command::SlashCommandRegistry;
+use crate::assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
 use context_servers::ContextServerFactoryRegistry;
@@ -272,15 +272,16 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
-        let extension_registration_hooks = crate::extensions_ui::ConcreteExtensionRegistrationHooks::new(
-            theme_registry.clone(),
-            slash_command_registry.clone(),
-            indexed_docs_registry.clone(),
-            snippet_registry.clone(),
-            language_registry.clone(),
-            context_server_factory_registry.clone(),
-            cx,
-        );
+        let extension_registration_hooks =
+            crate::extensions_ui::ConcreteExtensionRegistrationHooks::new(
+                theme_registry.clone(),
+                slash_command_registry.clone(),
+                indexed_docs_registry.clone(),
+                snippet_registry.clone(),
+                language_registry.clone(),
+                context_server_factory_registry.clone(),
+                cx,
+            );
 
         ExtensionStore::new(
             PathBuf::from("/the-extension-dir"),

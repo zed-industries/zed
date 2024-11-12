@@ -125,9 +125,6 @@ wasmtime-wasi.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
-
 [dev-dependencies]
 async-compression.workspace = true
 async-tar.workspace = true

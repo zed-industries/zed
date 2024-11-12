@@ -552,7 +552,8 @@ pub fn append_buffer_to_output(
 
 #[cfg(test)]
 mod test {
-    use assistant_slash_command::SlashCommandOutput;
+    use crate::assistant::slash_command::file_command::collect_files;
+    use crate::assistant_slash_command::SlashCommandOutput;
     use fs::FakeFs;
     use gpui::TestAppContext;
     use pretty_assertions::assert_eq;
@@ -560,8 +561,6 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
-
-    use crate::assistant::slash_command::file_command::collect_files;
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {
