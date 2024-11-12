@@ -11,7 +11,7 @@ use gpui::{
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
+use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
