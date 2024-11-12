@@ -7,8 +7,8 @@ use editor::Editor;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, AsyncAppContext, DismissEvent,
-    EventEmitter, FocusableView, ParentElement as _, PromptLevel, Render, SemanticVersion,
-    SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
+    EventEmitter, FocusableView, FontFeatures, ParentElement as _, PromptLevel, Render,
+    SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, View, WeakView,
 };
 use gpui::{AppContext, Model};
 
@@ -178,6 +178,7 @@ impl SshPrompt {
         let mut text_style = cx.text_style();
         let refinement = TextStyleRefinement {
             font_family: Some(theme.buffer_font.family.clone()),
+            font_features: Some(FontFeatures::disable_ligatures()),
             font_size: Some(theme.buffer_font_size.into()),
             color: Some(cx.theme().colors().editor_foreground),
             background_color: Some(gpui::transparent_black()),
