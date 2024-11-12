@@ -159,8 +159,6 @@ impl zed::Extension for AstroExtension {
 
         let script_path = astro_lsp_path(&server_path);
 
-        println!("Astro script path: {:?}", script_path);
-
         Ok(zed::Command {
             command: zed::node_binary_path()?,
             args: vec![script_path, "--stdio".to_string()],
