@@ -9868,6 +9868,7 @@ dependencies = [
  "thiserror 1.0.69",
  "util",
  "which 6.0.3",
+ "windows 0.58.0",
 ]
 
 [[package]]
