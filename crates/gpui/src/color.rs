@@ -434,9 +434,10 @@ impl Hsla {
     }
 
     /// Returns true if the color is considered "light", false otherwise.
-    /// A color is considered light if its lightness value is greater than 0.5.
     pub fn is_light(&self) -> bool {
-        self.l > 0.5
+        const ONE_THIRD: f32 = 1. / 3.;
+        let Rgba { r, g, b, .. } = self.to_rgb();
+        r >= ONE_THIRD && g >= ONE_THIRD && b >= ONE_THIRD && r + g + b >= 2.
     }
 
     /// Blends `other` on top of `self` based on `other`'s alpha value. The resulting color is a combination of `self`'s and `other`'s colors.
