@@ -149,7 +149,7 @@ impl PromptBuilder {
                             if file_path.to_string_lossy().ends_with(".hbs") {
                                 if let Ok(content) = params.fs.load(&file_path).await {
                                     let file_name = file_path.file_stem().unwrap().to_string_lossy();
-                                    log::info!("Registering prompt template override: {}", file_name);
+                                    log::debug!("Registering prompt template override: {}", file_name);
                                     handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
@@ -194,7 +194,7 @@ impl PromptBuilder {
         for path in Assets.list("prompts")? {
             if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
-                    log::info!("Registering built-in prompt template: {}", id);
+                    log::debug!("Registering built-in prompt template: {}", id);
                     let prompt = String::from_utf8_lossy(prompt.as_ref());
                     handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
                 }

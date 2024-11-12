@@ -99,7 +99,7 @@ pub struct ProjectPanelSettingsContent {
     /// Whether to fold directories automatically
     /// when directory has only one directory inside.
     ///
-    /// Default: false
+    /// Default: true
     pub auto_fold_dirs: Option<bool>,
     /// Scrollbar-related settings
     pub scrollbar: Option<ScrollbarSettingsContent>,
