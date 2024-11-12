@@ -5,13 +5,13 @@ mod multibuffer_hint;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, svg, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
-    WindowContext,
+    actions, svg, AnchorCorner, AppContext, EventEmitter, FocusHandle, FocusableView,
+    InteractiveElement, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
+    VisualContext, WeakView, WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel};
+use ui::{prelude::*, CheckboxWithLabel, ContextMenu, IconButtonShape, PopoverMenu, Tooltip};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -70,6 +70,40 @@ pub struct WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+        let account_info_popover = PopoverMenu::new("AccountInfo")
+            .anchor(AnchorCorner::TopLeft)
+            .trigger(
+                IconButton::new("regenerate-context", IconName::FileText)
+                    .shape(IconButtonShape::Square)
+                    .icon_color(Color::Muted)
+                    .icon_size(IconSize::XSmall)
+                    .tooltip(|cx| Tooltip::text("Learn About Your Data", cx)),
+            )
+            .menu({
+                move |cx| {
+                    ContextMenu::build(cx, move |menu, _| {
+                        menu.custom_entry(
+                            move |_| {
+                                h_flex()
+                                    .w_full()
+                                    .max_w_64()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .flex_wrap()
+                                            .child(
+                                                Label::new("Your telemetry data is never shared with any 3rd party groups")
+                                            )
+                                    )
+                                    .into_any_element()
+                            },
+                            move |_| {},
+                        )
+                    })
+                    .into()
+                }
+            });
+
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -292,32 +326,42 @@ impl Render for WelcomePage {
                                     );
                                 }),
                             ))
-                            .child(CheckboxWithLabel::new(
-                                "enable-telemetry",
-                                Label::new("Send anonymous usage data"),
-                                if TelemetrySettings::get_global(cx).metrics {
-                                    ui::Selection::Selected
-                                } else {
-                                    ui::Selection::Unselected
-                                },
-                                cx.listener(move |this, selection, cx| {
-                                    this.telemetry.report_app_event(
-                                        "welcome page: toggle metric telemetry".to_string(),
-                                    );
-                                    this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        let telemetry = this.telemetry.clone();
-
-                                        move |settings, value| {
-                                            settings.metrics = Some(value);
-
-                                            telemetry.report_setting_event(
-                                                "metric telemetry",
-                                                value.to_string(),
+                            .child(
+                                h_flex()
+                                    .w_full()
+                                    .justify_between()
+                                    .child(CheckboxWithLabel::new(
+                                        "enable-telemetry",
+                                        Label::new("Send usage data"),
+                                        if TelemetrySettings::get_global(cx).metrics {
+                                            ui::Selection::Selected
+                                        } else {
+                                            ui::Selection::Unselected
+                                        },
+                                        cx.listener(move |this, selection, cx| {
+                                            this.telemetry.report_app_event(
+                                                "welcome page: toggle metric telemetry".to_string(),
                                             );
-                                        }
-                                    });
-                                }),
-                            ))
+                                            this.update_settings::<TelemetrySettings>(
+                                                selection,
+                                                cx,
+                                                {
+                                                    let telemetry = this.telemetry.clone();
+
+                                                    move |settings, value| {
+                                                        settings.metrics = Some(value);
+
+                                                        telemetry.report_setting_event(
+                                                            "metric telemetry",
+                                                            value.to_string(),
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        }),
+                                    ))
+                                    .child(account_info_popover),
+                            )
                             .child(CheckboxWithLabel::new(
                                 "enable-crash",
                                 Label::new("Send crash reports"),
