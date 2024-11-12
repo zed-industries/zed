@@ -6332,22 +6332,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "language_selector"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "editor",
- "fuzzy",
- "gpui",
- "language",
- "picker",
- "project",
- "ui",
- "util",
- "workspace",
-]
-
-[[package]]
 name = "language_tools"
 version = "0.1.0"
 dependencies = [
@@ -15093,7 +15077,6 @@ dependencies = [
  "journal",
  "language",
  "language_model",
- "language_selector",
  "language_tools",
  "languages",
  "libc",

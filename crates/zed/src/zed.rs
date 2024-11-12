@@ -206,7 +206,7 @@ pub fn initialize_workspace(
         let activity_indicator =
             activity_indicator::ActivityIndicator::new(workspace, app_state.languages.clone(), cx);
         let active_buffer_language =
-            cx.new_view(|_| language_selector::ActiveBufferLanguage::new(workspace));
+            cx.new_view(|_| zed_common::language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
             cx.new_view(|cx| toolchain_selector::ActiveToolchain::new(workspace, cx));
         let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);

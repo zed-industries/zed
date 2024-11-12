@@ -4,7 +4,7 @@ use language::LanguageName;
 use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::LanguageSelector;
+use crate::language_selector::LanguageSelector;
 
 pub struct ActiveBufferLanguage {
     active_language: Option<Option<LanguageName>>,
