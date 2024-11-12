@@ -2,6 +2,10 @@ use crate::assistant::{
     humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
     ModelSelector, RequestType, DEFAULT_CONTEXT_LINES,
 };
+use crate::language_model::{
+    logging::report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
+};
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
@@ -16,10 +20,6 @@ use gpui::{
     Subscription, Task, TextStyle, UpdateGlobal, View, WeakView,
 };
 use language::Buffer;
-use language_model::{
-    logging::report_assistant_event, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
-};
 use settings::Settings;
 use std::{
     cmp,

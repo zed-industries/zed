@@ -2,16 +2,16 @@ use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use crate::language_model::{
+    LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
+};
 use crate::semantic_index::{FileSummary, SemanticDb};
 use anyhow::{anyhow, Result};
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
-use language_model::{
-    LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
-};
 use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{prelude::*, BorrowAppContext, WindowContext};

@@ -1,3 +1,7 @@
+use crate::language_model::{
+    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, Role,
+};
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayString;
 use fs::Fs;
@@ -7,10 +11,6 @@ use gpui::{AppContext, Model, Task};
 use heed::{
     types::{SerdeBincode, Str},
     RoTxn,
-};
-use language_model::{
-    LanguageModelCompletionEvent, LanguageModelId, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, Role,
 };
 use log;
 use parking_lot::Mutex;

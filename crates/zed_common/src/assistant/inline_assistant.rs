@@ -3,6 +3,10 @@ use crate::assistant::{
     AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
     CyclePreviousInlineAssist, LineDiff, LineOperation, ModelSelector, RequestType, StreamingDiff,
 };
+use crate::language_model::{
+    logging::report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
+    LanguageModelRequestMessage, LanguageModelTextStream, Role,
+};
 use anyhow::{anyhow, Context as _, Result};
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
@@ -29,10 +33,6 @@ use gpui::{
     TextStyle, UpdateGlobal, View, ViewContext, WeakView, WindowContext,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
-use language_model::{
-    logging::report_assistant_event, LanguageModel, LanguageModelRegistry, LanguageModelRequest,
-    LanguageModelRequestMessage, LanguageModelTextStream, Role,
-};
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
@@ -3549,6 +3549,7 @@ fn merge_ranges(ranges: &mut Vec<Range<Anchor>>, buffer: &MultiBufferSnapshot) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::language_model::LanguageModelRegistry;
     use futures::stream::{self};
     use gpui::{Context, TestAppContext};
     use indoc::indoc;
@@ -3556,7 +3557,6 @@ mod tests {
         language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,
         Point,
     };
-    use language_model::LanguageModelRegistry;
     use rand::prelude::*;
     use serde::Serialize;
     use settings::SettingsStore;
@@ -3570,7 +3570,7 @@ mod tests {
     #[gpui::test(iterations = 10)]
     async fn test_transform_autoindent(cx: &mut TestAppContext, mut rng: StdRng) {
         cx.set_global(cx.update(SettingsStore::test));
-        cx.update(language_model::LanguageModelRegistry::test);
+        cx.update(crate::language_model::LanguageModelRegistry::test);
         cx.update(language_settings::init);
 
         let text = indoc! {"

@@ -23,8 +23,7 @@ use gpui::{
     Subscription, Task,
 };
 
-use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
-use language_model::{
+use crate::language_model::{
     logging::report_assistant_event,
     provider::cloud::{MaxMonthlySpendReachedError, PaymentRequiredError},
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
@@ -32,6 +31,7 @@ use language_model::{
     LanguageModelRequestTool, LanguageModelToolResult, LanguageModelToolUse, MessageContent, Role,
     StopReason,
 };
+use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
@@ -2503,17 +2503,17 @@ impl Context {
                             if let Some(image) = image.clone().now_or_never().flatten() {
                                 request_message
                                     .content
-                                    .push(language_model::MessageContent::Image(image));
+                                    .push(crate::language_model::MessageContent::Image(image));
                             }
                         }
                         Content::ToolUse { tool_use, .. } => {
-                            request_message
-                                .content
-                                .push(language_model::MessageContent::ToolUse(tool_use.clone()));
+                            request_message.content.push(
+                                crate::language_model::MessageContent::ToolUse(tool_use.clone()),
+                            );
                         }
                         Content::ToolResult { tool_use_id, .. } => {
                             request_message.content.push(
-                                language_model::MessageContent::ToolResult(
+                                crate::language_model::MessageContent::ToolResult(
                                     LanguageModelToolResult {
                                         tool_use_id: tool_use_id.to_string(),
                                         is_error: false,

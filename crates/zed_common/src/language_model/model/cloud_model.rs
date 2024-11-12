@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use strum::EnumIter;
 use ui::IconName;
 
-use crate::LanguageModelAvailability;
+use crate::language_model::LanguageModelAvailability;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "provider", rename_all = "lowercase")]

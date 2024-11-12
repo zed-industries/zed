@@ -23,12 +23,12 @@ use ui::{
     ViewContext, VisualContext, WindowContext,
 };
 
-use crate::settings::AllLanguageModelSettings;
-use crate::{
+use crate::language_model::settings::AllLanguageModelSettings;
+use crate::language_model::{
     LanguageModel, LanguageModelId, LanguageModelName, LanguageModelProvider,
     LanguageModelProviderId, LanguageModelProviderName, LanguageModelRequest, RateLimiter, Role,
 };
-use crate::{LanguageModelCompletionEvent, LanguageModelProviderState};
+use crate::language_model::{LanguageModelCompletionEvent, LanguageModelProviderState};
 
 use super::anthropic::count_anthropic_tokens;
 use super::open_ai::count_open_ai_tokens;

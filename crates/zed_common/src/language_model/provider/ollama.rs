@@ -13,8 +13,8 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use ui::{prelude::*, ButtonLike, Indicator};
 use util::ResultExt;
 
-use crate::LanguageModelCompletionEvent;
-use crate::{
+use crate::language_model::LanguageModelCompletionEvent;
+use crate::language_model::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,

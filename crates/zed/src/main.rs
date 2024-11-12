@@ -387,7 +387,7 @@ fn main() {
             cx,
         );
         supermaven::init(app_state.client.clone(), cx);
-        language_model::init(
+        zed_common::language_model::init(
             app_state.user_store.clone(),
             app_state.client.clone(),
             app_state.fs.clone(),

@@ -1,9 +1,9 @@
-use crate::{
+use crate::language_model::{
     settings::AllLanguageModelSettings, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelId, LanguageModelName, LanguageModelProvider, LanguageModelProviderId,
     LanguageModelProviderName, LanguageModelProviderState, LanguageModelRequest, RateLimiter, Role,
 };
-use crate::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
+use crate::language_model::{LanguageModelCompletionEvent, LanguageModelToolUse, StopReason};
 use anthropic::{AnthropicError, ContentDelta, Event, ResponseContent};
 use anyhow::{anyhow, Context as _, Result};
 use collections::{BTreeMap, HashMap};
@@ -257,7 +257,7 @@ pub fn count_anthropic_tokens(
             let mut string_messages = Vec::with_capacity(messages.len());
 
             for message in messages {
-                use crate::MessageContent;
+                use crate::language_model::MessageContent;
 
                 let mut string_contents = String::new();
 

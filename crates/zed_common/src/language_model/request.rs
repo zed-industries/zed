@@ -1,7 +1,7 @@
 use std::io::{Cursor, Write};
 
-use crate::role::Role;
-use crate::LanguageModelToolUse;
+use crate::language_model::role::Role;
+use crate::language_model::LanguageModelToolUse;
 use base64::write::EncoderWriter;
 use gpui::{point, size, AppContext, DevicePixels, Image, ObjectFit, RenderImage, Size, Task};
 use image::{codecs::png::PngEncoder, imageops::resize, DynamicImage, ImageDecoder};

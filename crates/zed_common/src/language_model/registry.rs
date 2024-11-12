@@ -1,5 +1,5 @@
-use crate::provider::cloud::RefreshLlmTokenListener;
-use crate::{
+use crate::language_model::provider::cloud::RefreshLlmTokenListener;
+use crate::language_model::{
     provider::{
         anthropic::AnthropicLanguageModelProvider, cloud::CloudLanguageModelProvider,
         copilot_chat::CopilotChatLanguageModelProvider, google::GoogleLanguageModelProvider,
@@ -62,7 +62,7 @@ fn register_language_model_providers(
                 );
             } else {
                 registry.unregister_provider(
-                    LanguageModelProviderId::from(crate::provider::cloud::PROVIDER_ID.to_string()),
+                    LanguageModelProviderId::from(crate::language_model::provider::cloud::PROVIDER_ID.to_string()),
                     cx,
                 );
             }
@@ -106,8 +106,8 @@ impl LanguageModelRegistry {
     }
 
     #[cfg(any(test, feature = "test-support"))]
-    pub fn test(cx: &mut AppContext) -> crate::provider::fake::FakeLanguageModelProvider {
-        let fake_provider = crate::provider::fake::FakeLanguageModelProvider;
+    pub fn test(cx: &mut AppContext) -> crate::language_model::provider::fake::FakeLanguageModelProvider {
+        let fake_provider = crate::language_model::provider::fake::FakeLanguageModelProvider;
         let registry = cx.new_model(|cx| {
             let mut registry = Self::default();
             registry.register_provider(fake_provider.clone(), cx);
@@ -148,7 +148,7 @@ impl LanguageModelRegistry {
     }
 
     pub fn providers(&self) -> Vec<Arc<dyn LanguageModelProvider>> {
-        let zed_provider_id = LanguageModelProviderId(crate::provider::cloud::PROVIDER_ID.into());
+        let zed_provider_id = LanguageModelProviderId(crate::language_model::provider::cloud::PROVIDER_ID.into());
         let mut providers = Vec::with_capacity(self.providers.len());
         if let Some(provider) = self.providers.get(&zed_provider_id) {
             providers.push(provider.clone());
@@ -269,7 +269,7 @@ impl LanguageModelRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::provider::fake::FakeLanguageModelProvider;
+    use crate::language_model::provider::fake::FakeLanguageModelProvider;
 
     #[gpui::test]
     fn test_register_providers(cx: &mut AppContext) {
@@ -281,10 +281,10 @@ mod tests {
 
         let providers = registry.read(cx).providers();
         assert_eq!(providers.len(), 1);
-        assert_eq!(providers[0].id(), crate::provider::fake::provider_id());
+        assert_eq!(providers[0].id(), crate::language_model::provider::fake::provider_id());
 
         registry.update(cx, |registry, cx| {
-            registry.unregister_provider(crate::provider::fake::provider_id(), cx);
+            registry.unregister_provider(crate::language_model::provider::fake::provider_id(), cx);
         });
 
         let providers = registry.read(cx).providers();

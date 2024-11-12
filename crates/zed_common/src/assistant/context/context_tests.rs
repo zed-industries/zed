@@ -10,6 +10,7 @@ use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
+use crate::language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use anyhow::Result;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
@@ -19,7 +20,6 @@ use futures::{
 };
 use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
-use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::Project;

@@ -47,7 +47,6 @@ members = [
     "crates/install_cli",
     "crates/journal",
     "crates/language",
-    "crates/language_model",
     "crates/language_tools",
     "crates/languages",
     "crates/live_kit_client",
@@ -204,7 +203,6 @@ inline_completion_button = { path = "crates/inline_completion_button" }
 install_cli = { path = "crates/install_cli" }
 journal = { path = "crates/journal" }
 language = { path = "crates/language" }
-language_model = { path = "crates/language_model" }
 language_tools = { path = "crates/language_tools" }
 languages = { path = "crates/languages" }
 live_kit_client = { path = "crates/live_kit_client" }

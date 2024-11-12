@@ -22,6 +22,11 @@ use crate::assistant::{
     RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
 use crate::assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use crate::language_model::{
+    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
+    LanguageModelRegistry, Role,
+};
+use crate::language_model::{LanguageModelImage, LanguageModelToolUse};
 use anyhow::Result;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
@@ -50,11 +55,6 @@ use indexed_docs::IndexedDocsStore;
 use language::{
     language_settings::SoftWrap, BufferSnapshot, LanguageRegistry, LspAdapterDelegate, ToOffset,
 };
-use language_model::{
-    provider::cloud::PROVIDER_ID, LanguageModelProvider, LanguageModelProviderId,
-    LanguageModelRegistry, Role,
-};
-use language_model::{LanguageModelImage, LanguageModelToolUse};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -503,16 +503,16 @@ impl AssistantPanel {
             cx.subscribe(&context_store, Self::handle_context_store_event),
             cx.subscribe(
                 &LanguageModelRegistry::global(cx),
-                |this, _, event: &language_model::Event, cx| match event {
-                    language_model::Event::ActiveModelChanged => {
+                |this, _, event: &crate::language_model::Event, cx| match event {
+                    crate::language_model::Event::ActiveModelChanged => {
                         this.completion_provider_changed(cx);
                     }
-                    language_model::Event::ProviderStateChanged => {
+                    crate::language_model::Event::ProviderStateChanged => {
                         this.ensure_authenticated(cx);
                         cx.notify()
                     }
-                    language_model::Event::AddedProvider(_)
-                    | language_model::Event::RemovedProvider(_) => {
+                    crate::language_model::Event::AddedProvider(_)
+                    | crate::language_model::Event::RemovedProvider(_) => {
                         this.ensure_authenticated(cx);
                     }
                 },
@@ -4752,14 +4752,14 @@ impl ConfigurationView {
 
         let registry_subscription = cx.subscribe(
             &LanguageModelRegistry::global(cx),
-            |this, _, event: &language_model::Event, cx| match event {
-                language_model::Event::AddedProvider(provider_id) => {
+            |this, _, event: &crate::language_model::Event, cx| match event {
+                crate::language_model::Event::AddedProvider(provider_id) => {
                     let provider = LanguageModelRegistry::read_global(cx).provider(provider_id);
                     if let Some(provider) = provider {
                         this.add_configuration_view(&provider, cx);
                     }
                 }
-                language_model::Event::RemovedProvider(provider_id) => {
+                crate::language_model::Event::RemovedProvider(provider_id) => {
                     this.remove_configuration_view(provider_id);
                 }
                 _ => {}

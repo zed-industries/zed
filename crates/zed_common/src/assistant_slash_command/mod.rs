@@ -1,11 +1,11 @@
 mod slash_command_registry;
 
+pub use crate::language_model::Role;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
-pub use language_model::Role;
 use serde::{Deserialize, Serialize};
 pub use slash_command_registry::*;
 use std::{

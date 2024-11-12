@@ -6,12 +6,12 @@ use crate::assistant::PromptBuilder;
 use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult,
 };
+use crate::language_model::{LanguageModelRegistry, LanguageModelTool};
 use crate::semantic_index::SemanticDb;
 use anyhow::{anyhow, Result};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
-use language_model::{LanguageModelRegistry, LanguageModelTool};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -107,10 +107,10 @@ impl SlashCommand for ProjectSlashCommand {
 
             let search_queries = current_model
                 .use_tool::<SearchQueries>(
-                    language_model::LanguageModelRequest {
-                        messages: vec![language_model::LanguageModelRequestMessage {
-                            role: language_model::Role::User,
-                            content: vec![language_model::MessageContent::Text(prompt)],
+                    crate::language_model::LanguageModelRequest {
+                        messages: vec![crate::language_model::LanguageModelRequestMessage {
+                            role: crate::language_model::Role::User,
+                            content: vec![crate::language_model::MessageContent::Text(prompt)],
                             cache: false,
                         }],
                         tools: vec![],

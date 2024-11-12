@@ -297,7 +297,7 @@ impl TestServer {
             file_finder::init(cx);
             menu::init();
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
-            language_model::LanguageModelRegistry::test(cx);
+            zed_common::language_model::LanguageModelRegistry::test(cx);
             zed_common::assistant::context_store::init(&client.clone().into());
         });
 

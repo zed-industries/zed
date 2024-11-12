@@ -1,6 +1,6 @@
 use feature_flags::ZedPro;
 
-use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
+use crate::language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use proto::Plan;
 use workspace::ShowConfiguration;
 

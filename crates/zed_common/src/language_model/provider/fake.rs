@@ -1,4 +1,4 @@
-use crate::{
+use crate::language_model::{
     LanguageModel, LanguageModelCompletionEvent, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest,

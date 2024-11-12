@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
 
-use crate::{
+use crate::language_model::{
     provider::{
         self,
         anthropic::AnthropicSettings,

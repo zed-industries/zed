@@ -1,5 +1,10 @@
 use crate::assistant::SlashCommandWorkingSet;
-use crate::assistant::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
+use crate::assistant::{
+    slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant,
+};
+use crate::language_model::{
+    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
+};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use collections::{HashMap, HashSet};
@@ -19,9 +24,6 @@ use heed::{
     Database, RoTxn,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
-use language_model::{
-    LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
-};
 use parking_lot::RwLock;
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;

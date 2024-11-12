@@ -1,6 +1,6 @@
 use super::open_ai::count_open_ai_tokens;
-use crate::provider::anthropic::map_to_language_model_completion_events;
-use crate::{
+use crate::language_model::provider::anthropic::map_to_language_model_completion_events;
+use crate::language_model::{
     settings::AllLanguageModelSettings, CloudModel, LanguageModel, LanguageModelCacheConfiguration,
     LanguageModelId, LanguageModelName, LanguageModelProviderId, LanguageModelProviderName,
     LanguageModelProviderState, LanguageModelRequest, RateLimiter,
@@ -41,7 +41,7 @@ use strum::IntoEnumIterator;
 use thiserror::Error;
 use ui::{prelude::*, TintColor};
 
-use crate::{LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider};
+use crate::language_model::{LanguageModelAvailability, LanguageModelCompletionEvent, LanguageModelProvider};
 
 use super::anthropic::count_anthropic_tokens;
 

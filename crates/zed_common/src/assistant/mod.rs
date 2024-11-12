@@ -21,6 +21,9 @@ mod tools;
 pub use crate::assistant::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
 pub use crate::assistant::tool_working_set::{ToolId, ToolWorkingSet};
 use crate::assistant_slash_command::SlashCommandRegistry;
+use crate::language_model::{
+    LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
+};
 use crate::semantic_index::{CloudEmbeddingProvider, SemanticDb};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
@@ -35,9 +38,6 @@ use gpui::impl_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 use indexed_docs::IndexedDocsRegistry;
 pub(crate) use inline_assistant::*;
-use language_model::{
-    LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
-};
 pub(crate) use model_selector::*;
 pub use patch::*;
 pub use prompts::PromptBuilder;
@@ -293,10 +293,10 @@ fn init_language_model_settings(cx: &mut AppContext) {
         .detach();
     cx.subscribe(
         &LanguageModelRegistry::global(cx),
-        |_, event: &language_model::Event, cx| match event {
-            language_model::Event::ProviderStateChanged
-            | language_model::Event::AddedProvider(_)
-            | language_model::Event::RemovedProvider(_) => {
+        |_, event: &crate::language_model::Event, cx| match event {
+            crate::language_model::Event::ProviderStateChanged
+            | crate::language_model::Event::AddedProvider(_)
+            | crate::language_model::Event::RemovedProvider(_) => {
                 update_active_language_model_from_settings(cx);
             }
             _ => {}
