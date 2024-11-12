@@ -73,11 +73,8 @@ impl Render for WelcomePage {
         let account_info_popover = PopoverMenu::new("AccountInfo")
             .anchor(AnchorCorner::TopLeft)
             .trigger(
-                IconButton::new("regenerate-context", IconName::FileText)
-                    .shape(IconButtonShape::Square)
-                    .icon_color(Color::Muted)
-                    .icon_size(IconSize::XSmall)
-                    .tooltip(|cx| Tooltip::text("Learn About Your Data", cx)),
+                Button::new("usage-data-info", "Learn More")
+                    .label_size(LabelSize::XSmall)
             )
             .menu({
                 move |cx| {
@@ -86,13 +83,13 @@ impl Render for WelcomePage {
                             move |_| {
                                 h_flex()
                                     .w_full()
-                                    .max_w_64()
                                     .justify_between()
                                     .child(
                                         div()
+                                            .max_w_64()
                                             .flex_wrap()
                                             .child(
-                                                Label::new("Your telemetry data is never shared with any 3rd party groups")
+                                                Label::new("Your telemetry data is never shared with any third-party groups. To delete your account and data, email hi@zed.dev")
                                             )
                                     )
                                     .into_any_element()
@@ -122,7 +119,7 @@ impl Render for WelcomePage {
                                     .w(px(40.))
                                     .h(px(40.))
                                     .mx_auto()
-                                    .mb_2(),
+                                    .mb_4(),
                             )
                             .child(
                                 h_flex()
