@@ -656,11 +656,26 @@ impl PlatformWindow for WindowsWindow {
         if status.is_ok() {
             if background_appearance == WindowBackgroundAppearance::Blurred {
                 if version.dwBuildNumber >= 17763 {
-                    set_window_composition_attribute(window_state.hwnd, None, 4);
+                    set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 10)), 4);
                 }
             } else {
                 if version.dwBuildNumber >= 17763 {
                     set_window_composition_attribute(window_state.hwnd, None, 0);
+                }
+            }
+            if background_appearance == WindowBackgroundAppearance::Transparent {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(window_state.hwnd, GWL_EXSTYLE, current_style | WS_EX_LAYERED.0 as i32);
+                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 225, LWA_ALPHA)
+                    .inspect_err(|e| {
+                        log::error!("Unable to set window to transparent: {e}")
+                    }).ok();
+                };
+            } else {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(window_state.hwnd, GWL_EXSTYLE, current_style & !WS_EX_LAYERED.0 as i32);
                 }
             }
         }
