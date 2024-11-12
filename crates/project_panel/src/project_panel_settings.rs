@@ -61,7 +61,7 @@ pub struct ScrollbarSettingsContent {
     pub show: Option<Option<ShowScrollbar>>,
 }
 
-/// Which files containing diagnostic errors/warnings to mark in the project panel.
+/// Whether to indicate diagnostic errors and/or warnings in project panel items.
 ///
 /// Default: all
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -69,7 +69,7 @@ pub struct ScrollbarSettingsContent {
 pub enum ShowDiagnostics {
     /// Never mark the diagnostic errors/warnings in the project panel.
     Off,
-    /// Mark files containing diagnostic errors in the project panel.
+    /// Mark files containing only diagnostic errors in the project panel.
     Errors,
     #[default]
     /// Mark files containing diagnostic errors or warnings in the project panel.
