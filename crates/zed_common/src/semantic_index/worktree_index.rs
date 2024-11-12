@@ -1,7 +1,7 @@
-use crate::embedding::EmbeddingProvider;
-use crate::embedding_index::EmbeddingIndex;
-use crate::indexing::IndexingEntrySet;
-use crate::summary_index::SummaryIndex;
+use crate::semantic_index::embedding::EmbeddingProvider;
+use crate::semantic_index::embedding_index::EmbeddingIndex;
+use crate::semantic_index::indexing::IndexingEntrySet;
+use crate::semantic_index::summary_index::SummaryIndex;
 use anyhow::Result;
 use feature_flags::{AutoCommand, FeatureFlagAppExt};
 use fs::Fs;

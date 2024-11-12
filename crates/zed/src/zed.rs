@@ -3138,7 +3138,7 @@ mod tests {
             client::init(&app_state.client, cx);
             language::init(cx);
             workspace::init(app_state.clone(), cx);
-            welcome::init(cx);
+            zed_common::welcome::init(cx);
             Project::init_settings(cx);
             app_state
         })
@@ -3489,7 +3489,7 @@ mod tests {
             command_palette::init(cx);
             language::init(cx);
             editor::init(cx);
-            collab_ui::init(&app_state, cx);
+            zed_common::collab_ui::init(&app_state, cx);
             project_panel::init((), cx);
             outline_panel::init((), cx);
             terminal_view::init(cx);
@@ -3504,14 +3504,18 @@ mod tests {
                 app_state.fs.clone(),
                 cx,
             );
-            let prompt_builder =
-                assistant::init(app_state.fs.clone(), app_state.client.clone(), false, cx);
-            repl::init(
+            let prompt_builder = zed_common::assistant::init(
+                app_state.fs.clone(),
+                app_state.client.clone(),
+                false,
+                cx,
+            );
+            zed_common::repl::init(
                 app_state.fs.clone(),
                 app_state.client.telemetry().clone(),
                 cx,
             );
-            repl::notebook::init(cx);
+            zed_common::repl::notebook::init(cx);
             tasks_ui::init(cx);
             initialize_workspace(app_state.clone(), prompt_builder, cx);
             search::init(cx);

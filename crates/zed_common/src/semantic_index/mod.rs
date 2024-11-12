@@ -374,8 +374,8 @@ mod tests {
             project_path,
             json!({
                 "fixture": {
-                    "main.rs": include_str!("../fixture/main.rs"),
-                    "needle.md": include_str!("../fixture/needle.md"),
+                    "main.rs": include_str!("fixture/main.rs"),
+                    "needle.md": include_str!("fixture/needle.md"),
                 }
             }),
         )

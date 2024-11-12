@@ -6,13 +6,13 @@ use crate::assistant::PromptBuilder;
 use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult,
 };
+use crate::semantic_index::SemanticDb;
 use anyhow::{anyhow, Result};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
 use schemars::JsonSchema;
-use semantic_index::SemanticDb;
 use serde::Deserialize;
 
 pub struct ProjectSlashCommandFeatureFlag;

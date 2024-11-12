@@ -46,13 +46,13 @@ impl ComponentStory {
     pub fn story(&self, cx: &mut WindowContext) -> AnyView {
         match self {
             Self::ApplicationMenu => cx
-                .new_view(|cx| title_bar::ApplicationMenuStory::new(cx))
+                .new_view(|cx| zed_common::title_bar::ApplicationMenuStory::new(cx))
                 .into(),
             Self::AutoHeightEditor => AutoHeightEditorStory::new(cx).into(),
             Self::Avatar => cx.new_view(|_| ui::AvatarStory).into(),
             Self::Button => cx.new_view(|_| ui::ButtonStory).into(),
             Self::CollabNotification => cx
-                .new_view(|_| collab_ui::notifications::CollabNotificationStory)
+                .new_view(|_| zed_common::collab_ui::notifications::CollabNotificationStory)
                 .into(),
             Self::ContextMenu => cx.new_view(|_| ui::ContextMenuStory).into(),
             Self::Cursor => cx.new_view(|_| crate::stories::CursorStory).into(),

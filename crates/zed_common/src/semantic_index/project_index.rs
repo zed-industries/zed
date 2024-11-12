@@ -1,4 +1,4 @@
-use crate::{
+use crate::semantic_index::{
     embedding::{EmbeddingProvider, TextToEmbed},
     summary_index::FileSummary,
     worktree_index::{WorktreeIndex, WorktreeIndexHandle},

@@ -3868,11 +3868,11 @@ dependencies = [
  "open_ai",
  "project",
  "reqwest_client",
- "semantic_index",
  "serde",
  "serde_json",
  "settings",
  "smol",
+ "zed_common",
 ]
 
 [[package]]
@@ -10414,47 +10414,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d369a96f978623eb3dc28807c4852d6cc617fed53da5d3c400feff1ef34a714a"
 
 [[package]]
-name = "semantic_index"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrayvec",
- "blake3",
- "client",
- "clock",
- "collections",
- "env_logger 0.11.5",
- "feature_flags",
- "fs",
- "futures 0.3.30",
- "futures-batch",
- "gpui",
- "heed",
- "http_client",
- "language",
- "language_model",
- "languages",
- "log",
- "open_ai",
- "parking_lot",
- "project",
- "reqwest_client",
- "serde",
- "serde_json",
- "settings",
- "sha2",
- "smol",
- "tempfile",
- "theme",
- "tree-sitter",
- "ui",
- "unindent",
- "util",
- "workspace",
- "worktree",
-]
-
-[[package]]
 name = "semantic_version"
 version = "0.1.0"
 dependencies = [
@@ -15008,6 +14967,7 @@ dependencies = [
  "alacritty_terminal",
  "anthropic",
  "anyhow",
+ "arrayvec",
  "assets",
  "assistant_tool",
  "async-compression",
@@ -15017,6 +14977,7 @@ dependencies = [
  "async-watch",
  "auto_update",
  "base64 0.22.1",
+ "blake3",
  "call",
  "cargo_toml",
  "channel",
@@ -15038,6 +14999,7 @@ dependencies = [
  "feedback",
  "fs",
  "futures 0.3.30",
+ "futures-batch",
  "fuzzy",
  "globset",
  "gpui",
@@ -15086,13 +15048,13 @@ dependencies = [
  "runtimelib",
  "schemars",
  "search",
- "semantic_index",
  "semantic_version",
  "serde",
  "serde_derive",
  "serde_json",
  "serde_json_lenient",
  "settings",
+ "sha2",
  "similar",
  "smallvec",
  "smol",
@@ -15100,6 +15062,7 @@ dependencies = [
  "story",
  "strum 0.25.0",
  "telemetry_events",
+ "tempfile",
  "terminal",
  "terminal_view",
  "text",
@@ -15108,6 +15071,7 @@ dependencies = [
  "time",
  "time_format",
  "toml 0.8.19",
+ "tree-sitter",
  "tree-sitter-md",
  "tree-sitter-python",
  "tree-sitter-typescript",
@@ -15119,6 +15083,7 @@ dependencies = [
  "vim",
  "wasmtime-wasi",
  "workspace",
+ "worktree",
  "zed_actions",
 ]
 

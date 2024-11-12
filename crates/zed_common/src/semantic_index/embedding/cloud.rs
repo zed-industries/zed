@@ -1,4 +1,4 @@
-use crate::{Embedding, EmbeddingProvider, TextToEmbed};
+use crate::semantic_index::{Embedding, EmbeddingProvider, TextToEmbed};
 use anyhow::{anyhow, Context, Result};
 use client::{proto, Client};
 use collections::HashMap;

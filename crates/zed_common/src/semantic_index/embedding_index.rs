@@ -1,4 +1,4 @@
-use crate::{
+use crate::semantic_index::{
     chunking::{self, Chunk},
     embedding::{Embedding, EmbeddingProvider, TextToEmbed},
     indexing::{IndexingEntryHandle, IndexingEntrySet},

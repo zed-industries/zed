@@ -3,7 +3,7 @@ use story::{Story, StoryItem, StorySection};
 
 use ui::prelude::*;
 
-use crate::application_menu::ApplicationMenu;
+use crate::title_bar::application_menu::ApplicationMenu;
 
 pub struct ApplicationMenuStory {
     menu: View<ApplicationMenu>,

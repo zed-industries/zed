@@ -26,7 +26,7 @@ use std::{
 use util::ResultExt;
 use worktree::Snapshot;
 
-use crate::{indexing::IndexingEntrySet, summary_backlog::SummaryBacklog};
+use crate::semantic_index::{indexing::IndexingEntrySet, summary_backlog::SummaryBacklog};
 
 #[derive(Serialize, Deserialize, Debug)]
 pub struct FileSummary {

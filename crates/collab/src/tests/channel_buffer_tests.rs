@@ -5,7 +5,6 @@ use crate::{
 use call::ActiveCall;
 use channel::ACKNOWLEDGE_DEBOUNCE_INTERVAL;
 use client::{Collaborator, ParticipantIndex, UserId};
-use collab_ui::channel_view::ChannelView;
 use collections::HashMap;
 use editor::{Anchor, Editor, ToOffset};
 use futures::future;
@@ -13,6 +12,7 @@ use gpui::{BackgroundExecutor, Model, TestAppContext, ViewContext};
 use rpc::{proto::PeerId, RECEIVE_TIMEOUT};
 use serde_json::json;
 use std::ops::Range;
+use zed_common::collab_ui::channel_view::ChannelView;
 
 #[gpui::test]
 async fn test_core_channel_buffers(

@@ -2,6 +2,7 @@ use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use crate::semantic_index::{FileSummary, SemanticDb};
 use anyhow::{anyhow, Result};
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
@@ -11,7 +12,6 @@ use language_model::{
     LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
     LanguageModelRequestMessage, Role,
 };
-use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::{prelude::*, BorrowAppContext, WindowContext};

@@ -12,7 +12,6 @@ use client::{
     UserStore,
 };
 use clock::FakeSystemClock;
-use collab_ui::channel_view::ChannelView;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
@@ -44,6 +43,7 @@ use std::{
     },
 };
 use workspace::{Workspace, WorkspaceStore};
+use zed_common::collab_ui::channel_view::ChannelView;
 
 pub struct TestServer {
     pub app_state: Arc<AppState>,
@@ -293,12 +293,12 @@ impl TestServer {
             call::init(client.clone(), user_store.clone(), cx);
             channel::init(&client, user_store.clone(), cx);
             notifications::init(client.clone(), user_store, cx);
-            collab_ui::init(&app_state, cx);
+            zed_common::collab_ui::init(&app_state, cx);
             file_finder::init(cx);
             menu::init();
             settings::KeymapFile::load_asset(os_keymap, cx).unwrap();
             language_model::LanguageModelRegistry::test(cx);
-            assistant::context_store::init(&client.clone().into());
+            zed_common::assistant::context_store::init(&client.clone().into());
         });
 
         client

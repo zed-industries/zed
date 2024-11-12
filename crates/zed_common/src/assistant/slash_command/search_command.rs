@@ -2,11 +2,11 @@ use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use crate::semantic_index::{LoadedSearchResult, SemanticDb};
 use anyhow::Result;
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
-use semantic_index::{LoadedSearchResult, SemanticDb};
 use std::{
     fmt::Write,
     sync::{atomic::AtomicBool, Arc},

@@ -4,7 +4,7 @@ use http_client::HttpClient;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{Embedding, EmbeddingProvider, TextToEmbed};
+use crate::semantic_index::{Embedding, EmbeddingProvider, TextToEmbed};
 
 pub enum OllamaEmbeddingModel {
     NomicEmbedText,

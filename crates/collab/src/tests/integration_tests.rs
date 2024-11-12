@@ -6,7 +6,6 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
-use assistant::{ContextStore, PromptBuilder, SlashCommandWorkingSet, ToolWorkingSet};
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
@@ -48,6 +47,7 @@ use std::{
 };
 use unindent::Unindent as _;
 use workspace::Pane;
+use zed_common::assistant::{ContextStore, PromptBuilder, SlashCommandWorkingSet, ToolWorkingSet};
 
 #[ctor::ctor]
 fn init_logger() {

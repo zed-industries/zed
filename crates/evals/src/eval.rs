@@ -13,9 +13,6 @@ use node_runtime::NodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
 use reqwest_client::ReqwestClient;
-use semantic_index::{
-    EmbeddingProvider, OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status,
-};
 use serde::{Deserialize, Serialize};
 use settings::SettingsStore;
 use smol::channel::bounded;
@@ -32,6 +29,9 @@ use std::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
     },
+};
+use zed_common::semantic_index::{
+    EmbeddingProvider, OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status,
 };
 
 const CODESEARCH_NET_DIR: &'static str = "target/datasets/code-search-net";

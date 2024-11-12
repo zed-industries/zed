@@ -1,4 +1,4 @@
-use crate::{Embedding, EmbeddingProvider, TextToEmbed};
+use crate::semantic_index::{Embedding, EmbeddingProvider, TextToEmbed};
 use anyhow::Result;
 use futures::{future::BoxFuture, FutureExt};
 use http_client::HttpClient;

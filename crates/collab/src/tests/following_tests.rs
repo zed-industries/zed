@@ -2,10 +2,6 @@
 use crate::{rpc::RECONNECT_TIMEOUT, tests::TestServer};
 use call::{ActiveCall, ParticipantLocation};
 use client::ChannelId;
-use collab_ui::{
-    channel_view::ChannelView,
-    notifications::project_shared_notification::ProjectSharedNotification,
-};
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
     point, BackgroundExecutor, BorrowAppContext, Context, Entity, SharedString, TestAppContext,
@@ -22,6 +18,10 @@ use workspace::{
     item::{test::TestItem, ItemHandle as _},
     shared_screen::SharedScreen,
     SplitDirection, Workspace,
+};
+use zed_common::collab_ui::{
+    channel_view::ChannelView,
+    notifications::project_shared_notification::ProjectSharedNotification,
 };
 
 use super::TestClient;
@@ -1861,9 +1861,9 @@ async fn test_following_to_channel_notes_without_a_shared_project(
     cx_a.update(editor::init);
     cx_b.update(editor::init);
     cx_c.update(editor::init);
-    cx_a.update(collab_ui::channel_view::init);
-    cx_b.update(collab_ui::channel_view::init);
-    cx_c.update(collab_ui::channel_view::init);
+    cx_a.update(zed_common::collab_ui::channel_view::init);
+    cx_b.update(zed_common::collab_ui::channel_view::init);
+    cx_c.update(zed_common::collab_ui::channel_view::init);
 
     let channel_1_id = server
         .make_channel(

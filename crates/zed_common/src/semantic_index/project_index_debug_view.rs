@@ -1,4 +1,4 @@
-use crate::ProjectIndex;
+use crate::semantic_index::ProjectIndex;
 use gpui::{
     canvas, div, list, uniform_list, AnyElement, AppContext, CursorStyle, EventEmitter,
     FocusHandle, FocusableView, IntoElement, ListOffset, ListState, Model, MouseMoveEvent, Render,
