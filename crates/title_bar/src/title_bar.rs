@@ -38,7 +38,7 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
-const BOOK_ONBOARDING: &str = "https://zed.dev";
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 
 actions!(
     collab,
