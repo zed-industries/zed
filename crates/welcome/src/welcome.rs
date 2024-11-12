@@ -5,13 +5,13 @@ mod multibuffer_hint;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, svg, AnchorCorner, AppContext, EventEmitter, FocusHandle, FocusableView,
-    InteractiveElement, ParentElement, Render, Styled, Subscription, Task, View, ViewContext,
-    VisualContext, WeakView, WindowContext,
+    actions, svg, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
+    WindowContext,
 };
 use settings::{Settings, SettingsStore};
 use std::sync::Arc;
-use ui::{prelude::*, CheckboxWithLabel, ContextMenu, PopoverMenu};
+use ui::{prelude::*, CheckboxWithLabel};
 use vim::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -70,46 +70,6 @@ pub struct WelcomePage {
 
 impl Render for WelcomePage {
     fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
-        let account_info_popover = PopoverMenu::new("AccountInfo")
-            .anchor(AnchorCorner::TopLeft)
-            .trigger(
-                Button::new("usage-data-info", "Learn More")
-                    .color(Color::Muted)
-                    .label_size(LabelSize::XSmall)
-            )
-            .menu({
-                move |cx| {
-                    ContextMenu::build(cx, move |menu, _| {
-                        menu.custom_entry(
-                            move |_| {
-                                div()
-                                    .max_w_64()
-                                    .flex_wrap()
-                                    .child(
-                                        Label::new("Your telemetry data is never shared with any third-party groups.").size(LabelSize::Small)
-                                    )
-                                    .into_any_element()
-                            },
-                            move |_| {},
-                        )
-                        .separator()
-                        .custom_entry(
-                            move |_| {
-                                div()
-                                    .max_w_64()
-                                    .flex_wrap()
-                                    .child(
-                                        Label::new("Send an email to hi@zed.dev to delete your account and data.").size(LabelSize::Small)
-                                    )
-                                    .into_any_element()
-                            },
-                            move |_| {},
-                        )
-                    })
-                    .into()
-                }
-            });
-
         h_flex()
             .size_full()
             .bg(cx.theme().colors().editor_background)
@@ -316,7 +276,7 @@ impl Render for WelcomePage {
                             .rounded_md()
                             .child(CheckboxWithLabel::new(
                                 "enable-vim",
-                                Label::new("Enable vim mode"),
+                                Label::new("Enable Vim Mode"),
                                 if VimModeSetting::get_global(cx).0 {
                                     ui::Selection::Selected
                                 } else {
@@ -334,7 +294,7 @@ impl Render for WelcomePage {
                             ))
                             .child(CheckboxWithLabel::new(
                                 "enable-crash",
-                                Label::new("Send crash reports"),
+                                Label::new("Send Crash Reports"),
                                 if TelemetrySettings::get_global(cx).diagnostics {
                                     ui::Selection::Selected
                                 } else {
@@ -358,42 +318,32 @@ impl Render for WelcomePage {
                                     });
                                 }),
                             ))
-                            .child(
-                                h_flex()
-                                    .w_full()
-                                    .justify_between()
-                                    .child(CheckboxWithLabel::new(
-                                        "enable-telemetry",
-                                        Label::new("Send usage data"),
-                                        if TelemetrySettings::get_global(cx).metrics {
-                                            ui::Selection::Selected
-                                        } else {
-                                            ui::Selection::Unselected
-                                        },
-                                        cx.listener(move |this, selection, cx| {
-                                            this.telemetry.report_app_event(
-                                                "welcome page: toggle metric telemetry".to_string(),
-                                            );
-                                            this.update_settings::<TelemetrySettings>(
-                                                selection,
-                                                cx,
-                                                {
-                                                    let telemetry = this.telemetry.clone();
+                            .child(CheckboxWithLabel::new(
+                                "enable-telemetry",
+                                Label::new("Send Telemetry"),
+                                if TelemetrySettings::get_global(cx).metrics {
+                                    ui::Selection::Selected
+                                } else {
+                                    ui::Selection::Unselected
+                                },
+                                cx.listener(move |this, selection, cx| {
+                                    this.telemetry.report_app_event(
+                                        "welcome page: toggle metric telemetry".to_string(),
+                                    );
+                                    this.update_settings::<TelemetrySettings>(selection, cx, {
+                                        let telemetry = this.telemetry.clone();
 
-                                                    move |settings, value| {
-                                                        settings.metrics = Some(value);
+                                        move |settings, value| {
+                                            settings.metrics = Some(value);
 
-                                                        telemetry.report_setting_event(
-                                                            "metric telemetry",
-                                                            value.to_string(),
-                                                        );
-                                                    }
-                                                },
+                                            telemetry.report_setting_event(
+                                                "metric telemetry",
+                                                value.to_string(),
                                             );
-                                        }),
-                                    ))
-                                    .child(account_info_popover),
-                            ),
+                                        }
+                                    });
+                                }),
+                            )),
                     ),
             )
     }
