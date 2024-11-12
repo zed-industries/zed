@@ -95,7 +95,7 @@ impl ThemeSelectorDelegate {
     ) -> Self {
         let original_theme = cx.theme().clone();
 
-        let registry = <dyn ThemeRegistry>::global(cx);
+        let registry = ThemeRegistry::global(cx);
         let mut themes = registry
             .list()
             .into_iter()
@@ -140,7 +140,7 @@ impl ThemeSelectorDelegate {
 
     fn show_selected_theme(&mut self, cx: &mut ViewContext<Picker<ThemeSelectorDelegate>>) {
         if let Some(mat) = self.matches.get(self.selected_index) {
-            let registry = <dyn ThemeRegistry>::global(cx);
+            let registry = ThemeRegistry::global(cx);
             match registry.get(&mat.string) {
                 Ok(theme) => {
                     Self::set_theme(theme, cx);

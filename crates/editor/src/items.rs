@@ -992,12 +992,15 @@ impl SerializableItem for Editor {
                     };
 
                     // First create the empty buffer
-                    let buffer = project.update(&mut cx, |project, cx| {
-                        project.create_local_buffer("", language, cx)
-                    })?;
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.create_buffer(cx))?
+                        .await?;
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(&mut cx, |buffer, cx| {
+                        if let Some(language) = language {
+                            buffer.set_language(Some(language), cx);
+                        }
                         buffer.set_text(contents, cx);
                     })?;
 
@@ -1277,7 +1280,7 @@ impl SearchableItem for Editor {
         matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) {
-        self.unfold_ranges([matches[index].clone()], false, true, cx);
+        self.unfold_ranges(&[matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges([range]);
@@ -1285,7 +1288,7 @@ impl SearchableItem for Editor {
     }
 
     fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
-        self.unfold_ranges(matches.to_vec(), false, false, cx);
+        self.unfold_ranges(matches, false, false, cx);
         let mut ranges = Vec::new();
         for m in matches {
             ranges.push(self.range_for_match(m))

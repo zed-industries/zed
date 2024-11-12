@@ -1,2 +1,2 @@
-(comment) @comment
+(comment) @comment.inclusive
 [(string) (charlist)] @string

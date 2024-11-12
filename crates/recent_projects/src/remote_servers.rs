@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use gpui::{
 };
 use picker::Picker;
 use project::Project;
+use remote::ssh_session::ConnectionIdentifier;
 use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
 use settings::update_settings_file;
@@ -172,7 +174,7 @@ impl ProjectPicker {
                                     .as_mut()
                                     .and_then(|connections| connections.get_mut(ix))
                                 {
-                                    server.projects.push(SshProject { paths })
+                                    server.projects.insert(SshProject { paths });
                                 }
                             }
                         });
@@ -384,7 +386,7 @@ impl RemoteServerProjects {
         let ssh_prompt = cx.new_view(|cx| SshPrompt::new(&connection_options, cx));
 
         let connection = connect_over_ssh(
-            connection_options.remote_server_identifier(),
+            ConnectionIdentifier::setup(),
             connection_options.clone(),
             ssh_prompt.clone(),
             cx,
@@ -475,7 +477,7 @@ impl RemoteServerProjects {
                     .clone();
 
                 let connect = connect_over_ssh(
-                    connection_options.remote_server_identifier(),
+                    ConnectionIdentifier::setup(),
                     connection_options.clone(),
                     prompt,
                     cx,
@@ -783,7 +785,8 @@ impl RemoteServerProjects {
                     .end_hover_slot::<AnyElement>(Some(
                         div()
                             .mr_2()
-                            .child(
+                            .child({
+                                let project = project.clone();
                                 // Right-margin to offset it from the Scrollbar
                                 IconButton::new("remove-remote-project", IconName::TrashAlt)
                                     .icon_size(IconSize::Small)
@@ -791,9 +794,9 @@ impl RemoteServerProjects {
                                     .size(ButtonSize::Large)
                                     .tooltip(|cx| Tooltip::text("Delete Remote Project", cx))
                                     .on_click(cx.listener(move |this, _, cx| {
-                                        this.delete_ssh_project(server_ix, ix, cx)
-                                    })),
-                            )
+                                        this.delete_ssh_project(server_ix, &project, cx)
+                                    }))
+                            })
                             .into_any_element(),
                     )),
             )
@@ -822,14 +825,20 @@ impl RemoteServerProjects {
         });
     }
 
-    fn delete_ssh_project(&mut self, server: usize, project: usize, cx: &mut ViewContext<Self>) {
+    fn delete_ssh_project(
+        &mut self,
+        server: usize,
+        project: &SshProject,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let project = project.clone();
         self.update_settings_file(cx, move |setting, _| {
             if let Some(server) = setting
                 .ssh_connections
                 .as_mut()
                 .and_then(|connections| connections.get_mut(server))
             {
-                server.projects.remove(project);
+                server.projects.remove(&project);
             }
         });
     }
@@ -847,7 +856,7 @@ impl RemoteServerProjects {
                     host: SharedString::from(connection_options.host),
                     username: connection_options.username,
                     port: connection_options.port,
-                    projects: vec![],
+                    projects: BTreeSet::<SshProject>::new(),
                     nickname: None,
                     args: connection_options.args.unwrap_or_default(),
                     upload_binary_over_ssh: None,

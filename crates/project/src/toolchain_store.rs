@@ -13,7 +13,7 @@ use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::WorktreeId;
 use util::ResultExt as _;
 
-use crate::worktree_store::WorktreeStore;
+use crate::{worktree_store::WorktreeStore, ProjectEnvironment};
 
 pub struct ToolchainStore(ToolchainStoreInner);
 enum ToolchainStoreInner {
@@ -32,11 +32,13 @@ impl ToolchainStore {
     pub fn local(
         languages: Arc<LanguageRegistry>,
         worktree_store: Model<WorktreeStore>,
+        project_environment: Model<ProjectEnvironment>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let model = cx.new_model(|_| LocalToolchainStore {
             languages,
             worktree_store,
+            project_environment,
             active_toolchains: Default::default(),
         });
         let subscription = cx.subscribe(&model, |_, _, e: &ToolchainStoreEvent, cx| {
@@ -203,6 +205,7 @@ impl ToolchainStore {
 struct LocalToolchainStore {
     languages: Arc<LanguageRegistry>,
     worktree_store: Model<WorktreeStore>,
+    project_environment: Model<ProjectEnvironment>,
     active_toolchains: BTreeMap<(WorktreeId, LanguageName), Toolchain>,
 }
 
@@ -296,9 +299,20 @@ impl LocalToolchainStore {
         else {
             return Task::ready(None);
         };
-        cx.spawn(|_| async move {
+
+        let environment = self.project_environment.clone();
+        cx.spawn(|mut cx| async move {
+            let project_env = environment
+                .update(&mut cx, |environment, cx| {
+                    environment.get_environment(Some(worktree_id), Some(root.clone()), cx)
+                })
+                .ok()?
+                .await;
             let language = registry.language_for_name(&language_name.0).await.ok()?;
-            let toolchains = language.toolchain_lister()?.list(root.to_path_buf()).await;
+            let toolchains = language
+                .toolchain_lister()?
+                .list(root.to_path_buf(), project_env)
+                .await;
             Some(toolchains)
         })
     }
@@ -345,6 +359,7 @@ impl RemoteToolchainStore {
             Some(())
         })
     }
+
     pub(crate) fn list_toolchains(
         &self,
         worktree_id: WorktreeId,

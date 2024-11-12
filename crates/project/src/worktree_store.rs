@@ -23,7 +23,7 @@ use smol::{
     stream::StreamExt,
 };
 use text::ReplicaId;
-use util::{paths::compare_paths, ResultExt};
+use util::ResultExt;
 use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
@@ -725,9 +725,7 @@ impl WorktreeStore {
                     !metadata.is_dir,
                 ))
             }
-            results.sort_by(|(a_path, a_is_file), (b_path, b_is_file)| {
-                compare_paths((a_path, *a_is_file), (b_path, *b_is_file))
-            });
+            results.sort_by(|(a_path, _), (b_path, _)| a_path.cmp(b_path));
             for (path, is_file) in results {
                 if is_file {
                     if query.filters_path() {
@@ -782,9 +780,7 @@ impl WorktreeStore {
     ) -> Result<()> {
         let include_root = snapshots.len() > 1;
         for (snapshot, settings) in snapshots {
-            let mut entries: Vec<_> = snapshot.entries(query.include_ignored(), 0).collect();
-            entries.sort_by(|a, b| compare_paths((&a.path, a.is_file()), (&b.path, b.is_file())));
-            for entry in entries {
+            for entry in snapshot.entries(query.include_ignored(), 0) {
                 if entry.is_dir() && entry.is_ignored {
                     if !settings.is_path_excluded(&entry.path) {
                         Self::scan_ignored_dir(

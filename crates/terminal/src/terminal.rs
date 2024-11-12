@@ -818,7 +818,7 @@ impl Terminal {
                         selection.update(point, AlacDirection::Right);
                         term.selection = Some(selection);
 
-                        #[cfg(target_os = "linux")]
+                        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                         if let Some(selection_text) = term.selection_to_string() {
                             cx.write_to_primary(ClipboardItem::new_string(selection_text));
                         }
@@ -831,7 +831,7 @@ impl Terminal {
             InternalEvent::SetSelection(selection) => {
                 term.selection = selection.as_ref().map(|(sel, _)| sel.clone());
 
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 if let Some(selection_text) = term.selection_to_string() {
                     cx.write_to_primary(ClipboardItem::new_string(selection_text));
                 }
@@ -852,7 +852,7 @@ impl Terminal {
                     selection.update(point, side);
                     term.selection = Some(selection);
 
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                     if let Some(selection_text) = term.selection_to_string() {
                         cx.write_to_primary(ClipboardItem::new_string(selection_text));
                     }
@@ -924,18 +924,22 @@ impl Terminal {
                 } else if let Some(word_match) = regex_match_at(term, point, &mut self.word_regex) {
                     let file_path = term.bounds_to_string(*word_match.start(), *word_match.end());
 
-                    let (sanitized_match, sanitized_word) =
-                        if file_path.starts_with('[') && file_path.ends_with(']') {
-                            (
-                                Match::new(
-                                    word_match.start().add(term, Boundary::Cursor, 1),
-                                    word_match.end().sub(term, Boundary::Cursor, 1),
-                                ),
-                                file_path[1..file_path.len() - 1].to_owned(),
-                            )
-                        } else {
-                            (word_match, file_path)
-                        };
+                    let (sanitized_match, sanitized_word) = if file_path.starts_with('[')
+                        && file_path.ends_with(']')
+                        // this is to avoid sanitizing the match '[]' to an empty string,
+                        // which would be considered a valid navigation target
+                        && file_path.len() > 2
+                    {
+                        (
+                            Match::new(
+                                word_match.start().add(term, Boundary::Cursor, 1),
+                                word_match.end().sub(term, Boundary::Cursor, 1),
+                            ),
+                            file_path[1..file_path.len() - 1].to_owned(),
+                        )
+                    } else {
+                        (word_match, file_path)
+                    };
 
                     Some((sanitized_word, false, sanitized_match))
                 } else {
@@ -1508,7 +1512,7 @@ impl Terminal {
                             .push_back(InternalEvent::SetSelection(Some((sel, point))));
                     }
                 }
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 MouseButton::Middle => {
                     if let Some(item) = _cx.read_from_primary() {
                         let text = item.text().unwrap_or_default().to_string();
