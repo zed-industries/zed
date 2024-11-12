@@ -10,7 +10,7 @@ use clock::ReplicaId;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use context_servers::manager::{ContextServerManager, ContextServerSettings};
-use context_servers::CONTEXT_SERVERS_NAMESPACE;
+use context_servers::{ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -51,8 +51,8 @@ pub struct ContextStore {
     contexts: Vec<ContextHandle>,
     contexts_metadata: Vec<SavedContextMetadata>,
     context_server_manager: Model<ContextServerManager>,
-    context_server_slash_command_ids: HashMap<String, Vec<SlashCommandId>>,
-    context_server_tool_ids: HashMap<String, Vec<ToolId>>,
+    context_server_slash_command_ids: HashMap<Arc<str>, Vec<SlashCommandId>>,
+    context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     host_contexts: Vec<RemoteContextMetadata>,
     fs: Arc<dyn Fs>,
     languages: Arc<LanguageRegistry>,
@@ -148,6 +148,47 @@ impl ContextStore {
                 this.handle_project_changed(project, cx);
                 this.synchronize_contexts(cx);
                 this.register_context_server_handlers(cx);
+
+                // TODO: At the time when we construct the `ContextStore` we may not have yet initialized the extensions.
+                // In order to register the context servers when the extension is loaded, we're periodically looping to
+                // see if there are context servers to register.
+                //
+                // I tried doing this in a subscription on the `ExtensionStore`, but it never seemed to fire.
+                //
+                // We should find a more elegant way to do this.
+                let context_server_factory_registry =
+                    ContextServerFactoryRegistry::default_global(cx);
+                cx.spawn(|context_store, mut cx| async move {
+                    loop {
+                        let mut servers_to_register = Vec::new();
+                        for (_id, factory) in
+                            context_server_factory_registry.context_server_factories()
+                        {
+                            if let Some(server) = factory(&cx).await.log_err() {
+                                servers_to_register.push(server);
+                            }
+                        }
+
+                        let Some(_) = context_store
+                            .update(&mut cx, |this, cx| {
+                                this.context_server_manager.update(cx, |this, cx| {
+                                    for server in servers_to_register {
+                                        this.add_server(server, cx).detach_and_log_err(cx);
+                                    }
+                                })
+                            })
+                            .log_err()
+                        else {
+                            break;
+                        };
+
+                        smol::Timer::after(Duration::from_millis(100)).await;
+                    }
+
+                    anyhow::Ok(())
+                })
+                .detach_and_log_err(cx);
+
                 this
             })?;
             this.update(&mut cx, |this, cx| this.reload(cx))?
@@ -819,7 +860,7 @@ impl ContextStore {
             |context_server_manager, cx| {
                 for server in context_server_manager.servers() {
                     context_server_manager
-                        .restart_server(&server.id, cx)
+                        .restart_server(&server.id(), cx)
                         .detach_and_log_err(cx);
                 }
             },
@@ -850,7 +891,7 @@ impl ContextStore {
                         let server = server.clone();
                         let server_id = server_id.clone();
                         |this, mut cx| async move {
-                            let Some(protocol) = server.client.read().clone() else {
+                            let Some(protocol) = server.client() else {
                                 return;
                             };
 
@@ -889,7 +930,7 @@ impl ContextStore {
                                         tool_working_set.insert(
                                             Arc::new(tools::context_server_tool::ContextServerTool::new(
                                                 context_server_manager.clone(),
-                                                server.id.clone(),
+                                                server.id(),
                                                 tool,
                                             )),
                                         )

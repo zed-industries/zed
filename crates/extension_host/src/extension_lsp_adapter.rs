@@ -8,10 +8,9 @@ use collections::HashMap;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
-    CodeLabel, HighlightId, Language, LanguageServerName, LanguageToolchainStore, LspAdapter,
-    LspAdapterDelegate,
+    CodeLabel, HighlightId, Language, LanguageToolchainStore, LspAdapter, LspAdapterDelegate,
 };
-use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions};
+use lsp::{CodeActionKind, LanguageServerBinary, LanguageServerBinaryOptions, LanguageServerName};
 use serde::Serialize;
 use serde_json::Value;
 use std::ops::Range;

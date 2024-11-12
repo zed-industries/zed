@@ -13,6 +13,7 @@ use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
 use client::{parse_zed_link, Client, ProxySettings, UserStore};
 use collab_ui::channel_view::ChannelView;
+use context_servers::ContextServerFactoryRegistry;
 use db::kvp::{GLOBAL_KEY_VALUE_STORE, KEY_VALUE_STORE};
 use editor::Editor;
 use env_logger::Builder;
@@ -99,12 +100,12 @@ fn fail_to_open_window(e: anyhow::Error, _cx: &mut AppContext) {
     eprintln!(
         "Zed failed to open a window: {e:?}. See https://zed.dev/docs/linux for troubleshooting steps."
     );
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     {
         process::exit(1);
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     {
         use ashpd::desktop::notification::{Notification, NotificationProxy, Priority};
         _cx.spawn(|_cx| async move {
@@ -171,7 +172,7 @@ fn main() {
         if *db::ZED_STATELESS || *release_channel::RELEASE_CHANNEL == ReleaseChannel::Dev {
             false
         } else {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             {
                 crate::zed::listen_for_cli_connections(open_listener.clone()).is_err()
             }
@@ -411,6 +412,7 @@ fn main() {
             IndexedDocsRegistry::global(cx),
             SnippetRegistry::global(cx),
             app_state.languages.clone(),
+            ContextServerFactoryRegistry::global(cx),
             cx,
         );
         extension_host::init(
@@ -424,7 +426,7 @@ fn main() {
 
         load_embedded_fonts(cx);
 
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         crate::zed::linux_prompts::init(cx);
 
         app_state.languages.set_theme(cx.theme().clone());
@@ -940,7 +942,7 @@ fn init_logger() {
                     config_builder.set_time_offset(offset);
                 }
 
-                #[cfg(target_os = "linux")]
+                #[cfg(any(target_os = "linux", target_os = "freebsd"))]
                 {
                     config_builder.add_filter_ignore_str("zbus");
                     config_builder.add_filter_ignore_str("blade_graphics::hal::resource");

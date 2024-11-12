@@ -1549,14 +1549,18 @@ impl SshRemoteConnection {
         let os = match os.trim() {
             "Darwin" => "macos",
             "Linux" => "linux",
-            _ => Err(anyhow!("unknown uname os {os:?}"))?,
+            _ => Err(anyhow!(
+                "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
+            ))?,
         };
         let arch = if arch.starts_with("arm") || arch.starts_with("aarch64") {
             "aarch64"
         } else if arch.starts_with("x86") || arch.starts_with("i686") {
             "x86_64"
         } else {
-            Err(anyhow!("unknown uname architecture {arch:?}"))?
+            Err(anyhow!(
+                "Prebuilt remote servers are not yet available for {arch:?}. See https://zed.dev/docs/remote-development"
+            ))?
         };
 
         Ok(SshPlatform { os, arch })

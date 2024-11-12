@@ -63,7 +63,7 @@ cargo test --workspace
 
 ## Installing from msys2
 
-[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64 and CLANG64. To download it, run
+[MSYS2](https://msys2.org/) distribution provides Zed as a package [mingw-w64-zed](https://packages.msys2.org/base/mingw-w64-zed). The package is available for UCRT64, MINGW64 and CLANG64 repositories. To download it, run
 
 ```sh
 pacman -Syu

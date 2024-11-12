@@ -142,7 +142,7 @@
     "bindings": {
       "alt-]": "editor::NextInlineCompletion",
       "alt-[": "editor::PreviousInlineCompletion",
-      "ctrl-right": "editor::AcceptPartialInlineCompletion"
+      "alt-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {

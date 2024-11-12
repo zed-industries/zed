@@ -28,6 +28,7 @@ use language::{
     LanguageConfig, LanguageMatcher, LanguageName, LanguageQueries, LoadedLanguage,
     QUERY_FILENAME_PREFIXES,
 };
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use project::ContextProviderWithTasks;
 use release_channel::ReleaseChannel;
@@ -121,12 +122,7 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn register_lsp_adapter(&self, _language: LanguageName, _adapter: ExtensionLspAdapter) {}
 
-    fn remove_lsp_adapter(
-        &self,
-        _language: &LanguageName,
-        _server_name: &language::LanguageServerName,
-    ) {
-    }
+    fn remove_lsp_adapter(&self, _language: &LanguageName, _server_name: &LanguageServerName) {}
 
     fn register_wasm_grammars(&self, _grammars: Vec<(Arc<str>, PathBuf)>) {}
 
@@ -140,6 +136,14 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     fn register_slash_command(
         &self,
         _slash_command: wit::SlashCommand,
+        _extension: WasmExtension,
+        _host: Arc<WasmHost>,
+    ) {
+    }
+
+    fn register_context_server(
+        &self,
+        _id: Arc<str>,
         _extension: WasmExtension,
         _host: Arc<WasmHost>,
     ) {
@@ -159,7 +163,7 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
 
     fn update_lsp_status(
         &self,
-        _server_name: language::LanguageServerName,
+        _server_name: lsp::LanguageServerName,
         _status: language::LanguageServerBinaryStatus,
     ) {
     }
@@ -1262,6 +1266,14 @@ impl ExtensionStore {
                                 tooltip_text: String::new(),
                                 requires_argument: slash_command.requires_argument,
                             },
+                            wasm_extension.clone(),
+                            this.wasm_host.clone(),
+                        );
+                    }
+
+                    for (id, _context_server_entry) in &manifest.context_servers {
+                        this.registration_hooks.register_context_server(
+                            id.clone(),
                             wasm_extension.clone(),
                             this.wasm_host.clone(),
                         );

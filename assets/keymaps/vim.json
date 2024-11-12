@@ -1,6 +1,7 @@
 [
   {
     "context": "VimControl && !menu",
+    "use_layout_keys": true,
     "bindings": {
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
@@ -171,6 +172,7 @@
   },
   {
     "context": "vim_mode == normal",
+    "use_layout_keys": true,
     "bindings": {
       "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel",
@@ -224,6 +226,7 @@
   },
   {
     "context": "VimControl && VimCount",
+    "use_layout_keys": true,
     "bindings": {
       "0": ["vim::Number", 0],
       ":": "vim::CountCommand"
@@ -231,6 +234,7 @@
   },
   {
     "context": "vim_mode == visual",
+    "use_layout_keys": true,
     "bindings": {
       ":": "vim::VisualCommand",
       "u": "vim::ConvertToLowerCase",
@@ -279,6 +283,7 @@
   },
   {
     "context": "vim_mode == insert",
+    "use_layout_keys": true,
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
@@ -304,6 +309,7 @@
   },
   {
     "context": "vim_mode == insert && !(showing_code_actions || showing_completions)",
+    "use_layout_keys": true,
     "bindings": {
       "ctrl-p": "editor::ShowCompletions",
       "ctrl-n": "editor::ShowCompletions"
@@ -311,6 +317,7 @@
   },
   {
     "context": "vim_mode == replace",
+    "use_layout_keys": true,
     "bindings": {
       "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
@@ -328,6 +335,7 @@
   },
   {
     "context": "vim_mode == waiting",
+    "use_layout_keys": true,
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
@@ -341,6 +349,7 @@
   },
   {
     "context": "vim_mode == operator",
+    "use_layout_keys": true,
     "bindings": {
       "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
@@ -349,6 +358,7 @@
   },
   {
     "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+    "use_layout_keys": true,
     "bindings": {
       "w": "vim::Word",
       "shift-w": ["vim::Word", { "ignorePunctuation": true }],
@@ -376,6 +386,7 @@
   },
   {
     "context": "vim_operator == c",
+    "use_layout_keys": true,
     "bindings": {
       "c": "vim::CurrentLine",
       "d": "editor::Rename", // zed specific
@@ -384,6 +395,7 @@
   },
   {
     "context": "vim_operator == d",
+    "use_layout_keys": true,
     "bindings": {
       "d": "vim::CurrentLine",
       "s": ["vim::PushOperator", "DeleteSurrounds"],
@@ -393,6 +405,7 @@
   },
   {
     "context": "vim_operator == gu",
+    "use_layout_keys": true,
     "bindings": {
       "g u": "vim::CurrentLine",
       "u": "vim::CurrentLine"
@@ -400,6 +413,7 @@
   },
   {
     "context": "vim_operator == gU",
+    "use_layout_keys": true,
     "bindings": {
       "g shift-u": "vim::CurrentLine",
       "shift-u": "vim::CurrentLine"
@@ -407,6 +421,7 @@
   },
   {
     "context": "vim_operator == g~",
+    "use_layout_keys": true,
     "bindings": {
       "g ~": "vim::CurrentLine",
       "~": "vim::CurrentLine"
@@ -414,6 +429,7 @@
   },
   {
     "context": "vim_operator == gq",
+    "use_layout_keys": true,
     "bindings": {
       "g q": "vim::CurrentLine",
       "q": "vim::CurrentLine",
@@ -423,6 +439,7 @@
   },
   {
     "context": "vim_operator == y",
+    "use_layout_keys": true,
     "bindings": {
       "y": "vim::CurrentLine",
       "s": ["vim::PushOperator", { "AddSurrounds": {} }]
@@ -430,30 +447,35 @@
   },
   {
     "context": "vim_operator == ys",
+    "use_layout_keys": true,
     "bindings": {
       "s": "vim::CurrentLine"
     }
   },
   {
     "context": "vim_operator == >",
+    "use_layout_keys": true,
     "bindings": {
       ">": "vim::CurrentLine"
     }
   },
   {
     "context": "vim_operator == <",
+    "use_layout_keys": true,
     "bindings": {
       "<": "vim::CurrentLine"
     }
   },
   {
     "context": "vim_operator == gc",
+    "use_layout_keys": true,
     "bindings": {
       "c": "vim::CurrentLine"
     }
   },
   {
     "context": "vim_mode == literal",
+    "use_layout_keys": true,
     "bindings": {
       "ctrl-@": ["vim::Literal", ["ctrl-@", "\u0000"]],
       "ctrl-a": ["vim::Literal", ["ctrl-a", "\u0001"]],
@@ -497,6 +519,7 @@
   },
   {
     "context": "BufferSearchBar && !in_replace",
+    "use_layout_keys": true,
     "bindings": {
       "enter": "vim::SearchSubmit",
       "escape": "buffer_search::Dismiss"
@@ -504,6 +527,7 @@
   },
   {
     "context": "ProjectPanel || CollabPanel || OutlinePanel || ChatPanel || VimControl || EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
+    "use_layout_keys": true,
     "bindings": {
       // window related commands (ctrl-w X)
       "ctrl-w": null,
@@ -554,6 +578,7 @@
   },
   {
     "context": "EmptyPane || SharedScreen || MarkdownPreview || KeyContextView",
+    "use_layout_keys": true,
     "bindings": {
       ":": "command_palette::Toggle",
       "g /": "pane::DeploySearch"
@@ -562,6 +587,7 @@
   {
     // netrw compatibility
     "context": "ProjectPanel && not_editing",
+    "use_layout_keys": true,
     "bindings": {
       ":": "command_palette::Toggle",
       "%": "project_panel::NewFile",
@@ -589,6 +615,7 @@
   },
   {
     "context": "OutlinePanel && not_editing",
+    "use_layout_keys": true,
     "bindings": {
       "j": "menu::SelectNext",
       "k": "menu::SelectPrev",

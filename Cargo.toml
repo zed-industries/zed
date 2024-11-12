@@ -323,7 +323,7 @@ async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "8
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
 async-trait = "0.1"
-async-tungstenite = "0.24"
+async-tungstenite = "0.28"
 async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
@@ -339,6 +339,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.4", features = ["derive"] }
 clickhouse = "0.11.6"
 cocoa = "0.26"
+cocoa-foundation = "0.2.0"
 convert_case = "0.6.0"
 core-foundation = "0.9.3"
 core-foundation-sys = "0.8.6"
@@ -412,7 +413,7 @@ runtimelib = { version = "0.16.1", default-features = false, features = [
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
-rustls = "0.20.3"
+rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
 schemars = { version = "0.8", features = ["impl_json_schema"] }
 semver = "1.0"

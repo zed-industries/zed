@@ -2,6 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use anyhow::Result;
 use assistant_slash_command::SlashCommandRegistry;
+use context_servers::ContextServerFactoryRegistry;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Task};
@@ -11,6 +12,7 @@ use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
 
+use crate::extension_context_server::ExtensionContextServer;
 use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
 
 pub struct ConcreteExtensionRegistrationHooks {
@@ -19,6 +21,7 @@ pub struct ConcreteExtensionRegistrationHooks {
     indexed_docs_registry: Arc<IndexedDocsRegistry>,
     snippet_registry: Arc<SnippetRegistry>,
     language_registry: Arc<LanguageRegistry>,
+    context_server_factory_registry: Arc<ContextServerFactoryRegistry>,
     executor: BackgroundExecutor,
 }
 
@@ -29,6 +32,7 @@ impl ConcreteExtensionRegistrationHooks {
         indexed_docs_registry: Arc<IndexedDocsRegistry>,
         snippet_registry: Arc<SnippetRegistry>,
         language_registry: Arc<LanguageRegistry>,
+        context_server_factory_registry: Arc<ContextServerFactoryRegistry>,
         cx: &AppContext,
     ) -> Arc<dyn extension_host::ExtensionRegistrationHooks> {
         Arc::new(Self {
@@ -37,6 +41,7 @@ impl ConcreteExtensionRegistrationHooks {
             indexed_docs_registry,
             snippet_registry,
             language_registry,
+            context_server_factory_registry,
             executor: cx.background_executor().clone(),
         })
     }
@@ -69,6 +74,31 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
         )
     }
 
+    fn register_context_server(
+        &self,
+        id: Arc<str>,
+        extension: wasm_host::WasmExtension,
+        host: Arc<wasm_host::WasmHost>,
+    ) {
+        self.context_server_factory_registry
+            .register_server_factory(
+                id.clone(),
+                Arc::new({
+                    move |cx| {
+                        let id = id.clone();
+                        let extension = extension.clone();
+                        let host = host.clone();
+                        cx.spawn(|_cx| async move {
+                            let context_server =
+                                ExtensionContextServer::new(extension, host, id).await?;
+
+                            anyhow::Ok(Arc::new(context_server) as _)
+                        })
+                    }
+                }),
+            );
+    }
+
     fn register_docs_provider(
         &self,
         extension: wasm_host::WasmExtension,
@@ -91,7 +121,7 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn update_lsp_status(
         &self,
-        server_name: language::LanguageServerName,
+        server_name: lsp::LanguageServerName,
         status: LanguageServerBinaryStatus,
     ) {
         self.language_registry
@@ -110,7 +140,7 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
     fn remove_lsp_adapter(
         &self,
         language_name: &language::LanguageName,
-        server_name: &language::LanguageServerName,
+        server_name: &lsp::LanguageServerName,
     ) {
         self.language_registry
             .remove_lsp_adapter(language_name, server_name);

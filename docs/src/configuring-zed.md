@@ -359,6 +359,40 @@ There are two options to choose from:
 
 List of `string` values
 
+## Inline Completions Disabled in
+
+- Description: A list of language scopes in which inline completions should be disabled.
+- Setting: `inline_completions_disabled_in`
+- Default: `[]`
+
+**Options**
+
+List of `string` values
+
+1. Don't show inline completions in comments:
+
+```json
+"disabled_in": ["comment"]
+```
+
+2. Don't show inline completions in strings and comments:
+
+```json
+"disabled_in": ["comment", "string"]
+```
+
+3. Only in Go, don't show inline completions in strings and comments:
+
+```json
+{
+  "languages": {
+    "Go": {
+      "inline_completions_disabled_in": ["comment", "string"]
+    }
+  }
+}
+```
+
 ## Current Line Highlight
 
 - Description: How to highlight the current line in the editor.

@@ -1,6 +1,7 @@
 use assistant_slash_command::SlashCommandRegistry;
 use async_compression::futures::bufread::GzipEncoder;
 use collections::BTreeMap;
+use context_servers::ContextServerFactoryRegistry;
 use extension_host::ExtensionSettings;
 use extension_host::SchemaVersion;
 use extension_host::{
@@ -13,7 +14,8 @@ use futures::{io::BufReader, AsyncReadExt, StreamExt};
 use gpui::{Context, SemanticVersion, TestAppContext};
 use http_client::{FakeHttpClient, Response};
 use indexed_docs::IndexedDocsRegistry;
-use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus, LanguageServerName};
+use language::{LanguageMatcher, LanguageRegistry, LanguageServerBinaryStatus};
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use project::{Project, DEFAULT_COMPLETION_CONTEXT};
@@ -161,6 +163,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         .into_iter()
                         .collect(),
                         language_servers: BTreeMap::default(),
+                        context_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
@@ -187,6 +190,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         languages: Default::default(),
                         grammars: BTreeMap::default(),
                         language_servers: BTreeMap::default(),
+                        context_servers: BTreeMap::default(),
                         slash_commands: BTreeMap::default(),
                         indexed_docs_providers: BTreeMap::default(),
                         snippets: None,
@@ -264,6 +268,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());
+    let context_server_factory_registry = ContextServerFactoryRegistry::new();
     let node_runtime = NodeRuntime::unavailable();
 
     let store = cx.new_model(|cx| {
@@ -273,6 +278,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             indexed_docs_registry.clone(),
             snippet_registry.clone(),
             language_registry.clone(),
+            context_server_factory_registry.clone(),
             cx,
         );
 
@@ -356,6 +362,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 languages: Default::default(),
                 grammars: BTreeMap::default(),
                 language_servers: BTreeMap::default(),
+                context_servers: BTreeMap::default(),
                 slash_commands: BTreeMap::default(),
                 indexed_docs_providers: BTreeMap::default(),
                 snippets: None,
@@ -406,6 +413,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
             indexed_docs_registry,
             snippet_registry,
             language_registry.clone(),
+            context_server_factory_registry.clone(),
             cx,
         );
 
@@ -500,6 +508,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let slash_command_registry = SlashCommandRegistry::new();
     let indexed_docs_registry = Arc::new(IndexedDocsRegistry::new(cx.executor()));
     let snippet_registry = Arc::new(SnippetRegistry::new());
+    let context_server_factory_registry = ContextServerFactoryRegistry::new();
     let node_runtime = NodeRuntime::unavailable();
 
     let mut status_updates = language_registry.language_server_binary_statuses();
@@ -596,6 +605,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
             indexed_docs_registry,
             snippet_registry,
             language_registry.clone(),
+            context_server_factory_registry.clone(),
             cx,
         );
         ExtensionStore::new(

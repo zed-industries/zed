@@ -2,6 +2,7 @@ use anyhow::Context;
 use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
 use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
@@ -174,9 +175,10 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
     language!("markdown-inline");
     language!(
         "python",
-        vec![Arc::new(python::PythonLspAdapter::new(
-            node_runtime.clone(),
-        ))],
+        vec![
+            Arc::new(python::PythonLspAdapter::new(node_runtime.clone(),)),
+            Arc::new(python::PyLspAdapter::new())
+        ],
         PythonContextProvider,
         Arc::new(PythonToolchainProvider::default()) as Arc<dyn ToolchainLister>
     );

@@ -260,7 +260,7 @@ pub trait RenderableCell: Render {
         if (cell_position == Some(&CellPosition::First) && is_first)
             || (cell_position == Some(&CellPosition::Last) && !is_first)
         {
-            Some(div().flex().w_full().h(Spacing::XLarge.px(cx)))
+            Some(div().flex().w_full().h(DynamicSpacing::Base12.px(cx)))
         } else {
             None
         }
@@ -389,7 +389,7 @@ impl Render for MarkdownCell {
                     .pr_6()
                     .rounded_sm()
                     .items_start()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(cx))
                     .child(self.gutter(cx))
                     .child(
@@ -564,7 +564,7 @@ impl Render for CodeCell {
                     .pr_6()
                     .rounded_sm()
                     .items_start()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(cx))
                     .child(self.gutter(cx))
                     .child(
@@ -590,7 +590,7 @@ impl Render for CodeCell {
                     .pr_6()
                     .rounded_sm()
                     .items_start()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(cx))
                     .child(self.gutter_output(cx))
                     .child(
@@ -710,7 +710,7 @@ impl Render for RawCell {
                     .pr_2()
                     .rounded_sm()
                     .items_start()
-                    .gap(Spacing::Large.rems(cx))
+                    .gap(DynamicSpacing::Base08.rems(cx))
                     .bg(self.selected_bg_color(cx))
                     .child(self.gutter(cx))
                     .child(
