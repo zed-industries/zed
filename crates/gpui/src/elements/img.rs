@@ -1,6 +1,6 @@
 use crate::{
     px, AbsoluteLength, AnyElement, AppContext, Asset, Bounds, DefiniteLength, Element, ElementId,
-    Focusable, FocusableElement, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity,
+    FocusableElement, GlobalElementId, Hitbox, Image, InteractiveElement, Interactivity,
     IntoElement, LayoutId, Length, ObjectFit, Pixels, RenderImage, SharedString, SharedUri,
     StatefulInteractiveElement, StyleRefinement, Styled, SvgSize, UriOrPath, WindowContext,
 };
@@ -110,14 +110,72 @@ impl<F: Fn(&mut WindowContext) -> Option<Result<Arc<RenderImage>>> + 'static> Fr
     }
 }
 
-/// An image element.
-pub struct Img {
-    interactivity: Interactivity,
-    source: ImageSource,
+/// The style of an image element.
+pub struct ImageStyle {
     grayscale: bool,
     object_fit: ObjectFit,
     loading: Option<Box<dyn Fn() -> AnyElement>>,
     fallback: Option<Box<dyn Fn() -> AnyElement>>,
+}
+
+impl Default for ImageStyle {
+    fn default() -> Self {
+        Self {
+            grayscale: false,
+            object_fit: ObjectFit::Contain,
+            loading: None,
+            fallback: None,
+        }
+    }
+}
+
+/// Style an image element.
+pub trait StyledImage: Sized {
+    /// Get a mutable [ImageStyle] from the element.
+    fn image_style(&mut self) -> &mut ImageStyle;
+
+    /// Set the image to be displayed in grayscale.
+    fn grayscale(mut self, grayscale: bool) -> Self {
+        self.image_style().grayscale = grayscale;
+        self
+    }
+
+    /// Set the object fit for the image.
+    fn object_fit(mut self, object_fit: ObjectFit) -> Self {
+        self.image_style().object_fit = object_fit;
+        self
+    }
+
+    /// Set the object fit for the image.
+    fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
+        self.image_style().fallback = Some(Box::new(fallback));
+        self
+    }
+
+    /// Set the object fit for the image.
+    fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
+        self.image_style().loading = Some(Box::new(loading));
+        self
+    }
+}
+
+impl StyledImage for Img {
+    fn image_style(&mut self) -> &mut ImageStyle {
+        &mut self.style
+    }
+}
+
+impl StyledImage for Stateful<Img> {
+    fn image_style(&mut self) -> &mut ImageStyle {
+        &mut self.element.style
+    }
+}
+
+/// An image element.
+pub struct Img {
+    interactivity: Interactivity,
+    source: ImageSource,
+    style: ImageStyle,
 }
 
 /// Create a new image element.
@@ -125,10 +183,7 @@ pub fn img(source: impl Into<ImageSource>) -> Img {
     Img {
         interactivity: Interactivity::default(),
         source: source.into(),
-        grayscale: false,
-        object_fit: ObjectFit::Contain,
-        loading: None,
-        fallback: None,
+        style: ImageStyle::default(),
     }
 }
 
@@ -140,31 +195,6 @@ impl Img {
             "avif", "jpg", "jpeg", "png", "gif", "webp", "tif", "tiff", "tga", "dds", "bmp", "ico",
             "hdr", "exr", "pbm", "pam", "ppm", "pgm", "ff", "farbfeld", "qoi", "svg",
         ]
-    }
-
-    /// Set the image to be displayed in grayscale.
-    pub fn grayscale(mut self, grayscale: bool) -> Self {
-        self.grayscale = grayscale;
-        self
-    }
-    /// Set the object fit for the image.
-    pub fn object_fit(mut self, object_fit: ObjectFit) -> Self {
-        self.object_fit = object_fit;
-        self
-    }
-
-    /// Set the object fit for the image.
-    pub fn with_fallback(mut self, fallback: impl Fn() -> AnyElement + 'static) -> Self {
-        self.fallback = Some(Box::new(fallback));
-        self
-    }
-}
-
-impl Stateful<Img> {
-    /// Set the object fit for the image.
-    pub fn with_loading(mut self, loading: impl Fn() -> AnyElement + 'static) -> Self {
-        self.element.loading = Some(Box::new(loading));
-        self
     }
 }
 
@@ -285,7 +315,7 @@ impl Element for Img {
                             }
                         }
                         Some(_err) => {
-                            if let Some(fallback) = &self.fallback {
+                            if let Some(fallback) = self.style.fallback.as_ref() {
                                 let mut element = fallback();
                                 replacement_id = Some(element.request_layout(cx));
                                 layout_state.replacement = Some(element);
@@ -295,7 +325,7 @@ impl Element for Img {
                             if let Some(state) = &mut state {
                                 if let Some(started_loading) = state.started_loading {
                                     if started_loading.elapsed() > LOADING_DELAY {
-                                        if let Some(loading) = &self.loading {
+                                        if let Some(loading) = self.style.loading.as_ref() {
                                             let mut element = loading();
                                             replacement_id = Some(element.request_layout(cx));
                                             layout_state.replacement = Some(element);
@@ -349,6 +379,7 @@ impl Element for Img {
 
                 if let Some(Ok(data)) = source.use_data(cx) {
                     let new_bounds = self
+                        .style
                         .object_fit
                         .get_bounds(bounds, data.size(layout_state.frame_index));
                     cx.paint_image(
@@ -356,7 +387,7 @@ impl Element for Img {
                         corner_radii,
                         data.clone(),
                         layout_state.frame_index,
-                        self.grayscale,
+                        self.style.grayscale,
                     )
                     .log_err();
                 } else if let Some(replacement) = &mut layout_state.replacement {

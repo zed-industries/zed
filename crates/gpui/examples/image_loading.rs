@@ -1,10 +1,11 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
 use gpui::{
-    div, img, pulsating_between, px, red, size, Animation, AnimationExt, App, AppContext, Asset,
-    AssetSource, Bounds, ImageAsset, ImageCacheError, InteractiveElement as _, IntoElement, Length,
-    ParentElement, Pixels, Render, RenderImage, SharedString, Styled, UriOrPath, ViewContext,
-    VisualContext as _, WindowBounds, WindowContext, WindowOptions, LOADING_DELAY,
+    div, img, prelude::*, pulsating_between, px, red, size, Animation, AnimationExt, App,
+    AppContext, Asset, AssetSource, Bounds, ImageAsset, ImageCacheError, InteractiveElement as _,
+    IntoElement, Length, ParentElement, Pixels, Render, RenderImage, SharedString, Styled,
+    UriOrPath, ViewContext, VisualContext as _, WindowBounds, WindowContext, WindowOptions,
+    LOADING_DELAY,
 };
 
 struct Assets {}
@@ -112,11 +113,11 @@ impl Render for ImageLoadingExample {
                             .map(|result| result.map_err(|e| e.into()))
                         })
                         .id("image-1")
-                        .size_12()
                         .border_1()
+                        .size_12()
+                        .with_fallback(|| Self::fallback_element().into_any_element())
                         .border_color(red())
-                        .with_loading(|| Self::loading_element().into_any_element())
-                        .with_fallback(|| Self::fallback_element().into_any_element()),
+                        .with_loading(|| Self::loading_element().into_any_element()),
                     )
                     .child(
                         // Load after a long delay
@@ -127,8 +128,8 @@ impl Render for ImageLoadingExample {
                             })
                             .map(|result| result.map_err(|e| e.into()))
                         })
-                        .with_fallback(|| Self::fallback_element().into_any_element())
                         .id("image-2")
+                        .with_fallback(|| Self::fallback_element().into_any_element())
                         .with_loading(|| Self::loading_element().into_any_element())
                         .size_12()
                         .border_1()
@@ -143,8 +144,8 @@ impl Render for ImageLoadingExample {
                             })
                             .map(|result| result.map_err(|e| e.into()))
                         })
-                        .with_fallback(|| Self::fallback_element().into_any_element())
                         .id("image-3")
+                        .with_fallback(|| Self::fallback_element().into_any_element())
                         .with_loading(|| Self::loading_element().into_any_element())
                         .size_12()
                         .border_1()
