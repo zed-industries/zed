@@ -7,10 +7,11 @@ use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
     prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
 };
-use project::Fs;
+use language::Language;
+use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::local_kernel_specifications;
+use crate::kernels::{local_kernel_specifications, python_env_kernel_specifications};
 use crate::{JupyterSettings, KernelSpecification, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
@@ -22,6 +23,8 @@ pub struct ReplStore {
     enabled: bool,
     sessions: HashMap<EntityId, View<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
+    selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
+    kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
     telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
 }
@@ -55,6 +58,8 @@ impl ReplStore {
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
             _subscriptions: subscriptions,
+            kernel_specifications_for_worktree: HashMap::default(),
+            selected_kernel_for_worktree: HashMap::default(),
         };
         this.on_enabled_changed(cx);
         this
@@ -72,7 +77,18 @@ impl ReplStore {
         self.enabled
     }
 
-    pub fn kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
+    pub fn kernel_specifications_for_worktree(
+        &self,
+        worktree_id: WorktreeId,
+    ) -> impl Iterator<Item = &KernelSpecification> {
+        self.kernel_specifications_for_worktree
+            .get(&worktree_id)
+            .into_iter()
+            .flat_map(|specs| specs.iter())
+            .chain(self.kernel_specifications.iter())
+    }
+
+    pub fn pure_jupyter_kernel_specifications(&self) -> impl Iterator<Item = &KernelSpecification> {
         self.kernel_specifications.iter()
     }
 
@@ -105,8 +121,29 @@ impl ReplStore {
         cx.notify();
     }
 
+    pub fn refresh_python_kernelspecs(
+        &mut self,
+        worktree_id: WorktreeId,
+        project: &Model<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let kernel_specifications = python_env_kernel_specifications(project, worktree_id, cx);
+        cx.spawn(move |this, mut cx| async move {
+            let kernel_specifications = kernel_specifications
+                .await
+                .map_err(|e| anyhow::anyhow!("Failed to get python kernelspecs: {:?}", e))?;
+
+            this.update(&mut cx, |this, cx| {
+                this.kernel_specifications_for_worktree
+                    .insert(worktree_id, kernel_specifications);
+                cx.notify();
+            })
+        })
+    }
+
     pub fn refresh_kernelspecs(&mut self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
         let local_kernel_specifications = local_kernel_specifications(self.fs.clone());
+
         cx.spawn(|this, mut cx| async move {
             let local_kernel_specifications = local_kernel_specifications.await?;
 
@@ -122,9 +159,41 @@ impl ReplStore {
         })
     }
 
-    pub fn kernelspec(&self, language_name: &str, cx: &AppContext) -> Option<KernelSpecification> {
+    pub fn set_active_kernelspec(
+        &mut self,
+        worktree_id: WorktreeId,
+        kernelspec: KernelSpecification,
+        _cx: &mut ModelContext<Self>,
+    ) {
+        self.selected_kernel_for_worktree
+            .insert(worktree_id, kernelspec);
+    }
+
+    pub fn active_kernelspec(
+        &self,
+        worktree_id: WorktreeId,
+        language_at_cursor: Option<Arc<Language>>,
+        cx: &AppContext,
+    ) -> Option<KernelSpecification> {
+        let selected_kernelspec = self.selected_kernel_for_worktree.get(&worktree_id).cloned();
+
+        if let Some(language_at_cursor) = language_at_cursor {
+            selected_kernelspec
+                .or_else(|| self.kernelspec_legacy_by_lang_only(language_at_cursor, cx))
+        } else {
+            selected_kernelspec
+        }
+    }
+
+    fn kernelspec_legacy_by_lang_only(
+        &self,
+        language_at_cursor: Arc<Language>,
+        cx: &AppContext,
+    ) -> Option<KernelSpecification> {
         let settings = JupyterSettings::get_global(cx);
-        let selected_kernel = settings.kernel_selections.get(language_name);
+        let selected_kernel = settings
+            .kernel_selections
+            .get(language_at_cursor.code_fence_block_name().as_ref());
 
         let found_by_name = self
             .kernel_specifications
@@ -149,10 +218,15 @@ impl ReplStore {
             .find(|kernel_option| match kernel_option {
                 KernelSpecification::Jupyter(runtime_specification) => {
                     runtime_specification.kernelspec.language.to_lowercase()
-                        == language_name.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
                 }
-                // todo!()
-                _ => false,
+                KernelSpecification::PythonEnv(runtime_specification) => {
+                    runtime_specification.kernelspec.language.to_lowercase()
+                        == language_at_cursor.code_fence_block_name().to_lowercase()
+                }
+                KernelSpecification::Remote(_) => {
+                    unimplemented!()
+                }
             })
             .cloned()
     }

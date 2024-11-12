@@ -29,7 +29,7 @@ serde.workspace = true
 util.workspace = true
 tempfile.workspace = true
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 exec.workspace =  true
 fork.workspace = true
 
