@@ -1698,11 +1698,10 @@ fn end_of_document(
 }
 
 fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoint> {
-    let Some(outer) = crate::object::surrounding_html_tag(map, head, head..head, true) else {
+    let Some(inner) = crate::object::surrounding_html_tag(map, head, head..head, false) else {
         return None;
     };
-
-    let Some(inner) = crate::object::surrounding_html_tag(map, head, head..head, false) else {
+    let Some(outer) = crate::object::surrounding_html_tag(map, head, head..head, true) else {
         return None;
     };
 
@@ -1762,8 +1761,9 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                         return tag;
                     }
                 } else if close_range.contains(&offset) {
-                    // We might be in a self closing tag which we still need to jump between
                     return open_range.start.to_display_point(map);
+                } else if open_range.contains(&offset) {
+                    return (close_range.end - 1).to_display_point(map);
                 }
             }
 
