@@ -462,7 +462,7 @@ fn main() {
         feedback::init(cx);
         markdown_preview::init(cx);
         zed_common::welcome::init(cx);
-        settings_ui::init(cx);
+        zed_common::settings_ui::init(cx);
         zed_common::extensions_ui::init(cx);
 
         cx.observe_global::<SettingsStore>({

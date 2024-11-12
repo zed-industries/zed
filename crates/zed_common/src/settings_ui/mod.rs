@@ -10,7 +10,7 @@ use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
 
-use crate::appearance_settings_controls::AppearanceSettingsControls;
+use crate::settings_ui::appearance_settings_controls::AppearanceSettingsControls;
 
 pub struct SettingsUiFeatureFlag;
 

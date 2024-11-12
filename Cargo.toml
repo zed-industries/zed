@@ -90,7 +90,6 @@ members = [
     "crates/semantic_version",
     "crates/session",
     "crates/settings",
-    "crates/settings_ui",
     "crates/snippet",
     "crates/snippet_provider",
     "crates/snippets_ui",
@@ -258,7 +257,6 @@ semantic_index = { path = "crates/semantic_index" }
 semantic_version = { path = "crates/semantic_version" }
 session = { path = "crates/session" }
 settings = { path = "crates/settings" }
-settings_ui = { path = "crates/settings_ui" }
 snippet = { path = "crates/snippet" }
 snippet_provider = { path = "crates/snippet_provider" }
 snippets_ui = { path = "crates/snippets_ui" }

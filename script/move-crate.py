@@ -88,3 +88,21 @@ if mod_line not in lines:
     print(f"Added {crate_name} module to lib.rs")
 else:
     print(f"Module {crate_name} already exists in lib.rs")
+
+# Print the Cargo.toml content
+cargo_toml_path = f"crates/{crate_name}/Cargo.toml"
+if os.path.exists(cargo_toml_path):
+    with open(cargo_toml_path, "r") as f:
+        print(f"Contents of {cargo_toml_path}:")
+        print("-----------------------------")
+        print(f.read())
+        print("-----------------------------")
+else:
+    print(f"Cargo.toml for {crate_name} not found")
+
+# Remove the src path and print the cargo toml
+if os.path.exists(f"crates/{crate_name}"):
+    shutil.rmtree(f"crates/{crate_name}")
+    print(f"Removed src directory from {crate_name}")
+else:
+    print(f"Source directory for {crate_name} not found")
