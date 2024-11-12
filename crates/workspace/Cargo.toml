@@ -61,6 +61,7 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 uuid.workspace = true
+strum.workspace = true
 
 [dev-dependencies]
 call = { workspace = true, features = ["test-support"] }

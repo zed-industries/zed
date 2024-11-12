@@ -26,6 +26,7 @@ mod settings_group;
 mod stack;
 mod tab;
 mod tab_bar;
+mod table;
 mod tool_strip;
 mod tooltip;
 
@@ -60,6 +61,7 @@ pub use settings_group::*;
 pub use stack::*;
 pub use tab::*;
 pub use tab_bar::*;
+pub use table::*;
 pub use tool_strip::*;
 pub use tooltip::*;
 

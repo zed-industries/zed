@@ -3,13 +3,15 @@ mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
-use indexed_docs::IndexedDocsDatabase;
+use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
 
+use crate::DocsDatabase;
+
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
-use language::{LanguageServerName, LspAdapterDelegate};
+use language::LspAdapterDelegate;
 use semantic_version::SemanticVersion;
 use std::{ops::RangeInclusive, sync::Arc};
 use wasmtime::{
@@ -24,7 +26,7 @@ pub use latest::{
         Completion, CompletionKind, CompletionLabelDetails, InsertTextFormat, Symbol, SymbolKind,
     },
     zed::extension::slash_command::{SlashCommandArgumentCompletion, SlashCommandOutput},
-    CodeLabel, CodeLabelSpan, Command, Range, SlashCommand,
+    CodeLabel, CodeLabelSpan, Command, ExtensionProject, Range, SlashCommand,
 };
 pub use since_v0_0_4::LanguageServerConfig;
 
@@ -78,13 +80,20 @@ impl Extension {
         version: SemanticVersion,
         component: &Component,
     ) -> Result<Self> {
-        // Note: The release channel can be used to stage a new version of the extension API.
-        let allow_latest_version = match release_channel {
-            ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
-            ReleaseChannel::Stable | ReleaseChannel::Preview => false,
-        };
-
-        if allow_latest_version && version >= latest::MIN_VERSION {
+        if version >= latest::MIN_VERSION {
+            // Note: The release channel can be used to stage a new version of the extension API.
+            // We always allow the latest in tests so that the extension tests pass on release branches.
+            let allow_latest_version = match release_channel {
+                ReleaseChannel::Dev | ReleaseChannel::Nightly => true,
+                ReleaseChannel::Stable | ReleaseChannel::Preview => {
+                    cfg!(any(test, feature = "test-support"))
+                }
+            };
+            if !allow_latest_version {
+                Err(anyhow!(
+                    "unreleased versions of the extension API can only be used on development builds of Zed"
+                ))?;
+            }
             let extension =
                 latest::Extension::instantiate_async(store, component, latest::linker())
                     .await
@@ -375,6 +384,25 @@ impl Extension {
         }
     }
 
+    pub async fn call_context_server_command(
+        &self,
+        store: &mut Store<WasmState>,
+        context_server_id: Arc<str>,
+        project: Resource<ExtensionProject>,
+    ) -> Result<Result<Command, String>> {
+        match self {
+            Extension::V020(ext) => {
+                ext.call_context_server_command(store, &context_server_id, project)
+                    .await
+            }
+            Extension::V001(_) | Extension::V004(_) | Extension::V006(_) | Extension::V010(_) => {
+                Err(anyhow!(
+                    "`context_server_command` not available prior to v0.2.0"
+                ))
+            }
+        }
+    }
+
     pub async fn call_suggest_docs_packages(
         &self,
         store: &mut Store<WasmState>,
@@ -394,7 +422,7 @@ impl Extension {
         store: &mut Store<WasmState>,
         provider: &str,
         package_name: &str,
-        database: Resource<Arc<IndexedDocsDatabase>>,
+        database: Resource<Arc<dyn DocsDatabase>>,
     ) -> Result<Result<(), String>> {
         match self {
             Extension::V020(ext) => {

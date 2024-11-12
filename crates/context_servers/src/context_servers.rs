@@ -1,40 +1,27 @@
-use gpui::{actions, AppContext, Context, ViewContext};
-use manager::ContextServerManager;
-use workspace::Workspace;
-
 pub mod client;
 pub mod manager;
 pub mod protocol;
 mod registry;
 pub mod types;
 
-pub use registry::*;
+use command_palette_hooks::CommandPaletteFilter;
+use gpui::{actions, AppContext};
+use settings::Settings;
+
+pub use crate::manager::ContextServer;
+use crate::manager::ContextServerSettings;
+pub use crate::registry::ContextServerFactoryRegistry;
 
 actions!(context_servers, [Restart]);
 
 /// The namespace for the context servers actions.
-const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
+pub const CONTEXT_SERVERS_NAMESPACE: &'static str = "context_servers";
 
 pub fn init(cx: &mut AppContext) {
-    log::info!("initializing context server client");
-    manager::init(cx);
-    ContextServerRegistry::register(cx);
+    ContextServerSettings::register(cx);
+    ContextServerFactoryRegistry::default_global(cx);
 
-    cx.observe_new_views(
-        |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
-            workspace.register_action(restart_servers);
-        },
-    )
-    .detach();
-}
-
-fn restart_servers(_workspace: &mut Workspace, _action: &Restart, cx: &mut ViewContext<Workspace>) {
-    let model = ContextServerManager::global(cx);
-    cx.update_model(&model, |manager, cx| {
-        for server in manager.servers() {
-            manager
-                .restart_server(&server.id, cx)
-                .detach_and_log_err(cx);
-        }
+    CommandPaletteFilter::update_global(cx, |filter, _cx| {
+        filter.hide_namespace(CONTEXT_SERVERS_NAMESPACE);
     });
 }

@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Context, Result};
 use collections::{BTreeMap, HashMap};
 use fs::Fs;
-use language::{LanguageName, LanguageServerName};
+use language::LanguageName;
+use lsp::LanguageServerName;
 use semantic_version::SemanticVersion;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -75,6 +76,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub language_servers: BTreeMap<LanguageServerName, LanguageServerManifestEntry>,
     #[serde(default)]
+    pub context_servers: BTreeMap<Arc<str>, ContextServerManifestEntry>,
+    #[serde(default)]
     pub slash_commands: BTreeMap<Arc<str>, SlashCommandManifestEntry>,
     #[serde(default)]
     pub indexed_docs_providers: BTreeMap<Arc<str>, IndexedDocsProviderEntry>,
@@ -133,6 +136,9 @@ impl LanguageServerManifestEntry {
         self.languages.iter().cloned().chain(language)
     }
 }
+
+#[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
+pub struct ContextServerManifestEntry {}
 
 #[derive(Clone, PartialEq, Eq, Debug, Deserialize, Serialize)]
 pub struct SlashCommandManifestEntry {
@@ -205,6 +211,7 @@ fn manifest_from_old_manifest(
             .map(|grammar_name| (grammar_name, Default::default()))
             .collect(),
         language_servers: Default::default(),
+        context_servers: BTreeMap::default(),
         slash_commands: BTreeMap::default(),
         indexed_docs_providers: BTreeMap::default(),
         snippets: None,

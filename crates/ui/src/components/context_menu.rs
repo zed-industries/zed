@@ -1,7 +1,7 @@
 #![allow(missing_docs)]
 use crate::{
-    h_flex, prelude::*, utils::WithRemSize, v_flex, Icon, IconName, KeyBinding, Label, List,
-    ListItem, ListSeparator, ListSubHeader,
+    h_flex, prelude::*, utils::WithRemSize, v_flex, Icon, IconName, IconSize, KeyBinding, Label,
+    List, ListItem, ListSeparator, ListSubHeader,
 };
 use gpui::{
     px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
@@ -20,6 +20,7 @@ enum ContextMenuItem {
         toggle: Option<(IconPosition, bool)>,
         label: SharedString,
         icon: Option<IconName>,
+        icon_size: IconSize,
         handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
         action: Option<Box<dyn Action>>,
         disabled: bool,
@@ -103,6 +104,7 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
+            icon_size: IconSize::Small,
             action,
             disabled: false,
         });
@@ -122,6 +124,7 @@ impl ContextMenu {
             label: label.into(),
             handler: Rc::new(move |_, cx| handler(cx)),
             icon: None,
+            icon_size: IconSize::Small,
             action,
             disabled: false,
         });
@@ -171,6 +174,7 @@ impl ContextMenu {
                 cx.dispatch_action(action.boxed_clone());
             }),
             icon: None,
+            icon_size: IconSize::Small,
             disabled: false,
         });
         self
@@ -193,6 +197,7 @@ impl ContextMenu {
                 cx.dispatch_action(action.boxed_clone());
             }),
             icon: None,
+            icon_size: IconSize::Small,
             disabled: true,
         });
         self
@@ -206,6 +211,7 @@ impl ContextMenu {
             action: Some(action.boxed_clone()),
             handler: Rc::new(move |_, cx| cx.dispatch_action(action.boxed_clone())),
             icon: Some(IconName::ArrowUpRight),
+            icon_size: IconSize::XSmall,
             disabled: false,
         });
         self
@@ -393,6 +399,7 @@ impl Render for ContextMenu {
                                     label,
                                     handler,
                                     icon,
+                                    icon_size,
                                     action,
                                     disabled,
                                 } => {
@@ -403,12 +410,12 @@ impl Render for ContextMenu {
                                     } else {
                                         Color::Default
                                     };
-                                    let label_element = if let Some(icon) = icon {
+                                    let label_element = if let Some(icon_name) = icon {
                                         h_flex()
                                             .gap_1()
                                             .child(Label::new(label.clone()).color(color))
                                             .child(
-                                                Icon::new(*icon).size(IconSize::Small).color(color),
+                                                Icon::new(*icon_name).size(*icon_size).color(color),
                                             )
                                             .into_any_element()
                                     } else {

@@ -124,6 +124,9 @@ impl Keystroke {
     /// Produces a representation of this key that Parse can understand.
     pub fn unparse(&self) -> String {
         let mut str = String::new();
+        if self.modifiers.function {
+            str.push_str("fn-");
+        }
         if self.modifiers.control {
             str.push_str("ctrl-");
         }
@@ -134,7 +137,7 @@ impl Keystroke {
             #[cfg(target_os = "macos")]
             str.push_str("cmd-");
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             str.push_str("super-");
 
             #[cfg(target_os = "windows")]
@@ -234,7 +237,7 @@ impl std::fmt::Display for Keystroke {
             #[cfg(target_os = "macos")]
             f.write_char('⌘')?;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             f.write_char('❖')?;
 
             #[cfg(target_os = "windows")]

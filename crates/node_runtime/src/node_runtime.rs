@@ -161,6 +161,10 @@ impl NodeRuntime {
         directory: &Path,
         packages: &[(&str, &str)],
     ) -> Result<()> {
+        if packages.is_empty() {
+            return Ok(());
+        }
+
         let packages: Vec<_> = packages
             .iter()
             .map(|(name, version)| format!("{name}@{version}"))

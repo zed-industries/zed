@@ -18,6 +18,7 @@ use gpui::{
 use language::{
     proto::serialize_anchor as serialize_text_anchor, Bias, Buffer, CharKind, Point, SelectionGoal,
 };
+use lsp::DiagnosticSeverity;
 use multi_buffer::AnchorRangeExt;
 use project::{
     lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Item as _,
@@ -39,7 +40,7 @@ use std::{
 };
 use text::{BufferId, Selection};
 use theme::{Theme, ThemeSettings};
-use ui::{h_flex, prelude::*, Label};
+use ui::{h_flex, prelude::*, IconDecorationKind, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent};
 use workspace::{
@@ -992,12 +993,15 @@ impl SerializableItem for Editor {
                     };
 
                     // First create the empty buffer
-                    let buffer = project.update(&mut cx, |project, cx| {
-                        project.create_local_buffer("", language, cx)
-                    })?;
+                    let buffer = project
+                        .update(&mut cx, |project, cx| project.create_buffer(cx))?
+                        .await?;
 
                     // Then set the text so that the dirty bit is set correctly
                     buffer.update(&mut cx, |buffer, cx| {
+                        if let Some(language) = language {
+                            buffer.set_language(Some(language), cx);
+                        }
                         buffer.set_text(contents, cx);
                     })?;
 
@@ -1277,7 +1281,7 @@ impl SearchableItem for Editor {
         matches: &[Range<Anchor>],
         cx: &mut ViewContext<Self>,
     ) {
-        self.unfold_ranges([matches[index].clone()], false, true, cx);
+        self.unfold_ranges(&[matches[index].clone()], false, true, cx);
         let range = self.range_for_match(&matches[index]);
         self.change_selections(Some(Autoscroll::fit()), cx, |s| {
             s.select_ranges([range]);
@@ -1285,7 +1289,7 @@ impl SearchableItem for Editor {
     }
 
     fn select_matches(&mut self, matches: &[Self::Match], cx: &mut ViewContext<Self>) {
-        self.unfold_ranges(matches.to_vec(), false, false, cx);
+        self.unfold_ranges(matches, false, false, cx);
         let mut ranges = Vec::new();
         for m in matches {
             ranges.push(self.range_for_match(m))
@@ -1509,6 +1513,26 @@ pub fn entry_label_color(selected: bool) -> Color {
         Color::Default
     } else {
         Color::Muted
+    }
+}
+
+pub fn entry_diagnostic_aware_icon_name_and_color(
+    diagnostic_severity: Option<DiagnosticSeverity>,
+) -> Option<(IconName, Color)> {
+    match diagnostic_severity {
+        Some(DiagnosticSeverity::ERROR) => Some((IconName::X, Color::Error)),
+        Some(DiagnosticSeverity::WARNING) => Some((IconName::Triangle, Color::Warning)),
+        _ => None,
+    }
+}
+
+pub fn entry_diagnostic_aware_icon_decoration_and_color(
+    diagnostic_severity: Option<DiagnosticSeverity>,
+) -> Option<(IconDecorationKind, Color)> {
+    match diagnostic_severity {
+        Some(DiagnosticSeverity::ERROR) => Some((IconDecorationKind::X, Color::Error)),
+        Some(DiagnosticSeverity::WARNING) => Some((IconDecorationKind::Triangle, Color::Warning)),
+        _ => None,
     }
 }
 

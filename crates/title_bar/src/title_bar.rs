@@ -30,12 +30,15 @@ use ui::{
 use util::ResultExt;
 use vcs_menu::{BranchList, OpenRecent as ToggleVcsMenu};
 use workspace::{notifications::NotifyResultExt, Workspace};
+use zed_actions::OpenBrowser;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
 
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
+
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 
 actions!(
     collab,
@@ -75,7 +78,7 @@ impl Render for TitleBar {
         let height = Self::height(cx);
         let supported_controls = cx.window_controls();
         let decorations = cx.window_decorations();
-        let titlebar_color = if cfg!(target_os = "linux") {
+        let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
             if cx.is_window_active() && !self.should_move {
                 cx.theme().colors().title_bar_background
             } else {
@@ -580,6 +583,13 @@ impl TitleBar {
                         .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                         .action("Extensions", extensions_ui::Extensions.boxed_clone())
                         .separator()
+                        .link(
+                            "Book Onboarding",
+                            OpenBrowser {
+                                url: BOOK_ONBOARDING.to_string(),
+                            }
+                            .boxed_clone(),
+                        )
                         .action("Sign Out", client::SignOut.boxed_clone())
                     })
                     .into()
@@ -608,6 +618,14 @@ impl TitleBar {
                             .action("Key Bindings", Box::new(zed_actions::OpenKeymap))
                             .action("Themes…", theme_selector::Toggle::default().boxed_clone())
                             .action("Extensions", extensions_ui::Extensions.boxed_clone())
+                            .separator()
+                            .link(
+                                "Book Onboarding",
+                                OpenBrowser {
+                                    url: BOOK_ONBOARDING.to_string(),
+                                }
+                                .boxed_clone(),
+                            )
                     })
                     .into()
                 })
