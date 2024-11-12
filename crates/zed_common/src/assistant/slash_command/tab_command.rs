@@ -1,8 +1,8 @@
-use anyhow::{Context, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{Context, Result};
 use collections::{HashMap, HashSet};
 use editor::Editor;
 use futures::future::join_all;

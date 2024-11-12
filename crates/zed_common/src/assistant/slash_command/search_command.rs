@@ -1,8 +1,8 @@
-use anyhow::Result;
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::Result;
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView};
 use language::{CodeLabel, LspAdapterDelegate};
@@ -15,7 +15,9 @@ use ui::{prelude::*, IconName};
 use workspace::Workspace;
 
 use crate::assistant::slash_command::create_label_for_command;
-use crate::assistant::slash_command::file_command::{build_entry_output_section, codeblock_fence_for_path};
+use crate::assistant::slash_command::file_command::{
+    build_entry_output_section, codeblock_fence_for_path,
+};
 
 pub(crate) struct SearchSlashCommandFeatureFlag;
 

@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandResult,
 };
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use context_servers::{
     manager::{ContextServer, ContextServerManager},

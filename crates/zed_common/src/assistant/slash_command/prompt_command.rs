@@ -1,9 +1,9 @@
 use crate::assistant::prompt_library::PromptStore;
-use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, Context, Result};
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
 use std::sync::{atomic::AtomicBool, Arc};

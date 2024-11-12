@@ -1,11 +1,11 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::Result;
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::Result;
 use chrono::Local;
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};

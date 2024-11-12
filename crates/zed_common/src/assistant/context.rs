@@ -8,10 +8,10 @@ use crate::assistant::{
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
-use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
 };
+use anyhow::{anyhow, Context as _, Result};
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;
 use collections::{HashMap, HashSet};
@@ -728,7 +728,7 @@ impl Context {
                 .filter_map(|section| {
                     if section.is_valid(buffer) {
                         let range = section.range.to_offset(buffer);
-                        Some(assistant_slash_command::SlashCommandOutputSection {
+                        Some(crate::assistant_slash_command::SlashCommandOutputSection {
                             range,
                             icon: section.icon,
                             label: section.label.clone(),
@@ -3239,7 +3239,7 @@ pub struct SavedContext {
     pub messages: Vec<SavedMessage>,
     pub summary: String,
     pub slash_command_output_sections:
-        Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
+        Vec<crate::assistant_slash_command::SlashCommandOutputSection<usize>>,
 }
 
 impl SavedContext {
@@ -3380,7 +3380,8 @@ struct SavedContextV0_3_0 {
     messages: Vec<SavedMessagePreV0_4_0>,
     message_metadata: HashMap<SavedMessageIdPreV0_4_0, SavedMessageMetadataPreV0_4_0>,
     summary: String,
-    slash_command_output_sections: Vec<assistant_slash_command::SlashCommandOutputSection<usize>>,
+    slash_command_output_sections:
+        Vec<crate::assistant_slash_command::SlashCommandOutputSection<usize>>,
 }
 
 impl SavedContextV0_3_0 {

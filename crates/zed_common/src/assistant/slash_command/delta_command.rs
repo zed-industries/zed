@@ -1,9 +1,9 @@
 use crate::assistant::slash_command::file_command::{FileCommandMetadata, FileSlashCommand};
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, Result};
 use collections::HashSet;
 use futures::future;
 use gpui::{Task, WeakView, WindowContext};

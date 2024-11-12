@@ -3,11 +3,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::{anyhow, bail, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, bail, Result};
 use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
@@ -182,7 +182,7 @@ impl SlashCommand for DocsSlashCommand {
                     .map(|item| ArgumentCompletion {
                         label: item.clone().into(),
                         new_text: item.to_string(),
-                        after_completion: assistant_slash_command::AfterCompletion::Run,
+                        after_completion: crate::assistant_slash_command::AfterCompletion::Run,
                         replace_previous_arguments: false,
                     })
                     .collect()

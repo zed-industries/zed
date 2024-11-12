@@ -3,8 +3,10 @@ use super::{
     SlashCommandOutput,
 };
 use crate::assistant::PromptBuilder;
+use crate::assistant_slash_command::{
+    ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult,
+};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};

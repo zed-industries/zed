@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, Result};
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
 use gpui::{AppContext, AsyncAppContext, Task, WeakView};

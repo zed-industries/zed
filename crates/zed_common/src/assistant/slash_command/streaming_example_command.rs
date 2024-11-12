@@ -2,11 +2,11 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::Result;
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutputSection, SlashCommandResult,
 };
+use anyhow::Result;
 use feature_flags::FeatureFlag;
 use futures::channel::mpsc;
 use gpui::{Task, WeakView};

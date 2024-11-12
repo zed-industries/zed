@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, Context, Result};
 use fs::Fs;
 use gpui::{AppContext, Model, Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};

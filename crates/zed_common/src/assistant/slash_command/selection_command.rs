@@ -1,9 +1,9 @@
 use crate::assistant::assistant_panel::selections_creases;
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutputSection, SlashCommandResult,
 };
+use anyhow::{anyhow, Result};
 use futures::StreamExt;
 use gpui::{AppContext, Task, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};

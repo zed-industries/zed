@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
+use crate::assistant_slash_command::SlashCommandRegistry;
 use anyhow::Result;
-use assistant_slash_command::SlashCommandRegistry;
 use context_servers::ContextServerFactoryRegistry;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
@@ -13,7 +13,9 @@ use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
 
 use crate::extensions_ui::extension_context_server::ExtensionContextServer;
-use crate::extensions_ui::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
+use crate::extensions_ui::{
+    extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand,
+};
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,

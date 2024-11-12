@@ -28,7 +28,6 @@ test-support = [
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 assets.workspace = true
-assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-trait.workspace = true
 async-watch.workspace = true
@@ -119,6 +118,7 @@ vim.workspace = true
 wasmtime-wasi.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+derive_more.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true

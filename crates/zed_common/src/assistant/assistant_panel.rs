@@ -21,8 +21,8 @@ use crate::assistant::{
     ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection, RemoteContextMetadata,
     RequestType, SavedContextMetadata, Split, ToggleFocus, ToggleModelSelector,
 };
+use crate::assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use anyhow::Result;
-use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
 use editor::{

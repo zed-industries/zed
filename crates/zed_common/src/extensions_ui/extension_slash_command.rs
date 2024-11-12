@@ -1,10 +1,10 @@
 use std::sync::{atomic::AtomicBool, Arc};
 
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, Result};
 use futures::FutureExt as _;
 use gpui::{Task, WeakView, WindowContext};
 use language::{BufferSnapshot, LspAdapterDelegate};

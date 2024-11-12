@@ -1,11 +1,11 @@
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::Result;
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::Result;
 use gpui::{AppContext, Task, View, WeakView};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};

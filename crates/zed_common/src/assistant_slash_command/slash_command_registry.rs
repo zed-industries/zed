@@ -6,7 +6,7 @@ use gpui::Global;
 use gpui::{AppContext, ReadGlobal};
 use parking_lot::RwLock;
 
-use crate::SlashCommand;
+use crate::assistant_slash_command::SlashCommand;
 
 #[derive(Default, Deref, DerefMut)]
 struct GlobalSlashCommandRegistry(Arc<SlashCommandRegistry>);

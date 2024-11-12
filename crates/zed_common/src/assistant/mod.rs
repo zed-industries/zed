@@ -20,9 +20,9 @@ mod tools;
 
 pub use crate::assistant::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
 pub use crate::assistant::tool_working_set::{ToolId, ToolWorkingSet};
+use crate::assistant_slash_command::SlashCommandRegistry;
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
-use assistant_slash_command::SlashCommandRegistry;
 use assistant_tool::ToolRegistry;
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
@@ -236,7 +236,7 @@ pub fn init(
     context_store::init(&client.clone().into());
     prompt_library::init(cx);
     init_language_model_settings(cx);
-    assistant_slash_command::init(cx);
+    crate::assistant_slash_command::init(cx);
     assistant_tool::init(cx);
     assistant_panel::init(cx);
     context_servers::init(cx);

@@ -374,24 +374,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "assistant_slash_command"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "collections",
- "derive_more",
- "futures 0.3.30",
- "gpui",
- "language",
- "language_model",
- "parking_lot",
- "pretty_assertions",
- "serde",
- "serde_json",
- "workspace",
-]
-
-[[package]]
 name = "assistant_tool"
 version = "0.1.0"
 dependencies = [
@@ -15086,7 +15068,6 @@ dependencies = [
  "anyhow",
  "ashpd",
  "assets",
- "assistant_slash_command",
  "async-watch",
  "audio",
  "auto_update",
@@ -15219,7 +15200,6 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assets",
- "assistant_slash_command",
  "assistant_tool",
  "async-compression",
  "async-tar",
@@ -15238,6 +15218,7 @@ dependencies = [
  "context_servers",
  "ctor",
  "db",
+ "derive_more",
  "editor",
  "emojis",
  "env_logger 0.11.5",

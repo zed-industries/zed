@@ -15,7 +15,6 @@ name = "zed"
 path = "src/main.rs"
 
 [dependencies]
-assistant_slash_command.workspace = true
 activity_indicator.workspace = true
 anyhow.workspace = true
 assets.workspace = true

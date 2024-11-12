@@ -7,7 +7,6 @@ mod reliability;
 mod zed;
 
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::SlashCommandRegistry;
 use chrono::Offset;
 use clap::{command, Parser};
 use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
@@ -28,6 +27,7 @@ use indexed_docs::IndexedDocsRegistry;
 use language::LanguageRegistry;
 use log::LevelFilter;
 use reqwest_client::ReqwestClient;
+use zed_common::assistant_slash_command::SlashCommandRegistry;
 use zed_common::collab_ui::channel_view::ChannelView;
 
 use assets::Assets;

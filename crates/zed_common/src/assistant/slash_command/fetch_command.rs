@@ -3,11 +3,11 @@ use std::rc::Rc;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::{anyhow, bail, Context, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, bail, Context, Result};
 use futures::AsyncReadExt;
 use gpui::{Task, WeakView};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};

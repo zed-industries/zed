@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     AfterCompletion, ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent,
     SlashCommandOutput, SlashCommandOutputSection, SlashCommandResult,
 };
+use anyhow::{anyhow, Context as _, Result};
 use futures::channel::mpsc;
 use futures::Stream;
 use fuzzy::PathMatch;

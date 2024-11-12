@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{
+use crate::assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
+use anyhow::{anyhow, Result};
 use fuzzy::{PathMatch, StringMatchCandidate};
 use gpui::{AppContext, Model, Task, View, WeakView};
 use language::{
@@ -160,7 +160,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
                 .map(|completion| ArgumentCompletion {
                     label: completion.clone().into(),
                     new_text: completion,
-                    after_completion: assistant_slash_command::AfterCompletion::Run,
+                    after_completion: crate::assistant_slash_command::AfterCompletion::Run,
                     replace_previous_arguments: false,
                 })
                 .collect())

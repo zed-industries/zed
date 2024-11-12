@@ -1,4 +1,4 @@
-use assistant_slash_command::{SlashCommand, SlashCommandRegistry};
+use crate::assistant_slash_command::{SlashCommand, SlashCommandRegistry};
 use collections::HashMap;
 use gpui::AppContext;
 use parking_lot::Mutex;
