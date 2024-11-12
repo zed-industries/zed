@@ -1,12 +1,12 @@
 use std::time::Duration;
 
-use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
-use picker::Picker;
-use repl::{
+use crate::repl::{
     components::{KernelPickerDelegate, KernelSelector},
     worktree_id_for_editor, ExecutionState, JupyterSettings, Kernel, KernelSpecification,
     KernelStatus, Session, SessionSupport,
 };
+use gpui::{percentage, Animation, AnimationExt, AnyElement, Transformation, View};
+use picker::Picker;
 use ui::{
     prelude::*, ButtonLike, ContextMenu, IconWithIndicator, Indicator, IntoElement, PopoverMenu,
     PopoverMenuHandle, Tooltip,
@@ -63,7 +63,7 @@ impl QuickActionBar {
             })
         };
 
-        let session = repl::session(editor.downgrade(), cx);
+        let session = crate::repl::session(editor.downgrade(), cx);
         let session = match session {
             SessionSupport::ActiveSession(session) => session,
             SessionSupport::Inactive(spec) => {
@@ -142,7 +142,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::run(editor.clone(), true, cx).log_err();
+                                crate::repl::run(editor.clone(), true, cx).log_err();
                             }
                         },
                     )
@@ -156,7 +156,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::interrupt(editor.clone(), cx);
+                                crate::repl::interrupt(editor.clone(), cx);
                             }
                         },
                     )
@@ -170,7 +170,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::clear_outputs(editor.clone(), cx);
+                                crate::repl::clear_outputs(editor.clone(), cx);
                             }
                         },
                     )
@@ -185,7 +185,7 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::shutdown(editor.clone(), cx);
+                                crate::repl::shutdown(editor.clone(), cx);
                             }
                         },
                     )
@@ -199,12 +199,12 @@ impl QuickActionBar {
                         {
                             let editor = editor.clone();
                             move |cx| {
-                                repl::restart(editor.clone(), cx);
+                                crate::repl::restart(editor.clone(), cx);
                             }
                         },
                     )
                     .separator()
-                    .action("View Sessions", Box::new(repl::Sessions))
+                    .action("View Sessions", Box::new(crate::repl::Sessions))
                     // TODO: Add shut down all kernels action
                     // .action("Shut Down all Kernels", Box::new(gpui::NoAction))
                 })
@@ -243,7 +243,7 @@ impl QuickActionBar {
             .size(ButtonSize::Compact)
             .style(ButtonStyle::Subtle)
             .tooltip(move |cx| Tooltip::text(menu_state.tooltip.clone(), cx))
-            .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {})))
+            .on_click(|_, cx| cx.dispatch_action(Box::new(crate::repl::Run {})))
             .into_any_element();
 
         Some(
@@ -271,7 +271,7 @@ impl QuickActionBar {
                         .icon_color(Color::Muted)
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                        .on_click(|_, cx| cx.dispatch_action(Box::new(repl::Run {}))),
+                        .on_click(|_, cx| cx.dispatch_action(Box::new(crate::repl::Run {}))),
                 )
                 .into_any_element(),
         )
@@ -288,7 +288,7 @@ impl QuickActionBar {
             return div().into_any_element();
         };
 
-        let session = repl::session(editor.downgrade(), cx);
+        let session = crate::repl::session(editor.downgrade(), cx);
 
         let current_kernelspec = match session {
             SessionSupport::ActiveSession(view) => Some(view.read(cx).kernel_specification.clone()),
@@ -304,7 +304,7 @@ impl QuickActionBar {
         KernelSelector::new(
             {
                 Box::new(move |kernelspec, cx| {
-                    repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
+                    crate::repl::assign_kernelspec(kernelspec, editor.downgrade(), cx).ok();
                 })
             },
             worktree_id,

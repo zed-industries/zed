@@ -1,6 +1,6 @@
-use crate::components::KernelListItem;
-use crate::setup_editor_session_actions;
-use crate::{
+use crate::repl::components::KernelListItem;
+use crate::repl::setup_editor_session_actions;
+use crate::repl::{
     kernels::{Kernel, KernelSpecification, RunningKernel},
     outputs::{ExecutionStatus, ExecutionView},
     KernelStatus,
@@ -123,7 +123,7 @@ impl EditorBlock {
     ) -> RenderBlock {
         let render = move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_style = crate::outputs::plain::text_style(cx);
+            let text_style = crate::repl::outputs::plain::text_style(cx);
 
             let gutter = cx.gutter_dimensions;
 

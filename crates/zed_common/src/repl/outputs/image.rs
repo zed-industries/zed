@@ -4,7 +4,7 @@ use gpui::{img, ClipboardItem, Image, ImageFormat, Pixels, RenderImage, WindowCo
 use std::sync::Arc;
 use ui::{div, prelude::*, IntoElement, Styled};
 
-use crate::outputs::OutputContent;
+use crate::repl::outputs::OutputContent;
 
 /// ImageView renders an image inline in an editor, adapting to the line height to fit the image.
 pub struct ImageView {

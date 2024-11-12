@@ -11,8 +11,8 @@ use language::Language;
 use project::{Fs, Project, WorktreeId};
 use settings::{Settings, SettingsStore};
 
-use crate::kernels::{local_kernel_specifications, python_env_kernel_specifications};
-use crate::{JupyterSettings, KernelSpecification, Session};
+use crate::repl::kernels::{local_kernel_specifications, python_env_kernel_specifications};
+use crate::repl::{JupyterSettings, KernelSpecification, Session};
 
 struct GlobalReplStore(Model<ReplStore>);
 

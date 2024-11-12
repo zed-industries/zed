@@ -16,14 +16,14 @@ use project::Fs;
 pub use runtimelib::ExecutionState;
 use settings::Settings as _;
 
-pub use crate::jupyter_settings::JupyterSettings;
-pub use crate::kernels::{Kernel, KernelSpecification, KernelStatus};
-pub use crate::repl_editor::*;
-pub use crate::repl_sessions_ui::{
+pub use crate::repl::jupyter_settings::JupyterSettings;
+pub use crate::repl::kernels::{Kernel, KernelSpecification, KernelStatus};
+pub use crate::repl::repl_editor::*;
+pub use crate::repl::repl_sessions_ui::{
     ClearOutputs, Interrupt, ReplSessionsPage, Restart, Run, Sessions, Shutdown,
 };
-use crate::repl_store::ReplStore;
-pub use crate::session::Session;
+use crate::repl::repl_store::ReplStore;
+pub use crate::repl::session::Session;
 use client::telemetry::Telemetry;
 
 pub const KERNEL_DOCS_URL: &str = "https://zed.dev/docs/repl#changing-kernels";

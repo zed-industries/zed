@@ -25,13 +25,16 @@ test-support = [
 ]
 
 [dependencies]
+alacritty_terminal.workspace = true
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 assets.workspace = true
 assistant_tool.workspace = true
+async-dispatcher.workspace = true
 async-trait.workspace = true
 async-watch.workspace = true
 auto_update.workspace = true
+base64.workspace = true
 call.workspace = true
 cargo_toml.workspace = true
 channel.workspace = true
@@ -43,6 +46,7 @@ command_palette.workspace = true
 command_palette_hooks.workspace = true
 context_servers.workspace = true
 db.workspace = true
+derive_more.workspace = true
 editor.workspace = true
 emojis.workspace = true
 extension_host.workspace = true
@@ -57,6 +61,7 @@ handlebars.workspace = true
 heed.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
+image.workspace = true
 indexed_docs.workspace = true
 indoc.workspace = true
 inline_completion_button.workspace = true
@@ -69,6 +74,7 @@ markdown.workspace = true
 markdown_preview.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
+nbformat.workspace = true
 notifications.workspace = true
 num-format.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
@@ -83,10 +89,10 @@ recent_projects.workspace = true
 regex.workspace = true
 release_channel.workspace = true
 remote.workspace = true
-repl.workspace = true
 rich_text.workspace = true
 rope.workspace = true
 rpc.workspace = true
+runtimelib.workspace = true
 schemars.workspace = true
 search.workspace = true
 semantic_index.workspace = true
@@ -118,9 +124,8 @@ vim.workspace = true
 wasmtime-wasi.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
-derive_more.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(target_os = "windows")'.dependencies]
 windows.workspace = true
 
 [dev-dependencies]
@@ -137,6 +142,7 @@ fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 indexed_docs.workspace = true
+indoc.workspace = true
 language = { workspace = true, features = ["test-support"] }
 language_model = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
@@ -154,7 +160,10 @@ serde_json.workspace = true
 serde_json_lenient.workspace = true
 settings = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
+theme = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
+tree-sitter-python.workspace = true
+tree-sitter-typescript.workspace = true
 unindent.workspace = true
 util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

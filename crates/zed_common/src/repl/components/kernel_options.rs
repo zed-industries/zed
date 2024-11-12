@@ -1,6 +1,6 @@
-use crate::kernels::KernelSpecification;
-use crate::repl_store::ReplStore;
-use crate::KERNEL_DOCS_URL;
+use crate::repl::kernels::KernelSpecification;
+use crate::repl::repl_store::ReplStore;
+use crate::repl::KERNEL_DOCS_URL;
 
 use gpui::DismissEvent;
 

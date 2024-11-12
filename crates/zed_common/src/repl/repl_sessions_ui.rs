@@ -10,8 +10,8 @@ use workspace::item::ItemEvent;
 use workspace::WorkspaceId;
 use workspace::{item::Item, Workspace};
 
-use crate::jupyter_settings::JupyterSettings;
-use crate::repl_store::ReplStore;
+use crate::repl::jupyter_settings::JupyterSettings;
+use crate::repl::repl_store::ReplStore;
 
 actions!(
     repl,
@@ -98,7 +98,7 @@ pub fn init(cx: &mut AppContext) {
                             return;
                         }
 
-                        crate::run(editor_handle.clone(), true, cx).log_err();
+                        crate::repl::run(editor_handle.clone(), true, cx).log_err();
                     }
                 })
                 .detach();
@@ -111,7 +111,7 @@ pub fn init(cx: &mut AppContext) {
                             return;
                         }
 
-                        crate::run(editor_handle.clone(), false, cx).log_err();
+                        crate::repl::run(editor_handle.clone(), false, cx).log_err();
                     }
                 })
                 .detach();

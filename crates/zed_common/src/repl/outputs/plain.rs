@@ -30,7 +30,7 @@ use terminal_view::terminal_element::TerminalElement;
 use theme::ThemeSettings;
 use ui::{prelude::*, IntoElement};
 
-use crate::outputs::OutputContent;
+use crate::repl::outputs::OutputContent;
 
 /// The `TerminalOutput` struct handles the parsing and rendering of text input,
 /// simulating a basic terminal environment within REPL output.

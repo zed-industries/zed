@@ -9,9 +9,9 @@ use gpui::{prelude::*, Entity, View, WeakView, WindowContext};
 use language::{BufferSnapshot, Language, LanguageName, Point};
 use project::{Item as _, WorktreeId};
 
-use crate::repl_store::ReplStore;
-use crate::session::SessionEvent;
-use crate::{
+use crate::repl::repl_store::ReplStore;
+use crate::repl::session::SessionEvent;
+use crate::repl::{
     ClearOutputs, Interrupt, JupyterSettings, KernelSpecification, Restart, Session, Shutdown,
 };
 
@@ -25,7 +25,7 @@ pub fn assign_kernelspec(
         return Ok(());
     }
 
-    let worktree_id = crate::repl_editor::worktree_id_for_editor(weak_editor.clone(), cx)
+    let worktree_id = crate::repl::repl_editor::worktree_id_for_editor(weak_editor.clone(), cx)
         .context("editor is not in a worktree")?;
 
     store.update(cx, |store, cx| {
@@ -285,7 +285,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakView
                     return;
                 }
 
-                crate::clear_outputs(editor_handle.clone(), cx);
+                crate::repl::clear_outputs(editor_handle.clone(), cx);
             }
         })
         .detach();
@@ -298,7 +298,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakView
                     return;
                 }
 
-                crate::interrupt(editor_handle.clone(), cx);
+                crate::repl::interrupt(editor_handle.clone(), cx);
             }
         })
         .detach();
@@ -311,7 +311,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakView
                     return;
                 }
 
-                crate::shutdown(editor_handle.clone(), cx);
+                crate::repl::shutdown(editor_handle.clone(), cx);
             }
         })
         .detach();
@@ -324,7 +324,7 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakView
                     return;
                 }
 
-                crate::restart(editor_handle.clone(), cx);
+                crate::repl::restart(editor_handle.clone(), cx);
             }
         })
         .detach();

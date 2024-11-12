@@ -1,7 +1,7 @@
 use gpui::AnyElement;
 use ui::{prelude::*, Indicator, ListItem};
 
-use crate::KernelSpecification;
+use crate::repl::KernelSpecification;
 
 #[derive(IntoElement)]
 pub struct KernelListItem {

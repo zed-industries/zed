@@ -1,7 +1,7 @@
 use gpui::{AnyElement, FontWeight, View, WindowContext};
 use ui::{h_flex, prelude::*, v_flex, Label};
 
-use crate::outputs::plain::TerminalOutput;
+use crate::repl::outputs::plain::TerminalOutput;
 
 /// Userspace error from the kernel
 pub struct ErrorView {

@@ -5465,7 +5465,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.4.10",
+ "socket2 0.5.7",
  "tokio",
  "tower-service",
  "tracing",
@@ -9610,53 +9610,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "71fe3824f5629716b1589be05dacd749f6aa084c87e00e016714a8cdfccc997c"
 dependencies = [
  "bytecheck",
-]
-
-[[package]]
-name = "repl"
-version = "0.1.0"
-dependencies = [
- "alacritty_terminal",
- "anyhow",
- "async-dispatcher",
- "base64 0.22.1",
- "client",
- "collections",
- "command_palette_hooks",
- "editor",
- "env_logger 0.11.5",
- "feature_flags",
- "futures 0.3.30",
- "gpui",
- "http_client",
- "image",
- "indoc",
- "language",
- "languages",
- "log",
- "markdown_preview",
- "menu",
- "multi_buffer",
- "nbformat",
- "picker",
- "project",
- "runtimelib",
- "schemars",
- "serde",
- "serde_json",
- "settings",
- "smol",
- "terminal",
- "terminal_view",
- "theme",
- "tree-sitter-md",
- "tree-sitter-python",
- "tree-sitter-typescript",
- "ui",
- "util",
- "uuid",
- "windows 0.58.0",
- "workspace",
 ]
 
 [[package]]
@@ -15099,7 +15052,6 @@ dependencies = [
  "recent_projects",
  "release_channel",
  "remote",
- "repl",
  "reqwest_client",
  "rope",
  "search",
@@ -15165,15 +15117,18 @@ dependencies = [
 name = "zed_common"
 version = "0.1.0"
 dependencies = [
+ "alacritty_terminal",
  "anthropic",
  "anyhow",
  "assets",
  "assistant_tool",
  "async-compression",
+ "async-dispatcher",
  "async-tar",
  "async-trait",
  "async-watch",
  "auto_update",
+ "base64 0.22.1",
  "call",
  "cargo_toml",
  "channel",
@@ -15202,6 +15157,7 @@ dependencies = [
  "heed",
  "html_to_markdown",
  "http_client",
+ "image",
  "indexed_docs",
  "indoc",
  "inline_completion_button",
@@ -15215,6 +15171,7 @@ dependencies = [
  "markdown_preview",
  "menu",
  "multi_buffer",
+ "nbformat",
  "node_runtime",
  "notifications",
  "num-format",
@@ -15232,11 +15189,11 @@ dependencies = [
  "regex",
  "release_channel",
  "remote",
- "repl",
  "reqwest_client",
  "rich_text",
  "rope",
  "rpc",
+ "runtimelib",
  "schemars",
  "search",
  "semantic_index",
@@ -15262,6 +15219,8 @@ dependencies = [
  "time_format",
  "toml 0.8.19",
  "tree-sitter-md",
+ "tree-sitter-python",
+ "tree-sitter-typescript",
  "ui",
  "unindent",
  "util",
@@ -15519,9 +15478,9 @@ dependencies = [
 
 [[package]]
 name = "zeromq"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb0560d00172817b7f7c2265060783519c475702ae290b154115ca75e976d4d0"
+checksum = "6a4528179201f6eecf211961a7d3276faa61554c82651ecc66387f68fc3004bd"
 dependencies = [
  "async-dispatcher",
  "async-std",

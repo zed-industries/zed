@@ -62,7 +62,7 @@ use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled};
 
-use crate::outputs::OutputContent;
+use crate::repl::outputs::OutputContent;
 
 /// TableView renders a static table inline in a buffer.
 /// It uses the https://specs.frictionlessdata.io/tabular-data-resource/ specification for data interchange.

@@ -7,7 +7,7 @@ use markdown_preview::{
 };
 use ui::v_flex;
 
-use crate::outputs::OutputContent;
+use crate::repl::outputs::OutputContent;
 
 pub struct MarkdownView {
     raw_text: String,

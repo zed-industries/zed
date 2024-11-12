@@ -401,7 +401,7 @@ fn main() {
             stdout_is_a_pty(),
             cx,
         );
-        repl::init(
+        zed_common::repl::init(
             app_state.fs.clone(),
             app_state.client.telemetry().clone(),
             cx,
@@ -432,7 +432,7 @@ fn main() {
         app_state.languages.set_theme(cx.theme().clone());
         editor::init(cx);
         image_viewer::init(cx);
-        repl::notebook::init(cx);
+        zed_common::repl::notebook::init(cx);
         diagnostics::init(cx);
 
         audio::init(Assets, cx);

@@ -12,7 +12,7 @@ use theme::ThemeSettings;
 use ui::{prelude::*, IconButtonShape};
 use util::ResultExt;
 
-use crate::{
+use crate::repl::{
     notebook::{CODE_BLOCK_INSET, GUTTER_WIDTH},
     outputs::{plain::TerminalOutput, user_error::ErrorView, Output},
 };
