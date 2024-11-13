@@ -1559,7 +1559,7 @@ impl SshRemoteConnection {
             || arch.starts_with("aarch64")
         {
             "aarch64"
-        } else if arch.starts_with("x86") || arch.starts_with("i686") {
+        } else if arch.starts_with("x86") {
             "x86_64"
         } else {
             Err(anyhow!(
