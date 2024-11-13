@@ -5045,7 +5045,6 @@ impl Element for EditorElement {
                     } else {
                         px(0.)
                     };
-
                     let overscroll = size(em_width + right_margin, px(0.));
 
                     let editor_width =
