@@ -1044,10 +1044,6 @@ impl InputHandler for TerminalInputHandler {
     ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
     }
-
-    fn apple_press_and_hold_enabled(&mut self) -> bool {
-        false
-    }
 }
 
 pub fn is_blank(cell: &IndexedCell) -> bool {

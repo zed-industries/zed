@@ -124,9 +124,6 @@ impl Keystroke {
     /// Produces a representation of this key that Parse can understand.
     pub fn unparse(&self) -> String {
         let mut str = String::new();
-        if self.modifiers.function {
-            str.push_str("fn-");
-        }
         if self.modifiers.control {
             str.push_str("ctrl-");
         }
