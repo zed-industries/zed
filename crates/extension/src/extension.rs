@@ -1,5 +1,6 @@
 pub mod extension_builder;
 mod extension_manifest;
+mod slash_command;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,6 +11,7 @@ use gpui::Task;
 use semantic_version::SemanticVersion;
 
 pub use crate::extension_manifest::*;
+pub use crate::slash_command::*;
 
 #[async_trait]
 pub trait WorktreeDelegate: Send + Sync + 'static {
@@ -31,6 +33,19 @@ pub trait Extension: Send + Sync + 'static {
 
     /// Returns the path to this extension's working directory.
     fn work_dir(&self) -> Arc<Path>;
+
+    async fn complete_slash_command_argument(
+        &self,
+        command: SlashCommand,
+        arguments: Vec<String>,
+    ) -> Result<Vec<SlashCommandArgumentCompletion>>;
+
+    async fn run_slash_command(
+        &self,
+        command: SlashCommand,
+        arguments: Vec<String>,
+        resource: Option<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<SlashCommandOutput>;
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>>;
 

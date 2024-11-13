@@ -3,7 +3,10 @@ pub mod wit;
 use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
-use extension::KeyValueStoreDelegate;
+use extension::{
+    KeyValueStoreDelegate, SlashCommand, SlashCommandArgumentCompletion, SlashCommandOutput,
+    WorktreeDelegate,
+};
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
 use futures::{
@@ -29,7 +32,7 @@ use wasmtime::{
 };
 use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
-pub use wit::{ExtensionProject, SlashCommand};
+pub use wit::ExtensionProject;
 
 pub struct WasmHost {
     engine: Engine,
@@ -60,6 +63,51 @@ impl extension::Extension for WasmExtension {
 
     fn work_dir(&self) -> Arc<Path> {
         self.work_dir.clone()
+    }
+
+    async fn complete_slash_command_argument(
+        &self,
+        command: SlashCommand,
+        arguments: Vec<String>,
+    ) -> Result<Vec<SlashCommandArgumentCompletion>> {
+        self.call(|extension, store| {
+            async move {
+                let completions = extension
+                    .call_complete_slash_command_argument(store, &command.into(), &arguments)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(completions.into_iter().map(Into::into).collect())
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn run_slash_command(
+        &self,
+        command: SlashCommand,
+        arguments: Vec<String>,
+        delegate: Option<Arc<dyn WorktreeDelegate>>,
+    ) -> Result<SlashCommandOutput> {
+        self.call(|extension, store| {
+            async move {
+                let resource = if let Some(delegate) = delegate {
+                    Some(store.data_mut().table().push(delegate)?)
+                } else {
+                    None
+                };
+
+                let output = extension
+                    .call_run_slash_command(store, &command.into(), &arguments, resource)
+                    .await?
+                    .map_err(|err| anyhow!("{err}"))?;
+
+                Ok(output.into())
+            }
+            .boxed()
+        })
+        .await
     }
 
     async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>> {
