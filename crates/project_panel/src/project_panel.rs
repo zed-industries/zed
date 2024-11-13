@@ -5104,14 +5104,13 @@ mod tests {
             &[
                 "v src",
                 "    v test",
-                "          second.rs",
+                "          second.rs  <== selected",
                 "          third.rs"
             ],
             "Project panel should have no deleted file, no other file is selected in it"
         );
         ensure_no_open_items_and_panes(&workspace, cx);
 
-        select_path(&panel, "src/test/second.rs", cx);
         panel.update(cx, |panel, cx| panel.open(&Open, cx));
         cx.executor().run_until_parked();
         assert_eq!(
@@ -5145,7 +5144,7 @@ mod tests {
         submit_deletion_skipping_prompt(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    v test", "          third.rs"],
+            &["v src", "    v test", "          third.rs  <== selected"],
             "Project panel should have no deleted file, with one last file remaining"
         );
         ensure_no_open_items_and_panes(&workspace, cx);
@@ -6347,6 +6346,205 @@ mod tests {
                 //
                 "v src  <== selected",
                 "    > test"
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_next_selection_after_delete(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "first.rs": "// First",
+                    "second.rs": "// Second",
+                    "third.rs": "// Third",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        // Delete middle file (second.rs) - should select next file (third.rs)
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/second.rs", cx);
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs",
+                "          third.rs  <== selected",
+            ]
+        );
+
+        // Delete last file (third.rs) - should select previous file (first.rs)
+        select_path(&panel, "src/test/third.rs", cx);
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    v test", "          first.rs  <== selected",]
+        );
+
+        // Delete only remaining file (first.rs) - should select parent directory (test)
+        select_path(&panel, "src/test/first.rs", cx);
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    v test  <== selected",]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_next_selection_after_multiple_delete(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "test": {
+                    "a.rs": "// a",
+                    "b.rs": "// b",
+                    "c.rs": "// c",
+                    "d.rs": "// d",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+        toggle_expand_dir(&panel, "src/test", cx);
+        select_path(&panel, "src/test/a.rs", cx);
+        // Select multiple files (b.rs and c.rs) in middle - should select next file (d.rs)
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            shift: true,
+            ..Default::default()
+        });
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.select_next(&Default::default(), cx);
+                this.select_next(&Default::default(), cx);
+            })
+        });
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          a.rs",
+                "          d.rs  <== selected",
+            ]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_next_selection_after_directory_delete(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "dir1": {
+                    "file1.rs": "",
+                },
+                "dir2": {
+                    "file2.rs": "",
+                },
+                "dir3": {
+                    "file3.rs": "",
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        // Delete middle directory (dir2) - should select next directory (dir3)
+        select_path(&panel, "src/dir2", cx);
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > dir1", "    > dir3  <== selected",]
+        );
+
+        // Delete last directory (dir3) - should select previous directory (dir1)
+        select_path(&panel, "src/dir3", cx);
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > dir1  <== selected",]
+        );
+    }
+
+    #[gpui::test]
+    async fn test_next_selection_after_mixed_delete(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/src",
+            json!({
+                "dir1": {
+                    "a.rs": "",
+                    "b.rs": "",
+                },
+                "dir2": {
+                    "c.rs": "",
+                },
+                "file1.rs": "",
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/src".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "src/dir1", cx);
+        select_path(&panel, "src/dir1", cx);
+        // Move to next file (a.rs)
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.select_next(&Default::default(), cx);
+            })
+        });
+        // Select file (b.rs) and directory (dir2) - should select file next to directory (file1.rs)
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            shift: true,
+            ..Default::default()
+        });
+        cx.update(|cx| {
+            panel.update(cx, |this, cx| {
+                this.select_next(&Default::default(), cx);
+                this.select_next(&Default::default(), cx);
+            })
+        });
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "          a.rs",
+                "      file1.rs  <== selected",
             ]
         );
     }
