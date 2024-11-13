@@ -1,5 +1,5 @@
 [package]
-name = "windows_net"
+name = "askpass_helper"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -8,20 +8,21 @@ license = "Apache-2.0"
 [lints]
 workspace = true
 
-[lib]
-path = "src/windows_net.rs"
+[[bin]]
+name = "askpass_helper"
+path = "src/askpass_helper.rs"
 doctest = false
 
 [dependencies]
-smol.workspace = true
+# smol.workspace = true
+windows_net.workspace = true
 
-[target.'cfg(windows)'.dependencies]
-windows.workspace = true
-uds_windows = "*"
+# [target.'cfg(windows)'.dependencies]
+# windows.workspace = true
 
 [dev-dependencies]
 # futures-lite = "*"
-tempfile.workspace = true
+# tempfile.workspace = true
 
 [package.metadata.docs.rs]
 targets = ["x86_64-pc-windows-msvc"]

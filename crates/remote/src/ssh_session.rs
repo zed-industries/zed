@@ -36,7 +36,9 @@ use smol::{
 use std::{
     any::TypeId,
     collections::VecDeque,
-    fmt, iter,
+    fmt,
+    io::{BufRead, Read, Write},
+    iter,
     ops::ControlFlow,
     path::{Path, PathBuf},
     sync::{
@@ -1405,10 +1407,14 @@ impl SshRemoteConnection {
                         askpass_opened_tx.send(()).ok();
                     }
                     let mut buffer = Vec::new();
-                    let mut reader = BufReader::new(&mut stream);
-                    if reader.read_until(b'\0', &mut buffer).await.is_err() {
+                    let mut reader = std::io::BufReader::new(&mut stream);
+                    if reader.read_until(b'\0', &mut buffer).is_err() {
                         buffer.clear();
                     }
+                    // let mut reader = BufReader::new(&mut stream);
+                    // if reader.read_until(b'\0', &mut buffer).await.is_err() {
+                    //     buffer.clear();
+                    // }
                     let password_prompt = String::from_utf8_lossy(&buffer);
                     println!("--> password prompt: {}", password_prompt);
                     if let Some(password) = delegate
@@ -1418,7 +1424,8 @@ impl SshRemoteConnection {
                         .and_then(|p| p)
                         .log_err()
                     {
-                        stream.write_all(password.as_bytes()).await.log_err();
+                        // stream.write_all(password.as_bytes()).await.log_err();
+                        stream.write_all(password.as_bytes()).log_err();
                     } else {
                         if let Some(kill_tx) = kill_tx.take() {
                             kill_tx.send(stream).log_err();
@@ -1430,13 +1437,24 @@ impl SshRemoteConnection {
         });
 
         // Create an askpass script that communicates back to this process.
+        // let askpass_script = format!(
+        //     "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
+        //     askpass_socket = askpass_socket.display(),
+        //     print_args = "printf '%s\\0' \"$@\"",
+        //     shebang = "#!/bin/sh",
+        // );
         let askpass_script = format!(
-            "{shebang}\n{print_args} | nc -U {askpass_socket} 2> /dev/null \n",
-            askpass_socket = askpass_socket.display(),
-            print_args = "printf '%s\\0' \"$@\"",
-            shebang = "#!/bin/sh",
+            r#""{}" "{}" %*"#,
+            std::env::current_exe()
+                .unwrap()
+                .parent()
+                .unwrap()
+                .join("askpass_helper.exe")
+                .display(),
+            askpass_socket.display()
         );
-        let askpass_script_path = temp_dir.path().join("askpass.sh");
+        // let askpass_script_path = temp_dir.path().join("askpass.sh");
+        let askpass_script_path = temp_dir.path().join("askpass.cmd");
         println!("--> script: {}", askpass_script);
         println!("--> script path: {}", askpass_script_path.display());
         fs::write(&askpass_script_path, askpass_script).await?;
@@ -1452,8 +1470,8 @@ impl SshRemoteConnection {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            // .env("SSH_ASKPASS_REQUIRE", "force")
-            // .env("SSH_ASKPASS", &askpass_script_path)
+            .env("SSH_ASKPASS_REQUIRE", "force")
+            .env("SSH_ASKPASS", &askpass_script_path)
             .args(connection_options.additional_args().unwrap_or(&Vec::new()))
             .args([
                 "-N",

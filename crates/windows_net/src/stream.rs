@@ -1,5 +1,6 @@
 use std::{
     io::{Read, Write},
+    net::Shutdown,
     os::windows::io::AsRawSocket,
     path::Path,
     pin::Pin,
@@ -7,177 +8,183 @@ use std::{
     task::Poll,
 };
 
-use async_io::{ReadableOwned, WritableOwned};
+// use async_io::{ReadableOwned, WritableOwned};
 use smol::{
     future::FutureExt,
     io::{AsyncRead, AsyncWrite},
     ready, Async,
 };
-// use windows::Win32::Networking::WinSock::{connect, getpeername};
+use windows::Win32::Networking::WinSock::{connect, getpeername};
 
-#[derive(Debug)]
-pub struct UnixStream {
-    inner: Arc<Async<uds_windows::UnixStream>>,
-    readable: Option<ReadableOwned<uds_windows::UnixStream>>,
-    writable: Option<WritableOwned<uds_windows::UnixStream>>,
-}
+use crate::{init, map_ret, sockaddr_un, socket::WindowsSocket};
 
 // #[derive(Debug)]
-// pub struct WindowsStream(WindowsSocket);
+// pub struct UnixStream {
+//     inner: Arc<Async<uds_windows::UnixStream>>,
+//     readable: Option<ReadableOwned<uds_windows::UnixStream>>,
+//     writable: Option<WritableOwned<uds_windows::UnixStream>>,
+// }
 
-impl UnixStream {
-    pub fn new(raw: Arc<Async<uds_windows::UnixStream>>) -> Self {
-        Self {
-            inner: raw,
-            readable: None,
-            writable: None,
-        }
-    }
+#[derive(Debug)]
+pub struct UnixStream(WindowsSocket);
 
-    pub fn peer_addr(&self) -> std::io::Result<uds_windows::SocketAddr> {
-        self.inner.get_ref().peer_addr()
-    }
-
-    pub fn as_inner(&self) -> &Arc<Async<uds_windows::UnixStream>> {
-        &self.inner
-    }
-}
-
-impl AsyncRead for UnixStream {
-    fn poll_read(
-        mut self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<std::io::Result<usize>> {
-        loop {
-            // Attempt the non-blocking operation.
-            match self.inner.get_ref().read(buf) {
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
-                res => {
-                    self.readable = None;
-                    return Poll::Ready(res);
-                }
-            }
-
-            // Initialize the future to wait for readiness.
-            if self.readable.is_none() {
-                self.readable = Some(self.inner.clone().readable_owned());
-            }
-
-            // Poll the future for readiness.
-            if let Some(f) = &mut self.readable {
-                let res = ready!(Pin::new(f).poll(cx));
-                self.readable = None;
-                res?;
-            }
-        }
-    }
-}
-
-impl AsyncWrite for UnixStream {
-    fn poll_write(
-        mut self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-        buf: &[u8],
-    ) -> Poll<std::io::Result<usize>> {
-        loop {
-            // Attempt the non-blocking operation.
-            match self.inner.get_ref().write(buf) {
-                Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
-                res => {
-                    self.writable = None;
-                    return Poll::Ready(res);
-                }
-            }
-
-            // Initialize the future to wait for readiness.
-            if self.writable.is_none() {
-                self.writable = Some(self.inner.clone().writable_owned());
-            }
-
-            // Poll the future for readiness.
-            if let Some(f) = &mut self.writable {
-                let res = ready!(Pin::new(f).poll(cx));
-                self.writable = None;
-                res?;
-            }
-        }
-    }
-
-    fn poll_flush(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        todo!()
-    }
-
-    fn poll_close(
-        self: Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> Poll<std::io::Result<()>> {
-        todo!()
-    }
-}
-
-// impl WindowsStream {
-//     pub fn new(raw: WindowsSocket) -> Self {
-//         Self(raw)
-//     }
-
-//     pub fn connect<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
-//         init();
-//         unsafe {
-//             let inner = WindowsSocket::new()?;
-//             let (addr, len) = sockaddr_un(path.as_ref())?;
-
-//             map_ret(connect(
-//                 *inner.as_raw(),
-//                 &addr as *const _ as *const _,
-//                 len as i32,
-//             ))?;
-//             Ok(Self(inner))
+// impl UnixStream {
+//     pub fn new(raw: Arc<Async<uds_windows::UnixStream>>) -> Self {
+//         Self {
+//             inner: raw,
+//             readable: None,
+//             writable: None,
 //         }
 //     }
 
-//     pub fn as_raw(&self) -> &WindowsSocket {
-//         &self.0
+//     pub fn peer_addr(&self) -> std::io::Result<uds_windows::SocketAddr> {
+//         self.inner.get_ref().peer_addr()
+//     }
+
+//     pub fn as_inner(&self) -> &Arc<Async<uds_windows::UnixStream>> {
+//         &self.inner
 //     }
 // }
 
-// impl AsRawSocket for WindowsStream {
-//     fn as_raw_socket(&self) -> std::os::windows::io::RawSocket {
-//         self.0.as_raw().0 as _
+// impl AsyncRead for UnixStream {
+//     fn poll_read(
+//         mut self: std::pin::Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//         buf: &mut [u8],
+//     ) -> Poll<std::io::Result<usize>> {
+//         loop {
+//             // Attempt the non-blocking operation.
+//             match self.inner.get_ref().read(buf) {
+//                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+//                 res => {
+//                     self.readable = None;
+//                     return Poll::Ready(res);
+//                 }
+//             }
+
+//             // Initialize the future to wait for readiness.
+//             if self.readable.is_none() {
+//                 self.readable = Some(self.inner.clone().readable_owned());
+//             }
+
+//             // Poll the future for readiness.
+//             if let Some(f) = &mut self.readable {
+//                 let res = ready!(Pin::new(f).poll(cx));
+//                 self.readable = None;
+//                 res?;
+//             }
+//         }
 //     }
 // }
 
-// impl Read for WindowsStream {
-//     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-//         Read::read(&mut &*self, buf)
+// impl AsyncWrite for UnixStream {
+//     fn poll_write(
+//         mut self: Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//         buf: &[u8],
+//     ) -> Poll<std::io::Result<usize>> {
+//         loop {
+//             // Attempt the non-blocking operation.
+//             match self.inner.get_ref().write(buf) {
+//                 Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {}
+//                 res => {
+//                     self.writable = None;
+//                     return Poll::Ready(res);
+//                 }
+//             }
+
+//             // Initialize the future to wait for readiness.
+//             if self.writable.is_none() {
+//                 self.writable = Some(self.inner.clone().writable_owned());
+//             }
+
+//             // Poll the future for readiness.
+//             if let Some(f) = &mut self.writable {
+//                 let res = ready!(Pin::new(f).poll(cx));
+//                 self.writable = None;
+//                 res?;
+//             }
+//         }
+//     }
+
+//     fn poll_flush(
+//         self: Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//     ) -> Poll<std::io::Result<()>> {
+//         todo!()
+//     }
+
+//     fn poll_close(
+//         self: Pin<&mut Self>,
+//         cx: &mut std::task::Context<'_>,
+//     ) -> Poll<std::io::Result<()>> {
+//         todo!()
 //     }
 // }
 
-// impl<'a> Read for &'a WindowsStream {
-//     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-//         self.0.read(buf)
-//     }
-// }
+impl UnixStream {
+    pub fn new(raw: WindowsSocket) -> Self {
+        Self(raw)
+    }
 
-// impl Write for WindowsStream {
-//     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-//         Write::write(&mut &*self, buf)
-//     }
+    pub fn connect<P: AsRef<Path>>(path: P) -> std::io::Result<Self> {
+        init();
+        unsafe {
+            let inner = WindowsSocket::new()?;
+            let (addr, len) = sockaddr_un(path.as_ref())?;
 
-//     fn flush(&mut self) -> std::io::Result<()> {
-//         Write::flush(&mut &*self)
-//     }
-// }
+            map_ret(connect(
+                *inner.as_raw(),
+                &addr as *const _ as *const _,
+                len as i32,
+            ))?;
+            Ok(Self(inner))
+        }
+    }
 
-// impl<'a> Write for &'a WindowsStream {
-//     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-//         self.0.write(buf)
-//     }
+    pub fn shutdown(&self, how: Shutdown) -> std::io::Result<()> {
+        self.0.shutdown(how)
+    }
 
-//     fn flush(&mut self) -> std::io::Result<()> {
-//         Ok(())
-//     }
-// }
+    pub fn as_raw(&self) -> &WindowsSocket {
+        &self.0
+    }
+}
+
+impl AsRawSocket for UnixStream {
+    fn as_raw_socket(&self) -> std::os::windows::io::RawSocket {
+        self.0.as_raw().0 as _
+    }
+}
+
+impl Read for UnixStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        Read::read(&mut &*self, buf)
+    }
+}
+
+impl<'a> Read for &'a UnixStream {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.0.read(buf)
+    }
+}
+
+impl Write for UnixStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        Write::write(&mut &*self, buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Write::flush(&mut &*self)
+    }
+}
+
+impl<'a> Write for &'a UnixStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
