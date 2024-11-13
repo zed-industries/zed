@@ -16,9 +16,12 @@ pub struct ImageView {
 
 impl ImageView {
     pub fn from(base64_encoded_data: &str) -> Result<Self> {
-        let bytes = BASE64_STANDARD.decode(base64_encoded_data.trim())?;
+        let filtered =
+            base64_encoded_data.replace(&[' ', '\n', '\t', '\r', '\x0b', '\x0c'][..], "");
+        let bytes = BASE64_STANDARD_NO_PAD.decode(filtered)?;
 
         let format = image::guess_format(&bytes)?;
+
         let mut data = image::load_from_memory_with_format(&bytes, format)?.into_rgba8();
 
         // Convert from RGBA to BGRA.

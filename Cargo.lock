@@ -6362,12 +6362,11 @@ dependencies = [
 
 [[package]]
 name = "jupyter-serde"
-version = "0.2.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77b96de099fc23d5c21e05de32cc087c8326983895b7f6c242562af01f7d4c81"
+checksum = "dd71aa17c4fa65e6d7536ab2728881a41f8feb2ee5841c2240516c3c3d65d8b3"
 dependencies = [
  "anyhow",
- "chrono",
  "serde",
  "serde_json",
  "thiserror",
@@ -7369,9 +7368,9 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "0.3.2"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84f8a9ab08b34237c2c1d0504b794c2ff01c08dfc46a060d160f004a7f479c31"
+checksum = "c9ffb2ca556072f114bcaf2ca01dde7f1bc8a4946097dd804cb5a22d8af7d6df"
 dependencies = [
  "anyhow",
  "chrono",
@@ -10184,9 +10183,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.16.1"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc7fe3c17675445fe89de68d130be00b7115104924fbcf53a9b0a84b0283fc81"
+checksum = "fe23ba9967355bbb1be2fb9a8e51bd239ffdf9c791fad5a9b765122ee2bde2e4"
 dependencies = [
  "anyhow",
  "async-dispatcher",
