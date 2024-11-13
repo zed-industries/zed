@@ -21,17 +21,20 @@ use std::sync::Arc;
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+use command_palette_hooks::CommandPaletteFilter;
 use futures::{Future, FutureExt};
-use gpui::{AsyncAppContext, EventEmitter, ModelContext, Task};
+use gpui::{AsyncAppContext, EventEmitter, Model, ModelContext, Subscription, Task};
 use log;
 use parking_lot::RwLock;
+use project::Project;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use settings::{Settings, SettingsSources};
+use settings::{Settings, SettingsSources, SettingsStore};
+use util::ResultExt as _;
 
 use crate::{
     client::{self, Client},
-    types,
+    types, ContextServerFactoryRegistry, CONTEXT_SERVERS_NAMESPACE,
 };
 
 #[derive(Deserialize, Serialize, Default, Clone, PartialEq, Eq, JsonSchema, Debug)]
@@ -161,7 +164,12 @@ impl ContextServer for NativeContextServer {
 /// a model to the ContextServerManager.
 pub struct ContextServerManager {
     servers: HashMap<Arc<str>, Arc<dyn ContextServer>>,
+    project: Model<Project>,
+    registry: Model<ContextServerFactoryRegistry>,
+    update_servers_task: Option<Task<Result<()>>>,
+    needs_server_update: bool,
     pending_servers: HashSet<Arc<str>>,
+    _subscriptions: Vec<Subscription>,
 }
 
 pub enum Event {
@@ -171,17 +179,79 @@ pub enum Event {
 
 impl EventEmitter<Event> for ContextServerManager {}
 
-impl Default for ContextServerManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl ContextServerManager {
-    pub fn new() -> Self {
+    pub fn new(
+        registry: Model<ContextServerFactoryRegistry>,
+        project: Model<Project>,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
         Self {
-            servers: HashMap::default(),
+            _subscriptions: vec![
+                cx.observe(&registry, |this, _registry, cx| {
+                    this.available_context_servers_changed(cx);
+                }),
+                cx.observe_global::<SettingsStore>(|this, cx| {
+                    this.available_context_servers_changed(cx);
+                }),
+            ],
+            project,
+            registry,
+            needs_server_update: false,
             pending_servers: HashSet::default(),
+            servers: HashMap::default(),
+            update_servers_task: None,
+        }
+    }
+
+    fn available_context_servers_changed(&mut self, cx: &mut ModelContext<Self>) {
+        let has_any_context_servers = !self.servers().is_empty();
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            if has_any_context_servers {
+                filter.show_namespace(CONTEXT_SERVERS_NAMESPACE);
+            }
+        });
+
+        if self.update_servers_task.is_some() {
+            self.needs_server_update = true;
+        } else {
+            self.update_servers_task = Some(cx.spawn(|this, mut cx| async move {
+                let (registry, project) = this.update(&mut cx, |this, cx| {
+                    this.needs_server_update = false;
+
+                    let location = this.project.read(cx).worktrees(cx).next().map(|worktree| {
+                        settings::SettingsLocation {
+                            worktree_id: worktree.read(cx).id(),
+                            path: Path::new(""),
+                        }
+                    });
+
+                    let settings = ContextServerSettings::get(location, cx);
+
+                    this.maintain_servers(settings, cx);
+                    (this.registry.clone(), this.project.clone())
+                })?;
+
+                let mut servers_to_register = Vec::new();
+                for (_id, factory) in
+                    registry.read_with(&cx, |registry, _| registry.context_server_factories())?
+                {
+                    if let Some(server) = factory(project.clone(), &cx).await.log_err() {
+                        servers_to_register.push(server);
+                    }
+                }
+
+                this.update(&mut cx, |this, cx| {
+                    for server in servers_to_register {
+                        this.add_server(server, cx).detach_and_log_err(cx);
+                    }
+
+                    this.update_servers_task.take();
+                    if this.needs_server_update {
+                        this.available_context_servers_changed(cx);
+                    }
+                })?;
+                Ok(())
+            }));
         }
     }
 
