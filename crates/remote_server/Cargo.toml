@@ -29,6 +29,7 @@ chrono.workspace = true
 clap.workspace = true
 client.workspace = true
 env_logger.workspace = true
+extension_host.workspace = true
 fs.workspace = true
 futures.workspace = true
 git.workspace = true
