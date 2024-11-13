@@ -1395,7 +1395,6 @@ impl SshRemoteConnection {
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<PipeStream>();
         let mut kill_tx = Some(askpass_kill_master_tx);
 
-        println!("--> 1");
         let askpass_task = cx.spawn({
             let delegate = delegate.clone();
             |mut cx| async move {
@@ -1405,11 +1404,9 @@ impl SshRemoteConnection {
                     if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
                         askpass_opened_tx.send(()).ok();
                     }
-                    println!("  --> 1.1");
                     let Some(password_prompt) = stream.get_password_prompt().await.log_err() else {
                         break;
                     };
-                    println!("  --> 1.2");
                     if let Some(password) = delegate
                         .ask_password(password_prompt, &mut cx)
                         .await
@@ -1418,12 +1415,8 @@ impl SshRemoteConnection {
                         .log_err()
                     {
                         // stream.write_all(password.as_bytes()).await.log_err();
-                        println!("  --> 1.3");
-                        let x = listener.send_password(password).await;
-                        println!("  --> 1.3.1: {:?}", x);
-                        // listener.disconnect();
+                        listener.send_password(password).await.log_err();
                     } else {
-                        println!("  --> 1.4");
                         if let Some(kill_tx) = kill_tx.take() {
                             kill_tx.send(stream).log_err();
                             break;
@@ -1442,7 +1435,6 @@ impl SshRemoteConnection {
             which::which("nc").is_ok(),
             "Cannot find nc, which is required to connect over ssh."
         );
-        println!("--> 2");
         // Create an askpass script that communicates back to this process.
         // let askpass_script = format!(
         //     "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
@@ -1462,7 +1454,6 @@ impl SshRemoteConnection {
         #[cfg(not(target_os = "windows"))]
         fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
         let askpass_script_path = generate_askpass_script(&temp_dir, &askpass_handle_name).await?;
-        println!("--> askpass_script_path: {:?}", askpass_script_path);
 
         // Start the master SSH process, which does not do anything except for establish
         // the connection and keep it open, allowing other ssh commands to reuse it
@@ -1489,7 +1480,6 @@ impl SshRemoteConnection {
             .kill_on_drop(true)
             .spawn()?;
 
-        println!("--> 3");
         // Wait for this ssh process to close its stdout, indicating that authentication
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
@@ -1498,10 +1488,8 @@ impl SshRemoteConnection {
 
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {
-                println!("--> 3.1");
                 select_biased! {
                     stream = askpass_kill_master_rx.fuse() => {
-                        println!("--> 3.1.1");
                         master_process.kill().ok();
                         drop(stream);
                         Err(anyhow!("SSH connection canceled"))
@@ -1510,18 +1498,15 @@ impl SshRemoteConnection {
                     // their password, in which case we don't want to timeout anymore,
                     // since we know a connection has been established.
                     result = stdout.read_to_end(&mut output).fuse() => {
-                        println!("--> 3.1.2");
                         result?;
                         Ok(())
                     }
                 }
             }
             _ = stdout.read_to_end(&mut output).fuse() => {
-                println!("--> 3.2");
                 Ok(())
             }
             _ = futures::FutureExt::fuse(smol::Timer::after(connection_timeout)) => {
-                println!("--> 3.3");
                 Err(anyhow!("Exceeded {:?} timeout trying to connect to host", connection_timeout))
             }
         };
@@ -1531,7 +1516,6 @@ impl SshRemoteConnection {
             return Err(e.context("Failed to connect to host"));
         }
 
-        println!("--> 4");
         drop(askpass_task);
 
         if master_process.try_status()?.is_some() {
@@ -1546,20 +1530,17 @@ impl SshRemoteConnection {
             Err(anyhow!(error_message))?;
         }
 
-        println!("--> 5");
         let socket = SshSocket {
             connection_options,
             socket_path,
         };
 
-        println!("--> 6");
         let mut this = Self {
             socket,
             master_process: Mutex::new(Some(master_process)),
             _temp_dir: temp_dir,
             remote_binary_path: None,
         };
-        println!("--> 7");
 
         let (release_channel, version, commit) = cx.update(|cx| {
             (
@@ -1568,12 +1549,10 @@ impl SshRemoteConnection {
                 AppCommitSha::try_global(cx),
             )
         })?;
-        println!("--> 8");
         this.remote_binary_path = Some(
             this.ensure_server_binary(&delegate, release_channel, version, commit, cx)
                 .await?,
         );
-        println!("--> 9");
 
         Ok(this)
     }
