@@ -582,7 +582,7 @@ impl Render for InputExample {
                     "{:} {}",
                     ks.unparse(),
                     if let Some(ime_key) = ks.ime_key.as_ref() {
-                        format!("-> {}", ime_key)
+                        format!("-> {:?}", ime_key)
                     } else {
                         "".to_owned()
                     }
