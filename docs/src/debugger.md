@@ -4,7 +4,6 @@
 
 To debug a program using Zed you must first create a debug configuration within your project located at `.zed/debug.json`
 
-
 ```json
 [
   {
