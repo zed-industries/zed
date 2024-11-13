@@ -7,6 +7,7 @@ use anyhow::{Context, Result};
 use editor::Editor;
 use gpui::{prelude::*, Entity, View, WeakView, WindowContext};
 use language::{BufferSnapshot, Language, LanguageName, Point};
+use project::{Item as _, WorktreeId};
 
 use crate::repl_store::ReplStore;
 use crate::session::SessionEvent;
@@ -23,6 +24,13 @@ pub fn assign_kernelspec(
     if !store.read(cx).is_enabled() {
         return Ok(());
     }
+
+    let worktree_id = crate::repl_editor::worktree_id_for_editor(weak_editor.clone(), cx)
+        .context("editor is not in a worktree")?;
+
+    store.update(cx, |store, cx| {
+        store.set_active_kernelspec(worktree_id, kernel_specification.clone(), cx);
+    });
 
     let fs = store.read(cx).fs().clone();
     let telemetry = store.read(cx).telemetry().clone();
@@ -79,6 +87,10 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
         return Ok(());
     };
 
+    let Some(project_path) = buffer.read(cx).project_path(cx) else {
+        return Ok(());
+    };
+
     let (runnable_ranges, next_cell_point) =
         runnable_ranges(&buffer.read(cx).snapshot(), selected_range);
 
@@ -87,11 +99,10 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
             continue;
         };
 
-        let kernel_specification = store.update(cx, |store, cx| {
-            store
-                .kernelspec(language.code_fence_block_name().as_ref(), cx)
-                .with_context(|| format!("No kernel found for language: {}", language.name()))
-        })?;
+        let kernel_specification = store
+            .read(cx)
+            .active_kernelspec(project_path.worktree_id, Some(language.clone()), cx)
+            .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language.name()))?;
 
         let fs = store.read(cx).fs().clone();
         let telemetry = store.read(cx).telemetry().clone();
@@ -156,6 +167,22 @@ pub enum SessionSupport {
     Unsupported,
 }
 
+pub fn worktree_id_for_editor(
+    editor: WeakView<Editor>,
+    cx: &mut WindowContext,
+) -> Option<WorktreeId> {
+    editor.upgrade().and_then(|editor| {
+        editor
+            .read(cx)
+            .buffer()
+            .read(cx)
+            .as_singleton()?
+            .read(cx)
+            .project_path(cx)
+            .map(|path| path.worktree_id)
+    })
+}
+
 pub fn session(editor: WeakView<Editor>, cx: &mut WindowContext) -> SessionSupport {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
@@ -164,17 +191,24 @@ pub fn session(editor: WeakView<Editor>, cx: &mut WindowContext) -> SessionSuppo
         return SessionSupport::ActiveSession(session);
     };
 
-    let Some(language) = get_language(editor, cx) else {
+    let Some(language) = get_language(editor.clone(), cx) else {
         return SessionSupport::Unsupported;
     };
-    let kernelspec = store.update(cx, |store, cx| {
-        store.kernelspec(language.code_fence_block_name().as_ref(), cx)
-    });
+
+    let worktree_id = worktree_id_for_editor(editor.clone(), cx);
+
+    let Some(worktree_id) = worktree_id else {
+        return SessionSupport::Unsupported;
+    };
+
+    let kernelspec = store
+        .read(cx)
+        .active_kernelspec(worktree_id, Some(language.clone()), cx);
 
     match kernelspec {
         Some(kernelspec) => SessionSupport::Inactive(kernelspec),
         None => {
-            if language_supported(&language) {
+            if language_supported(&language.clone()) {
                 SessionSupport::RequiresSetup(language.name())
             } else {
                 SessionSupport::Unsupported

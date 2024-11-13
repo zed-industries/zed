@@ -85,7 +85,7 @@ impl RenderOnce for Checkbox {
             .id(self.id)
             .justify_center()
             .items_center()
-            .size(crate::styles::custom_spacing(cx, 20.))
+            .size(DynamicSpacing::Base20.rems(cx))
             .group(group_id.clone())
             .child(
                 div()
@@ -93,8 +93,8 @@ impl RenderOnce for Checkbox {
                     .flex_none()
                     .justify_center()
                     .items_center()
-                    .m(Spacing::Small.px(cx))
-                    .size(crate::styles::custom_spacing(cx, 16.))
+                    .m(DynamicSpacing::Base04.px(cx))
+                    .size(DynamicSpacing::Base16.rems(cx))
                     .rounded_sm()
                     .bg(bg_color)
                     .border_1()
@@ -118,7 +118,7 @@ impl ComponentPreview for Checkbox {
         "A checkbox lets people choose between a pair of opposing states, like enabled and disabled, using a different appearance to indicate each state."
     }
 
-    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Default",
@@ -191,7 +191,7 @@ impl CheckboxWithLabel {
 impl RenderOnce for CheckboxWithLabel {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
-            .gap(Spacing::Large.rems(cx))
+            .gap(DynamicSpacing::Base08.rems(cx))
             .child(Checkbox::new(self.id.clone(), self.checked).on_click({
                 let on_click = self.on_click.clone();
                 move |checked, cx| {
@@ -214,7 +214,7 @@ impl ComponentPreview for CheckboxWithLabel {
         "A checkbox with an associated label, allowing users to select an option while providing a descriptive text."
     }
 
-    fn examples() -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![example_group(vec![
             single_example(
                 "Unselected",

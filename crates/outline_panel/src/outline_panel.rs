@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
-use ui::{IndentGuideColors, IndentGuideLayout};
+use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
 use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -51,8 +51,8 @@ use workspace::{
     ui::{
         h_flex, v_flex, ActiveTheme, ButtonCommon, Clickable, Color, ContextMenu, FluentBuilder,
         HighlightedLabel, Icon, IconButton, IconButtonShape, IconName, IconSize, Label,
-        LabelCommon, ListItem, Scrollbar, ScrollbarState, Selectable, Spacing, StyledExt,
-        StyledTypography, Tooltip,
+        LabelCommon, ListItem, Scrollbar, ScrollbarState, Selectable, StyledExt, StyledTypography,
+        Tooltip,
     },
     OpenInTerminal, WeakItemHandle, Workspace,
 };
@@ -2280,7 +2280,6 @@ impl OutlinePanel {
                             // For a proper git status propagation, we have to keep the entries sorted lexicographically.
                             entries.sort_by(|a, b| a.path.as_ref().cmp(b.path.as_ref()));
                             worktree_snapshot.propagate_git_statuses(&mut entries);
-                            project::sort_worktree_entries(&mut entries);
                             (worktree_id, entries)
                         })
                         .flat_map(|(worktree_id, entries)| {
@@ -3867,7 +3866,7 @@ impl OutlinePanel {
                 })
                 .child(
                     h_flex()
-                        .pt(Spacing::Small.rems(cx))
+                        .pt(DynamicSpacing::Base04.rems(cx))
                         .justify_center()
                         .child({
                             let keystroke = match self.position(cx) {

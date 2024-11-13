@@ -36,7 +36,7 @@ impl RenderOnce for RadioWithLabel {
         let border_width = rems_from_px(1.);
         h_flex()
             .id(self.id)
-            .gap(Spacing::Large.rems(cx))
+            .gap(DynamicSpacing::Base08.rems(cx))
             .group("")
             .child(
                 div()

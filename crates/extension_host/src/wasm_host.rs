@@ -27,7 +27,7 @@ use wasmtime::{
 };
 use wasmtime_wasi as wasi;
 use wit::Extension;
-pub use wit::SlashCommand;
+pub use wit::{ExtensionProject, SlashCommand};
 
 pub struct WasmHost {
     engine: Engine,

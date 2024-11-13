@@ -3,12 +3,14 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use context_servers::manager::{NativeContextServer, ServerConfig};
+use context_servers::manager::{NativeContextServer, ServerCommand, ServerConfig};
 use context_servers::protocol::InitializedContextServerProtocol;
 use context_servers::ContextServer;
-use extension_host::wasm_host::{WasmExtension, WasmHost};
+use extension_host::wasm_host::{ExtensionProject, WasmExtension, WasmHost};
 use futures::{Future, FutureExt};
-use gpui::AsyncAppContext;
+use gpui::{AsyncAppContext, Model};
+use project::Project;
+use wasmtime_wasi::WasiView as _;
 
 pub struct ExtensionContextServer {
     #[allow(unused)]
@@ -20,14 +22,27 @@ pub struct ExtensionContextServer {
 }
 
 impl ExtensionContextServer {
-    pub async fn new(extension: WasmExtension, host: Arc<WasmHost>, id: Arc<str>) -> Result<Self> {
+    pub async fn new(
+        extension: WasmExtension,
+        host: Arc<WasmHost>,
+        id: Arc<str>,
+        project: Model<Project>,
+        mut cx: AsyncAppContext,
+    ) -> Result<Self> {
+        let extension_project = project.update(&mut cx, |project, cx| ExtensionProject {
+            worktree_ids: project
+                .visible_worktrees(cx)
+                .map(|worktree| worktree.read(cx).id().to_proto())
+                .collect(),
+        })?;
         let command = extension
             .call({
                 let id = id.clone();
                 |extension, store| {
                     async move {
+                        let project = store.data_mut().table().push(extension_project)?;
                         let command = extension
-                            .call_context_server_command(store, id.clone())
+                            .call_context_server_command(store, id.clone(), project)
                             .await?
                             .map_err(|e| anyhow!("{}", e))?;
                         anyhow::Ok(command)
@@ -38,17 +53,19 @@ impl ExtensionContextServer {
             .await?;
 
         let config = Arc::new(ServerConfig {
-            id: id.to_string(),
-            executable: command.command,
-            args: command.args,
-            env: Some(command.env.into_iter().collect()),
+            settings: None,
+            command: Some(ServerCommand {
+                path: command.command,
+                args: command.args,
+                env: Some(command.env.into_iter().collect()),
+            }),
         });
 
         anyhow::Ok(Self {
             extension,
             host,
-            id,
-            context_server: Arc::new(NativeContextServer::new(config)),
+            id: id.clone(),
+            context_server: Arc::new(NativeContextServer::new(id, config)),
         })
     }
 }

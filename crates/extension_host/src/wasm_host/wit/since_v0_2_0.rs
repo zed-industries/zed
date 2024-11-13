@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use async_compression::futures::bufread::GzipDecoder;
 use async_tar::Archive;
 use async_trait::async_trait;
+use context_servers::manager::ContextServerSettings;
 use futures::{io::BufReader, FutureExt as _};
 use futures::{lock::Mutex, AsyncReadExt};
 use language::{
@@ -31,6 +32,7 @@ wasmtime::component::bindgen!({
     path: "../extension_api/wit/since_v0.2.0",
     with: {
          "worktree": ExtensionWorktree,
+         "project": ExtensionProject,
          "key-value-store": ExtensionKeyValueStore,
          "zed:extension/http-client/http-response-stream": ExtensionHttpResponseStream
     },
@@ -45,6 +47,10 @@ mod settings {
 pub type ExtensionWorktree = Arc<dyn LspAdapterDelegate>;
 pub type ExtensionKeyValueStore = Arc<dyn DocsDatabase>;
 pub type ExtensionHttpResponseStream = Arc<Mutex<::http_client::Response<AsyncBody>>>;
+
+pub struct ExtensionProject {
+    pub worktree_ids: Vec<u64>,
+}
 
 pub fn linker() -> &'static Linker<WasmState> {
     static LINKER: OnceLock<Linker<WasmState>> = OnceLock::new();
@@ -65,6 +71,22 @@ impl HostKeyValueStore for WasmState {
 
     fn drop(&mut self, _worktree: Resource<ExtensionKeyValueStore>) -> Result<()> {
         // We only ever hand out borrows of key-value stores.
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl HostProject for WasmState {
+    async fn worktree_ids(
+        &mut self,
+        project: Resource<ExtensionProject>,
+    ) -> wasmtime::Result<Vec<u64>> {
+        let project = self.table.get(&project)?;
+        Ok(project.worktree_ids.clone())
+    }
+
+    fn drop(&mut self, _project: Resource<Project>) -> Result<()> {
+        // We only ever hand out borrows of projects.
         Ok(())
     }
 }
@@ -421,12 +443,31 @@ impl ExtensionImports for WasmState {
                             .cloned()
                             .unwrap_or_default();
                         Ok(serde_json::to_string(&settings::LspSettings {
-                            binary: settings.binary.map(|binary| settings::BinarySettings {
+                            binary: settings.binary.map(|binary| settings::CommandSettings {
                                 path: binary.path,
                                 arguments: binary.arguments,
+                                env: None,
                             }),
                             settings: settings.settings,
                             initialization_options: settings.initialization_options,
+                        })?)
+                    }
+                    "context_servers" => {
+                        let settings = key
+                            .and_then(|key| {
+                                ContextServerSettings::get(location, cx)
+                                    .context_servers
+                                    .get(key.as_str())
+                            })
+                            .cloned()
+                            .unwrap_or_default();
+                        Ok(serde_json::to_string(&settings::ContextServerSettings {
+                            command: settings.command.map(|command| settings::CommandSettings {
+                                path: Some(command.path),
+                                arguments: Some(command.args),
+                                env: command.env.map(|env| env.into_iter().collect()),
+                            }),
+                            settings: settings.settings,
                         })?)
                     }
                     _ => {
