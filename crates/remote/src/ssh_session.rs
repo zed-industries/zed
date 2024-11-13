@@ -1444,7 +1444,10 @@ impl SshRemoteConnection {
         //     shebang = "#!/bin/sh",
         // );
         let askpass_script = format!(
-            r#""{}" "{}" %*"#,
+            r#"
+            @echo off
+            "{}" "{}" %*
+            "#,
             std::env::current_exe()
                 .unwrap()
                 .parent()

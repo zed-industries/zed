@@ -14,7 +14,6 @@ path = "src/askpass_helper.rs"
 doctest = false
 
 [dependencies]
-# smol.workspace = true
 windows_net.workspace = true
 
 # [target.'cfg(windows)'.dependencies]
