@@ -1262,13 +1262,13 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         }
 
         let mut callback = window_state.as_ref().lock().event_callback.take();
-        let handled = if let Some(callback) = callback.as_mut() {
+        let handled: BOOL = if let Some(callback) = callback.as_mut() {
             !callback(PlatformInput::KeyDown(event)).propagate
         } else {
-            false
+            NO
         };
         window_state.as_ref().lock().event_callback = callback;
-        return handled;
+        return handled as BOOL;
     }
 
     let mut callback = window_state.as_ref().lock().event_callback.take();
@@ -1279,7 +1279,7 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     };
     window_state.as_ref().lock().event_callback = callback;
     if handled {
-        return handled;
+        return YES;
     }
 
     if event.is_held {
@@ -1289,9 +1289,9 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
                     None,
                     &event.keystroke.ime_key.unwrap_or(event.keystroke.key),
                 );
-                return true;
+                return YES;
             }
-            false
+            NO
         });
         if handled == Some(true) {
             return YES;
