@@ -3468,13 +3468,17 @@ impl ContextEditor {
         Some(
             v_flex()
                 .id(id)
+                .bg(theme.colors().editor_background)
                 .ml(gutter_width)
                 .w(max_width - gutter_width)
                 .rounded_md()
                 .border_1()
-                .when(selected, |this| this.bg(theme.players().local().selection))
                 .border_color(theme.colors().border)
-                .py_2()
+                .hover(|style| style.border_color(theme.colors().text_accent))
+                .when(selected, |this| {
+                    this.border_color(theme.colors().text_accent)
+                })
+                .pb_1()
                 .cursor(CursorStyle::PointingHand)
                 .on_click(cx.listener(move |this, _, cx| {
                     this.editor.update(cx, |editor, cx| {
@@ -3486,29 +3490,53 @@ impl ContextEditor {
                 }))
                 .child(
                     h_flex()
-                        .pl_1()
+                        .rounded_t_md()
+                        .bg(theme.colors().element_background)
+                        .px_2()
+                        .py_1()
                         .child(Label::new(patch.title.clone()).size(LabelSize::Small))
                         .border_b_1()
                         .border_color(theme.colors().border),
                 )
                 .children(paths.into_iter().map(|path| {
                     h_flex()
-                        .pl_1()
+                        .px_2()
+                        .pt_1()
                         .gap_1()
                         .child(Icon::new(IconName::File).size(IconSize::Small))
                         .child(Label::new(path).size(LabelSize::Small))
                 }))
                 .when(patch.status == AssistantPatchStatus::Pending, |div| {
                     div.child(
-                        Label::new("Generating")
-                            .color(Color::Muted)
-                            .size(LabelSize::Small)
-                            .with_animation(
-                                "pulsating-label",
-                                Animation::new(Duration::from_secs(2))
-                                    .repeat()
-                                    .with_easing(pulsating_between(0.4, 1.)),
-                                |label, delta| label.alpha(delta),
+                        h_flex()
+                            .pt_1()
+                            .px_2()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::ArrowCircle)
+                                    .size(IconSize::XSmall)
+                                    .color(Color::Info)
+                                    .with_animation(
+                                        "arrow-circle",
+                                        Animation::new(Duration::from_secs(2)).repeat(),
+                                        |icon, delta| {
+                                            icon.transform(Transformation::rotate(percentage(
+                                                delta,
+                                            )))
+                                        },
+                                    ),
+                            )
+                            .child(
+                                Label::new("Generating")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small)
+                                    .with_animation(
+                                        "pulsating-label",
+                                        Animation::new(Duration::from_secs(2))
+                                            .repeat()
+                                            .with_easing(pulsating_between(0.4, 1.)),
+                                        |label, delta| label.alpha(delta),
+                                    ),
                             ),
                     )
                 })
