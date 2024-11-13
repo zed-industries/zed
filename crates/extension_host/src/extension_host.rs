@@ -90,10 +90,6 @@ pub fn is_version_compatible(
     true
 }
 
-pub trait DocsDatabase: Send + Sync + 'static {
-    fn insert(&self, key: String, docs: String) -> Task<Result<()>>;
-}
-
 pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
     fn remove_user_themes(&self, _themes: Vec<SharedString>) {}
 

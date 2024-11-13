@@ -2,6 +2,8 @@ pub mod wit;
 
 use crate::{ExtensionManifest, ExtensionRegistrationHooks};
 use anyhow::{anyhow, bail, Context as _, Result};
+use async_trait::async_trait;
+use extension::KeyValueStoreDelegate;
 use fs::{normalize_path, Fs};
 use futures::future::LocalBoxFuture;
 use futures::{
@@ -25,7 +27,7 @@ use wasmtime::{
     component::{Component, ResourceTable},
     Engine, Store,
 };
-use wasmtime_wasi as wasi;
+use wasmtime_wasi::{self as wasi, WasiView};
 use wit::Extension;
 pub use wit::{ExtensionProject, SlashCommand};
 
@@ -45,8 +47,61 @@ pub struct WasmHost {
 pub struct WasmExtension {
     tx: UnboundedSender<ExtensionCall>,
     pub manifest: Arc<ExtensionManifest>,
+    pub work_dir: Arc<Path>,
     #[allow(unused)]
     pub zed_api_version: SemanticVersion,
+}
+
+#[async_trait]
+impl extension::Extension for WasmExtension {
+    fn manifest(&self) -> Arc<ExtensionManifest> {
+        self.manifest.clone()
+    }
+
+    fn work_dir(&self) -> Arc<Path> {
+        self.work_dir.clone()
+    }
+
+    async fn suggest_docs_packages(&self, provider: Arc<str>) -> Result<Vec<String>> {
+        self.call(|extension, store| {
+            async move {
+                let packages = extension
+                    .call_suggest_docs_packages(store, provider.as_ref())
+                    .await?
+                    .map_err(|err| anyhow!("{err:?}"))?;
+
+                Ok(packages)
+            }
+            .boxed()
+        })
+        .await
+    }
+
+    async fn index_docs(
+        &self,
+        provider: Arc<str>,
+        package_name: Arc<str>,
+        kv_store: Arc<dyn KeyValueStoreDelegate>,
+    ) -> Result<()> {
+        self.call(|extension, store| {
+            async move {
+                let kv_store_resource = store.data_mut().table().push(kv_store)?;
+                extension
+                    .call_index_docs(
+                        store,
+                        provider.as_ref(),
+                        package_name.as_ref(),
+                        kv_store_resource,
+                    )
+                    .await?
+                    .map_err(|err| anyhow!("{err:?}"))?;
+
+                anyhow::Ok(())
+            }
+            .boxed()
+        })
+        .await
+    }
 }
 
 pub struct WasmState {
@@ -152,6 +207,7 @@ impl WasmHost {
 
             Ok(WasmExtension {
                 manifest: manifest.clone(),
+                work_dir: this.work_dir.clone().into(),
                 tx,
                 zed_api_version,
             })

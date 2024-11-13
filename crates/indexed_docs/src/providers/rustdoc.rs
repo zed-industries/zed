@@ -2,7 +2,7 @@ mod item;
 mod to_markdown;
 
 use cargo_metadata::MetadataCommand;
-use extension_host::DocsDatabase;
+use extension::KeyValueStoreDelegate;
 use futures::future::BoxFuture;
 pub use item::*;
 use parking_lot::RwLock;
@@ -209,7 +209,7 @@ impl IndexedDocsProvider for DocsDotRsProvider {
 
 async fn index_rustdoc(
     package: PackageName,
-    database: Arc<dyn DocsDatabase>,
+    database: Arc<dyn KeyValueStoreDelegate>,
     fetch_page: impl Fn(&PackageName, Option<&RustdocItem>) -> BoxFuture<'static, Result<Option<String>>>
         + Send
         + Sync,
