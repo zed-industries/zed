@@ -1553,7 +1553,11 @@ impl SshRemoteConnection {
                 "Prebuilt remote servers are not yet available for {os:?}. See https://zed.dev/docs/remote-development"
             ))?,
         };
-        let arch = if arch.starts_with("arm") || arch.starts_with("aarch64") {
+        // exclude armv5,6,7 as they are 32-bit.
+        let arch = if arch.starts_with("armv8")
+            || arch.starts_with("armv9")
+            || arch.starts_with("aarch64")
+        {
             "aarch64"
         } else if arch.starts_with("x86") || arch.starts_with("i686") {
             "x86_64"
