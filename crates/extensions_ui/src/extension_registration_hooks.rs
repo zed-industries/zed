@@ -1,9 +1,12 @@
 use std::{path::PathBuf, sync::Arc};
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use assistant_slash_command::SlashCommandRegistry;
+use context_servers::manager::ServerCommand;
 use context_servers::ContextServerFactoryRegistry;
+use db::smol::future::FutureExt as _;
 use extension::Extension;
+use extension_host::wasm_host::ExtensionProject;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Model, Task};
@@ -12,8 +15,8 @@ use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
+use wasmtime_wasi::WasiView as _;
 
-use crate::extension_context_server::ExtensionContextServer;
 use crate::extension_slash_command::ExtensionSlashCommand;
 
 pub struct ConcreteExtensionRegistrationHooks {
@@ -79,7 +82,6 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
         &self,
         id: Arc<str>,
         extension: wasm_host::WasmExtension,
-        host: Arc<wasm_host::WasmHost>,
         cx: &mut AppContext,
     ) {
         self.context_server_factory_registry
@@ -90,12 +92,44 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
                         move |project, cx| {
                             let id = id.clone();
                             let extension = extension.clone();
-                            let host = host.clone();
-                            cx.spawn(|cx| async move {
-                                let context_server =
-                                    ExtensionContextServer::new(extension, host, id, project, cx)
-                                        .await?;
-                                anyhow::Ok(Arc::new(context_server) as _)
+                            cx.spawn(|mut cx| async move {
+                                let extension_project =
+                                    project.update(&mut cx, |project, cx| ExtensionProject {
+                                        worktree_ids: project
+                                            .visible_worktrees(cx)
+                                            .map(|worktree| worktree.read(cx).id().to_proto())
+                                            .collect(),
+                                    })?;
+
+                                let command = extension
+                                    .call({
+                                        let id = id.clone();
+                                        |extension, store| {
+                                            async move {
+                                                let project = store
+                                                    .data_mut()
+                                                    .table()
+                                                    .push(extension_project)?;
+                                                let command = extension
+                                                    .call_context_server_command(
+                                                        store,
+                                                        id.clone(),
+                                                        project,
+                                                    )
+                                                    .await?
+                                                    .map_err(|e| anyhow!("{}", e))?;
+                                                anyhow::Ok(command)
+                                            }
+                                            .boxed()
+                                        }
+                                    })
+                                    .await?;
+
+                                Ok(ServerCommand {
+                                    path: command.command,
+                                    args: command.args,
+                                    env: Some(command.env.into_iter().collect()),
+                                })
                             })
                         }
                     }),

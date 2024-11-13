@@ -142,7 +142,6 @@ pub trait ExtensionRegistrationHooks: Send + Sync + 'static {
         &self,
         _id: Arc<str>,
         _extension: WasmExtension,
-        _host: Arc<WasmHost>,
         _cx: &mut AppContext,
     ) {
     }
@@ -1269,7 +1268,6 @@ impl ExtensionStore {
                         this.registration_hooks.register_context_server(
                             id.clone(),
                             wasm_extension.clone(),
-                            this.wasm_host.clone(),
                             cx,
                         );
                     }
