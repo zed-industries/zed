@@ -2122,9 +2122,7 @@ impl EditorElement {
                         max_width: text_hitbox.size.width.max(*scroll_width),
                         editor_style: &self.style,
                     }))
-                    .cursor(CursorStyle::Arrow)
-                    .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                    .into_any_element()
+                    .into_any()
             }
 
             Block::ExcerptBoundary {
@@ -5670,7 +5668,6 @@ impl Element for EditorElement {
             line_height: Some(self.style.text.line_height),
             ..Default::default()
         };
-        let mouse_position = cx.mouse_position();
         let hovered_hunk = layout
             .display_hunks
             .iter()
@@ -5684,7 +5681,7 @@ impl Element for EditorElement {
                 } => {
                     if hunk_hitbox
                         .as_ref()
-                        .map(|hitbox| hitbox.contains(&mouse_position))
+                        .map(|hitbox| hitbox.is_hovered(cx))
                         .unwrap_or(false)
                     {
                         Some(HoveredHunk {

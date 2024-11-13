@@ -1199,6 +1199,7 @@ impl InlineAssistant {
                     style: BlockStyle::Flex,
                     render: Arc::new(move |cx| {
                         div()
+                            .occlude()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.line_height())
@@ -1480,6 +1481,7 @@ impl Render for PromptEditor {
         h_flex()
             .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
+            .occlude()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()

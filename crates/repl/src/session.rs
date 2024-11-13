@@ -163,6 +163,7 @@ impl EditorBlock {
 
             div()
                 .id(cx.block_id)
+                .occlude()
                 .flex()
                 .items_start()
                 .min_h(text_line_height)

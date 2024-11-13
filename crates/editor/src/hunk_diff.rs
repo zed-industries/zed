@@ -435,6 +435,7 @@ impl Editor {
 
                     h_flex()
                         .id(cx.block_id)
+                        .occlude()
                         .h(cx.line_height())
                         .w_full()
                         .border_t_1()
@@ -713,6 +714,7 @@ impl Editor {
 
                 h_flex()
                     .id(cx.block_id)
+                    .occlude()
                     .bg(deleted_hunk_color)
                     .h(height as f32 * cx.line_height())
                     .w_full()
