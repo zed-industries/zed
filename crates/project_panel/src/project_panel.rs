@@ -1279,25 +1279,26 @@ impl ProjectPanel {
                 }
             });
 
-            cx.spawn(|this, mut cx| async move {
+            cx.spawn(|panel, mut cx| async move {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
                         return Result::<(), anyhow::Error>::Ok(());
                     }
                 }
                 for (entry_id, _) in file_paths {
-                    this.update(&mut cx, |this, cx| {
-                        this.project
-                            .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
-                            .ok_or_else(|| anyhow!("no such entry"))
-                    })??
-                    .await?;
+                    panel
+                        .update(&mut cx, |panel, cx| {
+                            panel
+                                .project
+                                .update(cx, |project, cx| project.delete_entry(entry_id, trash, cx))
+                                .ok_or_else(|| anyhow!("no such entry"))
+                        })??
+                        .await?;
                 }
                 if let Some(next_selection) = next_selection {
-                    this.update(&mut cx, |this, cx| {
-                        this.selection = Some(next_selection);
-                        this.autoscroll(cx);
-                        cx.notify();
+                    panel.update(&mut cx, |panel, cx| {
+                        panel.selection = Some(next_selection);
+                        panel.autoscroll(cx);
                     })?;
                 }
                 Result::<(), anyhow::Error>::Ok(())
@@ -6375,6 +6376,17 @@ mod tests {
         // Delete middle file (second.rs) - should select next file (third.rs)
         toggle_expand_dir(&panel, "src/test", cx);
         select_path(&panel, "src/test/second.rs", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs",
+                "          second.rs  <== selected",
+                "          third.rs",
+            ],
+            "Before deleting middle file"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -6383,23 +6395,41 @@ mod tests {
                 "    v test",
                 "          first.rs",
                 "          third.rs  <== selected",
-            ]
+            ],
+            "After deleting middle file"
         );
 
         // Delete last file (third.rs) - should select previous file (first.rs)
         select_path(&panel, "src/test/third.rs", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          first.rs",
+                "          third.rs  <== selected",
+            ],
+            "Before deleting last file"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    v test", "          first.rs  <== selected",]
+            &["v src", "    v test", "          first.rs  <== selected",],
+            "After deleting last file"
         );
 
         // Delete only remaining file (first.rs) - should select parent directory (test)
         select_path(&panel, "src/test/first.rs", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    v test", "          first.rs  <== selected",],
+            "Before deleting only remaining file"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    v test  <== selected",]
+            &["v src", "    v test  <== selected",],
+            "After deleting only remaining file"
         );
     }
 
@@ -6438,6 +6468,18 @@ mod tests {
                 this.select_next(&Default::default(), cx);
             })
         });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v test",
+                "          a.rs",
+                "          b.rs  <== marked",
+                "          c.rs  <== selected  <== marked",
+                "          d.rs",
+            ],
+            "Before deleting multiple files"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -6446,7 +6488,8 @@ mod tests {
                 "    v test",
                 "          a.rs",
                 "          d.rs  <== selected",
-            ]
+            ],
+            "After deleting multiple files"
         );
     }
 
@@ -6478,18 +6521,35 @@ mod tests {
 
         // Delete middle directory (dir2) - should select next directory (dir3)
         select_path(&panel, "src/dir2", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    > dir1",
+                "    > dir2  <== selected",
+                "    > dir3",
+            ],
+            "Before deleting middle directory"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > dir1", "    > dir3  <== selected",]
+            &["v src", "    > dir1", "    > dir3  <== selected",],
+            "After deleting middle directory"
         );
 
         // Delete last directory (dir3) - should select previous directory (dir1)
         select_path(&panel, "src/dir3", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &["v src", "    > dir1", "    > dir3  <== selected",],
+            "Before deleting last directory"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
-            &["v src", "    > dir1  <== selected",]
+            &["v src", "    > dir1  <== selected",],
+            "After deleting last directory"
         );
     }
 
@@ -6537,6 +6597,18 @@ mod tests {
                 this.select_next(&Default::default(), cx);
             })
         });
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..10, cx),
+            &[
+                "v src",
+                "    v dir1",
+                "          a.rs",
+                "          b.rs  <== marked",
+                "    > dir2  <== selected  <== marked",
+                "      file1.rs",
+            ],
+            "Before deleting mixed files and directories"
+        );
         submit_deletion(&panel, cx);
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
@@ -6545,7 +6617,8 @@ mod tests {
                 "    v dir1",
                 "          a.rs",
                 "      file1.rs  <== selected",
-            ]
+            ],
+            "After deleting mixed files"
         );
     }
 
