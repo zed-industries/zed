@@ -1260,6 +1260,25 @@ impl ProjectPanel {
                 None
             };
 
+            let next_selection = self.selection.and_then(|current| {
+                let (worktree_ix, entry_ix, _) = self.index_for_selection(current)?;
+                let (worktree_id, worktree_entries, _) = self.visible_entries.get(worktree_ix)?;
+
+                if entry_ix + 1 < worktree_entries.len() {
+                    Some(SelectedEntry {
+                        worktree_id: *worktree_id,
+                        entry_id: worktree_entries[entry_ix + 1].id,
+                    })
+                } else if entry_ix > 0 {
+                    Some(SelectedEntry {
+                        worktree_id: *worktree_id,
+                        entry_id: worktree_entries[entry_ix - 1].id,
+                    })
+                } else {
+                    None
+                }
+            });
+
             cx.spawn(|this, mut cx| async move {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
@@ -1273,6 +1292,13 @@ impl ProjectPanel {
                             .ok_or_else(|| anyhow!("no such entry"))
                     })??
                     .await?;
+                }
+                if let Some(next_selection) = next_selection {
+                    this.update(&mut cx, |this, cx| {
+                        this.selection = Some(next_selection);
+                        this.autoscroll(cx);
+                        cx.notify();
+                    })?;
                 }
                 Result::<(), anyhow::Error>::Ok(())
             })
