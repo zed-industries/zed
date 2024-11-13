@@ -5,6 +5,7 @@ use crate::wasm_host::{
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::HashMap;
+use extension::WorktreeDelegate;
 use futures::{Future, FutureExt};
 use gpui::AsyncAppContext;
 use language::{
@@ -17,6 +18,35 @@ use std::ops::Range;
 use std::{any::Any, path::PathBuf, pin::Pin, sync::Arc};
 use util::{maybe, ResultExt};
 use wasmtime_wasi::WasiView as _;
+
+/// An adapter that allows an [`LspAdapterDelegate`] to be used as a [`WorktreeDelegate`].
+pub struct WorktreeDelegateAdapter(pub Arc<dyn LspAdapterDelegate>);
+
+#[async_trait]
+impl WorktreeDelegate for WorktreeDelegateAdapter {
+    fn id(&self) -> u64 {
+        self.0.worktree_id().to_proto()
+    }
+
+    fn root_path(&self) -> String {
+        self.0.worktree_root_path().to_string_lossy().to_string()
+    }
+
+    async fn read_text_file(&self, path: PathBuf) -> Result<String> {
+        self.0.read_text_file(path).await
+    }
+
+    async fn which(&self, binary_name: String) -> Option<String> {
+        self.0
+            .which(binary_name.as_ref())
+            .await
+            .map(|path| path.to_string_lossy().to_string())
+    }
+
+    async fn shell_env(&self) -> Vec<(String, String)> {
+        self.0.shell_env().await.into_iter().collect()
+    }
+}
 
 pub struct ExtensionLspAdapter {
     pub(crate) extension: WasmExtension,
@@ -45,6 +75,7 @@ impl LspAdapter for ExtensionLspAdapter {
                     let this = self.clone();
                     |extension, store| {
                         async move {
+                            let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
                             let resource = store.data_mut().table().push(delegate)?;
                             let command = extension
                                 .call_language_server_command(
@@ -166,6 +197,7 @@ impl LspAdapter for ExtensionLspAdapter {
                 let this = self.clone();
                 |extension, store| {
                     async move {
+                        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
                         let resource = store.data_mut().table().push(delegate)?;
                         let options = extension
                             .call_language_server_initialization_options(
@@ -204,6 +236,7 @@ impl LspAdapter for ExtensionLspAdapter {
                 let this = self.clone();
                 |extension, store| {
                     async move {
+                        let delegate = Arc::new(WorktreeDelegateAdapter(delegate.clone())) as _;
                         let resource = store.data_mut().table().push(delegate)?;
                         let options = extension
                             .call_language_server_workspace_configuration(
