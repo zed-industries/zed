@@ -9613,6 +9613,7 @@ dependencies = [
  "anyhow",
  "auto_update",
  "editor",
+ "extension_host",
  "file_finder",
  "futures 0.3.30",
  "fuzzy",

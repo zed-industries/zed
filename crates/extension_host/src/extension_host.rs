@@ -1445,6 +1445,21 @@ impl ExtensionStore {
 
         Ok(())
     }
+
+    pub fn register_ssh_client(
+        &mut self,
+        client: Model<SshRemoteClient>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let connection_options = client.read(cx).connection_options();
+        if self.ssh_clients.contains_key(&connection_options.ssh_url()) {
+            return;
+        }
+
+        self.ssh_clients
+            .insert(connection_options.ssh_url(), client.downgrade());
+        self.ssh_registered_tx.unbounded_send(()).ok();
+    }
 }
 
 fn load_plugin_queries(root_path: &Path) -> LanguageQueries {
