@@ -2818,7 +2818,6 @@ name = "context_servers"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-trait",
  "collections",
  "command_palette_hooks",
  "futures 0.3.30",
@@ -4205,7 +4204,6 @@ dependencies = [
  "assistant_slash_command",
  "async-compression",
  "async-tar",
- "async-trait",
  "client",
  "collections",
  "context_servers",
