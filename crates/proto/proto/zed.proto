@@ -2537,6 +2537,7 @@ message CancelLanguageServerWork {
 message Extension {
     string id = 1;
     string version = 2;
+    bool dev = 3;
 }
 
 message SyncExtensions {

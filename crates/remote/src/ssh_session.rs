@@ -1269,6 +1269,7 @@ impl RemoteConnection for SshRemoteConnection {
                     .map(|port| vec!["-P".to_string(), port.to_string()])
                     .unwrap_or_default(),
             )
+            .arg("-C")
             .arg("-r")
             .arg(&src_path)
             .arg(format!(
