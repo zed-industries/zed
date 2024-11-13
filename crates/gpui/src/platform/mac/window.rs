@@ -1298,6 +1298,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
         }
     }
 
+    // Don't send key equivalents to the input handler,
+    // or macOS shortcuts like cmd-` will stop working.
+    if key_equivalent {
+        return NO;
+    }
+
     unsafe {
         let input_context: id = msg_send![this, inputContext];
         msg_send![input_context, handleEvent: native_event]
