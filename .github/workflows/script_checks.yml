@@ -10,7 +10,7 @@ on:
 
 jobs:
   shellcheck:
-    name: "Check formatting"
+    name: "ShellCheck Scripts"
     if: github.repository_owner == 'zed-industries'
     runs-on: ubuntu-latest
 

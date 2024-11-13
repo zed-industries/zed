@@ -28,3 +28,5 @@ git fetch >/dev/null
 if [[ "$(git rev-parse tags/$tag)" != $deployed_image_id ]]; then
     echo "NOTE: tags/$tag $(git rev-parse tags/$tag) is not yet deployed"
 fi;
+
+echo '>afsdjklasd;
