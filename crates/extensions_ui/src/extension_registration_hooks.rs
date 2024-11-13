@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 use anyhow::{anyhow, Result};
-use assistant_slash_command::SlashCommandRegistry;
+use assistant_slash_command::{ExtensionSlashCommand, SlashCommandRegistry};
 use context_servers::manager::ServerCommand;
 use context_servers::ContextServerFactoryRegistry;
 use db::smol::future::FutureExt as _;
@@ -16,8 +16,6 @@ use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
 use wasmtime_wasi::WasiView as _;
-
-use crate::extension_slash_command::ExtensionSlashCommand;
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
@@ -64,18 +62,11 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
 
     fn register_slash_command(
         &self,
-        command: wasm_host::SlashCommand,
-        extension: wasm_host::WasmExtension,
-        host: Arc<wasm_host::WasmHost>,
+        extension: Arc<dyn Extension>,
+        command: extension::SlashCommand,
     ) {
-        self.slash_command_registry.register_command(
-            ExtensionSlashCommand {
-                command,
-                extension,
-                host,
-            },
-            false,
-        )
+        self.slash_command_registry
+            .register_command(ExtensionSlashCommand::new(extension, command), false)
     }
 
     fn register_context_server(

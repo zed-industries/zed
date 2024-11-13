@@ -460,7 +460,7 @@ impl InlineAssistant {
                 style: BlockStyle::Sticky,
                 placement: BlockPlacement::Below(range.end),
                 height: 0,
-                render: Box::new(|cx| {
+                render: Arc::new(|cx| {
                     v_flex()
                         .h_full()
                         .w_full()
@@ -1197,8 +1197,9 @@ impl InlineAssistant {
                     placement: BlockPlacement::Above(new_row),
                     height,
                     style: BlockStyle::Flex,
-                    render: Box::new(move |cx| {
+                    render: Arc::new(move |cx| {
                         div()
+                            .occlude()
                             .bg(cx.theme().status().deleted_background)
                             .size_full()
                             .h(height as f32 * cx.line_height())
@@ -1317,7 +1318,7 @@ impl InlineAssistGroup {
 
 fn build_assist_editor_renderer(editor: &View<PromptEditor>) -> RenderBlock {
     let editor = editor.clone();
-    Box::new(move |cx: &mut BlockContext| {
+    Arc::new(move |cx: &mut BlockContext| {
         *editor.read(cx).gutter_dimensions.lock() = *cx.gutter_dimensions;
         editor.clone().into_any_element()
     })
@@ -1480,6 +1481,7 @@ impl Render for PromptEditor {
         h_flex()
             .key_context("PromptEditor")
             .bg(cx.theme().colors().editor_background)
+            .occlude()
             .border_y_1()
             .border_color(cx.theme().status().info_border)
             .size_full()

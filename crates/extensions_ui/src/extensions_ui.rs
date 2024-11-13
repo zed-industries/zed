@@ -1,6 +1,5 @@
 mod components;
 mod extension_registration_hooks;
-mod extension_slash_command;
 mod extension_suggest;
 mod extension_version_selector;
 
