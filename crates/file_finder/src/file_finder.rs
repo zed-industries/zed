@@ -34,7 +34,7 @@ use std::{
 use text::Point;
 use ui::{
     prelude::*, ButtonLike, ContextMenu, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing,
-    PopoverMenu, PopoverMenuHandle,
+    PopoverMenu, PopoverMenuHandle, TintColor,
 };
 use util::{paths::PathWithPosition, post_inc, ResultExt};
 use workspace::{
@@ -1222,6 +1222,7 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        let menu_open = self.popover_menu_handle.is_focused(cx);
         Some(
             h_flex()
                 .w_full()
@@ -1246,6 +1247,8 @@ impl PickerDelegate for FileFinderDelegate {
                             .anchor(gpui::AnchorCorner::BottomRight)
                             .trigger(
                                 ButtonLike::new("menu-trigger")
+                                    .selected(menu_open)
+                                    .selected_style(ButtonStyle::Tinted(TintColor::Accent))
                                     .when_some(
                                         KeyBinding::for_action_in(
                                             &OpenMenu,
