@@ -672,7 +672,7 @@ impl DisplaySnapshot {
     ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
         self.block_snapshot
             .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(|row| MultiBufferRow(row)))
+            .map(|row| row.map(MultiBufferRow))
     }
 
     pub fn max_buffer_row(&self) -> MultiBufferRow {
