@@ -194,7 +194,7 @@ impl Render for Console {
             .child(
                 div()
                     .child(self.render_query_bar(cx))
-                    .pt(DynamicSpacing::Base01.rems(cx)),
+                    .pt(DynamicSpacing::Base04.rems(cx)),
             )
             .border_2()
     }
