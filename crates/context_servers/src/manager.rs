@@ -300,18 +300,19 @@ impl ContextServerManager {
             }
         })?;
 
+        for (id, server) in servers_to_stop {
+            server.stop().log_err();
+            this.update(&mut cx, |_, cx| {
+                cx.emit(Event::ServerStopped { server_id: id })
+            })?;
+        }
+
         for (id, server) in servers_to_start {
             if server.start(&cx).await.log_err().is_some() {
                 this.update(&mut cx, |_, cx| {
                     cx.emit(Event::ServerStarted { server_id: id })
                 })?;
             }
-        }
-        for (id, server) in servers_to_stop {
-            server.stop().log_err();
-            this.update(&mut cx, |_, cx| {
-                cx.emit(Event::ServerStopped { server_id: id })
-            })?;
         }
 
         Ok(())
