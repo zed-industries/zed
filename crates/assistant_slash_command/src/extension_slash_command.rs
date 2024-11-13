@@ -129,7 +129,7 @@ impl SlashCommand for ExtensionSlashCommand {
                     .sections
                     .into_iter()
                     .map(|section| SlashCommandOutputSection {
-                        range: section.range.into(),
+                        range: section.range,
                         icon: IconName::Code,
                         label: section.label.into(),
                         metadata: None,
