@@ -3,17 +3,18 @@ use std::{path::PathBuf, sync::Arc};
 use anyhow::Result;
 use assistant_slash_command::SlashCommandRegistry;
 use context_servers::ContextServerFactoryRegistry;
+use extension::Extension;
 use extension_host::{extension_lsp_adapter::ExtensionLspAdapter, wasm_host};
 use fs::Fs;
 use gpui::{AppContext, BackgroundExecutor, Task};
-use indexed_docs::{IndexedDocsRegistry, ProviderId};
+use indexed_docs::{ExtensionIndexedDocsProvider, IndexedDocsRegistry, ProviderId};
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LoadedLanguage};
 use snippet_provider::SnippetRegistry;
 use theme::{ThemeRegistry, ThemeSettings};
 use ui::SharedString;
 
 use crate::extension_context_server::ExtensionContextServer;
-use crate::{extension_indexed_docs_provider, extension_slash_command::ExtensionSlashCommand};
+use crate::extension_slash_command::ExtensionSlashCommand;
 
 pub struct ConcreteExtensionRegistrationHooks {
     slash_command_registry: Arc<SlashCommandRegistry>,
@@ -99,19 +100,12 @@ impl extension_host::ExtensionRegistrationHooks for ConcreteExtensionRegistratio
             );
     }
 
-    fn register_docs_provider(
-        &self,
-        extension: wasm_host::WasmExtension,
-        host: Arc<wasm_host::WasmHost>,
-        provider_id: Arc<str>,
-    ) {
-        self.indexed_docs_registry.register_provider(Box::new(
-            extension_indexed_docs_provider::ExtensionIndexedDocsProvider {
+    fn register_docs_provider(&self, extension: Arc<dyn Extension>, provider_id: Arc<str>) {
+        self.indexed_docs_registry
+            .register_provider(Box::new(ExtensionIndexedDocsProvider::new(
                 extension,
-                host,
-                id: ProviderId(provider_id),
-            },
-        ));
+                ProviderId(provider_id),
+            )));
     }
 
     fn register_snippets(&self, path: &PathBuf, snippet_contents: &str) -> Result<()> {

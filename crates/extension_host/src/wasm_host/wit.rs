@@ -3,11 +3,10 @@ mod since_v0_0_4;
 mod since_v0_0_6;
 mod since_v0_1_0;
 mod since_v0_2_0;
+use extension::KeyValueStoreDelegate;
 use lsp::LanguageServerName;
 use release_channel::ReleaseChannel;
 use since_v0_2_0 as latest;
-
-use crate::DocsDatabase;
 
 use super::{wasm_engine, WasmState};
 use anyhow::{anyhow, Context, Result};
@@ -422,15 +421,15 @@ impl Extension {
         store: &mut Store<WasmState>,
         provider: &str,
         package_name: &str,
-        database: Resource<Arc<dyn DocsDatabase>>,
+        kv_store: Resource<Arc<dyn KeyValueStoreDelegate>>,
     ) -> Result<Result<(), String>> {
         match self {
             Extension::V020(ext) => {
-                ext.call_index_docs(store, provider, package_name, database)
+                ext.call_index_docs(store, provider, package_name, kv_store)
                     .await
             }
             Extension::V010(ext) => {
-                ext.call_index_docs(store, provider, package_name, database)
+                ext.call_index_docs(store, provider, package_name, kv_store)
                     .await
             }
             Extension::V001(_) | Extension::V004(_) | Extension::V006(_) => {
