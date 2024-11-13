@@ -673,7 +673,7 @@ impl PlatformWindow for WindowsWindow {
                         GWL_EXSTYLE,
                         current_style | WS_EX_LAYERED.0 as i32 | WS_EX_COMPOSITED.0 as i32,
                     );
-                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 240, LWA_ALPHA)
+                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 210, LWA_ALPHA)
                         .inspect_err(|e| log::error!("Unable to set window to transparent: {e}"))
                         .ok();
                 };
