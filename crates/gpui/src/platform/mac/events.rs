@@ -353,8 +353,10 @@ unsafe fn parse_keystroke(native_event: id) -> Keystroke {
                 if alt {
                     mods |= OPTION_MOD;
                 }
-
-                ime_key = Some(chars_for_modified_key(native_event.keyCode(), mods));
+                let alt_key = chars_for_modified_key(native_event.keyCode(), mods);
+                if alt_key != key {
+                    ime_key = Some(alt_key);
+                }
             };
 
             key
