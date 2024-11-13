@@ -46,12 +46,16 @@ impl Project {
         let worktree = self
             .active_entry()
             .and_then(|entry_id| self.worktree_for_entry(entry_id, cx))
-            .or_else(|| self.worktrees(cx).next())?;
-        let worktree = worktree.read(cx);
-        if !worktree.root_entry()?.is_dir() {
-            return None;
-        }
-        Some(worktree.abs_path().to_path_buf())
+            .into_iter()
+            .chain(self.worktrees(cx))
+            .find_map(|tree| {
+                let worktree = tree.read(cx);
+                worktree
+                    .root_entry()
+                    .filter(|entry| entry.is_dir())
+                    .map(|_| worktree.abs_path().to_path_buf())
+            });
+        worktree
     }
 
     pub fn first_project_directory(&self, cx: &AppContext) -> Option<PathBuf> {
