@@ -2572,6 +2572,7 @@ dependencies = [
  "clock",
  "collab_ui",
  "collections",
+ "context_servers",
  "ctor",
  "dashmap 6.0.1",
  "derive_more",
