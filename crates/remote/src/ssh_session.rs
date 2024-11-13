@@ -6,7 +6,9 @@ use crate::{
     proxy::ProxyLaunchError,
 };
 use anyhow::{anyhow, Context as _, Result};
-use askpass_password::{generate_password_helper_script, AskpassPasswordHelper};
+use askpass_password::{
+    generate_password_helper_script, AskpassPasswordGuard, AskpassPasswordHelper,
+};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -65,7 +67,7 @@ pub struct SshSocket {
     #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
     #[cfg(target_os = "windows")]
-    password_helper: Option<PathBuf>,
+    password_helper: Option<AskpassPasswordGuard>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -305,7 +307,8 @@ impl SshSocket {
             if let Some(ref askpass_script) = self.password_helper {
                 command
                     .env("SSH_ASKPASS_REQUIRE", "force")
-                    .env("SSH_ASKPASS", &askpass_script);
+                    .env("SSH_ASKPASS", askpass_script.script())
+                    .args(["-o", "PreferredAuthentications=password"]);
             }
         }
         command
@@ -1410,7 +1413,7 @@ impl SshRemoteConnection {
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
         let listener = AskpassHandle::new(&askpass_handle_name)?;
         let pipe_guard = PipeGuard::new(&askpass_handle_name)?;
-        let (askpass_password, shaerd_mem_identifier) =
+        let (askpass_password, shaerd_mem_identifier, shared_mem_handle) =
             AskpassPasswordHelper::new(&askpass_handle_name)?;
 
         // let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
@@ -1556,10 +1559,8 @@ impl SshRemoteConnection {
         }
 
         let askpass_password_helper = if require_password {
-            Some(generate_password_helper_script(
-                &shaerd_mem_identifier,
-                &temp_dir,
-            )?)
+            let script = generate_password_helper_script(&shaerd_mem_identifier, &temp_dir)?;
+            Some(AskpassPasswordGuard::new(shared_mem_handle, script))
         } else {
             None
         };
@@ -2523,7 +2524,6 @@ mod ipc {
         pub(super) async fn get_password_prompt(&mut self) -> Result<String> {
             let mut buffer = [0u8; SSH_NAMED_PIPE_MAX_SIZE];
             let mut bytes_read = 0;
-            println!("  => Reading from named pipe");
             unsafe {
                 ReadFile(
                     self.0.to_handle(),
@@ -2725,8 +2725,14 @@ mod askpass_password {
 
     pub(super) struct AskpassPasswordHelper(SafeHandle);
 
+    #[derive(Debug, Clone)]
+    pub(super) struct AskpassPasswordGuard {
+        handle: SafeHandle,
+        script: PathBuf,
+    }
+
     impl AskpassPasswordHelper {
-        pub(super) fn new(identifier: &str) -> anyhow::Result<(Self, String)> {
+        pub(super) fn new(identifier: &str) -> anyhow::Result<(Self, String, SafeHandle)> {
             let identifier = format!("Local\\{}-Shared-Memory", identifier);
             let handle = unsafe {
                 CreateFileMappingW(
@@ -2738,7 +2744,7 @@ mod askpass_password {
                     &HSTRING::from(&identifier),
                 )
             }?;
-            Ok((Self(handle.into()), identifier))
+            Ok((Self(handle.into()), identifier, handle.into()))
         }
 
         pub fn write_password(&self, password: &str) -> anyhow::Result<()> {
@@ -2755,10 +2761,20 @@ mod askpass_password {
         }
     }
 
-    impl Drop for AskpassPasswordHelper {
+    impl AskpassPasswordGuard {
+        pub(super) fn new(handle: SafeHandle, script: PathBuf) -> Self {
+            Self { handle, script }
+        }
+
+        pub(super) fn script(&self) -> &std::path::Path {
+            &self.script
+        }
+    }
+
+    impl Drop for AskpassPasswordGuard {
         fn drop(&mut self) {
             unsafe {
-                CloseHandle(self.0.to_handle()).log_err();
+                CloseHandle(self.handle.to_handle()).log_err();
             }
         }
     }
